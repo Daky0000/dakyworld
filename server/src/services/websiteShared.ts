@@ -1,3 +1,7 @@
+import { beforeWebsiteExternalAction } from "../lib/websiteWorkContext.js";
+import { capacity } from "../lib/capacity.js";
+import { enqueueWebsiteWork } from "./websiteWorkQueue.js";
+import { assertWebsiteSiteAccess } from "./websiteAccess.js";
 import type { Request, Response, Router } from "express";
 import type { Site, SitePage } from "@prisma/client";
 import { Prisma } from "@prisma/client";
@@ -9,7 +13,7 @@ import {
   type FieldValue, type SharedSlot, type SiteField,
 } from "./website/index.js";
 import { pageSource, publishPages, WebsiteError } from "./website/site.js";
-import { withWebsitePublishLocks } from "./websitePublishing.js";
+import { withWebsitePublishLocks, commitPublication } from "./websitePublishing.js";
 import { advancePublishJob, failPublishJob, publishJobCommitted, publishJobView, startPublishJob } from "./websitePublishJobs.js";
 import { createHash } from "node:crypto";
 import { ensureHostedAddress } from "./websiteHosting.js";
@@ -685,121 +689,12 @@ export function registerWebsiteShared(router: Router, access: Access) {
    * if any of them moved.
    */
   router.post("/shared/:sharedId/publish", handler(async (req, res) => {
-    const { element, site } = await loadShared(req, req.params.sharedId);
-    const body = z.object({
-      ifRevision: z.number().int().nonnegative(),
-      /** The hashes the review showed, one per affected page. */
-      pages: z.record(z.string().length(64)),
-    }).parse(req.body);
-
-    if (body.ifRevision !== element.draftRevision) {
-      throw new WebsiteError(409, `${element.name} changed after your review. Review it again before publishing.`);
+    if (capacity.admission) {
+      const { element, site } = await loadShared(req, req.params.sharedId);
+      res.status(202).json(await enqueueWebsiteWork(req, site.id, "PUBLISH_SHARED", { sharedId: element.id, body: req.body }));
+      return;
     }
-
-    // Locked before it is read: an ordinary publish of one of these pages must
-    // not be deciding what that file says at the same time as this one.
-    const result = await withWebsitePublishLocks(element.instances.filter((instance) => instance.state === "LINKED").map((instance) => instance.pageId), async (tx) => {
-    // Recorded before GitHub is touched, exactly as a page publish is. A shared
-    // publish writes several files, so an interruption here leaves more than one
-    // page ahead of this system and is worth more, not less, than a page's.
-    const job = await startPublishJob({
-      site,
-      kind: "SHARED",
-      sharedElementId: element.id,
-      startedById: req.dbUser?.id,
-      detail: { name: element.name, revision: element.draftRevision },
-    });
-
-    const review = await buildSharedReview(site, element);
-    if (!review.publishable) {
-      await failPublishJob(job.id, "CONFLICT", review.reason ?? "This shared change could not be published.");
-      throw Object.assign(new WebsiteError(409, review.reason ?? `${element.name} cannot be published yet.`), { pages: publicReview(review).pages });
-    }
-    for (const page of review.pages) {
-      if (body.pages[page.pageId] !== page.sourceHash) {
-        await failPublishJob(job.id, "CONFLICT", `${page.title} changed after the review, so nothing was published.`);
-        throw Object.assign(new WebsiteError(409, `${page.title} changed after your review, so nothing has been published. Review this change again.`), { pages: publicReview(review).pages });
-      }
-    }
-
-    const author = req.dbUser?.name ?? "the website editor";
-    await advancePublishJob(job.id, "COMMITTING", {
-      detail: {
-        name: element.name,
-        revision: element.draftRevision,
-        pages: review.pages.map((page) => ({ pageId: page.pageId, path: page.path, hash: createHash("sha256").update(page.html!).digest("hex") })),
-      },
-    });
-    let commit: { sha: string; url: string };
-    try {
-      commit = await publishPages({
-        site,
-        message: `Website: ${element.name} on ${review.pages.length} page${review.pages.length === 1 ? "" : "s"} (${author})`,
-        pages: review.pages.map((page) => ({ page: page.record, html: page.html!, expectedSource: page.source })),
-      });
-    } catch (error) {
-      await failPublishJob(job.id, "COMMIT_FAILED", error instanceof Error ? error.message : "The commit did not happen.");
-      throw error;
-    }
-    // One page of the several is enough to watch: they went out in one commit,
-    // so the host has either rebuilt or it has not.
-    const watched = review.pages[0]!;
-    await publishJobCommitted({ id: job.id, commit, site, page: watched.record, html: watched.html!, summary: watched.summary });
-
-    // The commit has landed. Everything below is bookkeeping, and a failure here
-    // leaves the repository ahead of the database rather than the other way
-    // round — the same trade the page publish makes, for the same reason.
-    const published = new Date();
-    {
-      for (const page of review.pages) {
-        const last = await tx.sitePageVersion.findFirst({ where: { pageId: page.pageId }, orderBy: { number: "desc" }, select: { number: true } });
-        await tx.sitePageVersion.create({
-          data: {
-            pageId: page.pageId,
-            number: (last?.number ?? 0) + 1,
-            html: page.html!,
-            values: versionValues(page.values) as unknown as Prisma.InputJsonValue,
-            commitSha: commit.sha,
-            commitUrl: commit.url,
-            publishedById: req.dbUser?.id ?? null,
-          },
-        });
-        await tx.sitePage.update({
-          where: { id: page.pageId },
-          data: {
-            lastPublishedAt: published,
-            publishedHtml: page.html!,
-            sourceHtml: page.record.sourceHtml === null ? undefined : page.html!,
-            // The page's own draft is untouched: this publish never carried it.
-            draftRevision: { increment: 1 },
-          },
-        });
-      }
-      await tx.sharedElement.update({
-        where: { id: element.id },
-        data: { draft: Prisma.DbNull, draftRevision: { increment: 1 }, draftSavedAt: null, draftSavedById: null },
-      });
-      await ensureHostedAddress(site.id);
-      await tx.siteAuditEvent.create({
-        data: {
-          siteId: site.id,
-          kind: "SHARED_PUBLISH",
-          summary: `Published ${element.name} to ${review.pages.length} page${review.pages.length === 1 ? "" : "s"}`,
-          ...actor(req),
-          detail: { sharedElementId: element.id, pages: review.pages.map((page) => page.path), commit: commit.sha },
-        },
-      });
-    }
-
-    return {
-      job: publishJobView(await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } })),
-      commit: { sha: commit.sha, url: commit.url },
-      pages: review.pages.map((page) => ({ pageId: page.pageId, title: page.title, path: page.path, changed: page.changed.length })),
-      note: "GitHub Pages rebuilds the site after a commit. The change is usually live within a minute or two.",
-    };
-    });
-
-    res.json(result);
+    res.json(await executeSharedPublish(req));
   }));
 
   /**
@@ -972,4 +867,133 @@ export async function buildSharedReview(
     pages,
     detached,
   };
+}
+
+async function loadSharedForWork(req: Request, sharedId: string) {
+  const element = await prisma.sharedElement.findUnique({ where: { id: sharedId },
+    include: { instances: { include: { page: { select: { id: true, title: true, path: true } } } } } });
+  if (!element) throw new WebsiteError(404, "That shared element is not in the editor.");
+  await assertWebsiteSiteAccess(req, element.siteId, "publish");
+  const site = await prisma.site.findUniqueOrThrow({ where: { id: element.siteId } });
+  return { element, site };
+}
+
+export async function executeSharedPublish(req: Request) {
+    const { element, site } = await loadSharedForWork(req, req.params.sharedId);
+    const body = z.object({
+      ifRevision: z.number().int().nonnegative(),
+      /** The hashes the review showed, one per affected page. */
+      pages: z.record(z.string().length(64)),
+    }).parse(req.body);
+
+    if (body.ifRevision !== element.draftRevision) {
+      throw new WebsiteError(409, `${element.name} changed after your review. Review it again before publishing.`);
+    }
+
+    // Locked before it is read: an ordinary publish of one of these pages must
+    // not be deciding what that file says at the same time as this one.
+    const result = await withWebsitePublishLocks(element.instances.filter((instance) => instance.state === "LINKED").map((instance) => instance.pageId), async () => {
+    // Recorded before GitHub is touched, exactly as a page publish is. A shared
+    // publish writes several files, so an interruption here leaves more than one
+    // page ahead of this system and is worth more, not less, than a page's.
+    const job = await startPublishJob({
+      site,
+      kind: "SHARED",
+      sharedElementId: element.id,
+      startedById: req.dbUser?.id,
+      detail: { name: element.name, revision: element.draftRevision },
+    });
+
+    const review = await buildSharedReview(site, element);
+    if (!review.publishable) {
+      await failPublishJob(job.id, "CONFLICT", review.reason ?? "This shared change could not be published.");
+      throw Object.assign(new WebsiteError(409, review.reason ?? `${element.name} cannot be published yet.`), { pages: publicReview(review).pages });
+    }
+    for (const page of review.pages) {
+      if (body.pages[page.pageId] !== page.sourceHash) {
+        await failPublishJob(job.id, "CONFLICT", `${page.title} changed after the review, so nothing was published.`);
+        throw Object.assign(new WebsiteError(409, `${page.title} changed after your review, so nothing has been published. Review this change again.`), { pages: publicReview(review).pages });
+      }
+    }
+
+    const author = req.dbUser?.name ?? "the website editor";
+    await advancePublishJob(job.id, "COMMITTING", {
+      detail: {
+        name: element.name,
+        revision: element.draftRevision,
+        pages: review.pages.map((page) => ({ pageId: page.pageId, path: page.path, hash: createHash("sha256").update(page.html!).digest("hex") })),
+      },
+    });
+    let commit: { sha: string; url: string };
+    try {
+      commit = await publishPages({
+        site,
+        message: `Website: ${element.name} on ${review.pages.length} page${review.pages.length === 1 ? "" : "s"} (${author})`,
+        pages: review.pages.map((page) => ({ page: page.record, html: page.html!, expectedSource: page.source })),
+      });
+    } catch (error) {
+      await failPublishJob(job.id, "COMMIT_FAILED", error instanceof Error ? error.message : "The commit did not happen.");
+      throw error;
+    }
+    // One page of the several is enough to watch: they went out in one commit,
+    // so the host has either rebuilt or it has not.
+    const watched = review.pages[0]!;
+    await advancePublishJob(job.id, "COMMITTING", { commitSha: commit.sha, commitUrl: commit.url });
+
+    // The commit has landed. Everything below is bookkeeping, and a failure here
+    // leaves the repository ahead of the database rather than the other way
+    // round — the same trade the page publish makes, for the same reason.
+    await beforeWebsiteExternalAction();
+    const published = new Date();
+    await commitPublication(async tx => {
+      await publishJobCommitted({ id: job.id, commit, site, page: watched.record, html: watched.html!, summary: watched.summary }, tx);
+      for (const page of review.pages) {
+        const last = await tx.sitePageVersion.findFirst({ where: { pageId: page.pageId }, orderBy: { number: "desc" }, select: { number: true } });
+        await tx.sitePageVersion.create({
+          data: {
+            pageId: page.pageId,
+            number: (last?.number ?? 0) + 1,
+            html: page.html!,
+            values: versionValues(page.values) as unknown as Prisma.InputJsonValue,
+            commitSha: commit.sha,
+            commitUrl: commit.url,
+            publishedById: req.dbUser?.id ?? null,
+          },
+        });
+        await tx.sitePage.update({
+          where: { id: page.pageId },
+          data: {
+            lastPublishedAt: published,
+            publishedHtml: page.html!,
+            sourceHtml: page.record.sourceHtml === null ? undefined : page.html!,
+            // The page's own draft is untouched: this publish never carried it.
+            draftRevision: { increment: 1 },
+          },
+        });
+      }
+      await tx.sharedElement.updateMany({
+        where: { id: element.id, draftRevision: element.draftRevision },
+        data: { draft: Prisma.DbNull, draftRevision: { increment: 1 }, draftSavedAt: null, draftSavedById: null },
+      });
+      await ensureHostedAddress(site.id, tx);
+      await tx.siteAuditEvent.create({
+        data: {
+          siteId: site.id,
+          kind: "SHARED_PUBLISH",
+          summary: `Published ${element.name} to ${review.pages.length} page${review.pages.length === 1 ? "" : "s"}`,
+          ...actor(req),
+          detail: { sharedElementId: element.id, pages: review.pages.map((page) => page.path), commit: commit.sha },
+        },
+      });
+    });
+
+    return {
+      job: publishJobView(await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } })),
+      commit: { sha: commit.sha, url: commit.url },
+      pages: review.pages.map((page) => ({ pageId: page.pageId, title: page.title, path: page.path, changed: page.changed.length })),
+      note: "GitHub Pages rebuilds the site after a commit. The change is usually live within a minute or two.",
+    };
+    });
+
+  return result;
 }

@@ -116,8 +116,8 @@ function People() {
   const [open, setOpen] = useState<string | null>(null);
   const [inviting, setInviting] = useState(false);
 
-  const members = useQuery({ queryKey: ["team", "members"], queryFn: () => api.get<Member[]>("/users/manage") });
-  const roles = useQuery({ queryKey: ["team", "roles"], queryFn: () => api.get<Role[]>("/access/roles") });
+  const members = useQuery({ queryKey: ["team", "members"], queryFn: ({ signal }) => api.get<Member[]>("/users/manage", signal) });
+  const roles = useQuery({ queryKey: ["team", "roles"], queryFn: ({ signal }) => api.get<Role[]>("/access/roles", signal) });
 
   const selected = members.data?.find((m) => m.id === open) ?? null;
 
@@ -556,7 +556,7 @@ function Roles({ canManage }: { canManage: boolean }) {
   const setOpen = (id: string | null) => setParams(id ? { tab: "roles", role: id } : { tab: "roles" });
   const [creating, setCreating] = useState(false);
 
-  const roles = useQuery({ queryKey: ["team", "roles"], queryFn: () => api.get<Role[]>("/access/roles") });
+  const roles = useQuery({ queryKey: ["team", "roles"], queryFn: ({ signal }) => api.get<Role[]>("/access/roles", signal) });
   const selected = roles.data?.find((r) => r.id === open) ?? null;
 
   if (roles.isLoading) return <p className="text-sm text-muted">Loading roles…</p>;
@@ -760,7 +760,7 @@ function RoleDrawer({
 function usePermissionCatalogue() {
   return useQuery({
     queryKey: ["team", "permissions"],
-    queryFn: () => api.get<PermissionModule[]>("/access/permissions"),
+    queryFn: ({ signal }) => api.get<PermissionModule[]>("/access/permissions", signal),
     // The catalogue only changes when the app is redeployed.
     staleTime: Infinity,
   });

@@ -544,6 +544,19 @@ function ModernColorPickerPopover({
     return rgbToHsv(r, g, b);
   });
   const [colorMode, setColorMode] = useState<"RGB" | "HEX">("RGB");
+  const pageSwatches = useMemo(() => {
+    if (!palette || !palette.length) return [];
+    const seen = new Set<string>();
+    const list: Array<{ label: string; value: string }> = [];
+    for (const item of palette) {
+      const hex = item.value.toUpperCase();
+      if (/^#[0-9A-F]{6}$/.test(hex) && !seen.has(hex)) {
+        seen.add(hex);
+        list.push({ label: item.label || hex, value: hex });
+      }
+    }
+    return list;
+  }, [palette]);
   const [savedColors, setSavedColors] = useState<string[]>(() => {
     try {
       const raw = localStorage.getItem("dw-saved-colors");
@@ -867,8 +880,40 @@ function ModernColorPickerPopover({
         )}
       </div>
 
+      {/* Page Colors */}
+      {pageSwatches.length > 0 && (
+        <div className="mt-3.5 border-t border-white/10 pt-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-medium text-white/90">Page Colors</span>
+            <span className="text-[10px] text-white/50">{pageSwatches.length} swatches</span>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {pageSwatches.map((item) => {
+              const active = colour.hex.toUpperCase() === item.value;
+              return (
+                <button
+                  key={item.value}
+                  type="button"
+                  title={`${item.label} (${item.value})`}
+                  onClick={() => {
+                    onChangeColour({ hex: item.value });
+                    onCommit?.();
+                  }}
+                  style={{ backgroundColor: item.value }}
+                  className={`h-5 w-5 rounded-full transition ${
+                    active
+                      ? "ring-2 ring-[#4C82FB] ring-offset-2 ring-offset-[#18191D]"
+                      : "border border-white/15 hover:scale-110"
+                  }`}
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Saved Colors */}
-      <div className="mt-3.5">
+      <div className={pageSwatches.length > 0 ? "mt-3 border-t border-white/10 pt-3" : "mt-3.5"}>
         <div className="flex items-center justify-between">
           <span className="text-[11px] font-medium text-white/80">Saved Colors</span>
           <button
@@ -1105,6 +1150,7 @@ export function ColorCodeInput({
       />
       <input
         type="text"
+        aria-label={effectiveLabel}
         disabled={disabled}
         placeholder={placeholder}
         value={draft}

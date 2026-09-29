@@ -58,8 +58,9 @@ const STUBS = new Set(["monthly-support.html", "one-time-projects.html", "founda
 /** Not a page of the website — an internal document that happens to live here. */
 const NOT_A_PAGE = new Set(["AGENT_SYSTEM_PLAN.html"]);
 
+// Checkout deliberately uses its own focused purchase header.
 const pages = readdirSync(root)
-  .filter((name) => name.endsWith(".html") && !STUBS.has(name) && !NOT_A_PAGE.has(name))
+  .filter((name) => name.endsWith(".html") && !STUBS.has(name) && !NOT_A_PAGE.has(name) && name !== "checkout.html")
   .sort();
 
 /** Every `href` inside the first element matching `open`…`close`, in order. */

@@ -386,3 +386,116 @@ export function injectSectionIntoHtml(html: string, sectionHtml: string): string
   // 4. Fallback append
   return `${html.trim()}\n${sectionHtml.trim()}`;
 }
+
+export type StarterTemplateKey = "business" | "saas" | "portfolio" | "local" | "blank";
+
+export interface StarterTemplateInfo {
+  key: StarterTemplateKey;
+  name: string;
+  tagline: string;
+  description: string;
+  recommendedFor: string;
+  sections: SectionKind[];
+}
+
+export const STARTER_TEMPLATES: Record<StarterTemplateKey, StarterTemplateInfo> = {
+  business: {
+    key: "business",
+    name: "Modern Business & Consulting",
+    tagline: "Corporate, advisory, and professional services",
+    description: "High-impact hero with lead capture CTA, core advantage features, client reviews, and direct contact details.",
+    recommendedFor: "Consulting firms, corporate agencies, and service providers",
+    sections: ["hero", "features", "testimonials", "cta", "contact"],
+  },
+  saas: {
+    key: "saas",
+    name: "Digital Product & SaaS",
+    tagline: "Software, web apps, and modern digital platforms",
+    description: "Product-led hero banner, platform advantages, tiered pricing cards, FAQ accordion, and conversion CTA.",
+    recommendedFor: "Tech startups, SaaS founders, and digital product studios",
+    sections: ["hero", "features", "pricing", "faq", "cta"],
+  },
+  portfolio: {
+    key: "portfolio",
+    name: "Creative Portfolio & Studio",
+    tagline: "Designers, photographers, and creative agencies",
+    description: "Bold visual showcase, core competencies, team leadership profiles, client reviews, and direct contact inquiry.",
+    recommendedFor: "Designers, architects, photographers, and boutique creative studios",
+    sections: ["hero", "features", "team", "testimonials", "contact"],
+  },
+  local: {
+    key: "local",
+    name: "Local Services & Storefront",
+    tagline: "Local businesses, clinics, gyms, and retail",
+    description: "Local service headline, core service highlights, clear pricing options, customer reviews, and direct booking contact.",
+    recommendedFor: "Medical practices, gyms, salons, contractors, and local storefronts",
+    sections: ["hero", "features", "pricing", "testimonials", "contact"],
+  },
+  blank: {
+    key: "blank",
+    name: "Clean Minimalist Canvas",
+    tagline: "Clean slate with semantic navigation and responsive structure",
+    description: "Clean canvas with standard header, minimalist hero, and footer ready for custom sections.",
+    recommendedFor: "Developers and designers building custom layouts from scratch",
+    sections: ["hero", "cta"],
+  },
+};
+
+export function generateStarterSiteHtml(options: {
+  siteName: string;
+  publicUrl?: string;
+  templateKey?: string;
+  primaryColor?: string;
+}): string {
+  const templateKey = (options.templateKey && options.templateKey in STARTER_TEMPLATES)
+    ? (options.templateKey as StarterTemplateKey)
+    : "business";
+  const template = STARTER_TEMPLATES[templateKey];
+  const siteName = options.siteName.trim() || "My Website";
+  const primaryColor = options.primaryColor || "#3157ff";
+
+  const sectionsHtml = template.sections
+    .map((kind) => {
+      const sec = SECTION_TEMPLATES[kind];
+      return sec ? sec.generateHtml({ siteName, primaryColor }) : "";
+    })
+    .filter(Boolean)
+    .join("\n\n");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${siteName}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    html { scroll-behavior: smooth; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 0; color: #0f172a; background-color: #ffffff; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between antialiased">
+  <header class="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <a href="/" class="font-bold text-lg text-slate-900 tracking-tight">${siteName}</a>
+      <nav class="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600">
+        <a href="#sec-features" class="hover:text-blue-600 transition">Features</a>
+        <a href="#sec-testimonials" class="hover:text-blue-600 transition">Reviews</a>
+        <a href="#sec-pricing" class="hover:text-blue-600 transition">Pricing</a>
+        <a href="#sec-contact" class="hover:text-blue-600 transition">Contact</a>
+      </nav>
+      <a href="#sec-contact" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-500 transition shadow-sm">Get Started</a>
+    </div>
+  </header>
+  <main class="flex-1">
+${sectionsHtml}
+  </main>
+  <footer class="bg-slate-900 text-slate-400 py-12 border-t border-slate-800">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
+      <p>© ${new Date().getFullYear()} ${siteName}. All rights reserved.</p>
+      <p>Powered by Dakyworld Website Builder</p>
+    </div>
+  </footer>
+</body>
+</html>`;
+}

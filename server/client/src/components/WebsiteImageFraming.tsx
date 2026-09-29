@@ -6,7 +6,7 @@ import { parseStyle, writeStyle } from "./InspectorControls";
 
 export function WebsiteImageFraming({ src, siteId, style, onApply }: { src: string; siteId?: string; style: string; onApply: (style: string) => void }) {
   const existing = parseStyle(style);
-  const assets = useQuery({ queryKey: ["website", "assets", siteId], enabled: !!siteId, queryFn: () => api.get<Array<{ url: string; preview: string }>>(`/website/sites/${siteId}/assets`) });
+  const assets = useQuery({ queryKey: ["website", "assets", siteId], enabled: !!siteId, queryFn: ({ signal }) => api.get<Array<{ url: string; preview: string }>>(`/website/sites/${siteId}/assets`, signal) });
   // Both sides can be relative (`/assets/hero.png` is the common case), so both
   // are resolved against the page before they are compared. Resolving one
   // against the other discards it whenever it is already absolute, which made

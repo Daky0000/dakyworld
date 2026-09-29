@@ -1,3 +1,4 @@
+import { useSiteDirectory, SiteDirectoryMore } from "../lib/siteDirectory";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
@@ -23,7 +24,7 @@ const inputClass = "h-10 w-full rounded-xl border border-line bg-white px-3 text
 export function useWebsiteAccess(siteId?: string) {
   return useQuery({
     queryKey: ["website", "access", siteId], enabled: Boolean(siteId),
-    queryFn: () => api.get<WebsiteAccess>(`/website/sites/${encodeURIComponent(siteId!)}/access`),
+    queryFn: ({ signal }) => api.get<WebsiteAccess>(`/website/sites/${encodeURIComponent(siteId!)}/access`, signal),
     staleTime: 15_000,
   });
 }
@@ -31,7 +32,7 @@ export function useWebsiteAccess(siteId?: string) {
 export function WebsiteMembers({ siteId }: { siteId: string }) {
   const qc = useQueryClient();
   const access = useWebsiteAccess(siteId);
-  const members = useQuery({ queryKey: ["website", "members", siteId], enabled: access.data?.capabilities.members === true, queryFn: () => api.get<MembershipResponse>(`/website/sites/${encodeURIComponent(siteId)}/members`) });
+  const members = useQuery({ queryKey: ["website", "members", siteId], enabled: access.data?.capabilities.members === true, queryFn: ({ signal }) => api.get<MembershipResponse>(`/website/sites/${encodeURIComponent(siteId)}/members`, signal) });
   const [identity, setIdentity] = useState("");
   const [identityType, setIdentityType] = useState<"email" | "userId">("email");
   const [role, setRole] = useState<MemberRole>("VIEWER");
@@ -84,10 +85,11 @@ export function WebsiteMembers({ siteId }: { siteId: string }) {
 }
 
 export function WebsiteTeam() {
-  const sites = useQuery({ queryKey: ["website", "sites"], queryFn: () => api.get<SiteSummary[]>("/website/sites") });
+  const sites = useSiteDirectory<SiteSummary>();
   const [selected, setSelected] = useState("");
   const id = sites.data?.some(site => site.id === selected) ? selected : sites.data?.[0]?.id;
   return <div><PageHeader title="Website team" subtitle="Give each person the access they need on each website." />
+    <SiteDirectoryMore directory={sites} />
     {sites.error && <p role="alert" className="text-sm text-danger-text">{(sites.error as Error).message}</p>}
     {sites.isLoading && <p role="status" className="text-sm text-muted">Loading websites…</p>}
     {sites.data?.length === 0 && <p className="text-sm text-muted">Your websites will appear here once access is assigned.</p>}

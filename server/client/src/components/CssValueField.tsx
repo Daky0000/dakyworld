@@ -118,16 +118,19 @@ export function CssValueField({
   const units = getUnitsForProperty(property);
   const parsed = splitCssNumericAndUnit(value, unitOverride ?? units[0] ?? "px");
 
+  const [isFocused, setIsFocused] = useState(false);
   const [numText, setNumText] = useState(isLength ? parsed.num : value);
   const [unit, setUnit] = useState(unitOverride ?? parsed.unit);
   const [error, setError] = useState(false);
 
   useEffect(() => {
     const nextParsed = splitCssNumericAndUnit(value, unitOverride ?? units[0] ?? "px");
-    setNumText(isLength ? nextParsed.num : value);
-    setUnit(unitOverride ?? nextParsed.unit);
+    if (!isFocused) {
+      setNumText(isLength ? nextParsed.num : value);
+      setUnit(unitOverride ?? nextParsed.unit);
+    }
     setError(false);
-  }, [value, unitOverride, isLength]);
+  }, [value, unitOverride, isLength, isFocused]);
 
   const emitLength = (nextNum: string, nextUnit: string) => {
     const clean = nextNum.trim();
@@ -174,28 +177,47 @@ export function CssValueField({
     error ? "border-danger-solid" : "border-line"
   }`;
 
+  const isNumeric = isLength && (property === "width" || property === "height");
+  const displayVal = isNumeric ? numText : (isFocused ? numText : (value || (numText ? `${numText}${unit}` : "")));
+
   const field = (
     <input
       aria-label={label}
       aria-invalid={error}
-      type={isLength ? "number" : "text"}
-      step="any"
+      type={isNumeric ? "number" : "text"}
+      step={isNumeric ? "any" : undefined}
+      inputMode={isLength ? "decimal" : undefined}
       className={box}
-      value={numText}
+      value={displayVal}
       disabled={disabled}
-      placeholder="0"
+      placeholder={isNumeric ? "Auto" : (prefix ? "auto" : "As designed")}
+      onFocus={() => {
+        setIsFocused(true);
+        setNumText(isLength ? parsed.num : value);
+      }}
       onChange={(event) => {
         const raw = event.target.value;
         setNumText(raw);
-        if (isLength && (raw === "" || /^-?\d+(\.\d+)?$/.test(raw.trim()))) {
-          emitLength(raw, unitOverride ?? unit);
+        if (isLength) {
+          const match = /^(-?[\d.]+)\s*([a-z%]*)$/i.exec(raw.trim());
+          if (match) {
+            const nextU = match[2] || unitOverride || unit;
+            if (match[2]) setUnit(nextU);
+            emitLength(match[1], nextU);
+          } else if (raw === "" || raw === "auto" || raw === "none" || raw === "normal") {
+            emitLength(raw, unit);
+          }
         }
       }}
-      onBlur={commitFree}
+      onBlur={() => {
+        setIsFocused(false);
+        commitFree();
+      }}
       onKeyDown={(event) => {
         if (event.key === "Enter") event.currentTarget.blur();
         if (event.key === "Escape") {
           setNumText(isLength ? parsed.num : value);
+          setIsFocused(false);
           setError(false);
         }
       }}

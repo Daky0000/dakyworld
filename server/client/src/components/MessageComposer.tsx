@@ -94,16 +94,16 @@ export function MessageComposer({ target, open, onClose }: { target: MessageTarg
   const { data: reach } = useQuery({
     queryKey: ["reachability", target?.leadId, toPhone],
     enabled: open && Boolean(target?.leadId || toPhone),
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.get<Reachability>(
         target?.leadId ? `/messages/reachability?leadId=${target.leadId}` : `/messages/reachability?phone=${encodeURIComponent(toPhone)}`,
-      ),
+      signal),
   });
 
   const { data: templateData } = useQuery({
     queryKey: ["whatsapp-templates"],
     enabled: open && channel === "WHATSAPP",
-    queryFn: () => api.get<{ templates: WhatsAppTemplateRow[]; starters: StarterTemplate[]; configured: boolean }>("/messages/templates"),
+    queryFn: ({ signal }) => api.get<{ templates: WhatsAppTemplateRow[]; starters: StarterTemplate[]; configured: boolean }>("/messages/templates", signal),
   });
   const approved = (templateData?.templates ?? []).filter((template) => template.status === "APPROVED");
   const template = approved.find((one) => one.name === templateName) ?? null;
@@ -349,7 +349,7 @@ function WindowNotice({ threadId, hasTemplate, onUseLink }: { threadId: string |
   const { data } = useQuery({
     queryKey: ["message-thread", threadId],
     enabled: Boolean(threadId),
-    queryFn: () => api.get<{ windowOpen: boolean; windowMinutesLeft: number | null; display: string }>(`/messages/threads/${threadId}`),
+    queryFn: ({ signal }) => api.get<{ windowOpen: boolean; windowMinutesLeft: number | null; display: string }>(`/messages/threads/${threadId}`, signal),
   });
 
   // No thread means nobody has ever written to us from this number, which is

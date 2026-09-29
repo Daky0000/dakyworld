@@ -73,17 +73,20 @@ export const purchaseInput = z.object({
  * `resolveCurrency` applies that precedence. Somebody behind a VPN gets the
  * wrong default, which is the right failure for a price display.
  */
-export function countryHint(req: { headers: Record<string, unknown>; ip?: string }): string | null {
-  for (const header of ["cf-ipcountry", "x-vercel-ip-country", "x-country-code"]) {
-    const value = req.headers[header];
-    if (typeof value !== "string") continue;
-    const code = value.trim().toUpperCase();
-    // `XX` is Cloudflare saying it does not know and `T1` is Tor. Both are
-    // worse than no answer: read as "not Ghana" they would quote dollars,
-    // where not knowing should fall through to the default.
-    if (/^[A-Z]{2}$/.test(code) && code !== "XX") return code;
-  }
-  return countryForIp(req.ip);
+import { extractGeoHints, extractClientIp } from "../lib/demoGeo.js";
+
+/**
+ * Where the request appears to come from, when the form did not say.
+ *
+ * Cloudflare and Vercel both put a two-letter country on a request. When
+ * present, edge headers win. When absent, the real caller address is extracted
+ * and looked up in the MaxMind country database.
+ */
+export function countryHint(req: { headers: Record<string, unknown>; ip?: string; socket?: { remoteAddress?: string } }): string | null {
+  const hints = extractGeoHints(req);
+  if (hints.country) return hints.country;
+  const ip = extractClientIp(req);
+  return countryForIp(ip);
 }
 
 const websiteCheckInput = z.object({

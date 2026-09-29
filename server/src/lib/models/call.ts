@@ -1,3 +1,6 @@
+import { capacity } from "../capacity.js";
+import { withModelCapacity } from "../modelCapacity.js";
+import { beforeWebsiteExternalAction, confirmWebsiteProviderResponse, currentWebsiteWork, UncertainExternalError, WorkCancelledError } from "../websiteWorkContext.js";
 import { AnalystError, callClaude, forStructuredOutput, type Effort, type FailureKind, type PromptImage } from "../claude.js";
 import { retryAfterMs } from "../retryAfter.js";
 import { costOf, rateFor, type ModelRate } from "../claudePricing.js";
@@ -313,12 +316,13 @@ async function post(
   limits?: { attempts?: number; timeoutMs?: number },
 ): Promise<Record<string, unknown>> {
   let waited = 0;
-  const maxAttempts = limits?.attempts ?? MAX_ATTEMPTS;
+  const maxAttempts = Math.min(limits?.attempts ?? MAX_ATTEMPTS, currentWebsiteWork() ? 3 : MAX_ATTEMPTS);
 
   for (let attempt = 0; ; attempt++) {
     try {
       return await postOnce(url, headers, body, vendor, limits?.timeoutMs);
     } catch (err) {
+      if (currentWebsiteWork() && err instanceof ProviderError && err.failure.status >= 500) throw new UncertainExternalError();
       const last = attempt >= maxAttempts - 1;
       if (last || !(err instanceof ProviderError) || !worthRetrying(err.failure.status)) throw err;
 
@@ -340,6 +344,7 @@ async function postOnce(
   vendor: string,
   timeoutMs = TIMEOUT_MS,
 ): Promise<Record<string, unknown>> {
+  await beforeWebsiteExternalAction();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -364,6 +369,7 @@ async function postOnce(
 
   const text = await response.text();
   if (!response.ok) {
+    if (response.status < 500) await confirmWebsiteProviderResponse(false);
     // Vendors put the useful sentence in different places; the raw body is the
     // one thing all three definitely have.
     const detail = extractError(text) ?? text.slice(0, 300);
@@ -376,7 +382,9 @@ async function postOnce(
   }
 
   try {
-    return JSON.parse(text) as Record<string, unknown>;
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    await confirmWebsiteProviderResponse(true);
+    return parsed;
   } catch {
     throw new ProviderError({ status: 502, kind: "parse", detail: `${vendor} returned something that was not JSON.` });
   }
@@ -915,6 +923,9 @@ function whyFailed(status: number): string {
  * fallback that is invisible is a fallback nobody can price or fix.
  */
 export async function callModel<T>(request: ModelRequest): Promise<ModelResult<T>> {
+  return withModelCapacity(() => callModelUnbounded<T>(request));
+}
+async function callModelUnbounded<T>(request: ModelRequest): Promise<ModelResult<T>> {
   const say = (kind: FailureKind) => request.messages?.[kind] ?? DEFAULT_MESSAGES[kind];
 
   const tried: string[] = [];
@@ -1112,6 +1123,7 @@ async function attemptProvider<T>(
             ? await callPerplexity(apiKey, model, asked)
             : await callNvidia(apiKey, model, asked, free);
   } catch (err) {
+    if (err instanceof UncertainExternalError || err instanceof WorkCancelledError) throw err;
     if (err instanceof ProviderError) {
       const kind = err.failure.kind;
       // The caller's own wording for a rate limit, which is the one failure
@@ -1318,6 +1330,9 @@ interface Drawing {
  * runtime reverts on the next deploy and *looks like it worked*.
  */
 export async function generateImage(request: ImageRequest): Promise<ImageResult> {
+  return withModelCapacity(() => generateImageUnbounded(request));
+}
+async function generateImageUnbounded(request: ImageRequest): Promise<ImageResult> {
   const { chosen, chain } = await serveChain("image");
   if (chain.length === 0) {
     const route = await routeFor("image");
@@ -1360,6 +1375,8 @@ export async function generateImage(request: ImageRequest): Promise<ImageResult>
           fallbackNote: tried.length > 0 ? `${tried.join("; ")}, so ${PROVIDERS[serving].name} drew it instead.` : null,
         };
       } catch (err) {
+        if (currentWebsiteWork() && err instanceof ProviderError && err.failure.status >= 500) throw new UncertainExternalError();
+        if (currentWebsiteWork() && (err instanceof UncertainExternalError || err instanceof WorkCancelledError || !(err instanceof AttemptFailed) && !(err instanceof ProviderError))) throw err;
         const failed =
           err instanceof AttemptFailed
             ? err
@@ -1496,6 +1513,7 @@ async function drawOne(url: string, apiKey: string, body: Record<string, unknown
     "nvcf-poll-seconds": "60",
   };
 
+  await beforeWebsiteExternalAction();
   let response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(TIMEOUT_MS) });
 
   // 202 is "queued", not "failed" — the ordinary answer under load.
@@ -1507,6 +1525,7 @@ async function drawOne(url: string, apiKey: string, body: Record<string, unknown
 
   const text = await response.text();
   if (!response.ok) {
+    if (response.status < 500 && !requestId) await confirmWebsiteProviderResponse(false);
     throw new ProviderError({
       status: response.status,
       kind: response.status === 401 || response.status === 403 ? "auth" : response.status === 429 ? "rate" : "empty",
@@ -1527,6 +1546,7 @@ async function drawOne(url: string, apiKey: string, body: Record<string, unknown
     throw new ProviderError({ status: 502, kind: "parse", detail: "NVIDIA returned something that was not JSON." });
   }
 
+  await confirmWebsiteProviderResponse(true);
   const artifact = payload.artifacts?.[0];
   // A declined prompt comes back 200 with a finish reason rather than an
   // error, which would otherwise be read as "the model produced nothing" and

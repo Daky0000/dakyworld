@@ -25,6 +25,14 @@ import {
 } from "../services/accountAccess.js";
 
 export const authRouter = Router();
+// Credential-management routes explicitly reload secrets; ordinary session reads do not.
+authRouter.use((req, _res, next) => {
+  if (!req.dbUser || ["/me", "/logout", "/login", "/login/2fa"].includes(req.path)) return next();
+  void prisma.user.findUnique({ where: { id: req.dbUser.id }, include: WITH_ACCESS }).then(user => {
+    req.dbUser = user?.active ? user : undefined;
+    next();
+  }, next);
+});
 
 const loginInput = z.object({
   email: z.string().email(),
@@ -95,7 +103,7 @@ authRouter.post("/login", loginRateLimit, loginAccountRateLimit, async (req, res
 
     // Signing in successfully clears the counter, so a person who mistyped
     // twice and then got it right isn't locked out by their own attempts.
-    clearLoginAttempts(req);
+    await clearLoginAttempts(req);
     setSessionCookie(res, await createSession(user.id));
     res.json(publicUser(user));
   } catch (err) {
@@ -156,7 +164,7 @@ authRouter.post("/login/2fa", mfaAttemptLimit, async (req, res, next) => {
       await prisma.user.update({ where: { id: user.id }, data: { totpRecoveryHashes: remaining } });
     }
 
-    clearLoginAttempts(req);
+    await clearLoginAttempts(req);
     mfaAttemptLimit.forgive(req);
     setSessionCookie(res, await createSession(user.id));
     res.json({ ...publicUser(user), recoveryCodesRemaining: user.totpRecoveryHashes.length });

@@ -16,6 +16,7 @@ import { api } from "../lib/api";
 
 export type PublishJobStatus = {
   id: string;
+  cdnState?: "PENDING" | "PROPAGATED" | "DISABLED";
   state: "QUEUED" | "VALIDATING" | "COMMITTING" | "COMMITTED" | "DEPLOYING" | "VERIFYING" | "COMPLETED" | "CONFLICT" | "COMMIT_FAILED" | "DEPLOY_FAILED" | "VERIFY_FAILED" | "RECONCILIATION_REQUIRED";
   label: string;
   /** True when a source file was committed and the host has to build it first. */
@@ -31,10 +32,10 @@ const WAITING = new Set(["QUEUED", "VALIDATING", "COMMITTING", "COMMITTED", "DEP
 export function PublishStatus({ siteId, jobId }: { siteId: string; jobId: string }) {
   const job = useQuery({
     queryKey: ["website", "publish-job", jobId],
-    queryFn: () => api.get<PublishJobStatus>(`/website/sites/${siteId}/publish-jobs/${jobId}`),
+    queryFn: ({ signal }) => api.get<PublishJobStatus>(`/website/sites/${siteId}/publish-jobs/${jobId}`, signal),
     // The server checks on its own minute tick and backs off; this only has to
     // catch up with it, so a slow poll is the polite one.
-    refetchInterval: (query) => (query.state.data && WAITING.has(query.state.data.state) ? 15_000 : false),
+    refetchInterval: (query) => (query.state.data && (WAITING.has(query.state.data.state) || query.state.data.cdnState === "PENDING") ? 15_000 : false),
   });
 
   if (job.isError) return <p role="alert" className="mt-2 text-sm text-warn-text">Unable to check publishing status. <button type="button" className="underline" onClick={() => void job.refetch()}>Retry status check</button>. Avoid publishing again until you have checked the live site.</p>;
@@ -43,9 +44,9 @@ export function PublishStatus({ siteId, jobId }: { siteId: string; jobId: string
 }
 
 export function PublishProgress({ status }: { status: PublishJobStatus }) {
-  const waiting = WAITING.has(status.state);
-  const complete = status.state === "COMPLETED";
-  const checking = ["COMMITTED", "DEPLOYING", "VERIFYING", "VERIFY_FAILED", "DEPLOY_FAILED"].includes(status.state);
+  const waiting = WAITING.has(status.state) || status.cdnState === "PENDING";
+  const complete = status.state === "COMPLETED" && status.cdnState !== "PENDING";
+  const checking = status.cdnState === "PENDING" || ["COMMITTED", "DEPLOYING", "VERIFYING", "VERIFY_FAILED", "DEPLOY_FAILED"].includes(status.state);
   const active = complete ? 3 : checking ? 2 : 1;
   const guidance: Partial<Record<PublishJobStatus["state"], string>> = {
     CONFLICT: "The source changed. Reopen the page, resolve the conflict and review again.",
@@ -62,6 +63,7 @@ export function PublishProgress({ status }: { status: PublishJobStatus }) {
     <ol className="flex flex-wrap gap-3 text-sm">{["Draft saved", "Publishing", "Checking live site", "Live"].map((label, index) => <li key={label} aria-current={index === active ? "step" : undefined} className={index <= active ? "font-semibold text-ink" : "text-muted"}><span aria-hidden>{`${index + 1}. `}</span>{label}</li>)}</ol>
     <p role="status" aria-live="polite" className="mt-2 text-sm">{complete ? "Your changes are live." : waiting ? checking ? status.fromSource ? "Changes committed. Your host is building the site — this usually takes a few minutes." : "Changes sent. Waiting for the live website to update…" : "Sending the reviewed changes…" : guidance[status.state] ?? status.label}</p>
     {!waiting && !complete && status.lastError && <details className="mt-2 text-xs text-muted"><summary>Details for your website manager</summary><p>{status.lastError}</p></details>}
+    {status.cdnState === "PENDING" && <p role="status" className="mt-2 text-sm">Published. Updating the public cache.</p>}
     {liveUrl && <a href={liveUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-sm text-blue underline">Open live website</a>}
   </section>;
 }

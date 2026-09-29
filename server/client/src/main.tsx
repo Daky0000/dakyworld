@@ -1,7 +1,9 @@
+import { QueuedWork } from "./components/QueuedWork";
+import { queryClient } from "./lib/queryPolicy";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import { Login } from "./pages/Login";
 import { AuthProvider, useAuth } from "./lib/auth";
@@ -9,7 +11,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ForgotPassword, SetPassword, VerifyEmail } from "./pages/AccountAccess";
 import "./index.css";
 
-const queryClient = new QueryClient();
+
 
 /**
  * Holds the app back until /auth/me has answered, so a logged-in user never
@@ -28,7 +30,7 @@ function Gate() {
   if (path === "/verify-email") return <VerifyEmail />;
 
   if (loading) return <div className="min-h-screen bg-cream" />;
-  return user ? <App /> : <Login />;
+  return user ? <><App /><QueuedWork /></> : <Login />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

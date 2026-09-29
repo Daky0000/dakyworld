@@ -1,3 +1,8 @@
+import { pruneRateBuckets } from "../lib/rateLimitStore.js";
+import { singleFlight } from "../lib/concurrency.js";
+import { processPaymentWebhookEvents } from "./paymentWebhookEvents.js";
+import { backgroundRunAllowed } from "../lib/backgroundOwnership.js";
+import { costControlState } from "./costControl.js";
 import type { ScraperSource } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { apifyConfigured } from "../lib/apify.js";
@@ -29,6 +34,7 @@ import { settleIdleRehearsals } from "./rehearsals/run.js";
 import { purgeExpiredSessions } from "../lib/session.js";
 import { reconcileInterruptedPublishJobs, verifyDuePublishJobs } from "./websitePublishJobs.js";
 import { processPaystackEvents, reconcilePaystackPayments, updateDuePaystackPrices } from "./paystackEvents.js";
+import { tickScheduledPublishes } from "./websitePublishScheduler.js";
 
 /**
  * The app's clock. Three things run on it:
@@ -106,7 +112,10 @@ export async function syncSchedule(sourceId: string): Promise<Date | null> {
 
 // --- The tick --------------------------------------------------------------
 
-export async function tick(now = new Date()) {
+export const tick = singleFlight(runTick);
+
+async function runTick(now = new Date()) {
+  if (!backgroundRunAllowed()) return;
   // A commit is not a deployment. Every publish waiting to be seen on its own
   // live page gets one look here, on a backoff — see websitePublishJobs.ts.
   await verifyDuePublishJobs(now).catch((err) => console.error("[scheduler] publish verification failed:", err));
@@ -118,6 +127,10 @@ export async function tick(now = new Date()) {
     captureTick(now),
     billDuePlans(now),
     processPaystackEvents(now),
+    processPaymentWebhookEvents(now),
+    pruneRateBuckets(),
+    // Retry after expired ownership leases, including those still active at boot.
+    reconcileInterruptedPublishJobs(new Date(now.getTime() - 120_000)),
     reconcilePaystackPayments(),
     updateDuePaystackPrices(now),
     dispatchDueEmails(now),
@@ -145,6 +158,7 @@ export async function tick(now = new Date()) {
     // while it is open; this is the floor under that, and it is what puts a
     // woken agent's autonomy back when the tab was closed part-way.
     settleIdleRehearsals(),
+    tickScheduledPublishes(),
     housekeepingTick(now),
   ]);
   for (const result of results) {
@@ -306,7 +320,7 @@ async function housekeepingTick(now: Date) {
   // cached page reads and no model call at all: `syncBusinessOffer` fingerprints
   // the text it read and stops there when nothing has changed.
   try {
-    const offer = await syncBusinessOffer();
+    const offer = costControlState().pauseRefresh ? { changed: false, pages: [], readBy: "", notes: [] } : await syncBusinessOffer();
     if (offer.changed) console.log(`[scheduler] re-read what the business sells from the website (${offer.pages.length} page(s), ${offer.readBy})`);
     for (const note of offer.notes) console.warn(`[scheduler] business context: ${note}`);
   } catch (err) {
@@ -323,7 +337,7 @@ async function housekeepingTick(now: Date) {
   // granted; one it has removed is a grant that fails at the moment it is
   // used. Never revokes on a failed refresh: `refreshServer` keeps the
   // previous list when a server is briefly unreachable, for that reason.
-  const refreshed = await refreshStaleServers();
+  const refreshed = costControlState().pauseRefresh ? 0 : await refreshStaleServers();
   if (refreshed) console.log(`[scheduler] refreshed the tool list on ${refreshed} MCP server(s)`);
 
   // Hiring cards nobody answered. They have to expire rather than sit PENDING
@@ -451,8 +465,9 @@ export function startScheduler() {
   console.log("  → Scheduler running (lead capture, lead hunts, care plan billing, email, WhatsApp/SMS, agent tasks — checks every minute)");
 }
 
-export function stopScheduler() {
+export async function stopScheduler() {
   if (timer) clearInterval(timer);
   timer = null;
   stopSlackQueueWorker();
+  await tick.idle();
 }

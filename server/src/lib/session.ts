@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Request, Response } from "express";
 import { prisma } from "./prisma.js";
+import { SESSION_USER } from "./userSelect.js";
+import { Prisma, type Session } from "@prisma/client";
 
 /**
  * `__Host-` is not decoration. The prefix is a promise the browser enforces:
@@ -54,11 +56,24 @@ export async function createSession(userId: string): Promise<string> {
  * deleted rather than ignored so the table doesn't grow without bound.
  */
 export async function resolveSession(token: string) {
-  const session = await prisma.session.findUnique({
-    where: { tokenHash: digest(token) },
-    include: { user: true },
-  });
+  const fields = Object.keys(SESSION_USER).filter(key => key !== "accessRole");
+  const selection = Prisma.join(fields.map(key => Prisma.sql`${key}::text, ${Prisma.raw(`u."${key}"`)}`));
+  const [session] = await prisma.$queryRaw<Array<Session & { user: Omit<Prisma.UserGetPayload<{ select: typeof SESSION_USER }>, "passwordHash"> }>>`
+    SELECT s.*, jsonb_build_object(${selection}, 'accessRole', to_jsonb(r)) AS "user"
+    FROM "Session" s JOIN "User" u ON u.id = s."userId"
+    LEFT JOIN "AccessRole" r ON r.id = u."accessRoleId"
+    WHERE s."tokenHash" = ${digest(token)} LIMIT 1`;
   if (!session) return null;
+  if (session.user.hourlyRate !== null) session.user.hourlyRate = new Prisma.Decimal(String(session.user.hourlyRate));
+  // PostgreSQL JSON timestamps omit the zone for timestamp-without-time-zone columns.
+  for (const key of ["createdAt", "updatedAt", "emailVerifiedAt", "totpConfirmedAt"] as const) {
+    const value = session.user[key] as unknown;
+    if (typeof value === "string") session.user[key] = new Date(/[Zz]|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`);
+  }
+  if (session.user.accessRole) for (const key of ["createdAt", "updatedAt"] as const) {
+    const value = session.user.accessRole[key] as unknown;
+    if (typeof value === "string") session.user.accessRole[key] = new Date(/[Zz]|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`);
+  }
 
   const ageMs = Date.now() - session.createdAt.getTime();
   const expired = session.expiresAt.getTime() <= Date.now();
@@ -69,15 +84,19 @@ export async function resolveSession(token: string) {
     return null;
   }
 
-  if (ageMs > REFRESH_AFTER_DAYS * DAY_MS) {
+  const refreshCutoff = new Date(Date.now() - REFRESH_AFTER_DAYS * DAY_MS);
+  if (session.lastRefreshedAt <= refreshCutoff) {
     // Clamped, so the refresh can extend a session towards the ceiling but
     // never through it.
     const ceiling = new Date(session.createdAt.getTime() + ABSOLUTE_MAX_DAYS * DAY_MS);
     const next = new Date(Math.min(expiryFromNow().getTime(), ceiling.getTime()));
-    await prisma.session.update({ where: { id: session.id }, data: { expiresAt: next } }).catch(() => {});
+    await prisma.session.updateMany({
+      where: { id: session.id, lastRefreshedAt: { lte: refreshCutoff }, expiresAt: { gt: new Date() } },
+      data: { expiresAt: next, lastRefreshedAt: new Date() },
+    });
   }
 
-  return session;
+  return { ...session, user: { ...session.user, passwordHash: null, totpSecret: null, totpLastStep: null, totpRecoveryHashes: [] as string[] } };
 }
 
 export async function revokeSession(token: string) {

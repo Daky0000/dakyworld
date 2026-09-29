@@ -171,9 +171,10 @@ export async function settleFromProvider(reference: string, expectedProvider?: R
   return settleInvoice(invoice, status.paidAt ?? new Date(), describeChannel(status.channel), authorization && billingEmail ? encryptSecret(authorization) : null, billingEmail, reference);
 }
 
-async function settleInvoice(invoice: Invoice, paidAt: Date, paidVia: string | null, authorization: string | null = null, billingEmail: string | null = null, reference?: string) {
+async function settleInvoice(invoice: Invoice, paidAt: Date, paidVia: string | null, authorization: string | null = null, billingEmail: string | null = null, reference?: string, stripeReference?: string) {
   const result = await prisma.$transaction(async tx => {
-    const claimed = await tx.invoice.updateMany({ where: { id: invoice.id, status: { not: "PAID" }, amountTotal: invoice.amountTotal, currency: invoice.currency }, data: { status: "PAID", paidAt, paidVia } });
+    const claimed = await tx.invoice.updateMany({ where: { id: invoice.id, status: { not: "PAID" }, amountTotal: invoice.amountTotal, currency: invoice.currency,
+      ...(stripeReference ? { paymentProvider: "stripe", paymentRef: invoice.paymentRef, stripePaymentIntentId: invoice.stripePaymentIntentId } : {}) }, data: { status: "PAID", paidAt, paidVia } });
     const current = await tx.invoice.findUniqueOrThrow({ where: { id: invoice.id } });
     if (!claimed.count) return { invoice: current, changed: false };
     await tx.websitePurchase.updateMany({ where: { invoiceId: invoice.id, status: "PAYMENT_PENDING" }, data: { status: "SETUP_PAID", setupPaidAt: paidAt, paymentAuthorization: authorization, billingEmail } });
@@ -213,6 +214,11 @@ export async function settleManually(invoiceId: string, options: { paidVia?: str
   const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId } });
   if (!invoice) return null;
   return settleInvoice(invoice, options.paidAt ?? new Date(), options.paidVia ?? "manual");
+}
+
+/** Accepts only the invoice snapshot already verified against the provider session. */
+export async function settleStripeInvoice(invoice: Invoice, reference: string, paidVia: string) {
+  return settleInvoice(invoice, new Date(), paidVia, null, null, undefined, reference);
 }
 
 /** The provider's own word for how it was paid, in the Owner's words. */

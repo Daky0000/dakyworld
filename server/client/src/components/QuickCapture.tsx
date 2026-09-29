@@ -51,7 +51,7 @@ export function QuickCapture() {
 
   const { data: taskList } = useQuery({
     queryKey: ["capture-tasks"],
-    queryFn: () => api.get<{ tasks: CaptureTaskInfo[] }>("/capture/tasks"),
+    queryFn: ({ signal }) => api.get<{ tasks: CaptureTaskInfo[] }>("/capture/tasks", signal),
     staleTime: 5 * 60_000,
   });
   const tasks = taskList?.tasks ?? [];

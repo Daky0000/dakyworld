@@ -160,12 +160,12 @@ export function Hunts() {
   const [note, setNote] = useState<string | null>(null);
   const [selectedRegion, setSelectedRegion] = useState<HuntRegion>("all");
 
-  const list = useQuery({ queryKey: ["hunts"], refetchInterval: 20_000, queryFn: () => api.get<HuntList>("/hunts") });
+  const list = useQuery({ queryKey: ["hunts"], refetchInterval: 20_000, queryFn: ({ signal }) => api.get<HuntList>("/hunts", signal) });
   const detail = useQuery({
     queryKey: ["hunt", open],
     enabled: Boolean(open),
     refetchInterval: 15_000,
-    queryFn: () => api.get<Detail>(`/hunts/${open}`),
+    queryFn: ({ signal }) => api.get<Detail>(`/hunts/${open}`, signal),
   });
 
   const invalidate = () => {

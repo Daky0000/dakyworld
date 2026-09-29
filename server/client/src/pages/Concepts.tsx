@@ -89,7 +89,7 @@ export function Concepts() {
 
   const { data, isLoading } = useQuery({
     queryKey: ["concepts"],
-    queryFn: () => api.get<ListResponse>("/concepts?open=true"),
+    queryFn: ({ signal }) => api.get<ListResponse>("/concepts?open=true", signal),
   });
 
   const setAuto = useMutation({
@@ -298,7 +298,7 @@ function ConceptDetail({ leadId }: { leadId: string }) {
 
   const { data, isLoading } = useQuery({
     queryKey: ["concept", leadId],
-    queryFn: () => api.get<DetailResponse>(`/concepts/${leadId}`),
+    queryFn: ({ signal }) => api.get<DetailResponse>(`/concepts/${leadId}`, signal),
   });
 
   const invalidate = () => {

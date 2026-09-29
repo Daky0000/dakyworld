@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { api, ApiError, setUnauthorizedHandler } from "./api";
+import { api, ApiError, setUnauthorizedHandler, resetPrivateRequests } from "./api";
 import { useQueryClient } from "@tanstack/react-query";
 
 export type CurrentUser = {
@@ -68,7 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     api
       .get<CurrentUser>("/auth/me")
-      .then((me) => !cancelled && setUser(me))
+      .then((me) => { if (!cancelled) { resetPrivateRequests(me.id); queryClient.clear(); setUser(me); } })
       .catch(() => !cancelled && setUser(null))
       .finally(() => !cancelled && setLoading(false));
     return () => {
@@ -79,20 +79,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // If a session expires or is revoked while the tab is open, any 401 drops
   // straight back to the login screen instead of leaving a dead-looking UI.
   useEffect(() => {
-    setUnauthorizedHandler(() => { queryClient.clear(); setUser(null); });
+    setUnauthorizedHandler(() => { resetPrivateRequests(); queryClient.clear(); setUser(null); });
   }, [queryClient]);
 
   const login = useCallback(async (email: string, password: string) => {
     const result = await api.post<LoginResult>("/auth/login", { email, password });
     // Only a real user goes into state. Setting one from a challenge would
     // render the whole app behind a login that has not finished.
-    if (!isMfaChallenge(result)) { queryClient.clear(); setUser(result); }
+    if (!isMfaChallenge(result)) { resetPrivateRequests(result.id); queryClient.clear(); setUser(result); }
     return result;
   }, [queryClient]);
 
   const completeLogin = useCallback(async (challenge: string, code: string) => {
     const current = await api.post<CurrentUser>("/auth/login/2fa", { challenge, code });
-    queryClient.clear();
+    resetPrivateRequests(current.id); queryClient.clear();
     setUser(current);
   }, [queryClient]);
 
@@ -103,7 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // An already-dead session still means logged out as far as the UI goes.
       if (!(err instanceof ApiError)) throw err;
     }
-    queryClient.clear();
+    resetPrivateRequests(); queryClient.clear();
     setUser(null);
   }, [queryClient]);
 

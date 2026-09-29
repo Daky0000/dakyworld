@@ -55,7 +55,7 @@ export function Approvals() {
 
   const { data, isLoading } = useQuery({
     queryKey: ["approvals", filter],
-    queryFn: () => api.get<{ requests: ActionRequestRow[]; pending: number; counts: Record<string, number> }>(`/approvals?status=${filter}`),
+    queryFn: ({ signal }) => api.get<{ requests: ActionRequestRow[]; pending: number; counts: Record<string, number> }>(`/approvals?status=${filter}`, signal),
     // These arrive while you are looking at the page — an agent working in the
     // background is the normal case, not the exception.
     refetchInterval: 20_000,

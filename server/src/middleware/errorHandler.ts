@@ -9,6 +9,7 @@ import { WebsiteError } from "../services/website/site.js";
 import { GitHubError } from "../lib/github.js";
 import { PaystackError } from "../lib/paystack.js";
 import { PaymentRefused } from "../services/payments.js";
+import { CapacityError } from "../lib/capacity.js";
 
 /**
  * The one place an unhandled error becomes a response.
@@ -31,6 +32,8 @@ import { PaymentRefused } from "../services/payments.js";
  * something went wrong" can be traced to the exact log line.
  */
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
+  res.set("Cache-Control", "private, no-store");
+  if (err instanceof CapacityError) return res.status(err.status).set("Retry-After", String(err.retryAfter)).json({ error: err.message });
   const reference = Math.random().toString(36).slice(2, 10);
   console.error(`[${reference}]`, err);
   if (err instanceof PaystackError || err instanceof PaymentRefused) {

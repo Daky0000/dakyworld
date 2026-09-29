@@ -55,7 +55,7 @@ export function WebsiteIconPicker({
 
   const assets = useQuery({
     queryKey: ["website", "assets", siteId, "icon-picker"],
-    queryFn: () => api.get<Asset[]>(`/website/sites/${siteId}/assets`),
+    queryFn: ({ signal }) => api.get<Asset[]>(`/website/sites/${siteId}/assets`, signal),
     enabled: open && tab === "images" && Boolean(siteId),
   });
   const previewFor = useMemo(() => new Map((assets.data ?? []).map((asset) => [asset.url, asset.preview])), [assets.data]);

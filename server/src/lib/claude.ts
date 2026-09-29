@@ -1,4 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { withModelCapacity } from "./modelCapacity.js";
+import { beforeWebsiteExternalAction, confirmWebsiteProviderResponse, currentWebsiteWork, UncertainExternalError, WorkCancelledError } from "./websiteWorkContext.js";
 import { recordLlmCall } from "./llmLedger.js";
 import { SETTING, getSetting } from "./settings.js";
 import { costOf, defaultModel, modelForEffort, rateFor } from "./claudePricing.js";
@@ -232,6 +234,9 @@ function vendorSentence(err: InstanceType<typeof Anthropic.APIError>): string {
 }
 
 export async function callClaude<T>(request: ClaudeRequest): Promise<ClaudeResult<T>> {
+  return withModelCapacity(() => callClaudeUnbounded<T>(request));
+}
+async function callClaudeUnbounded<T>(request: ClaudeRequest): Promise<ClaudeResult<T>> {
   const say = (kind: FailureKind) => request.messages?.[kind] ?? DEFAULT_MESSAGES[kind];
 
   const apiKey = await analystKey();
@@ -273,7 +278,7 @@ export async function callClaude<T>(request: ClaudeRequest): Promise<ClaudeResul
     return new AnalystError(status, message);
   };
 
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey, maxRetries: currentWebsiteWork() ? 0 : 2 });
   const prompt = request.prompt();
 
   // Pictures before the words. Claude reads a prompt that refers to "the
@@ -304,8 +309,9 @@ export async function callClaude<T>(request: ClaudeRequest): Promise<ClaudeResul
       ? [{ type: "text", text: request.system, cache_control: { type: "ephemeral" } }]
       : request.system;
 
-  const send = (withFallbacks: boolean) =>
-    client.beta.messages.create({
+  const send = async (withFallbacks: boolean) => {
+    await beforeWebsiteExternalAction();
+    return client.beta.messages.create({
       model,
       max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
       system,
@@ -316,6 +322,7 @@ export async function callClaude<T>(request: ClaudeRequest): Promise<ClaudeResul
       ...(withFallbacks ? { betas: [FALLBACK_BETA], fallbacks: "default" as const } : {}),
       messages: [{ role: "user", content: userContent }],
     });
+  };
 
   let response;
   try {
@@ -323,12 +330,16 @@ export async function callClaude<T>(request: ClaudeRequest): Promise<ClaudeResul
       response = await send(fallbacksAvailable);
     } catch (err) {
       if (!fallbacksAvailable || !rejectedTheBeta(err)) throw err;
+      await confirmWebsiteProviderResponse(false);
       // One wasted request, once per process, and then never again.
       fallbacksAvailable = false;
       console.warn(`[claude] server-side fallbacks unavailable on this key — continuing without them: ${(err as Error).message}`);
       response = await send(false);
     }
   } catch (err) {
+    if (err instanceof WorkCancelledError) throw err;
+    if (err instanceof Anthropic.APIError && err.status !== undefined && err.status < 500) await confirmWebsiteProviderResponse(false);
+    if (currentWebsiteWork() && (!(err instanceof Anthropic.APIError) || err.status === undefined || err.status >= 500)) throw new UncertainExternalError();
     if (err instanceof Anthropic.AuthenticationError) throw await fail(400, say("auth"));
     if (err instanceof Anthropic.RateLimitError) throw await fail(429, say("rate"));
     if (err instanceof Anthropic.APIError) {
@@ -336,6 +347,8 @@ export async function callClaude<T>(request: ClaudeRequest): Promise<ClaudeResul
     }
     throw await fail(502, `Could not reach Anthropic: ${(err as Error).message}`);
   }
+
+  await confirmWebsiteProviderResponse(true);
 
   // Everything from here on cost money, so price it before deciding whether
   // the answer is usable.

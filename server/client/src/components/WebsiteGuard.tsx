@@ -12,7 +12,7 @@ export function useWebsiteSites() {
   const { user } = useAuth();
   return useQuery({
     queryKey: ["website", "sites"], enabled: Boolean(user),
-    queryFn: () => api.get<SiteSummary[]>("/website/sites"), staleTime: 15_000,
+    queryFn: ({ signal }) => api.get<SiteSummary[]>("/website/sites", signal), staleTime: 15_000,
     retry: false,
   });
 }

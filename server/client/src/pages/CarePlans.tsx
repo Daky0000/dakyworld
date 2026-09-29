@@ -25,7 +25,7 @@ export function CarePlans() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const { data: plans, isLoading } = useQuery({ queryKey: ["care-plans"], queryFn: () => api.get<CarePlan[]>("/care-plans") });
+  const { data: plans, isLoading } = useQuery({ queryKey: ["care-plans"], queryFn: ({ signal }) => api.get<CarePlan[]>("/care-plans", signal) });
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["care-plans"] });
@@ -307,7 +307,7 @@ function HoursBar({ plan }: { plan: CarePlan }) {
 function PlanHistory({ planId }: { planId: string }) {
   const { data, isLoading } = useQuery({
     queryKey: ["care-plans", planId],
-    queryFn: () => api.get<CarePlan>(`/care-plans/${planId}`),
+    queryFn: ({ signal }) => api.get<CarePlan>(`/care-plans/${planId}`, signal),
   });
 
   if (isLoading) return <div className="mt-5 border-t border-line pt-4 text-sm text-muted">Loading history…</div>;

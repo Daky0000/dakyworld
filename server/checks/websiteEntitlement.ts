@@ -167,7 +167,7 @@ check(
 );
 
 const website = source("../src/routes/website.ts");
-check("publishing writes the copy the hosting serves", /publishedHtml: plan\.html/.test(website));
+check("publishing writes the copy the hosting serves", /publishedHtml: plan\.html/.test(source("../src/services/websitePagePublication.ts")));
 check("imports are rate limited", /websiteImportLimit/.test(website));
 
 /* ------------------------------------------------------ leaving cleanly --- */

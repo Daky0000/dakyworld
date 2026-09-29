@@ -1,3 +1,7 @@
+import { prisma } from "../lib/prisma.js";
+import { capacity } from "../lib/capacity.js";
+import { enqueueWebsiteWork } from "./websiteWorkQueue.js";
+import { assertWebsiteSiteAccess } from "./websiteAccess.js";
 import type { Request, Router } from "express";
 import type { Site, SitePage } from "@prisma/client";
 import { z } from "zod";
@@ -233,6 +237,10 @@ export function registerWebsiteAssistant(router: Router, access: { loadPage: (re
       if (page.status === "HIDDEN") throw new WebsiteError(403, "This page is hidden from editing. Restore it before requesting suggestions.");
       const settings = z.object({ aiEnabled: z.boolean().default(false), brandVoice: z.string().max(4_000).default("") }).parse(site.settings ?? {});
       if (!settings.aiEnabled) throw new WebsiteError(403, "AI suggestions are disabled for this site. Enable them in Website settings.");
+      if (capacity.admission) {
+        res.status(202).json(await enqueueWebsiteWork(req, site.id, "ASSISTANT", { pageId: page.id, body }));
+        return;
+      }
       const runKey = req.dbUser?.id ?? "local-editor";
       if (running.has(runKey)) throw new WebsiteError(429, "A suggestion is already being prepared. Wait for it to finish before asking again.");
       running.add(runKey);
@@ -245,4 +253,15 @@ export function registerWebsiteAssistant(router: Router, access: { loadPage: (re
       if (key) running.delete(key);
     }
   });
+}
+
+export async function executeQueuedAssistant(req: Request, siteId: string, input: unknown) {
+  const parsed = z.object({ pageId: z.string(), body: websiteAssistantInput }).parse(input);
+  const page = await prisma.sitePage.findFirst({ where: { id: parsed.pageId, siteId }, include: { site: true } });
+  if (!page || page.status === "HIDDEN") throw new WebsiteError(404, "That page is not available.");
+  await assertWebsiteSiteAccess(req, siteId, "edit");
+  const settings = z.object({ aiEnabled: z.boolean().default(false), brandVoice: z.string().default("") }).parse(page.site.settings ?? {});
+  if (!settings.aiEnabled) throw new WebsiteError(403, "AI suggestions are disabled for this site.");
+  const source = await pageSource(page.site, page, { fresh: true });
+  return suggestWebsiteChanges({ source: editingSource(source.html, (page.draft ?? {}) as Record<string, FieldValue>), ...parsed.body, brandVoice: settings.brandVoice });
 }

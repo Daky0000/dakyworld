@@ -1,15 +1,23 @@
+import { draftValues, loadSite, loadPage, syncDemoFromSitePage } from "../services/websitePageContext.js";
+import { executePagePublish, executeVersionPublish } from "../services/websitePagePublication.js";
+export { executePagePublish, executeVersionPublish } from "../services/websitePagePublication.js";
+
+import { getOrLoad } from "../lib/cache.js";
+import { listPage } from "../lib/pagination.js";
+import { enqueueWebsiteWork, registerWebsiteWorkQueue } from "../services/websiteWorkQueue.js";
+import { capacity } from "../lib/capacity.js";
 import { versionDraft } from "../services/website/versionRestore.js";
 import { rateLimit } from "../middleware/security.js";
-import type { Request } from "express";
+
 import { Router, json } from "express";
 import { createHash } from "node:crypto";
-import { createBranch, openPullRequest } from "../lib/github.js";
-import { withWebsitePublishLock } from "../services/websitePublishing.js";
+
+
 import { registerWebsiteAssistant } from "../services/websiteAssistant.js";
 import { registerWebsiteBuilderAgent } from "../services/websiteBuilderAgent.js";
 import { registerWebsiteSource } from "../services/websiteSource.js";
 import { registerWebsiteFrameworkView, sourceManagedFields } from "../services/websiteFrameworkView.js";
-import { nameFieldsOnPage, publishFrameworkPage } from "../services/websiteFrameworkPublish.js";
+import { nameFieldsOnPage } from "../services/websiteFrameworkPublish.js";
 import { hasSourceManifest } from "../services/websitePageManifest.js";
 import { embedWebsiteAssets } from "../services/websiteAssets.js";
 import { registerWebsiteManagement, siteInput } from "../services/websiteManagement.js";
@@ -18,21 +26,21 @@ import { registerWebsiteReadiness } from "../services/websiteReadiness.js";
 import { registerWebsiteSurvey } from "../services/websiteSiteSurvey.js";
 import { registerWebsiteOnboarding } from "../services/websiteOnboarding.js";
 import { registerGithubAppRoutes } from "../services/githubAppRoutes.js";
-import {
-  assertEditAllowance,
-  assertTierFeatureAccess,
-  recordAiPromptUsed,
-  recordEditUsed,
-  registerWebsiteTierRoutes,
-} from "../services/websiteTierPlans.js";
-import { advancePublishJob, failPublishJob, publishJobCommitted, publishJobView, registerWebsitePublishJobs, startPublishJob } from "../services/websitePublishJobs.js";
-import { ensureHostedAddress, registerWebsiteHosting } from "../services/websiteHosting.js";
+import { assertEditAllowance, assertTierFeatureAccess, recordAiPromptUsed, recordEditUsed, registerWebsiteTierRoutes } from "../services/websiteTierPlans.js";
+import { registerWebsitePublishJobs } from "../services/websitePublishJobs.js";
+import { registerWebsiteHosting } from "../services/websiteHosting.js";
 import { registerSubscriberSelfService } from "../services/websiteSubscriberSelfService.js";
 import { registerWebsiteSetupAssistance } from "../services/websiteSetupAssistance.js";
 import { registerWebsiteClientPortal } from "../services/websiteClientPortal.js";
 import { registerWebsiteEscalationRoutes } from "../services/websiteEscalationService.js";
+import { registerWebsiteApprovalRoutes } from "../services/websiteApprovalAndReview.js";
+import { registerWebsiteSchedulerRoutes } from "../services/websitePublishScheduler.js";
+import { registerWebsiteBatchEditingRoutes } from "../services/websiteBatchEditing.js";
+import { registerWebsiteEditingPolicyRoutes } from "../services/websiteEditingPolicy.js";
+import { registerWebsiteFreelancerWorkspaceRoutes } from "../services/websiteFreelancerWorkspace.js";
+
 import { z } from "zod";
-import type { Site, SitePage } from "@prisma/client";
+
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { assertWebsiteConnectionChange, getWebsiteCapabilities, assertWebsiteSiteAccess, registerWebsiteMembership, websiteAccessGate, websiteCapabilities, websitePrincipal, websiteSiteFilter } from "../services/websiteAccess.js";
@@ -40,22 +48,9 @@ import { recordPresence, removePresence } from "../services/websitePresence.js";
 // The engine comes through its one door — see services/website/index.ts for why.
 // `site.js` is the other half and stays separate on purpose: it is the part that
 // talks to GitHub and the network, and nothing in the core does.
-import {
-  DOCUMENT_KEY, draftDocument, editingSource, fieldValues, sourceHash, documentChanged, versionValues, restoreDocument, changeStructure, structureControls,
-  applyValues,
-  categoriseChanges,
-  describeChanges,
-  buildPreview,
-  buildPublishPlan,
-  discoverFields,
-  isVariantOfStem,
-  sanitizeValue,
-  validateFieldChange,
-  type FieldValue,
-  type SiteField,
-} from "../services/website/index.js";
-import { discoverPages, PAGE_LIST_FIELDS, pageSource, pageUrl, publishPage, publishSourcePage, siteRepo, siteStyleClasses, underSiteCredential, WebsiteError } from "../services/website/site.js";
-import { offerPagePublished } from "../services/context/business.js";
+import { DOCUMENT_KEY, draftDocument, editingSource, fieldValues, sourceHash, documentChanged, changeStructure, structureControls, applyValues, categoriseChanges, describeChanges, buildPreview, discoverFields, isVariantOfStem, sanitizeValue, validateFieldChange, type FieldValue, type SiteField } from "../services/website/index.js";
+import { discoverPages, PAGE_LIST_FIELDS, pageSource, pageUrl, siteRepo, siteStyleClasses, WebsiteError } from "../services/website/site.js";
+
 import { tailwindCdnCss } from "../services/website/cdnStyles.js";
 
 /**
@@ -97,6 +92,11 @@ registerSubscriberSelfService(websiteRouter);
 registerWebsiteSetupAssistance(websiteRouter);
 registerWebsiteClientPortal(websiteRouter);
 registerWebsiteEscalationRoutes(websiteRouter);
+registerWebsiteApprovalRoutes(websiteRouter);
+registerWebsiteSchedulerRoutes(websiteRouter);
+registerWebsiteBatchEditingRoutes(websiteRouter);
+registerWebsiteEditingPolicyRoutes(websiteRouter);
+registerWebsiteFreelancerWorkspaceRoutes(websiteRouter);
 
 // Tier feature enforcement across SEO, AI Assistant, AI Builder Agent, and Source Editor routes
 websiteRouter.use((req, _res, next) => {
@@ -105,10 +105,10 @@ websiteRouter.use((req, _res, next) => {
       await assertTierFeatureAccess(req, "sourceCodeEditor");
     } else if (/\/agent(?:\/|$)/.test(req.path)) {
       await assertTierFeatureAccess(req, "aiBuilderAgent");
-      if (req.method === "POST" && /\/agent\/(?:plan|apply)\/?$/.test(req.path)) await recordAiPromptUsed(req);
+      if (!capacity.admission && req.method === "POST" && /\/agent\/(?:plan|apply)\/?$/.test(req.path)) await recordAiPromptUsed(req);
     } else if (/\/(?:assistant|suggest|ai)(?:\/|$)/.test(req.path)) {
-      await assertTierFeatureAccess(req, "aiAssistant");
-      if (req.method === "POST") await recordAiPromptUsed(req);
+      await assertTierFeatureAccess(req, "aiAssistant", undefined, { skipUsageLimit: capacity.admission && /\/pages\/[^/]+\/assistant\/?$/.test(req.path) });
+      if (!capacity.admission && req.method === "POST") await recordAiPromptUsed(req);
     } else if (/\/seo(?:\/|$)/.test(req.path)) {
       await assertTierFeatureAccess(req, "seoInspector");
     }
@@ -116,6 +116,7 @@ websiteRouter.use((req, _res, next) => {
 });
 
 registerWebsiteMembership(websiteRouter);
+registerWebsiteWorkQueue(websiteRouter);
 registerWebsiteManagement(websiteRouter, { loadSite, loadPage });
 registerWebsiteAssistant(websiteRouter, { loadPage });
 registerWebsiteBuilderAgent(websiteRouter, { loadSite, loadPage });
@@ -181,16 +182,9 @@ function publicField(field: SiteField) {
   };
 }
 
-function draftValues(page: SitePage): Record<string, FieldValue> {
-  return (page.draft as Record<string, FieldValue> | null) ?? {};
-}
 
-async function loadSite(req: Request, siteId: string): Promise<Site> {
-  const site = await prisma.site.findUnique({ where: { id: siteId } });
-  if (!site) throw new WebsiteError(404, "That site is not in the editor.");
-  await assertWebsiteSiteAccess(req, site.id);
-  return site;
-}
+
+
 
 /**
  * A page and the site it belongs to, with the caller checked against the site.
@@ -199,77 +193,53 @@ async function loadSite(req: Request, siteId: string): Promise<Site> {
  * page id alone is authorising on a value the caller supplied, and the record
  * that says who may touch it is one level up.
  */
-async function loadPage(req: Request, pageId: string): Promise<{ page: SitePage; site: Site }> {
-  const page = await prisma.sitePage.findUnique({ where: { id: pageId }, include: { site: true } });
-  if (!page) throw new WebsiteError(404, "That page is not in the editor. It may have been removed — rescan the site.");
-  const { site, ...rest } = page;
-  await assertWebsiteSiteAccess(req, site.id);
-  return { page: rest as SitePage, site };
-}
+
 
 websiteRouter.get("/sites", async (req, res, next) => {
   try {
     const principal = websitePrincipal(req);
     const siteFilter = websiteSiteFilter(req);
-    const sites = await prisma.site.findMany({
-      where: siteFilter,
-      orderBy: { name: "asc" },
-      include: { _count: { select: { pages: true } }, client: { select: { id: true, name: true } }, members: { where: { userId: principal.id }, select: { role: true } } },
+    const { limit, cursor } = listPage.parse(req.query);
+    const rows = await prisma.site.findMany({
+      where: siteFilter, orderBy: [{ name: "asc" }, { id: "asc" }], take: limit + 1,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      select: { id: true, name: true, slug: true, publicUrl: true, repoOwner: true, repoName: true,
+        sourceKind: true, repoBranch: true, _count: { select: { pages: true } },
+        client: { select: { id: true, name: true } }, members: { where: { userId: principal.id }, select: { role: true } } },
     });
-    const withDrafts = await prisma.sitePage.findMany({
-      where: { site: siteFilter, NOT: { draft: { equals: Prisma.DbNull } } },
-      select: { siteId: true },
-    });
-    const drafts = new Map<string, number>();
-    for (const row of withDrafts) drafts.set(row.siteId, (drafts.get(row.siteId) ?? 0) + 1);
-
-    res.json(
-      sites.map((site) => ({
-        id: site.id,
-        name: site.name,
-        slug: site.slug,
-        publicUrl: site.publicUrl,
-        repo: siteRepo(site),
-        sourceKind: site.sourceKind,
-        branch: site.repoBranch,
-        client: site.client,
-        pageCount: site._count.pages,
-        draftCount: drafts.get(site.id) ?? 0,
-        capabilities: websiteCapabilities(principal, site.members[0]?.role ?? null),
-      })),
-    );
-  } catch (err) {
-    next(err);
-  }
+    const sites = rows.slice(0, limit);
+    const grouped = await prisma.sitePage.groupBy({ by: ["siteId"], where: { siteId: { in: sites.map(site => site.id) }, NOT: { draft: { equals: Prisma.DbNull } } }, _count: true });
+    const drafts = new Map(grouped.map(row => [row.siteId, row._count]));
+    if (rows.length > limit) res.set("X-Next-Cursor", sites[sites.length - 1]!.id);
+    res.json(sites.map(site => ({ id: site.id, name: site.name, slug: site.slug, publicUrl: site.publicUrl,
+      repo: siteRepo(site), sourceKind: site.sourceKind, branch: site.repoBranch, client: site.client,
+      pageCount: site._count.pages, draftCount: drafts.get(site.id) ?? 0,
+      capabilities: websiteCapabilities(principal, site.members[0]?.role ?? null),
+    })));
+  } catch (error) { next(error); }
 });
 
 websiteRouter.get("/sites/:siteId/pages", async (req, res, next) => {
   try {
     const site = await loadSite(req, req.params.siteId);
-    const pages = await prisma.sitePage.findMany({
-      where: { siteId: site.id },
-      orderBy: [{ sortOrder: "asc" }, { path: "asc" }],
-      select: { ...PAGE_LIST_FIELDS, draftSavedBy: { select: { id: true, name: true } } },
+    const { limit, cursor } = listPage.parse(req.query);
+    const result = await getOrLoad({ scope: `site:${site.id}`, resource: "metadata", identity: `pages:${req.dbUser!.id}`, query: { limit, cursor } }, { ttlMs: 15_000 }, async () => {
+      const { draft: _draft, ...fields } = PAGE_LIST_FIELDS;
+      const rows = await prisma.sitePage.findMany({ where: { siteId: site.id },
+        orderBy: [{ sortOrder: "asc" }, { path: "asc" }, { id: "asc" }], take: limit + 1,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+        select: { ...fields, draftSavedBy: { select: { id: true, name: true } } },
+      });
+      const pages = rows.slice(0, limit);
+      const drafts = pages.length ? await prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`SELECT id FROM "SitePage" WHERE id IN (${Prisma.join(pages.map(page => page.id))}) AND draft IS NOT NULL AND draft <> 'null'::jsonb`) : [];
+      const draftIds = new Set(drafts.map(page => page.id));
+      return { nextCursor: rows.length > limit ? pages[pages.length - 1]!.id : null,
+        pages: pages.map(page => ({ id: page.id, title: page.title, path: page.path, filePath: page.filePath,
+          status: page.status, url: pageUrl(site, page), hasDraft: draftIds.has(page.id), draftSavedAt: page.draftSavedAt,
+          draftSavedBy: page.draftSavedBy, lastPublishedAt: page.lastPublishedAt })) };
     });
-
-    res.json({
-      site: { id: site.id, name: site.name, publicUrl: site.publicUrl, repo: siteRepo(site), branch: site.repoBranch, sourceKind: site.sourceKind },
-      pages: pages.map((page) => ({
-        id: page.id,
-        title: page.title,
-        path: page.path,
-        filePath: page.filePath,
-        status: page.status,
-        url: pageUrl(site, page),
-        hasDraft: page.draft !== null,
-        draftSavedAt: page.draftSavedAt,
-        draftSavedBy: page.draftSavedBy,
-        lastPublishedAt: page.lastPublishedAt,
-      })),
-    });
-  } catch (err) {
-    next(err);
-  }
+    res.json({ site: { id: site.id, name: site.name, publicUrl: site.publicUrl, repo: siteRepo(site), branch: site.repoBranch, sourceKind: site.sourceKind }, ...result });
+  } catch (error) { next(error); }
 });
 
 /**
@@ -848,216 +818,17 @@ websiteRouter.get("/pages/:pageId/preview", async (req, res, next) => {
  * leaves both the draft and the live page exactly as they were. The version row
  * is written afterwards for the same reason: it records what *did* happen.
  */
+
 websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
   try {
-    const result = await withWebsitePublishLock(req.params.pageId, async tx => {
-      const { page, site } = await loadPage(req, req.params.pageId);
+    if (capacity.admission) {
+      const { site, page } = await loadPage(req, req.params.pageId);
       if (req.body?.ifRevision !== undefined && req.body.ifRevision !== page.draftRevision) throw new WebsiteError(409, "The draft changed after your review. Review it again before publishing.");
-      const values = draftValues(page);
-      if (Object.keys(values).length === 0) {
-        if (page.sourceHtml !== null && !siteRepo(site)) {
-          await syncDemoFromSitePage(site, page.id, page.sourceHtml, false);
-          const last = await tx.sitePageVersion.findFirst({ where: { pageId: page.id }, orderBy: { number: "desc" }, select: { number: true } });
-          let version = last?.number ?? 0;
-          if (!page.publishedHtml) {
-            await tx.sitePage.update({ where: { id: page.id }, data: { publishedHtml: page.sourceHtml, status: "LIVE", lastPublishedAt: new Date() } });
-            await ensureHostedAddress(site.id);
-            const created = await tx.sitePageVersion.create({ data: {
-              pageId: page.id, number: version + 1, html: page.sourceHtml,
-              publishedById: req.dbUser?.id ?? null,
-            } });
-            version = created.number;
-            await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "PUBLISH", summary: `Published ${page.title} for the first time`, actorName: req.dbUser?.name ?? "Website editor", actorId: req.dbUser?.id } });
-          }
-          return {
-            version,
-            changed: 0,
-            summary: [],
-            commitSha: "local",
-            commitUrl: pageUrl(site, page),
-            url: pageUrl(site, page),
-            revision: page.draftRevision,
-            draftRetained: false,
-            publishJob: null,
-            pullRequest: null,
-          };
-        }
-        // A page whose only pending change is a shared one is not a page with
-        // nothing on it. Publishing it here would write this page and leave the
-        // other six saying something else, so it is refused — and the refusal
-        // says where the button is instead of implying the work was lost.
-        const pending = await prisma.sharedElementInstance.findMany({
-          where: { pageId: page.id, state: "LINKED", element: { draft: { not: Prisma.DbNull } } },
-          include: { element: { select: { name: true, id: true } } },
-        });
-        if (pending.length) {
-          throw Object.assign(
-            new WebsiteError(409, `The unpublished changes on this page belong to ${pending.map((instance) => instance.element.name).join(" and ")}, which ${pending.length === 1 ? "is" : "are"} shared with other pages. Publish ${pending.length === 1 ? "it" : "them"} from the shared change so every page gets it at the same time.`),
-            { sharedElements: pending.map((instance) => ({ id: instance.element.id, name: instance.element.name })) },
-          );
-        }
-        throw new WebsiteError(400, "There is nothing to publish — this page has no unsaved changes.");
-      }
-
-      // `fresh` is not an optimisation switch here. The whole purpose of the next
-      // few lines is to decide whether the page has moved under this draft, and a
-      // copy taken ninety seconds ago cannot answer that. See sourceCache.ts.
-      // Written before anything touches GitHub. A commit that lands while the
-      // write after it fails leaves the repository ahead of this system with
-      // nothing recording that it happened; this row is what turns that from a
-      // mystery into a state somebody can act on.
-      const job = await startPublishJob({
-        site,
-        kind: "PAGE",
-        pageId: page.id,
-        startedById: req.dbUser?.id,
-        detail: { path: page.path, filePath: page.filePath, draftRevision: page.draftRevision },
-      });
-
-      const source = await pageSource(site, page, { fresh: true });
-      // Every refusal is decided before anything acts, and each one is reported as
-      // itself — "some fields need attention" and "the page moved under you" send
-      // somebody to two different places.
-      if (req.body?.sourceHash && req.body.sourceHash !== createHash("sha256").update(source.html).digest("hex")) throw new WebsiteError(409, "The source changed after your review. Review it again before publishing.");
-      const plan = buildPublishPlan({ source: source.html, values });
-
-      if (plan.problems.length) {
-        await failPublishJob(job.id, "CONFLICT", "Some fields need attention before this page can be published.");
-        throw Object.assign(new WebsiteError(400, "This page cannot be published yet — some fields need attention."), { problems: plan.problems });
-      }
-      if (plan.conflicts.length || plan.missing.length) {
-        await failPublishJob(job.id, "CONFLICT", "The page moved under these edits, so nothing was published.");
-        throw Object.assign(new WebsiteError(409, "The page has changed since these edits were made, so they have not been published. Reopen the page to see it as it is now."), { conflicts: plan.conflicts, missing: plan.missing });
-      }
-      if (!plan.html) {
-        await failPublishJob(job.id, "CONFLICT", "The page already said all of this.");
-        throw new WebsiteError(400, "The page already says all of this. Nothing to publish.");
-      }
-
-      // Read once for the labels the summary is written in. The plan has already
-      // parsed the page; this is the same parse and is kept separate rather than
-      // threaded out of the plan, because a publish summary that silently depended
-      // on the plan's internals is how the two come to disagree.
-      const content = discoverFields(editingSource(source.html, values));
-      const author = req.dbUser?.name ?? "the website editor";
-      const summary = describeChanges(content.fields, values);
-
-      await advancePublishJob(job.id, "COMMITTING", {
-        detail: { path: page.path, filePath: page.filePath, draftRevision: page.draftRevision, expectedHtmlHash: createHash("sha256").update(plan.html).digest("hex") },
-      });
-      const isPR = req.body?.mode === "pull_request";
-      const prTitle = (typeof req.body?.prTitle === "string" && req.body.prTitle.trim()) || `Website: ${plan.changed.length} change${plan.changed.length === 1 ? "" : "s"} on ${page.path} (${author})`;
-      let branchOverride: string | undefined = undefined;
-      const repo = siteRepo(site);
-      if (isPR) {
-        await assertTierFeatureAccess(req, "pullRequestPublish", site.id);
-        if (!repo) throw new WebsiteError(409, "Connect this site's GitHub repository before opening a pull request.");
-        const slug = page.path.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "content";
-        branchOverride = `content/${slug}-${Date.now().toString(36)}`;
-        await underSiteCredential(site, () => createBranch(repo, branchOverride!));
-      }
-
-      let commit: { sha: string; url: string };
-      try {
-        commit = source.sourceFile
-          ? hasSourceManifest(page.filePath)
-            ? await publishFrameworkPage({ site, page, values, html: source.html, author, changed: plan.changed.length, branchOverride })
-            : await publishSourcePage({ site, page, values, html: source.html, author, changed: plan.changed.length, branchOverride })
-          : await publishPage({
-              site,
-              page,
-              html: plan.html,
-              expectedSource: source.html,
-              message: prTitle,
-              branchOverride,
-            });
-      } catch (error) {
-        await failPublishJob(job.id, "COMMIT_FAILED", error instanceof Error ? error.message : "The commit did not happen.");
-        throw error;
-      }
-
-      let prResult: { prUrl: string; prNumber: number; branch: string } | null = null;
-      if (isPR && repo && branchOverride) {
-        const prBody = `### Website Content Updates\n\n- **Page**: \`${page.path}\`\n- **Target Branch**: \`${site.repoBranch}\`\n- **Author**: ${author}\n\n### Summary of Changes\n${summary.map(s => `- **${s.label}** (${s.part}): \`${s.from}\` → \`${s.to}\``).join("\n")}\n\nSubmitted via Dakyworld Website Editor.`;
-        const pr = await underSiteCredential(site, () => openPullRequest({
-          repo,
-          branch: branchOverride,
-          title: prTitle,
-          body: prBody,
-          base: site.repoBranch,
-        }));
-        prResult = { prUrl: pr.url, prNumber: pr.number, branch: branchOverride };
-      }
-
-      // From here the change is in the repository whatever else happens. The
-      // job carries what to look for on the live page, because by the time
-      // anybody looks the draft this came from will have been cleared.
-      // What the OS serves for a hosted site. Written on every publish, for a
-      // site with a repository too: the repository is still the record there,
-      // and having the same bytes here means a customer can be given a working
-      // address while their DNS is still pointing somewhere else.
-      await tx.sitePage.update({ where: { id: page.id }, data: { publishedHtml: plan.html } });
-      await ensureHostedAddress(site.id);
-
-      await publishJobCommitted({ id: job.id, commit, site, page, html: plan.html, summary });
-
-      // The website is where the workforce reads what this company sells, so a
-      // published change to a page that describes the offer is a change to every
-      // agent's brief. Fire-and-forget — see `offerPagePublished`.
-      offerPagePublished(page.filePath);
-
-      const last = await tx.sitePageVersion.findFirst({ where: { pageId: page.id }, orderBy: { number: "desc" }, select: { number: true } });
-      const version = await tx.sitePageVersion.create({
-        data: {
-          pageId: page.id,
-          number: (last?.number ?? 0) + 1,
-          html: plan.html,
-          values: versionValues(values) as unknown as Prisma.InputJsonValue,
-          commitSha: commit.sha,
-          commitUrl: commit.url,
-          publishedById: req.dbUser?.id ?? null,
-        },
-      });
-      const cleared = await tx.sitePage.updateMany({
-        where: { id: page.id, draftRevision: page.draftRevision },
-        data: {
-          draft: Prisma.DbNull,
-          sourceHtml: page.sourceHtml === null ? undefined : plan.html,
-          draftSavedAt: null,
-          draftSavedById: null,
-          lastPublishedAt: new Date(),
-          // A publish is a change to the draft — it removes it. A second editor
-          // still holding the pre-publish number must be told that, or their next
-          // save silently re-creates a draft of edits that are already live.
-          draftRevision: { increment: 1 },
-        },
-      });
-
-      if (!cleared.count) {
-        // Someone saved during the network commit. Their draft must survive.
-        await tx.sitePage.update({ where: { id: page.id }, data: { lastPublishedAt: new Date(), sourceHtml: page.sourceHtml === null ? undefined : plan.html } });
-      }
-
-      await syncDemoFromSitePage(site, page.id, plan.html, true);
-      await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "PUBLISH", summary: `${isPR ? "Submitted PR for" : "Published"} ${page.title} · version ${version.number}`, actorName: author, actorId: req.dbUser?.id, detail: summary } });
-
-      return {
-        job: publishJobView(await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } })),
-        draftRetained: cleared.count === 0,
-        version: version.number,
-        changed: plan.changed.length,
-        summary,
-        touched: categoriseChanges(summary),
-        commit: { sha: commit.sha, url: commit.url },
-        url: pageUrl(site, page),
-        ...(prResult ? { mode: "pull_request", ...prResult } : { mode: "commit" }),
-        note: prResult ? `Created Pull Request #${prResult.prNumber} on GitHub.` : "GitHub Pages rebuilds the site after a commit. The change is usually live within a minute or two, and this screen will say when it is.",
-      };
-    });
-    res.json(result);
-  } catch (err) {
-    next(err);
-  }
+      res.status(202).json(await enqueueWebsiteWork(req, site.id, "PUBLISH_PAGE", { pageId: page.id, body: { ...req.body, ifRevision: page.draftRevision } }));
+      return;
+    }
+    res.json(await executePagePublish(req));
+  } catch (error) { next(error); }
 });
 
 websiteRouter.get("/pages/:pageId/versions", async (req, res, next) => {
@@ -1095,15 +866,63 @@ websiteRouter.get("/pages/:pageId/versions", async (req, res, next) => {
       versions.map((version) => {
         const values = (version.values as Record<string, FieldValue> | null) ?? {};
         const summary = describeChanges(fields, values);
+        const changedLabels = summary.map(s => `${s.label} (${s.part})`).slice(0, 6);
+        const dateStr = new Date(version.createdAt).toLocaleString("en-US", {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        });
         return {
           ...version,
           changed: Object.keys(values).length,
           summary,
+          changedLabels,
+          formattedDate: dateStr,
+          authorName: version.publishedBy?.name || "Dan",
+          affectedPagesCount: 1,
           touched: categoriseChanges(summary),
+          rawValues: fieldValues(values),
           values: undefined,
         };
       }),
     );
+  } catch (err) {
+    next(err);
+  }
+});
+
+websiteRouter.post("/pages/:pageId/versions/:versionId/cherry-pick", async (req, res, next) => {
+  try {
+    const { page, site } = await loadPage(req, req.params.pageId);
+    await assertWebsiteSiteAccess(req, site.id, "edit");
+    const body = z.object({ fieldId: z.string() }).parse(req.body);
+
+    const version = await prisma.sitePageVersion.findFirst({
+      where: { id: req.params.versionId, pageId: page.id },
+    });
+    if (!version) return res.status(404).json({ error: "Version not found" });
+
+    const versionVals = (version.values as Record<string, FieldValue> | null) ?? {};
+    const fieldVal = versionVals[body.fieldId];
+    if (!fieldVal) return res.status(404).json({ error: "Field not found in selected version" });
+
+    const currentDraft = ((page.draft as Record<string, FieldValue> | null) ?? {});
+    const updatedDraft = {
+      ...currentDraft,
+      [body.fieldId]: fieldVal,
+    };
+
+    const updated = await prisma.sitePage.update({
+      where: { id: page.id },
+      data: {
+        draft: updatedDraft as any,
+        draftSavedAt: new Date(),
+        draftRevision: { increment: 1 },
+      },
+    });
+
+    res.json({ ok: true, draftRevision: updated.draftRevision, copiedField: body.fieldId });
   } catch (err) {
     next(err);
   }
@@ -1271,69 +1090,18 @@ websiteRouter.get("/pages/:pageId/versions/:versionId/diff", async (req, res, ne
  * the record reads "we published X, then we published Y, then we put X back" —
  * which is what happened.
  */
+
 websiteRouter.post("/pages/:pageId/versions/:versionId/publish", async (req, res, next) => {
   try {
-    const result = await withWebsitePublishLock(req.params.pageId, async tx => {
-      const { page, site } = await loadPage(req, req.params.pageId);
-      const version = await tx.sitePageVersion.findFirst({ where: { id: req.params.versionId, pageId: page.id } });
-      if (!version) throw new WebsiteError(404, "That version is not on this page.");
-
-      const expectedRevision = req.body?.ifRevision === undefined ? page.draftRevision : z.number().int().nonnegative().parse(req.body.ifRevision);
-      if (expectedRevision !== page.draftRevision) throw new WebsiteError(409, "The draft changed after the rollback review. Reopen the page before publishing this version.");
-      const source = await pageSource(site, page, { fresh: true });
-      if (req.body?.sourceHash && req.body.sourceHash !== createHash("sha256").update(source.html).digest("hex")) throw new WebsiteError(409, "The page changed after the rollback review. Review this version again before publishing.");
-      if (source.html === version.html) {
-        throw new WebsiteError(400, `The page is already exactly as it was in version ${version.number}. Nothing to publish.`);
-      }
-
-      const author = req.dbUser?.name ?? "the website editor";
-      const restored = versionDraft(source.html, {}, version.html, Boolean(source.sourceFile), `Restored version ${version.number}`);
-      if (source.sourceFile && restored.dropped.length) throw new WebsiteError(409, "This version contains elements that no longer match the page. Restore it as a draft and review the differences first.");
-      const commit = source.sourceFile
-        ? hasSourceManifest(page.filePath)
-          ? await publishFrameworkPage({ site, page, html: source.html, values: restored.values, author, changed: Object.keys(restored.values).length })
-          : await publishSourcePage({ site, page, html: source.html, values: restored.values, author, changed: Object.keys(restored.values).length })
-        : await publishPage({ site, page, html: version.html, expectedSource: source.html, message: `Website: roll ${page.path} back to version ${version.number} (${author})` });
-
-      // A rollback changes the live page like any other publish, and a price
-      // rolled back is a price the agents must stop quoting.
-      offerPagePublished(page.filePath);
-
-      const last = await tx.sitePageVersion.findFirst({ where: { pageId: page.id }, orderBy: { number: "desc" }, select: { number: true } });
-      const written = await tx.sitePageVersion.create({
-        data: {
-          pageId: page.id,
-          number: (last?.number ?? 0) + 1,
-          html: version.html,
-          // The values are carried across so the new row can say what it restored
-          // rather than reading as a publish that changed nothing.
-          values: (version.values ?? Prisma.DbNull) as Prisma.InputJsonValue,
-          commitSha: commit.sha,
-          commitUrl: commit.url,
-          publishedById: req.dbUser?.id ?? null,
-        },
-      });
-
-      // The reviewed draft must not cover the restored content when the editor
-      // reloads. A draft saved concurrently is retained rather than overwritten.
-      const cleared = await tx.sitePage.updateMany({ where: { id: page.id, draftRevision: expectedRevision }, data: { draft: Prisma.DbNull, draftSavedAt: null, draftSavedById: null, draftRevision: { increment: 1 } } });
-      await tx.sitePage.update({ where: { id: page.id }, data: { lastPublishedAt: new Date(), publishedHtml: version.html, sourceHtml: page.sourceHtml === null ? undefined : version.html } });
-      await ensureHostedAddress(site.id);
-
-      await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "ROLLBACK", summary: `Restored ${page.title} to version ${version.number}`, actorName: author, actorId: req.dbUser?.id, detail: { pageId: page.id, version: written.number, restoredFrom: version.number } } });
-      return {
-        version: written.number,
-        restoredFrom: version.number,
-        label: `Rollback to version ${version.number}`,
-        commit: { sha: commit.sha, url: commit.url },
-        url: pageUrl(site, page),
-        note: `Your host rebuilds the site after the commit. ${cleared.count ? "The saved draft was cleared." : "A newer draft was saved during publishing and has been kept; it still appears in the editor."}`,
-      };
-    });
-    res.json(result);
-  } catch (err) {
-    next(err);
-  }
+    if (capacity.admission) {
+      const { site, page } = await loadPage(req, req.params.pageId);
+      res.status(202).json(await enqueueWebsiteWork(req, site.id, "PUBLISH_VERSION", {
+        pageId: page.id, versionId: req.params.versionId, body: { ...req.body, ifRevision: req.body?.ifRevision ?? page.draftRevision },
+      }));
+      return;
+    }
+    res.json(await executeVersionPublish(req));
+  } catch (error) { next(error); }
 });
 
 /**
@@ -1395,45 +1163,3 @@ websiteRouter.get("/overview", async (req, res, next) => {
     next(err);
   }
 });
-
-async function syncDemoFromSitePage(
-  site: { id: string; publicUrl: string },
-  pageId: string,
-  html: string,
-  incrementVersion: boolean,
-): Promise<void> {
-  try {
-    const slugMatch = site.publicUrl.match(/\/demos\/([^/?#]+)/i);
-    const slugFromUrl = slugMatch?.[1] ? decodeURIComponent(slugMatch[1]) : null;
-
-    let demo = slugFromUrl
-      ? await prisma.demo.findUnique({ where: { slug: slugFromUrl }, select: { id: true } })
-      : null;
-
-    if (!demo) {
-      const candidates = await prisma.demo.findMany({
-        where: {
-          OR: [
-            { brief: { path: ["sitePageId"], equals: pageId } },
-            { brief: { path: ["siteId"], equals: site.id } },
-          ],
-        },
-        select: { id: true },
-        take: 1,
-      });
-      demo = candidates[0] ?? null;
-    }
-
-    if (demo) {
-      await prisma.demo.update({
-        where: { id: demo.id },
-        data: {
-          html,
-          ...(incrementVersion ? { version: { increment: 1 } } : {}),
-        },
-      });
-    }
-  } catch {
-    /* Never block editor saves if demo synchronization encounters an unexpected error. */
-  }
-}

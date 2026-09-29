@@ -86,6 +86,21 @@ export function WebsiteClientOnboarding({
   const [guideOpen, setGuideOpen] = useState(false);
   const [guideTab, setGuideTab] = useState<GuideTab>("visual");
 
+  useEffect(() => {
+    const handler = () => {
+      setCompletedSteps((prev) => {
+        if (prev.includes("edit")) return prev;
+        const next = [...prev, "edit"];
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+    };
+    window.addEventListener("dw:walkthrough-completed", handler);
+    return () => window.removeEventListener("dw:walkthrough-completed", handler);
+  }, [storageKey]);
+
   const toggleStep = (stepId: string) => {
     const next = completedSteps.includes(stepId)
       ? completedSteps.filter((id) => id !== stepId)
@@ -174,11 +189,18 @@ export function WebsiteClientOnboarding({
             Open Visual Guide
           </Button>
           {firstPageId && (
-            <Link to={`/website/pages/${firstPageId}`}>
-              <Button variant="primary" size="sm">
-                Open Editor
-              </Button>
-            </Link>
+            <>
+              <Link to={`/website/pages/${firstPageId}?walkthrough=interactive`}>
+                <Button variant="accent" size="sm">
+                  ✨ Interactive Tour
+                </Button>
+              </Link>
+              <Link to={`/website/pages/${firstPageId}`}>
+                <Button variant="primary" size="sm">
+                  Open Editor
+                </Button>
+              </Link>
+            </>
           )}
           <button
             type="button"
@@ -248,13 +270,22 @@ export function WebsiteClientOnboarding({
               </div>
 
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => openGuideWithTab(step.tab)}
-                  className="rounded-full border border-line px-2.5 py-1 text-[11px] font-semibold text-blue transition hover:border-blue hover:bg-blue/5"
-                >
-                  {step.actionText}
-                </button>
+                {step.id === "edit" && firstPageId ? (
+                  <Link
+                    to={`/website/pages/${firstPageId}?walkthrough=interactive`}
+                    className="rounded-full border border-blue bg-blue/10 px-3 py-1 text-[11px] font-semibold text-blue-600 transition hover:bg-blue hover:text-white shadow-2xs"
+                  >
+                    Start In-Editor Tour →
+                  </Link>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => openGuideWithTab(step.tab)}
+                    className="rounded-full border border-line px-2.5 py-1 text-[11px] font-semibold text-blue transition hover:border-blue hover:bg-blue/5"
+                  >
+                    {step.actionText}
+                  </button>
+                )}
               </div>
             </div>
           );

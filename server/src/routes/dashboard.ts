@@ -1,3 +1,4 @@
+import { getOrLoad } from "../lib/cache.js";
 import { Router } from "express";
 import { prisma } from "../lib/prisma.js";
 import { gapsReadyToDecide } from "../services/agents/hiring.js";
@@ -10,8 +11,10 @@ dashboardRouter.use(gateBy({ view: "dashboard.view" }));
 // GET /api/dashboard — the "Revenue Dashboard" workflow: total revenue this
 // month, recurring revenue, outstanding invoices, pipeline value, all
 // computed live (no manual reporting).
-dashboardRouter.get("/", async (_req, res, next) => {
+dashboardRouter.get("/", async (req, res, next) => {
   try {
+    const result = await getOrLoad({ scope: "internal", resource: "dashboard", identity: req.dbUser!.id },
+      { ttlMs: 30_000, bypass: req.get("X-DW-Cache-Bypass") === "1" }, async () => {
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const weekAhead = new Date(now.getTime() + 7 * 24 * 60 * 60_000);
@@ -65,7 +68,7 @@ dashboardRouter.get("/", async (_req, res, next) => {
     // Read-only — deciding still happens on the Agent Creator's proposal.
     const hiringGaps = await gapsReadyToDecide();
 
-    res.json({
+    return {
       revenueThisMonth: invoicesThisMonth._sum.amountTotal ?? 0,
       monthlyRecurringRevenue: activeCarePlans._sum.monthlyFee ?? 0,
       activeCarePlanCount: activeCarePlans._count,
@@ -100,7 +103,9 @@ dashboardRouter.get("/", async (_req, res, next) => {
         unreviewed: hiringGaps.filter((gap) => gap.reviewTaskId === null).length,
         gaps: hiringGaps,
       },
+    };
     });
+    res.json(result);
   } catch (err) {
     next(err);
   }

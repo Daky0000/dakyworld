@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { beforeWebsiteExternalAction } from "./websiteWorkContext.js";
 import { SETTING, getSetting } from "./settings.js";
 
 /**
@@ -119,6 +120,7 @@ type Attempt<T> = { value: T } | { retryIn: number; error: GitHubError };
 async function attemptRequest<T>(path: string, options: { method?: "GET" | "POST" | "PATCH" | "PUT"; body?: unknown; token?: string }): Promise<Attempt<T>> {
   const token = options.token ?? credential.getStore()?.token ?? (await getSetting(SETTING.GITHUB_TOKEN));
   if (!token) throw new GitHubNotConfiguredError();
+  if ((options.method ?? "GET") !== "GET") await beforeWebsiteExternalAction();
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);

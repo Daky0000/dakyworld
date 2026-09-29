@@ -17,7 +17,15 @@ import { createRequire } from "node:module";
  * script, never at lookup time; package.json overrides it to a patched version.
  */
 
-type Lookup = (ip: string) => { country?: string } | null;
+type LookupResult = {
+  country?: string;
+  name?: string;
+  capital?: string;
+  continent?: string;
+  continent_name?: string;
+} | null;
+
+type Lookup = (ip: string) => LookupResult;
 
 let lookup: Lookup | null | undefined;
 
@@ -34,18 +42,56 @@ function loader(): Lookup | null {
   return lookup;
 }
 
-/** A two-letter country code, or null for a private, unknown or malformed address. */
-export function countryForIp(ip: string | null | undefined): string | null {
+/**
+ * Strips port, IPv6 brackets, and IPv4-mapped IPv6 prefixes so GeoIP lookup
+ * receives a pure, bare IP address.
+ */
+function cleanLookupIp(ip: string | null | undefined): string | null {
   if (!ip) return null;
-  // Express reports IPv4 clients on a dual-stack socket as ::ffff:1.2.3.4.
-  const address = ip.trim().replace(/^::ffff:/i, "");
+  let clean = ip.trim();
+  clean = clean.replace(/^::ffff:/i, "");
+  // Bracketed IPv6: [2001:db8::1]:8080 or [2001:db8::1]
+  const bracket = clean.match(/^\[([a-fA-F0-9:]+)\](?::\d+)?$/);
+  if (bracket) return bracket[1]!;
+  // IPv4 with port: 1.2.3.4:8080
+  const ipv4Port = clean.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):\d+$/);
+  if (ipv4Port) return ipv4Port[1]!;
+  return clean || null;
+}
+
+export interface GeoIpRecord {
+  country: string;
+  name?: string;
+  capital?: string;
+  continent?: string;
+  continentName?: string;
+}
+
+/** Look up full GeoIP record from MaxMind country database. */
+export function lookupIpRecord(ip: string | null | undefined): GeoIpRecord | null {
+  const address = cleanLookupIp(ip);
   if (!address) return null;
   const find = loader();
   if (!find) return null;
   try {
-    const code = find(address)?.country;
-    return typeof code === "string" && /^[A-Z]{2}$/.test(code) ? code : null;
+    const res = find(address);
+    if (!res || typeof res.country !== "string" || !/^[A-Z]{2}$/.test(res.country)) {
+      return null;
+    }
+    return {
+      country: res.country,
+      name: res.name,
+      capital: res.capital,
+      continent: res.continent,
+      continentName: res.continent_name,
+    };
   } catch {
     return null;
   }
+}
+
+/** A two-letter country code, or null for a private, unknown or malformed address. */
+export function countryForIp(ip: string | null | undefined): string | null {
+  const record = lookupIpRecord(ip);
+  return record ? record.country : null;
 }

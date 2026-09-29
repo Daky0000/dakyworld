@@ -24,7 +24,7 @@ export function ClientDetail() {
 
   const { data: client, isLoading } = useQuery({
     queryKey: ["clients", id],
-    queryFn: () => api.get<ClientDetailData>(`/clients/${id}`),
+    queryFn: ({ signal }) => api.get<ClientDetailData>(`/clients/${id}`, signal),
   });
 
   const totals = useMemo(() => {

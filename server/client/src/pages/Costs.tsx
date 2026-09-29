@@ -43,7 +43,7 @@ export function Costs() {
 
   const { data, isLoading } = useQuery({
     queryKey: ["costs", days],
-    queryFn: () => api.get<CostReport>(`/costs?days=${days}`),
+    queryFn: ({ signal }) => api.get<CostReport>(`/costs?days=${days}`, signal),
   });
 
   const summary = data?.summary;
@@ -399,7 +399,7 @@ function Budgets({ agentKeys, toolKeys }: { agentKeys: string[]; toolKeys: strin
   const client = useQueryClient();
   const { data } = useQuery({
     queryKey: ["costs", "budgets"],
-    queryFn: () => api.get<{ budgets: BudgetRow[] }>("/costs/budgets"),
+    queryFn: ({ signal }) => api.get<{ budgets: BudgetRow[] }>("/costs/budgets", signal),
   });
   const budgets = data?.budgets ?? [];
 

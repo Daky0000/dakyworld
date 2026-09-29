@@ -1,3 +1,5 @@
+import { withModelCapacity } from "./modelCapacity.js";
+import { beforeWebsiteExternalAction, currentWebsiteWork } from "./websiteWorkContext.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { recordLlmCall } from "./llmLedger.js";
 import { AnalystError, analystKey, type Effort } from "./claude.js";
@@ -656,7 +658,7 @@ class WireError extends Error {
  * "try the next model" or "lose the run" is the caller's decision, and it
  * depends on what else is connected.
  */
-async function chatCompletionsTurn(args: {
+async function chatCompletionsTurnUnbounded(args: {
   vendor: ChatCompletionsVendor;
   apiKey: string;
   model: string;
@@ -880,7 +882,7 @@ function toGeminiContents(messages: Anthropic.Beta.BetaMessageParam[]): Record<s
  * loop's Anthropic-shaped vocabulary here, so nothing downstream knows or
  * cares that this run finished on Gemini.
  */
-async function geminiTurn(args: {
+async function geminiTurnUnbounded(args: {
   apiKey: string;
   model: string;
   system: string;
@@ -1424,7 +1426,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
             if (!apiKey) {
               throw new AnalystError(503, "No Anthropic API key is set. Add one under Settings → AI models before an agent can work.");
             }
-            client = new Anthropic({ apiKey });
+            client = new Anthropic({ apiKey, maxRetries: currentWebsiteWork() ? 0 : 2 });
           }
           const anth = client;
           // Resolved here, for this vendor, rather than taken from the `model`
@@ -1443,8 +1445,9 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
           // `checks/agentLoopNvidia.ts` now reads the model out of the
           // *request body*, which is the only place the truth was.
           const claudeModel = await modelForVendor("anthropic", effort);
-          const send = (withFallbacks: boolean) =>
-            anth.beta.messages.create({
+          const send = (withFallbacks: boolean) => withModelCapacity(async () => {
+            await beforeWebsiteExternalAction();
+            return anth.beta.messages.create({
               model: claudeModel,
               max_tokens: MAX_TOKENS,
               system,
@@ -1457,6 +1460,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
               messages: withCacheBreakpoints(withoutThoughtSignatures(messages)),
               ...(withFallbacks ? { betas: [FALLBACK_BETA], fallbacks: "default" as const } : {}),
             });
+          });
 
           try {
             response = await send(fallbacksAvailable);
@@ -1760,4 +1764,11 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
   }
 
   return finish(true, "hit the iteration cap");
+}
+async function chatCompletionsTurn(args: Parameters<typeof chatCompletionsTurnUnbounded>[0]): Promise<WireTurn> {
+  return withModelCapacity(async () => { await beforeWebsiteExternalAction(); return chatCompletionsTurnUnbounded(args); });
+}
+
+async function geminiTurn(args: Parameters<typeof geminiTurnUnbounded>[0]): Promise<WireTurn> {
+  return withModelCapacity(async () => { await beforeWebsiteExternalAction(); return geminiTurnUnbounded(args); });
 }

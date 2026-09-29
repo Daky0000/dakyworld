@@ -34,19 +34,19 @@ export function Inbox() {
 
   const { data: status } = useQuery({
     queryKey: ["inbox-status"],
-    queryFn: () => api.get<InboxStatus>("/inbox/status"),
+    queryFn: ({ signal }) => api.get<InboxStatus>("/inbox/status", signal),
     refetchInterval: 30_000,
   });
 
   const { data: messages, isLoading } = useQuery({
     queryKey: ["inbox", tab],
-    queryFn: () => api.get<InboxMessageRow[]>(`/inbox?openOnly=${tab === "open" ? "true" : "false"}`),
+    queryFn: ({ signal }) => api.get<InboxMessageRow[]>(`/inbox?openOnly=${tab === "open" ? "true" : "false"}`, signal),
     enabled: tab !== "conversations",
   });
 
   const { data: threads } = useQuery({
     queryKey: ["inbox-threads"],
-    queryFn: () => api.get<MailThreadRow[]>("/inbox/threads"),
+    queryFn: ({ signal }) => api.get<MailThreadRow[]>("/inbox/threads", signal),
     enabled: tab === "conversations",
   });
 
@@ -317,8 +317,8 @@ function MessageDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const [agentKey, setAgentKey] = useState("");
   const [why, setWhy] = useState("");
 
-  const { data: message } = useQuery({ queryKey: ["inbox-message", id], queryFn: () => api.get<InboxMessageDetail>(`/inbox/${id}`) });
-  const { data: roster } = useQuery({ queryKey: ["agents"], queryFn: () => api.get<AgentList>("/agents") });
+  const { data: message } = useQuery({ queryKey: ["inbox-message", id], queryFn: ({ signal }) => api.get<InboxMessageDetail>(`/inbox/${id}`, signal) });
+  const { data: roster } = useQuery({ queryKey: ["agents"], queryFn: ({ signal }) => api.get<AgentList>("/agents", signal) });
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["inbox"] });
@@ -485,7 +485,7 @@ function MessageDrawer({ id, onClose }: { id: string; onClose: () => void }) {
 }
 
 function ThreadDrawer({ id, onClose, onOpenMessage }: { id: string; onClose: () => void; onOpenMessage: (id: string) => void }) {
-  const { data: thread } = useQuery({ queryKey: ["inbox-thread", id], queryFn: () => api.get<MailThreadDetail>(`/inbox/threads/${id}`) });
+  const { data: thread } = useQuery({ queryKey: ["inbox-thread", id], queryFn: ({ signal }) => api.get<MailThreadDetail>(`/inbox/threads/${id}`, signal) });
 
   return (
     <Drawer open onClose={onClose} title={thread?.subject ?? "Conversation"}>

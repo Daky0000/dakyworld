@@ -38,7 +38,7 @@ export function Messages() {
   const [composing, setComposing] = useState<MessageTarget | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
 
-  const { data: status } = useQuery({ queryKey: ["messaging-status"], queryFn: () => api.get<MessagingStatus>("/messages/status") });
+  const { data: status } = useQuery({ queryKey: ["messaging-status"], queryFn: ({ signal }) => api.get<MessagingStatus>("/messages/status", signal) });
 
   const compose = (target: MessageTarget) => {
     setComposing(target);
@@ -153,7 +153,7 @@ function Reach({ onCompose }: { onCompose: (target: MessageTarget) => void }) {
   const [status, setStatus] = useState("");
   const { data: leads, isLoading } = useQuery({
     queryKey: ["phone-only", status],
-    queryFn: () => api.get<PhoneOnlyLead[]>(`/messages/phone-only${status ? `?status=${status}` : ""}`),
+    queryFn: ({ signal }) => api.get<PhoneOnlyLead[]>(`/messages/phone-only${status ? `?status=${status}` : ""}`, signal),
   });
 
   if (isLoading) return <div className="text-sm text-muted">Looking…</div>;
@@ -237,7 +237,7 @@ function Conversations({ onCompose }: { onCompose: (target: MessageTarget) => vo
   const [openThread, setOpenThread] = useState<string | null>(null);
   const { data: threads, isLoading } = useQuery({
     queryKey: ["message-threads"],
-    queryFn: () => api.get<MessageThreadRow[]>("/messages/threads"),
+    queryFn: ({ signal }) => api.get<MessageThreadRow[]>("/messages/threads", signal),
     // A reply lands over a webhook while this screen is open, and the whole
     // value of the 24-hour window is acting inside it.
     refetchInterval: 60_000,
@@ -287,7 +287,7 @@ function ThreadDrawer({ id, onClose, onCompose }: { id: string | null; onClose: 
   const { data: thread } = useQuery({
     queryKey: ["message-thread", id],
     enabled: Boolean(id),
-    queryFn: () => api.get<MessageThreadDetail>(`/messages/threads/${id}`),
+    queryFn: ({ signal }) => api.get<MessageThreadDetail>(`/messages/threads/${id}`, signal),
   });
 
   const markRead = useMutation({
@@ -399,7 +399,7 @@ function Outbox() {
   const [filter, setFilter] = useState<MessageStatus | "">("");
   const { data: messages, isLoading } = useQuery({
     queryKey: ["messages", filter],
-    queryFn: () => api.get<MessageRow[]>(`/messages${filter ? `?status=${filter}` : ""}`),
+    queryFn: ({ signal }) => api.get<MessageRow[]>(`/messages${filter ? `?status=${filter}` : ""}`, signal),
   });
 
   const send = useMutation({
@@ -492,7 +492,7 @@ function Templates() {
 
   const { data } = useQuery({
     queryKey: ["whatsapp-templates"],
-    queryFn: () => api.get<{ templates: WhatsAppTemplateRow[]; starters: StarterTemplate[]; configured: boolean }>("/messages/templates"),
+    queryFn: ({ signal }) => api.get<{ templates: WhatsAppTemplateRow[]; starters: StarterTemplate[]; configured: boolean }>("/messages/templates", signal),
   });
 
   const sync = useMutation({
@@ -603,7 +603,7 @@ function Templates() {
 
 function Suppression() {
   const qc = useQueryClient();
-  const { data: rows } = useQuery({ queryKey: ["message-suppression"], queryFn: () => api.get<MessageSuppressionRow[]>("/messages/suppression") });
+  const { data: rows } = useQuery({ queryKey: ["message-suppression"], queryFn: ({ signal }) => api.get<MessageSuppressionRow[]>("/messages/suppression", signal) });
 
   const remove = useMutation({
     mutationFn: (id: string) => api.delete(`/messages/suppression/${id}`),

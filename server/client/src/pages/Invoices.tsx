@@ -14,7 +14,7 @@ export function Invoices() {
 
   const { data: invoices, isLoading } = useQuery({
     queryKey: ["invoices"],
-    queryFn: () => api.get<Invoice[]>("/invoices"),
+    queryFn: ({ signal }) => api.get<Invoice[]>("/invoices", signal),
   });
 
   const generatePdf = useMutation({

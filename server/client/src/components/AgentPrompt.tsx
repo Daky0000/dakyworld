@@ -110,7 +110,7 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
 
   const { data: compiled, isLoading } = useQuery({
     queryKey: ["agent-prompt", agent.key],
-    queryFn: () => api.get<CompiledPrompt>(`/agents/${agent.key}/prompt/compiled`),
+    queryFn: ({ signal }) => api.get<CompiledPrompt>(`/agents/${agent.key}/prompt/compiled`, signal),
   });
 
   const [prose, setProse] = useState("");
@@ -208,7 +208,7 @@ export function AgentPromptEditor({ agent }: { agent: AgentDetail }) {
 
   const { data: shipped } = useQuery({
     queryKey: ["agent-shipped", agent.key],
-    queryFn: () => api.get<ShippedPrompt>(`/agents/${agent.key}/prompt/shipped`),
+    queryFn: ({ signal }) => api.get<ShippedPrompt>(`/agents/${agent.key}/prompt/shipped`, signal),
     enabled: comparing && agent.resettable,
   });
 
@@ -586,7 +586,7 @@ function WriterBriefRow({
 
   const { data: brief, isLoading } = useQuery({
     queryKey: ["writer-brief", agentKey, job],
-    queryFn: () => api.get<WriterBrief>(`/agents/${agentKey}/writes/${job}`),
+    queryFn: ({ signal }) => api.get<WriterBrief>(`/agents/${agentKey}/writes/${job}`, signal),
     enabled: open,
   });
 

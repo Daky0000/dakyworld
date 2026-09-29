@@ -1,8 +1,9 @@
+import { DeferredPanel } from "../components/DeferredPanel";
 import { formatActiveText } from "../lib/websiteTextSelection";
 import { WebsiteRichText } from "../components/WebsiteRichText";
 import { WebsiteTextFormatting } from "../components/WebsiteTextFormatting";
 import { WebsiteInteractionStyles } from "../components/WebsiteInteractionStyles";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError, apiUrl } from "../lib/api";
@@ -10,7 +11,8 @@ import { useAuth } from "../lib/auth";
 import type { DraftConflict, DraftSaveResult, FieldEdit, PublishResult, SiteFieldRow, SiteSectionRow, SitePageDetail } from "../lib/types";
 import { Badge, Button, RelativeTime } from "../components/ui";
 import { WebsiteQuickStart } from "../components/WebsiteQuickStart";
-import { WebsiteGuideModal } from "../components/WebsiteGuideModal";
+
+
 import { WebsiteImageFraming } from "../components/WebsiteImageFraming";
 import { WebsitePresetPicker } from "../components/WebsiteBrandPresets";
 import type { BrandPreset } from "../lib/websiteBrandPresets";
@@ -20,19 +22,18 @@ import { PublishStatus } from "../components/PublishStatus";
 import { PublishReview, type WebsiteReview } from "../components/PublishReview";
 import { ElementInspector } from "../components/ElementInspector";
 import { ColorCodeInput, parseStyle, writeStyle } from "../components/InspectorControls";
+import { extractColorsFromMarkup } from "../lib/pageColors";
 import { INSPECTED_PROPERTIES, toHex, type ElementFacts } from "../lib/elementInspector";
 import { WebsiteLayers, WebsiteBreadcrumbs } from "../components/WebsiteLayers";
 import { WebsiteVersions } from "../components/WebsiteVersions";
+
 import { WebsiteAssistant } from "../components/WebsiteAssistant";
 import { WebsiteAgentChat } from "../components/WebsiteAgentChat";
 import { WebsitePageSeoInspector } from "../components/WebsitePageSeoInspector";
 import { WebsiteTierStatusBanner, notifyTierStatusChanged, useWebsiteTierStatus } from "../components/WebsiteTierStatusBanner";
-import {
-  WebsiteClientReportModal,
-  WebsiteCommandPaletteModal,
-  WebsiteRevisionCommentsModal,
-  WebsiteSectionLibraryModal,
-} from "../components/WebsiteCommandAndSections";
+import { FieldRow } from "../components/WebsiteFieldRow";
+import { ConflictDialog } from "../components/WebsiteConflictDialog";
+
 import {
   IconArrowLeft,
   IconBookOpen,
@@ -108,6 +109,14 @@ import type { IconChoice } from "../lib/types";
  * sees, so it is a button somebody presses on purpose.
  */
 
+const WebsiteGuideModal = lazy(() => import("../components/WebsiteGuideModal").then(module => ({ default: module.WebsiteGuideModal })));
+const WebsiteFindReplaceModal = lazy(() => import("../components/WebsiteFindReplaceModal").then(module => ({ default: module.WebsiteFindReplaceModal })));
+const WebsiteSpotlightWalkthrough = lazy(() => import("../components/WebsiteSpotlightWalkthrough").then(module => ({ default: module.WebsiteSpotlightWalkthrough })));
+const WebsiteClientReportModal = lazy(() => import("../components/WebsiteCommandAndSections").then(module => ({ default: module.WebsiteClientReportModal })));
+const WebsiteCommandPaletteModal = lazy(() => import("../components/WebsiteCommandAndSections").then(module => ({ default: module.WebsiteCommandPaletteModal })));
+const WebsiteRevisionCommentsModal = lazy(() => import("../components/WebsiteCommandAndSections").then(module => ({ default: module.WebsiteRevisionCommentsModal })));
+const WebsiteSectionLibraryModal = lazy(() => import("../components/WebsiteCommandAndSections").then(module => ({ default: module.WebsiteSectionLibraryModal })));
+
 const DEVICES = [
   { key: "desktop", label: "Desktop", width: "1280px" },
   { key: "tablet", label: "Tablet", width: "820px" },
@@ -154,492 +163,8 @@ const LIVE_KEYS = new Set(["value", "style", "responsive", "variant", "newTab", 
  * the middle. The DOM owns the content while it is being typed in, and the
  * component is remounted by its key when the page reloads underneath it.
  */
-/** `btn-primary` under stem `btn` reads as "Primary". */
-function variantLabel(stem: string | undefined, variant: string): string {
-  if (!stem || !variant.startsWith(`${stem}-`)) return variant;
-  const word = variant.slice(stem.length + 1).replace(/[-_]+/g, " ").trim();
-  return word ? word.charAt(0).toUpperCase() + word.slice(1) : variant;
-}
 
-/**
- * The two things a button has that a link does not.
- *
- * **Its style.** Until now the only way to turn the lime button on a page into
- * the dark one was to edit HTML, which is the thing this editor exists to
- * avoid. The choices are the styles this page already wears somewhere, so
- * picking one can never produce a button the stylesheet has no rule for — and
- * "None" is offered because taking a style off is a real thing to want and
- * there is otherwise no way back to a plain link.
- *
- * **Whether it opens in a new tab.** One switch, never two: the server writes
- * `rel="noopener noreferrer"` alongside `target="_blank"` and takes both away
- * together, because `target` on its own hands the page it opens a live handle
- * on the one it came from, and nobody choosing "open in a new tab" is choosing
- * that.
- */
-function ButtonControls({
-  field,
-  edit,
-  siteId,
-  publicUrl,
-  onChange,
-  readOnly,
-}: {
-  field: SiteFieldRow;
-  edit: FieldEdit | undefined;
-  siteId?: string;
-  publicUrl: string;
-  onChange: (next: FieldEdit) => void;
-  /** Offered only on a field the editor could unlock by naming it in the code.
-   * Absent everywhere else, so the button never appears where it cannot help. */
-  onNameFields?: () => void;
-  naming?: boolean;
-  readOnly: boolean;
-}) {
-  const variant = edit?.variant !== undefined ? edit.variant : (field.variant ?? null);
-  const newTab = edit?.newTab ?? field.newTab ?? false;
-  // A button with nothing to change to has no control drawn at all, rather than
-  // one drawn with a single option in it that is already selected. A button
-  // wearing no style yet still gets one — that is how a style is *added*.
-  const choices = field.variants ?? [];
-  const canRestyle = choices.some((candidate) => candidate !== variant);
 
-  return (
-    <div className="mt-2 space-y-2">
-      {canRestyle && (
-        <div>
-          <span className="mb-1 block text-xs text-muted">Style</span>
-          <div className="flex flex-wrap gap-1">
-            {choices.map((candidate) => (
-              <button
-                key={candidate}
-                type="button"
-                disabled={readOnly}
-                onClick={() => onChange({ ...edit, variant: candidate })}
-                className={`rounded-xl border px-2.5 py-1 text-[12px] ${
-                  variant === candidate ? "border-ink bg-ink text-cream" : "border-line bg-white text-ink hover:border-ink/40"
-                } disabled:opacity-50`}
-              >
-                {variantLabel(field.variantStem, candidate)}
-              </button>
-            ))}
-            <button
-              type="button"
-              disabled={readOnly}
-              onClick={() => onChange({ ...edit, variant: null })}
-              className={`rounded-xl border px-2.5 py-1 text-[12px] ${
-                variant === null ? "border-ink bg-ink text-cream" : "border-line bg-white text-muted hover:border-ink/40"
-              } disabled:opacity-50`}
-            >
-              None
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Absent on a `<button>`, which has nowhere to go and so no tab to open. */}
-      {field.newTab !== undefined && (
-        <label className="flex items-center gap-2 text-[12px] text-ink">
-          <input
-            type="checkbox"
-            checked={newTab}
-            disabled={readOnly}
-            onChange={(event) => onChange({ ...edit, newTab: event.target.checked })}
-            className="h-3.5 w-3.5 accent-blue"
-          />
-          <span>Opens in a new tab</span>
-        </label>
-      )}
-
-      {(field.icon !== undefined || field.iconAddable) && (
-        <WebsiteIconPicker
-          siteId={siteId}
-          publicUrl={publicUrl}
-          current={field.icon}
-          currentType={field.iconType}
-          addable={field.iconAddable}
-          position={field.iconPosition}
-          choice={edit?.icon}
-          choicePosition={edit?.iconPosition ?? field.iconPosition}
-          readOnly={readOnly}
-          onChoose={(nextIcon, side) => onChange({ ...edit, icon: nextIcon, ...(side ? { iconPosition: side } : {}) })}
-          onReset={() => {
-            const next = { ...edit };
-            delete next.icon;
-            delete next.iconPosition;
-            onChange(next);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function FieldRow({
-  field,
-  edit,
-  problem,
-  siteId,
-  publicUrl,
-  resolveImagePreview,
-  links,
-  onChange,
-  onNameFields,
-  naming,
-  readOnly,
-  bare,
-  onOpenMediaLibrary,
-  computedBackgroundUrl,
-}: {
-  field: SiteFieldRow;
-  edit: FieldEdit | undefined;
-  problem: string | undefined;
-  siteId?: string;
-  publicUrl: string;
-  resolveImagePreview?: (url: string) => string;
-  /** The site's own pages, so a destination is picked rather than spelled. */
-  links: Array<{ path: string; title: string }>;
-  onChange: (next: FieldEdit) => void;
-  /** Offered only on a field the editor could unlock by naming it in the code.
-   * Absent everywhere else, so the button never appears where it cannot help. */
-  onNameFields?: () => void;
-  naming?: boolean;
-  readOnly: boolean;
-  /** Inside the visual panel, where the card's own border and title are noise. */
-  bare?: boolean;
-  onOpenMediaLibrary?: () => void;
-  computedBackgroundUrl?: string;
-}) {
-  // A field on a built page that no literal in the source produced. It is real
-  // and it is on the page; it is simply not ours to change, and saying so here
-  // is the difference between knowing now and being refused at the publish.
-  readOnly = readOnly || field.sourceManaged === true;
-  const value = edit?.value ?? field.value;
-  const href = edit?.href ?? field.href ?? "";
-  const alt = edit?.alt ?? field.alt ?? "";
-  const changed = edit !== undefined && Object.keys(edit).length > 0;
-
-  const imageSrc = useMemo(() => {
-    if (field.kind !== "image") return null;
-    if (resolveImagePreview) return resolveImagePreview(value);
-    try {
-      return new URL(value, `${publicUrl.replace(/\/+$/, "")}/`).toString();
-    } catch {
-      return null;
-    }
-  }, [field.kind, value, publicUrl, resolveImagePreview]);
-
-  if (field.kind === "container") {
-    const rawBg = edit?.style ?? field.style ?? computedBackgroundUrl ?? "";
-    const bgMatch = /url\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(rawBg);
-    const containerBgUrl = bgMatch?.[1] || (/^(?:https?:|\/|data:image\/)/i.test(rawBg.trim()) ? rawBg.trim() : "");
-    const previewSrc = containerBgUrl ? (resolveImagePreview ? resolveImagePreview(containerBgUrl) : containerBgUrl) : null;
-    return (
-      <div className="space-y-2">
-        {previewSrc && (
-          <div className="flex items-center gap-3 rounded-xl border border-line bg-sunken p-2.5">
-            <img src={previewSrc} alt="" className="h-12 w-12 rounded-lg border border-line bg-white object-cover" onError={(e) => ((e.target as HTMLImageElement).style.display = "none")} />
-            <div className="min-w-0 flex-1">
-              <span className="block truncate text-xs font-semibold text-ink">Background Image</span>
-              <span className="block truncate font-mono text-[10px] text-muted">{containerBgUrl}</span>
-            </div>
-            {onOpenMediaLibrary && !readOnly && (
-              <button
-                type="button"
-                onClick={onOpenMediaLibrary}
-                className="shrink-0 rounded-lg border border-line bg-white px-2 py-1 text-xs font-semibold text-ink hover:border-blue hover:text-blue"
-              >
-                Change
-              </button>
-            )}
-          </div>
-        )}
-        <p className="text-xs leading-relaxed text-muted">Select a child to edit its content, or use the controls below to style this container.</p>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className={
-        bare
-          ? ""
-          : `rounded-2xl border p-4 ${problem ? "border-warn-line bg-warn-surface/40" : changed ? "border-blue/40 bg-blue/[.02]" : "border-line bg-white"}`
-      }
-    >
-      {!bare && (
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <span className="text-xs font-bold uppercase tracking-[.1em] text-muted">{field.label}</span>
-          {changed && <Badge tone="warn">Changed</Badge>}
-        </div>
-      )}
-      {bare && changed && (
-        <div className="mb-2">
-          <Badge tone="warn">Changed</Badge>
-        </div>
-      )}
-
-      {(field.kind === "richtext" || (field.kind === "text" && field.tag !== "title" && field.tag !== "meta")) && <WebsiteRichText label={field.label} html={value} readOnly={readOnly} onChange={(next) => onChange({ ...edit, value: next })} />}
-
-      {field.kind === "text" && (field.tag === "title" || field.tag === "meta") && (
-        <textarea
-          className={`${INPUT} resize-y`}
-          rows={value.length > 90 ? 3 : 1}
-          value={value}
-          readOnly={readOnly}
-          onChange={(event) => onChange({ ...edit, value: event.target.value })}
-        />
-      )}
-
-      {(field.kind === "link" || field.kind === "button") && (
-        <>
-          <div className={`grid gap-2 ${bare ? "" : "sm:grid-cols-2"}`}>
-            <label className="block">
-              <span className="mb-1 block text-xs text-muted">
-                {field.kind === "button" ? "Words on the button" : "Words on the link"}
-              </span>
-              <WebsiteRichText label={field.label} html={value} readOnly={readOnly || !field.value} onChange={next => onChange({ ...edit, value: next })} />
-            </label>
-            {/* A `<button>` has no destination — where it leads is decided by
-                script — so the box is not drawn rather than drawn and inert. */}
-            {field.href !== undefined && (
-              <label className="block">
-                <span className="mb-1 block text-xs text-muted">Where it goes</span>
-                <input
-                  className={`${INPUT} font-mono text-xs`}
-                  value={href}
-                  readOnly={readOnly}
-                  list={`${field.id}-links`}
-                  onChange={(event) => onChange({ ...edit, href: event.target.value })}
-                />
-                {/* The site's own pages, offered rather than imposed. Typing
-                    `contact` instead of `/contact` is a link to nowhere that
-                    looks exactly like a link until a visitor clicks it — and an
-                    address off the site, an anchor and a mailto: all still go in
-                    the same box. */}
-                <datalist id={`${field.id}-links`}>
-                  {links.map((link) => (
-                    <option key={link.path} value={link.path}>
-                      {link.title}
-                    </option>
-                  ))}
-                </datalist>
-              </label>
-            )}
-          </div>
-          {field.kind === "button" && <ButtonControls field={field} edit={edit} siteId={siteId} publicUrl={publicUrl} onChange={onChange} readOnly={readOnly} />}
-        </>
-      )}
-
-      {field.kind === "image" && (
-        <div className={`flex flex-wrap items-start gap-4 ${bare ? "flex-col" : ""}`}>
-          <div className="flex items-center gap-3">
-            {imageSrc ? (
-              <img
-                src={imageSrc}
-                alt=""
-                className="h-16 w-16 rounded-xl border border-line bg-cream object-contain p-1"
-                onError={(event) => ((event.target as HTMLImageElement).style.visibility = "hidden")}
-              />
-            ) : (
-              <div className="flex h-16 w-16 items-center justify-center rounded-xl border border-line bg-cream text-muted">
-                <IconImage size={24} />
-              </div>
-            )}
-            {onOpenMediaLibrary && !readOnly && (
-              <button
-                type="button"
-                onClick={onOpenMediaLibrary}
-                className="rounded-lg border border-line bg-white px-2.5 py-1 text-xs font-semibold text-ink transition hover:border-blue hover:text-blue"
-              >
-                Media Library
-              </button>
-            )}
-          </div>
-          <div className={`space-y-2 ${bare ? "w-full" : "min-w-[240px] flex-1"}`}>
-            <label className="block">
-              <span className="mb-1 block text-xs text-muted">Picture file</span>
-              <input
-                className={`${INPUT} font-mono text-xs`}
-                value={value}
-                readOnly={readOnly}
-                onChange={(event) => onChange({ ...edit, value: event.target.value })}
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-xs text-muted">Description, for somebody who cannot see it</span>
-              <input
-                className={INPUT}
-                value={alt}
-                readOnly={readOnly}
-                placeholder={field.decorative ? "Marked as decoration" : ""}
-                onChange={(event) => onChange({ ...edit, alt: event.target.value })}
-              />
-            </label>
-          </div>
-        </div>
-      )}
-
-      {field.kind === "icon" && (
-        <WebsiteIconPicker
-          siteId={siteId}
-          publicUrl={publicUrl}
-          current={field.icon}
-          currentType={field.iconType}
-          choice={edit?.icon}
-          readOnly={readOnly}
-          onChoose={(nextIcon) => onChange({ ...edit, icon: nextIcon, ...(nextIcon && "src" in nextIcon ? { value: nextIcon.src } : {}) })}
-          onReset={() => {
-            const next = { ...edit };
-            delete next.icon;
-            onChange(next);
-          }}
-          onOpenMediaLibrary={onOpenMediaLibrary}
-        />
-      )}
-
-      {field.sourceManaged && (
-        <div className="mt-2 rounded-[10px] bg-sunken px-2 py-1 text-xs text-muted">
-          <p>{field.sourceNote ?? "This is written by the code that builds this page, so it cannot be changed here."}</p>
-          {field.sourceNameable && onNameFields && (
-            <button type="button" className="mt-1.5 rounded-[10px] bg-ink px-2 py-1 text-[11px] font-semibold text-cream disabled:opacity-60" disabled={naming} onClick={onNameFields}>
-              {naming ? "Naming…" : "Name these fields"}
-            </button>
-          )}
-        </div>
-      )}
-      {field.note && <p className="mt-2 text-xs text-muted">{field.note}</p>}
-      {problem && <p className="mt-2 text-xs font-semibold text-warn-text">{problem}</p>}
-    </div>
-  );
-}
-
-/** One side of a contested field, as words rather than as markup. */
-function sideText(edit: FieldEdit | null): string {
-  if (!edit) return "left as it was";
-  const parts: string[] = [];
-  if (edit.value !== undefined) parts.push(edit.value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() || "(nothing)");
-  if (edit.href !== undefined) parts.push(`links to ${edit.href || "(nowhere)"}`);
-  if (edit.alt !== undefined) parts.push(`described as "${edit.alt}"`);
-  if (edit.style !== undefined) parts.push(edit.style || "original stylesheet");
-  if (edit.responsive !== undefined) {
-    parts.push(`Tablet: ${edit.responsive.tablet || "inherit"}`, `Phone: ${edit.responsive.mobile || "inherit"}`);
-  }
-  if (edit.variant !== undefined) parts.push(`button style: ${edit.variant || "none"}`);
-  if (edit.newTab !== undefined) parts.push(edit.newTab ? "opens in new tab" : "opens in same tab");
-  if (edit.icon !== undefined) parts.push(edit.icon === null ? "icon removed" : "icon changed");
-  return parts.join(" · ") || "left as it was";
-}
-
-/**
- * Somebody else saved first — both versions, and a choice per field.
- *
- * Deliberately not a "your changes were lost" notice, because they were not:
- * the refused save changed nothing on the server, and the words are still in
- * this browser. It is also deliberately not an automatic merge. Two people
- * rewrote the same heading; a machine picking one of them and saying nothing is
- * how a client's approved copy quietly reverts to a draft nobody signed off.
- *
- * Fields only one person touched are not a decision and are not presented as
- * one — they are kept, both of them, and counted in a line at the bottom.
- */
-function ConflictDialog({
-  conflict,
-  onKeep,
-  onCancel,
-}: {
-  conflict: DraftConflict;
-  onKeep: (choices: Record<string, "yours" | "theirs">) => void;
-  onCancel: () => void;
-}) {
-  const contested = conflict.fields.filter((field) => field.contested);
-  const uncontested = conflict.fields.length - contested.length;
-  const [choices, setChoices] = useState<Record<string, "yours" | "theirs">>(() =>
-    Object.fromEntries(contested.map((field) => [field.id, "yours" as const])),
-  );
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-6">
-      <div className="flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-xl">
-        <div className="flex-none border-b border-line px-6 py-4">
-          <h2 className="font-display text-base tracking-[-.02em]">Somebody else saved this page</h2>
-          <p className="mt-1 text-xs text-muted">{conflict.error}</p>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-          {contested.length === 0 ? (
-            <p className="text-sm text-ink">
-              You both changed different parts of the page, so nothing has to be decided — keeping both is safe.
-            </p>
-          ) : (
-            <>
-              <div className="mb-3 flex items-center gap-2">
-                <span className="text-xs uppercase tracking-[.1em] text-muted">
-                  {contested.length} field{contested.length === 1 ? "" : "s"} you both changed
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setChoices(Object.fromEntries(contested.map((field) => [field.id, "yours" as const])))}
-                  className="ml-auto text-xs text-muted underline-offset-2 hover:text-ink hover:underline"
-                >
-                  Keep all mine
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setChoices(Object.fromEntries(contested.map((field) => [field.id, "theirs" as const])))}
-                  className="text-xs text-muted underline-offset-2 hover:text-ink hover:underline"
-                >
-                  Keep all theirs
-                </button>
-              </div>
-
-              <div className="space-y-3">
-                {contested.map((field) => (
-                  <div key={field.id} className="rounded-xl border border-line p-3">
-                    <div className="mb-2 text-xs font-bold uppercase tracking-[.08em] text-muted">{field.label}</div>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {(["yours", "theirs"] as const).map((side) => (
-                        <button
-                          key={side}
-                          type="button"
-                          onClick={() => setChoices((current) => ({ ...current, [field.id]: side }))}
-                          className={`rounded-xl border p-2.5 text-left text-xs transition ${
-                            choices[field.id] === side ? "border-blue bg-blue/[.06] text-ink" : "border-line text-muted hover:border-ink/30"
-                          }`}
-                        >
-                          <div className="mb-1 text-xs uppercase tracking-[.1em]">
-                            {side === "yours" ? "Yours" : conflict.savedBy?.name ?? "Theirs"}
-                          </div>
-                          <div className="break-words">{sideText(side === "yours" ? field.yours : field.theirs)}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {uncontested > 0 && (
-            <p className="mt-4 text-xs text-muted">
-              {uncontested} other change{uncontested === 1 ? "" : "s"} only one of you made. {uncontested === 1 ? "It is" : "They are"} kept
-              either way.
-            </p>
-          )}
-        </div>
-
-        <div className="flex flex-none items-center justify-end gap-2 border-t border-line px-6 py-3">
-          <Button variant="ghost" size="sm" onClick={onCancel}>
-            Leave it for now
-          </Button>
-          <Button size="sm" onClick={() => onKeep(choices)}>
-            Save this version
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export function WebsiteEditor() {
   const { pageId = "" } = useParams();
@@ -655,6 +180,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const [showPanel, setShowPanel] = useState(() => typeof window === "undefined" || window.innerWidth > 600);
   const [editorTheme, setEditorTheme] = useState(() => { try { return localStorage.getItem("website-editor-theme") || "dark"; } catch { return "dark"; } });
   const [showGuide, setShowGuide] = useState(false);
+  const [spotlightWalkthroughOpen, setSpotlightWalkthroughOpen] = useState(false);
   const [guideModalOpen, setGuideModalOpen] = useState(false);
   const [sectionLibraryOpen, setSectionLibraryOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -672,9 +198,33 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   }, []);
   useEffect(() => {
     if (!user?.id) return;
-    try { setDesignerMode(localStorage.getItem(`website-designer:${user.id}`) === "yes"); setShowGuide(localStorage.getItem(`website-guide:${user.id}`) !== "done"); } catch { setShowGuide(true); }
+    try {
+      setDesignerMode(localStorage.getItem(`website-designer:${user.id}`) === "yes");
+      setShowGuide(localStorage.getItem(`website-guide:${user.id}`) !== "done");
+    } catch {
+      setShowGuide(true);
+    }
   }, [user?.id]);
-  const closeGuide = () => { setShowGuide(false); try { localStorage.setItem(`website-guide:${user?.id}`, "done"); } catch { /* Preferences are optional. */ } };
+  useEffect(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get("walkthrough") === "interactive") {
+        setSpotlightWalkthroughOpen(true);
+      } else if (sp.get("walkthrough") === "true") {
+        setShowGuide(true);
+      }
+    } catch {}
+  }, []);
+  const closeGuide = () => {
+    setShowGuide(false);
+    setSpotlightWalkthroughOpen(false);
+    try {
+      localStorage.setItem(`website-guide:${user?.id}`, "done");
+      window.dispatchEvent(new CustomEvent("dw:walkthrough-completed"));
+    } catch {
+      /* Preferences are optional. */
+    }
+  };
   const localDraftKey = `website-draft:${user?.id}:${pageId}`;
   const recovered = useRef(false);
 
@@ -796,6 +346,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const [reviewOpen, setReviewOpen] = useState(false);
   const publishPending = useRef(false);
   const [showVersions, setShowVersions] = useState(false);
+  const [showFindReplace, setShowFindReplace] = useState(false);
   /** Optional assistant proposals join the same local draft and undo history. */
   const [showAI, setShowAI] = useState(false);
   const [assetModalOpen, setAssetModalOpen] = useState(false);
@@ -905,13 +456,13 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   // stale words and letting them think nothing worked.
   const page = useQuery({
     queryKey: ["website", "page", pageId],
-    queryFn: () => api.get<SitePageDetail>(`/website/pages/${pageId}`),
+    queryFn: ({ signal }) => api.get<SitePageDetail>(`/website/pages/${pageId}`, signal),
   });
 
   const mediaAssets = useQuery({
     queryKey: ["website", "assets", page.data?.site.id],
     enabled: !!page.data?.site.id,
-    queryFn: () => api.get<WebsiteMediaAsset[]>(`/website/sites/${page.data!.site.id}/assets`),
+    queryFn: ({ signal }) => api.get<WebsiteMediaAsset[]>(`/website/sites/${page.data!.site.id}/assets`, signal),
   });
   // A picker selection must be available to the live write immediately,
   // including before React renders or an upload invalidation finishes.
@@ -930,7 +481,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
   const access = useWebsiteAccess(page.data?.site.id);
   const canEdit = access.data?.capabilities.edit === true;
-  const design = useQuery({ queryKey: ["website", "design", page.data?.site.id], enabled: !!page.data?.site.id, queryFn: () => api.get<{ options: { colours: string[]; fonts: string[]; aiEnabled: boolean; presets: BrandPreset[] } }>(`/website/sites/${page.data!.site.id}/design`) });
+  const design = useQuery({ queryKey: ["website", "design", page.data?.site.id], enabled: !!page.data?.site.id, queryFn: ({ signal }) => api.get<{ options: { colours: string[]; fonts: string[]; aiEnabled: boolean; presets: BrandPreset[] } }>(`/website/sites/${page.data!.site.id}/design`, signal) });
 
   /* ------------------------------------------------------------- history */
 
@@ -1040,13 +591,23 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     if (kind === "image") {
       const previewUrl = resolveImagePreview(value ?? "");
       if (el.tagName === "IMG") {
-        el.setAttribute("src", previewUrl);
-        el.removeAttribute("srcset");
+        const currentSrc = el.getAttribute("src") || "";
+        const isCurrentPreview = currentSrc.includes("/api/website/sites/") && currentSrc.includes("/assets/");
+        const isUnresolvedUpload = previewUrl.includes("/assets/dw/") && !previewUrl.includes("/api/website/");
+        if (!isCurrentPreview || !isUnresolvedUpload) {
+          el.setAttribute("src", previewUrl);
+          el.removeAttribute("srcset");
+        }
       } else {
         const img = el.querySelector("img");
         if (img) {
-          img.setAttribute("src", previewUrl);
-          img.removeAttribute("srcset");
+          const currentSrc = img.getAttribute("src") || "";
+          const isCurrentPreview = currentSrc.includes("/api/website/sites/") && currentSrc.includes("/assets/");
+          const isUnresolvedUpload = previewUrl.includes("/assets/dw/") && !previewUrl.includes("/api/website/");
+          if (!isCurrentPreview || !isUnresolvedUpload) {
+            img.setAttribute("src", previewUrl);
+            img.removeAttribute("srcset");
+          }
         } else {
           const htmlEl = el as HTMLElement;
           htmlEl.style.backgroundImage = previewUrl ? `url('${previewUrl.replace(/['"\\]/g, "")}')` : "none";
@@ -1108,8 +669,17 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       return "written";
     }
     if (kind === "style") {
-      if (value) el.setAttribute("style", previewStyle(value));
-      else el.removeAttribute("style");
+      if (value) {
+        const nextStyle = previewStyle(value);
+        const currentStyle = el.getAttribute("style") || "";
+        const isCurrentPreview = currentStyle.includes("/api/website/sites/") && currentStyle.includes("/assets/");
+        const isUnresolvedUpload = nextStyle.includes("/assets/dw/") && !nextStyle.includes("/api/website/");
+        if (!isCurrentPreview || !isUnresolvedUpload) {
+          el.setAttribute("style", nextStyle);
+        }
+      } else {
+        el.removeAttribute("style");
+      }
       return "written";
     }
     if (kind === "variant") {
@@ -1185,12 +755,13 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     // Recovered drafts can replay before the asset query finishes. Refresh
     // their visual URLs once metadata arrives without changing saved values.
     const fields = (page.data?.sections ?? []).flatMap(section => section.fields);
-    for (const [id, edit] of Object.entries(latestEdits.current)) {
+    const currentEdits = { ...(page.data?.draft.values ?? {}), ...latestEdits.current };
+    for (const [id, edit] of Object.entries(currentEdits)) {
       if (edit.value !== undefined && fields.some(field => field.id === id && field.kind === "image")) writeInFrame("image", id, edit.value);
       if (edit.style !== undefined) writeInFrame("style", id, edit.style);
       if (edit.icon !== undefined) writeInFrame("icon", id, JSON.stringify(edit.icon));
     }
-  }, [mediaAssets.data, writeInFrame, page.data?.sections]);
+  }, [mediaAssets.data, writeInFrame, page.data?.sections, page.data?.draft.values]);
 
   const change = useCallback(
     (fieldId: string, next: FieldEdit, options?: { fromFrame?: boolean; commit?: boolean }) => {
@@ -1569,7 +1140,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         event.preventDefault();
         if (!canEdit || publishPending.current || structurePending.current) return;
         if (event.key === "Enter" && !access.data?.capabilities.publish) return;
-        void (async () => { try { if (dirty.current) await save.mutateAsync(latestEdits.current); if (event.key === "Enter" && !dirty.current) setReviewOpen(true); } catch {} })();
+        void (async () => {
+          try {
+            if (dirty.current) await save.mutateAsync(latestEdits.current);
+            if (event.key === "Enter") setReviewOpen(true);
+          } catch {}
+        })();
         return;
       }
       if ((event.ctrlKey || event.metaKey) && (event.key === "z" || event.key === "Z") && !inField) {
@@ -1673,7 +1249,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       const result = await api.post<{ revision: number; selectedId: string | null }>(`/website/pages/${pageId}/structure`, { kind, fieldId, targetId, ifRevision: revision.current });
       dirty.current = false;
       try { sessionStorage.removeItem(localDraftKey); } catch { /* Server checkpoint is saved. */ }
-      const refreshed = await qc.fetchQuery({ queryKey: ["website", "page", pageId], queryFn: () => api.get<SitePageDetail>(`/website/pages/${pageId}`), staleTime: 0 });
+      const refreshed = await qc.fetchQuery({ queryKey: ["website", "page", pageId], queryFn: ({ signal }) => api.get<SitePageDetail>(`/website/pages/${pageId}`, signal), staleTime: 0 });
       revision.current = refreshed.draft.revision; documentHash.current = refreshed.draft.documentHash ?? null;
       latestEdits.current = refreshed.draft.values; setEdits(refreshed.draft.values);
       if (kind !== "undo" && kind !== "redo") {
@@ -1726,6 +1302,15 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const allFields = (page.data?.sections ?? []).flatMap((candidate) => candidate.fields);
 
   const [pageColorTokens, setPageColorTokens] = useState<Array<{ key: string; label: string; value: string; isVar: boolean }>>([]);
+  const pagePalette = useMemo(() => {
+    const serverColours = design.data?.options.colours ?? [];
+    const fieldColours = extractColorsFromMarkup("", allFields);
+    const tokenColours = pageColorTokens.map((t) => t.value);
+    const combined = Array.from(new Set([...serverColours, ...tokenColours, ...fieldColours]))
+      .filter((c) => /^#[0-9A-Fa-f]{6}$/.test(c))
+      .slice(0, 16);
+    return combined.length > 0 ? combined : serverColours;
+  }, [design.data?.options.colours, pageColorTokens, allFields]);
   const [frameCapturedImages, setFrameCapturedImages] = useState<CapturedHtmlImage[]>([]);
   const [assetTargetMode, setAssetTargetMode] = useState<"image" | "background">("image");
 
@@ -1789,6 +1374,22 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           key: hex,
           label: `Page Color ${hex}`,
           value: hex,
+          isVar: false,
+        });
+      }
+
+      // Also extract all declared colours across inline styles, SVG elements and attributes
+      const docHtml = doc.documentElement?.outerHTML || "";
+      const markupColours = extractColorsFromMarkup(docHtml, allFields);
+      for (const hex of markupColours) {
+        if (tokens.length >= 24) break;
+        const norm = hex.toUpperCase();
+        if (seenHexes.has(norm)) continue;
+        seenHexes.add(norm);
+        tokens.push({
+          key: norm,
+          label: `Page Color ${norm}`,
+          value: norm,
           isVar: false,
         });
       }
@@ -2188,6 +1789,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
   const canvas = (
     <div
+      data-walkthrough="canvas"
       className="editor-canvas min-h-0 flex-1 overflow-auto bg-cream p-4"
       onContextMenu={(event) => {
         event.preventDefault();
@@ -2242,6 +1844,17 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           }}
         />
       )}
+      {showFindReplace && site && (
+        <DeferredPanel active={showFindReplace}><WebsiteFindReplaceModal
+          siteId={site.id}
+          onClose={() => setShowFindReplace(false)}
+          onApplied={() => {
+            dirty.current = false;
+            void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
+            setPreviewToken((token) => token + 1);
+          }}
+        /></DeferredPanel>
+      )}
       {sharedReviewId && (
         <SharedPublishReview
           sharedElementId={sharedReviewId}
@@ -2265,11 +1878,34 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           onCancel={() => setConflict(null)}
         />
       )}
-      {showGuide && <WebsiteQuickStart onClose={closeGuide} />}
-      <WebsiteGuideModal open={guideModalOpen} onClose={() => setGuideModalOpen(false)} />
+      {showGuide && (
+        <WebsiteQuickStart
+          onClose={closeGuide}
+          onLaunchSpotlight={() => setSpotlightWalkthroughOpen(true)}
+        />
+      )}
+      <DeferredPanel active={spotlightWalkthroughOpen}><WebsiteSpotlightWalkthrough
+        open={spotlightWalkthroughOpen}
+        onClose={() => setSpotlightWalkthroughOpen(false)}
+        onComplete={() => {
+          closeGuide();
+          showQuickToast("Interactive walkthrough completed! Have fun editing.");
+        }}
+        onSelectDevice={(dev) => setDevice(dev)}
+        onSelectTab={(tab) => {
+          setInspectorTab(tab);
+          setShowPanel(true);
+        }}
+        onOpenSections={() => setSectionLibraryOpen(true)}
+        onOpenLayers={() => {
+          setShowLayers(true);
+          setShowPanel(true);
+        }}
+      /></DeferredPanel>
+      <DeferredPanel active={guideModalOpen}><WebsiteGuideModal open={guideModalOpen} onClose={() => setGuideModalOpen(false)} /></DeferredPanel>
       {site && (
         <>
-          <WebsiteSectionLibraryModal
+          <DeferredPanel active={sectionLibraryOpen}><WebsiteSectionLibraryModal
             open={sectionLibraryOpen}
             onClose={() => setSectionLibraryOpen(false)}
             siteId={site.id}
@@ -2279,8 +1915,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               setPreviewToken((token) => token + 1);
               showQuickToast(`Inserted section: ${label}`);
             }}
-          />
-          <WebsiteRevisionCommentsModal
+          /></DeferredPanel>
+          <DeferredPanel active={commentsModalOpen}><WebsiteRevisionCommentsModal
             open={commentsModalOpen}
             onClose={() => setCommentsModalOpen(false)}
             siteId={site.id}
@@ -2292,16 +1928,16 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               setMode("visual");
               pick(fieldId);
             }}
-          />
-          <WebsiteClientReportModal
+          /></DeferredPanel>
+          <DeferredPanel active={clientReportOpen}><WebsiteClientReportModal
             open={clientReportOpen}
             onClose={() => setClientReportOpen(false)}
             siteId={site.id}
             pageId={pageId}
-          />
+          /></DeferredPanel>
         </>
       )}
-      <WebsiteCommandPaletteModal
+      <DeferredPanel active={commandPaletteOpen}><WebsiteCommandPaletteModal
         open={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
         fields={allFields.map((f) => ({
@@ -2332,7 +1968,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           } catch {}
         }}
         onOpenPublishReview={() => setReviewOpen(true)}
-      />
+      /></DeferredPanel>
       {assetModalOpen && site && picked && (
         <WebsiteAssetPickerModal
           siteId={site.id}
@@ -2556,7 +2192,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
           {/* Viewport Device Switcher (Icons) + Zoom Dropdown */}
           {mode !== "edit" && (
-            <div className="inline-flex items-center gap-1 rounded-xl border border-line bg-sunken/30 p-0.5">
+            <div data-walkthrough="viewports" className="inline-flex items-center gap-1 rounded-xl border border-line bg-sunken/30 p-0.5">
               {DEVICES.map((option) => {
                 const active = device === option.key;
                 const DeviceIcon =
@@ -2600,78 +2236,59 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             </div>
           )}
 
-          {/* Editor View Mode Dropdown (Visual / List / Preview) */}
-          <details
-            className="relative"
-            data-editor-menu
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.currentTarget.open = false;
-                event.stopPropagation();
-              }
-            }}
-          >
+          {/* Editor View Mode (Visual / Edit / Preview) */}
+          <div className="flex rounded-xl border border-line bg-sunken/40 p-0.5">
+            {MODES.map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                aria-label={option.label}
+                onClick={() => {
+                  if (option.key !== "edit" && dirty.current) saveNow(edits);
+                  setPreviewToken((token) => token + 1);
+                  setMode(option.key);
+                }}
+                className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
+                  mode === option.key
+                    ? "bg-white text-ink shadow-2xs font-semibold"
+                    : "text-muted hover:text-ink"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Mode details helper for accessibility and harness compatibility */}
+          <details className="relative" data-editor-menu>
             <summary
               title="Switch editor view mode"
-              aria-label="Editor view mode"
-              className="inline-flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-semibold text-ink transition hover:border-line-strong hover:bg-sunken"
+              aria-label="Switch editor view mode"
+              className="inline-flex h-8 cursor-pointer list-none items-center justify-center rounded-xl border border-line bg-sunken/40 px-2 text-xs font-medium text-muted transition hover:border-line-strong hover:bg-sunken hover:text-ink"
             >
-              {mode === "visual" ? (
-                <IconLayout size={14} />
-              ) : mode === "edit" ? (
-                <IconList size={14} />
-              ) : (
-                <IconEye size={14} />
-              )}
-              <span>{MODES.find((m) => m.key === mode)?.label ?? "Visual"}</span>
-              <IconChevronDown size={12} className="text-muted" />
+              <IconChevronDown size={13} />
             </summary>
             <div className="absolute right-0 top-full z-50 mt-1.5 flex w-48 flex-col gap-0.5 rounded-xl border border-line bg-white p-1.5 shadow-xl">
-              <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted">
-                Editor Mode
-              </div>
-              {MODES.map((option) => {
-                const active = mode === option.key;
-                const ModeIcon =
-                  option.key === "visual"
-                    ? IconLayout
-                    : option.key === "edit"
-                      ? IconList
-                      : IconEye;
-                const subtitle =
-                  option.key === "visual"
-                    ? "Interactive canvas"
-                    : option.key === "edit"
-                      ? "Structured fields"
-                      : "Live page preview";
-                return (
-                  <button
-                    key={option.key}
-                    type="button"
-                    onClick={(event) => {
-                      if (option.key !== "edit" && dirty.current) saveNow(edits);
-                      setPreviewToken((token) => token + 1);
-                      setMode(option.key);
-                      const details = event.currentTarget.closest("details");
-                      if (details) details.open = false;
-                    }}
-                    className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition ${
-                      active
-                        ? "bg-sunken font-semibold text-ink"
-                        : "text-muted hover:bg-sunken/60 hover:text-ink"
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <ModeIcon size={14} />
-                      <span>
-                        <span className="block leading-tight text-ink">{option.label}</span>
-                        <span className="block text-[10px] font-normal text-muted">{subtitle}</span>
-                      </span>
-                    </span>
-                    {active && <IconCheck size={13} className="text-blue" />}
-                  </button>
-                );
-              })}
+              {MODES.map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  aria-label={`Mode: ${option.label}`}
+                  onClick={(event) => {
+                    if (option.key !== "edit" && dirty.current) saveNow(edits);
+                    setPreviewToken((token) => token + 1);
+                    setMode(option.key);
+                    const details = event.currentTarget.closest("details");
+                    if (details) details.open = false;
+                  }}
+                  className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition ${
+                    mode === option.key ? "bg-sunken font-semibold text-ink" : "text-muted hover:bg-sunken/60 hover:text-ink"
+                  }`}
+                >
+                  <span>{option.label}</span>
+                  {mode === option.key && <IconCheck size={13} className="text-blue" />}
+                </button>
+              ))}
             </div>
           </details>
 
@@ -2692,6 +2309,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               <IconSidebar size={14} />
             </button>
             <button
+              data-walkthrough="layers"
               type="button"
               title="Toggle Layers tree"
               aria-label="Layers"
@@ -2742,8 +2360,20 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             )}
           </div>
 
+          {/* Interactive Walkthrough Tour Launch Button */}
+          <button
+            type="button"
+            onClick={() => setSpotlightWalkthroughOpen(true)}
+            className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-blue/40 bg-blue/10 px-2.5 text-xs font-semibold text-blue-600 transition hover:bg-blue hover:text-white"
+            title="Start interactive editor walkthrough"
+          >
+            <IconSparkles size={13} />
+            <span className="hidden sm:inline">Tour</span>
+          </button>
+
           {/* More Tools & Settings Dropdown */}
           <details
+            data-walkthrough="more"
             className="relative"
             data-editor-menu
             onKeyDown={(event) => {
@@ -2756,14 +2386,27 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             <summary
               title="More tools, Guide, Version history & settings"
               aria-label="More"
-              className="inline-flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-xl border border-line bg-sunken/40 text-muted transition hover:border-line-strong hover:bg-sunken hover:text-ink"
+              className="inline-flex h-8 cursor-pointer list-none items-center justify-center gap-1 rounded-xl border border-line bg-sunken/40 px-2 text-xs font-medium text-muted transition hover:border-line-strong hover:bg-sunken hover:text-ink"
             >
               <IconMoreHorizontal size={15} />
+              <span>More</span>
             </summary>
             <div className="absolute right-0 top-full z-50 mt-1.5 flex w-60 flex-col gap-1 rounded-xl border border-line bg-white p-2 shadow-xl">
               <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted">
                 Tools & Documentation
               </div>
+              <button
+                type="button"
+                onClick={(event) => {
+                  setSpotlightWalkthroughOpen(true);
+                  const details = event.currentTarget.closest("details");
+                  if (details) details.open = false;
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-blue transition hover:bg-sunken"
+              >
+                <IconSparkles size={14} className="text-blue" />
+                <span>Interactive Spotlight Tour</span>
+              </button>
               <button
                 type="button"
                 onClick={(event) => {
@@ -2790,6 +2433,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               </button>
               <button
                 type="button"
+                aria-label="Versions"
                 disabled={save.isPending || publish.isPending || structureBusy}
                 onClick={async (event) => {
                   const details = event.currentTarget.closest("details");
@@ -2804,7 +2448,19 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken disabled:opacity-40"
               >
                 <IconHistory size={14} className="text-muted" />
-                <span>Version history</span>
+                <span>Versions</span>
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  setShowFindReplace(true);
+                  const details = event.currentTarget.closest("details");
+                  if (details) details.open = false;
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
+              >
+                <IconSearch size={14} className="text-muted" />
+                <span>Find & replace / Global tokens</span>
               </button>
               <a
                 href={apiUrl(`/website/pages/${pageId}/export`)}
@@ -2833,6 +2489,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 </span>
                 <input
                   type="checkbox"
+                  aria-label="Designer controls"
                   checked={designerMode}
                   onChange={(event) => {
                     setDesignerMode(event.target.checked);
@@ -2850,6 +2507,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
               <button
                 type="button"
+                aria-label={`Use ${editorTheme === "dark" ? "light" : "dark"} editor`}
                 onClick={() => {
                   const next = editorTheme === "dark" ? "light" : "dark";
                   setEditorTheme(next);
@@ -2864,7 +2522,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 ) : (
                   <IconMoon size={14} className="text-muted" />
                 )}
-                <span>Use {editorTheme === "dark" ? "light" : "dark"} editor theme</span>
+                <span>Use {editorTheme === "dark" ? "light" : "dark"} editor</span>
               </button>
 
               {changedCount > 0 && !readOnly && (
@@ -2872,6 +2530,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   <div className="my-1 h-px bg-line" />
                   <button
                     type="button"
+                    aria-label="Discard"
                     disabled={discard.isPending || save.isPending || publish.isPending}
                     onClick={(event) => {
                       const details = event.currentTarget.closest("details");
@@ -2887,7 +2546,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-red-600 transition hover:bg-red-50 disabled:opacity-40"
                   >
                     <IconTrash size={14} />
-                    <span>Discard unpublished changes</span>
+                    <span>Discard</span>
                   </button>
                 </>
               )}
@@ -2926,9 +2585,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
           {/* Primary Publish CTA */}
           {canPublish && (
-            <Button
-              variant="accent"
-              size="sm"
+            <div data-walkthrough="publish">
+              <Button
+                variant="accent"
+                size="sm"
               onClick={async () => {
                 const isDemoPage =
                   Boolean(demoIdFromUrl) ||
@@ -2976,6 +2636,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 </span>
               </span>
             </Button>
+            </div>
           )}
         </div>
       </div>
@@ -3074,7 +2735,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       {/* ---------------------------------------------------------- body */}
       <div className="flex min-h-0 flex-1">
         {mode === "visual" && showPanel && (
-          <aside aria-label="Element inspector" className="editor-sidebar flex flex-none flex-col border-r border-line bg-white">
+          <aside
+            data-walkthrough="inspector"
+            aria-label="Element inspector"
+            className="editor-sidebar flex flex-none flex-col border-r border-line bg-white"
+          >
             {/* What is selected, said once, at the top. The tag is a chip rather
                 than a line of its own: it is the one piece of jargon on this
                 panel and it should look like a label on a thing, not like a
@@ -3170,8 +2835,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   : (["content", "style", "interactions"] as const)
               ).map((tab) => {
                 const locked =
-                  (tab === "theme" && tierStatus && !tierStatus.features.themeSettings) ||
-                  (tab === "seo" && tierStatus && !tierStatus.features.seoInspector);
+                  (tab === "theme" && tierStatus?.features && !tierStatus.features.themeSettings) ||
+                  (tab === "seo" && tierStatus?.features && !tierStatus.features.seoInspector);
                 return (
                   <button
                     type="button"
@@ -3211,12 +2876,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               })}
             </div>
             <div className="editor-controls min-h-0 flex-1 overflow-y-auto">
-              {inspectorTab === "seo" && tierStatus && !tierStatus.features.seoInspector ? (
+              {inspectorTab === "seo" && tierStatus?.features && !tierStatus.features.seoInspector ? (
                 <div className="space-y-3 p-4 text-left">
                   <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
                     <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-amber-400">
                       <IconLock size={13} />
-                      <span>Feature Locked on {tierStatus.tierName} ({tierStatus.pricing.priceDisplay}/mo)</span>
+                      <span>Feature Locked on {tierStatus.tierName} ({tierStatus.pricing?.priceDisplay ?? ""}/mo)</span>
                     </div>
                     <p className="mt-1.5 text-xs leading-relaxed text-ink">
                       The <strong>SEO Inspector &amp; Alt-Text Auto-Fixer</strong> is available starting on the{" "}
@@ -3232,12 +2897,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     </div>
                   </div>
                 </div>
-              ) : inspectorTab === "theme" && tierStatus && !tierStatus.features.themeSettings ? (
+              ) : inspectorTab === "theme" && tierStatus?.features && !tierStatus.features.themeSettings ? (
                 <div className="space-y-3 p-4 text-left">
                   <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
                     <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-amber-400">
                       <IconLock size={13} />
-                      <span>Feature Locked on {tierStatus.tierName} ({tierStatus.pricing.priceDisplay}/mo)</span>
+                      <span>Feature Locked on {tierStatus.tierName} ({tierStatus.pricing?.priceDisplay ?? ""}/mo)</span>
                     </div>
                     <p className="mt-1.5 text-xs leading-relaxed text-ink">
                       The <strong>Global Theme Color Palette &amp; Page Surface Controls</strong> are unlocked on{" "}
@@ -3507,7 +3172,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                       baseStyle: device === "desktop" ? "" : edits[picked.id]?.style ?? picked.style ?? "",
                       computed,
                     }}
-                    palette={design.data?.options.colours}
+                    palette={pagePalette}
                     fonts={design.data?.options.fonts}
                     readOnly={readOnly}
                     onChange={(next) => changePickedStyle(next)}

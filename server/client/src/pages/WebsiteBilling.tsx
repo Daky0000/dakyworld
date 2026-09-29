@@ -10,7 +10,7 @@ const BOOKING_STATES = ["REQUESTED", "CONFIRMED", "COMPLETED", "CANCELLED"];
 
 export function WebsiteBilling() {
   const qc = useQueryClient();
-  const commerce = useQuery({ queryKey: ["website-commerce"], queryFn: () => api.get<Commerce>("/products/website-commerce") });
+  const commerce = useQuery({ queryKey: ["website-commerce"], queryFn: ({ signal }) => api.get<Commerce>("/products/website-commerce", signal) });
   const purchase = useMutation({ mutationFn: ({ id, status }: { id: string; status: string }) => api.patch(`/products/website-commerce/purchases/${id}`, { status }), onSuccess: () => qc.invalidateQueries({ queryKey: ["website-commerce"] }) });
   const booking = useMutation({ mutationFn: ({ id, ...data }: { id: string; status?: string; requestedAt?: string; adminNotes?: string }) => api.patch(`/products/website-commerce/bookings/${id}`, data), onSuccess: () => qc.invalidateQueries({ queryKey: ["website-commerce"] }) });
   const manage = useMutation({ mutationFn: (id: string) => api.post<{ url: string }>(`/products/website-commerce/purchases/${id}/manage-billing`, {}), onSuccess: ({ url }) => { window.location.assign(url); } });

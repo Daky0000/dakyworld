@@ -1,31 +1,20 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { WebsiteError } from "./website/site.js";
+import { capacity } from "../lib/capacity.js";
+import { withPublicationOwnership } from "../lib/publicationLease.js";
+export { commitPublication } from "../lib/publicationLease.js";
 
-/** A database lock coordinates publishes across processes, including rollbacks. */
-export async function withWebsitePublishLock<T>(pageId: string, publish: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
-  return prisma.$transaction(async tx => {
-    const [lock] = await tx.$queryRaw<Array<{ acquired: boolean }>>`SELECT pg_try_advisory_xact_lock(hashtext('website-publish'), hashtext(${pageId})) AS acquired`;
-    if (!lock?.acquired) throw new WebsiteError(409, "This page is already being published. Wait for that publish to finish, then review again.");
-    return publish(tx);
-  }, { maxWait: 5_000, timeout: 90_000 });
+/** Ownership spans network work; only final database writes use commitPublication. */
+export function withWebsitePublishLock<T>(pageId: string, publish: (db: Prisma.TransactionClient) => Promise<T>) {
+  return withWebsitePublishLocks([pageId], publish);
 }
 
-/**
- * The same, for a change that writes several pages at once.
- *
- * Every page is locked before anything is read, so a shared publish and an
- * ordinary publish of one of its pages cannot both decide what the file should
- * say and then both write it. Sorted, because two publishes taking the same
- * locks in different orders is a deadlock rather than a refusal.
- */
-export async function withWebsitePublishLocks<T>(pageIds: string[], publish: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+export async function withWebsitePublishLocks<T>(pageIds: string[], publish: (db: Prisma.TransactionClient) => Promise<T>): Promise<T> {
   const ordered = [...new Set(pageIds)].sort();
-  return prisma.$transaction(async tx => {
-    for (const pageId of ordered) {
-      const [lock] = await tx.$queryRaw<Array<{ acquired: boolean }>>`SELECT pg_try_advisory_xact_lock(hashtext('website-publish'), hashtext(${pageId})) AS acquired`;
-      if (!lock?.acquired) throw new WebsiteError(409, "One of the pages this change affects is already being published. Wait for that publish to finish, then review again.");
-    }
-    return publish(tx);
-  }, { maxWait: 5_000, timeout: 120_000 });
+  const keys = ordered.map(id => `publication:page:${id}`);
+  {
+    const pages = await prisma.sitePage.findMany({ where: { id: { in: ordered } }, select: { siteId: true } });
+    keys.push(...[...new Set(pages.map(page => page.siteId))].sort().map(id => `publication:site:${id}`));
+  }
+  return withPublicationOwnership(keys, capacity.admission ? 2 : null, () => publish(prisma));
 }

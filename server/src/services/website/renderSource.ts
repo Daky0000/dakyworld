@@ -1,3 +1,4 @@
+import { sourceGeneration } from "./sourceCache.js";
 /**
  * The HTML a framework page actually is, so the visual editor can open it.
  *
@@ -117,6 +118,7 @@ async function renderThroughService(input: { repo: string; branch: string; route
 export async function renderRoute(site: Site, page: SitePage, options: { fresh?: boolean; overrides?: Partial<Dependencies> } = {}): Promise<RenderedPage | null> {
   const deps = { ...dependencies, ...options.overrides };
   const key = renderKey(site, page);
+  const generation = sourceGeneration();
   if (!options.fresh) {
     const cached = readCache(key);
     // The cache speaks the HTML editor's vocabulary; a rendering is a repository
@@ -130,20 +132,20 @@ export async function renderRoute(site: Site, page: SitePage, options: { fresh?:
       const html = await deps.read(repo, prefixed(site, candidate), site.repoBranch).catch(() => null);
       if (html && html.trim()) {
         const rendered: RenderedPage = { html, from: "prerendered output", detail: candidate };
-        writeCache(key, { html, from: "repository" });
+        writeCache(key, { html, from: "repository" }, generation);
         return rendered;
       }
     }
     const built = await deps.service({ repo, branch: site.repoBranch, route: page.path, filePath: repoFilePath(site, page) });
     if (built) {
-      writeCache(key, { html: built, from: "repository" });
+      writeCache(key, { html: built, from: "repository" }, generation);
       return { html: built, from: "render service", detail: "built from this commit" };
     }
   }
 
   try {
     const html = await deps.live(pageUrl(site, page));
-    writeCache(key, { html, from: "live site" });
+    writeCache(key, { html, from: "live site" }, generation);
     return { html, from: "live site", detail: pageUrl(site, page) };
   } catch {
     return null;

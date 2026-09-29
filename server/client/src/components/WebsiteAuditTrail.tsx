@@ -28,7 +28,7 @@ export function WebsiteAuditTrail() {
 
   const sites = useQuery({
     queryKey: ["website", "sites"],
-    queryFn: () => api.get<SiteSummary[]>("/website/sites"),
+    queryFn: ({ signal }) => api.get<SiteSummary[]>("/website/sites", signal),
   });
 
   const activity = useQuery({

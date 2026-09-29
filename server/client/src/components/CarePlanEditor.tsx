@@ -99,11 +99,11 @@ export function CarePlanEditor({ plan, open, onClose }: { plan: CarePlan | null;
 
   const { data: catalogue } = useQuery({
     queryKey: ["care-plan-catalogue"],
-    queryFn: () => api.get<CarePlanCatalogue>("/care-plans/catalogue"),
+    queryFn: ({ signal }) => api.get<CarePlanCatalogue>("/care-plans/catalogue", signal),
     enabled: open,
   });
-  const { data: clients } = useQuery({ queryKey: ["clients"], queryFn: () => api.get<Client[]>("/clients"), enabled: open });
-  const { data: projects } = useQuery({ queryKey: ["projects"], queryFn: () => api.get<Project[]>("/projects"), enabled: open });
+  const { data: clients } = useQuery({ queryKey: ["clients"], queryFn: ({ signal }) => api.get<Client[]>("/clients", signal), enabled: open });
+  const { data: projects } = useQuery({ queryKey: ["projects"], queryFn: ({ signal }) => api.get<Project[]>("/projects", signal), enabled: open });
 
   const tiers = catalogue?.tiers ?? [];
   const tier = tiers.find((option) => option.tier === form.tier) ?? null;

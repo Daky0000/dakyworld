@@ -31,7 +31,7 @@ export function Sequences() {
 
   const { data: sequences, isLoading } = useQuery({
     queryKey: ["email-sequences"],
-    queryFn: () => api.get<EmailSequence[]>("/emails/sequences/all"),
+    queryFn: ({ signal }) => api.get<EmailSequence[]>("/emails/sequences/all", signal),
   });
 
   const refresh = () => {
@@ -177,7 +177,7 @@ function SequenceEditor({ sequence, onClose, onSaved }: { sequence: EmailSequenc
   const [error, setError] = useState<string | null>(null);
   const { data: templateData } = useQuery({
     queryKey: ["email-templates"],
-    queryFn: () => api.get<{ templates: EmailTemplate[] }>("/emails/templates/all"),
+    queryFn: ({ signal }) => api.get<{ templates: EmailTemplate[] }>("/emails/templates/all", signal),
   });
 
   const save = useMutation({
@@ -447,7 +447,7 @@ function Enrollments({ sequenceId }: { sequenceId: string }) {
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["sequence-enrollments", sequenceId],
-    queryFn: () => api.get<EmailEnrollment[]>(`/emails/sequences/${sequenceId}/enrollments`),
+    queryFn: ({ signal }) => api.get<EmailEnrollment[]>(`/emails/sequences/${sequenceId}/enrollments`, signal),
   });
 
   const stop = useMutation({

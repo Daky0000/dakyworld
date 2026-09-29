@@ -19,7 +19,7 @@ export function Proposals() {
 
   const { data: proposals, isLoading } = useQuery({
     queryKey: ["proposals"],
-    queryFn: () => api.get<Proposal[]>("/proposals"),
+    queryFn: ({ signal }) => api.get<Proposal[]>("/proposals", signal),
   });
 
   const send = useMutation({

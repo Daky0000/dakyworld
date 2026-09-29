@@ -2,24 +2,36 @@
  * Client-side analytics tracker injected into prospect demo pages.
  *
  * Captures visitor dwell time (active time tab was visible), scroll depth,
- * viewport dimensions, and user clicks (x/y coordinates, normalized percentages,
- * target element and text) to power rich analytics and heatmaps.
+ * viewport dimensions, user timezone/locale, and user clicks (x/y coordinates,
+ * normalized percentages, target element and text) to power rich analytics and heatmaps.
  *
- * Lightweight, zero dependencies, completely silent and non-intrusive.
+ * Lightweight, zero dependencies, completely silent, resilient to SVG/DOM edge cases.
  */
 
 export interface InjectTrackerOptions {
   slug: string;
   sessionId: string;
+  disabled?: boolean;
 }
 
-export function generateTrackerScript(options: { slug: string; sessionId: string }): string {
-  const { slug, sessionId } = options;
+export function generateTrackerScript(options: { slug: string; sessionId: string; disabled?: boolean }): string {
+  const { slug, sessionId, disabled } = options;
 
-  // We write the script with minimal size and high resilience
+  if (disabled) {
+    return `<script id="dw-demo-tracker">/* Tracking disabled in preview/heatmap mode */</script>`;
+  }
+
   return `<script id="dw-demo-tracker">
 (function() {
   if (window.__DW_TRACKER_LOADED__) return;
+  // Suppress tracking in admin heatmap preview or testing iframe
+  try {
+    var search = window.location.search || "";
+    if (search.indexOf("dw_preview=heatmap") !== -1 || search.indexOf("dw_heatmap=1") !== -1 || search.indexOf("preview=heatmap") !== -1) {
+      return;
+    }
+  } catch(e) {}
+
   window.__DW_TRACKER_LOADED__ = true;
 
   try {
@@ -108,12 +120,20 @@ export function generateTrackerScript(options: { slug: string; sessionId: string
       return String(str).replace(/\\s+/g, " ").trim().slice(0, 60);
     }
 
+    function getSafeClassName(el) {
+      if (!el || !el.className) return "";
+      if (typeof el.className === "string") return el.className;
+      if (typeof el.className.baseVal === "string") return el.className.baseVal;
+      return "";
+    }
+
     function buildSelector(el) {
       if (!el || el.nodeType !== 1) return "";
       var tag = el.tagName.toLowerCase();
       if (el.id) return "#" + el.id;
-      var cls = el.className && typeof el.className === "string" ? "." + el.className.trim().split(/\\s+/)[0] : "";
-      return tag + cls;
+      var clsStr = getSafeClassName(el).trim();
+      var firstCls = clsStr ? "." + clsStr.split(/\\s+/)[0] : "";
+      return tag + firstCls;
     }
 
     // Capture clicks for heatmap
@@ -128,12 +148,21 @@ export function generateTrackerScript(options: { slug: string; sessionId: string
         var yPct = dims.height > 0 ? Math.round((pageY / dims.height) * 10000) / 100 : 0;
 
         var target = e.target;
-        var tag = target && target.tagName ? target.tagName.toUpperCase() : "UNKNOWN";
+        // Attribute click to enclosing interactive element (button, link) if target is an inner icon/path
+        var interactive = null;
+        try {
+          if (target && target.closest) {
+            interactive = target.closest("a, button, input, select, textarea, summary, [role='button'], [tabindex]");
+          }
+        } catch(err) {}
+
+        var primary = interactive || target;
+        var tag = primary && primary.tagName ? primary.tagName.toUpperCase() : "UNKNOWN";
         var text = "";
-        if (target) {
-          text = cleanText(target.innerText || target.textContent || target.getAttribute("aria-label") || target.getAttribute("title") || target.getAttribute("alt"));
-          if (!text && target.parentElement) {
-            text = cleanText(target.parentElement.innerText || target.parentElement.textContent);
+        if (primary) {
+          text = cleanText(primary.innerText || primary.textContent || primary.getAttribute("aria-label") || primary.getAttribute("title") || primary.getAttribute("alt") || primary.getAttribute("value"));
+          if (!text && primary.parentElement) {
+            text = cleanText(primary.parentElement.innerText || primary.parentElement.textContent);
           }
         }
 
@@ -144,7 +173,7 @@ export function generateTrackerScript(options: { slug: string; sessionId: string
           yPercent: Math.min(100, Math.max(0, yPct)),
           targetTag: tag,
           targetText: text,
-          targetSelector: buildSelector(target),
+          targetSelector: buildSelector(primary),
           timeOffset: Math.round(activeDurationSeconds)
         };
 
@@ -162,6 +191,16 @@ export function generateTrackerScript(options: { slug: string; sessionId: string
         var clicksToSend = clickQueue.slice();
         clickQueue = [];
 
+        var timezone = "";
+        try {
+          timezone = (Intl && Intl.DateTimeFormat) ? Intl.DateTimeFormat().resolvedOptions().timeZone || "" : "";
+        } catch(e) {}
+
+        var locale = "";
+        try {
+          locale = navigator.language || navigator.userLanguage || "";
+        } catch(e) {}
+
         var payload = {
           sessionId: sessionId,
           durationSeconds: Math.round(activeDurationSeconds),
@@ -170,6 +209,8 @@ export function generateTrackerScript(options: { slug: string; sessionId: string
           viewportHeight: window.innerHeight || null,
           screenWidth: window.screen ? window.screen.width : null,
           screenHeight: window.screen ? window.screen.height : null,
+          timezone: timezone || undefined,
+          locale: locale || undefined,
           clicks: clicksToSend
         };
 

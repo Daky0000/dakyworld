@@ -36,6 +36,7 @@
  * dangerous, does not read it at all.
  */
 
+import { bypassRequestCache } from "../../lib/requestCache.js";
 export type CachedSource = { html: string; from: "repository" | "live site" | "imported file" };
 
 type Entry = CachedSource & { until: number };
@@ -52,6 +53,9 @@ export const LIVE_TTL_MS = 20_000;
  * least-recently-written.
  */
 const MAX_ENTRIES = 200;
+const MAX_BYTES = 16 * 1024 * 1024;
+let generation = 0;
+export const sourceGeneration = () => generation;
 
 const store = new Map<string, Entry>();
 
@@ -69,6 +73,7 @@ export function sourceKey(input: { siteId: string; repo: string | null; branch: 
 }
 
 export function readCache(key: string): CachedSource | null {
+  if (bypassRequestCache()) return null;
   const entry = store.get(key);
   if (!entry) return null;
   if (entry.until <= Date.now()) {
@@ -78,7 +83,15 @@ export function readCache(key: string): CachedSource | null {
   return { html: entry.html, from: entry.from };
 }
 
-export function writeCache(key: string, value: CachedSource): void {
+export function writeCache(key: string, value: CachedSource, expectedGeneration = generation): void {
+  if (expectedGeneration !== generation || Buffer.byteLength(value.html) > 1024 * 1024) return;
+  store.delete(key);
+  let bytes = [...store.values()].reduce((total, entry) => total + Buffer.byteLength(entry.html), 0);
+  while (bytes + Buffer.byteLength(value.html) > MAX_BYTES && store.size) {
+    const oldest = store.keys().next().value!;
+    bytes -= Buffer.byteLength(store.get(oldest)!.html);
+    store.delete(oldest);
+  }
   if (store.size >= MAX_ENTRIES && !store.has(key)) {
     let oldestKey: string | null = null;
     let oldest = Number.POSITIVE_INFINITY;
@@ -101,6 +114,7 @@ export function writeCache(key: string, value: CachedSource): void {
  * scan is cheaper than the bookkeeping that would avoid it.
  */
 export function invalidateSource(siteId: string, filePath?: string): number {
+  generation++;
   let dropped = 0;
   for (const key of [...store.keys()]) {
     const parts = key.split("|");
@@ -114,6 +128,7 @@ export function invalidateSource(siteId: string, filePath?: string): number {
 
 /** Test seam. Nothing in the application calls this. */
 export function clearSourceCache(): void {
+  generation++;
   store.clear();
 }
 

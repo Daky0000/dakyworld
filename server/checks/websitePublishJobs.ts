@@ -221,6 +221,21 @@ try {
   await reconcileInterruptedPublishJobs();
   equal("a commit that never landed is just a failed publish", (await prisma.publishJob.findUniqueOrThrow({ where: { id: missed.id } })).state, "COMMIT_FAILED");
 
+  const recorded = await prisma.publishJob.create({
+    data: { siteId: site.id, pageId: page.id, kind: "PAGE", state: "COMMITTING", commitSha: "recorded-commit", detail: { expectedHtmlHash: createHash("sha256").update(html).digest("hex") } },
+  });
+  const leaseKey = `publication:site:${site.id}`;
+  await prisma.serviceLease.create({ data: { key: leaseKey, owner: "check", expiresAt: new Date(Date.now() + 60_000) } });
+  try {
+    await reconcileInterruptedPublishJobs();
+    equal("an active publisher is left alone", (await prisma.publishJob.findUniqueOrThrow({ where: { id: recorded.id } })).state, "COMMITTING");
+    await prisma.serviceLease.update({ where: { key: leaseKey }, data: { expiresAt: new Date(0) } });
+    await reconcileInterruptedPublishJobs();
+    equal("a recorded commit remains uncertain even after the repository changes", (await prisma.publishJob.findUniqueOrThrow({ where: { id: recorded.id } })).state, "RECONCILIATION_REQUIRED");
+  } finally {
+    await prisma.serviceLease.deleteMany({ where: { key: leaseKey } });
+  }
+
   /* ----------------------------------- the record never breaks a publish */
 
   await failPublishJob("a-job-that-does-not-exist", "COMMIT_FAILED", "gone");

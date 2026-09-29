@@ -1,3 +1,4 @@
+import type { WebsiteActor } from "./websiteActor.js";
 import type { Request, Response, Router } from "express";
 import { randomUUID } from "node:crypto";
 import type { WebsitePlanTier } from "@prisma/client";
@@ -454,11 +455,11 @@ export function setActiveSwitchedUserEmail(email: string | null): void {
   setSwitchedUserEmail(email);
 }
 
-export async function resolveEffectiveUserIdentity(req: Request): Promise<Entitlement> {
+export async function resolveEffectiveUserIdentity(req: WebsiteActor): Promise<Entitlement> {
   return resolveEntitlement(req);
 }
 
-export async function computeUserStorageAndUsage(req: Request, siteId?: string) {
+export async function computeUserStorageAndUsage(req: WebsiteActor, siteId?: string) {
   const identity = await resolveEntitlement(req);
   const plan = WEBSITE_TIER_PLANS[identity.tier];
   const simulateAfter3Months = identity.simulateAfter3Months;
@@ -552,7 +553,7 @@ export async function computeUserStorageAndUsage(req: Request, siteId?: string) 
 /**
  * Enforces Media Library storage quota and max upload file size for the user's tier plan.
  */
-export async function assertMediaStorageAllowance(req: Request, incomingBytes: number, siteId?: string): Promise<void> {
+export async function assertMediaStorageAllowance(req: WebsiteActor, incomingBytes: number, siteId?: string): Promise<void> {
   const status = await computeUserStorageAndUsage(req, siteId);
   const { plan, storage } = status;
 
@@ -576,14 +577,14 @@ export async function assertMediaStorageAllowance(req: Request, incomingBytes: n
  * rows they own, which the database already knows and which stays true when a
  * deletion happens somewhere this function never sees.
  */
-export function recordMediaStorageAdded(_req: Request, _addedBytes: number): void {
+export function recordMediaStorageAdded(_req: WebsiteActor, _addedBytes: number): void {
   /* intentionally nothing */
 }
 
 /**
  * Enforces monthly HTML / Page import allowance for the user's tier plan.
  */
-export async function assertImportAllowance(req: Request, siteId?: string): Promise<void> {
+export async function assertImportAllowance(req: WebsiteActor, siteId?: string): Promise<void> {
   const status = await computeUserStorageAndUsage(req, siteId);
   const { plan, usage } = status;
   if (usage.importsUsed >= plan.importsLimit) {
@@ -594,7 +595,7 @@ export async function assertImportAllowance(req: Request, siteId?: string): Prom
   }
 }
 
-export async function recordImportUsed(req: Request): Promise<void> {
+export async function recordImportUsed(req: WebsiteActor): Promise<void> {
   const identity = await resolveEntitlement(req);
   await bumpUsage(identity.userId, "imports");
 }
@@ -602,7 +603,7 @@ export async function recordImportUsed(req: Request): Promise<void> {
 /**
  * Enforces monthly Page Edit / Save allowance for the user's tier plan.
  */
-export async function assertEditAllowance(req: Request, siteId?: string): Promise<void> {
+export async function assertEditAllowance(req: WebsiteActor, siteId?: string): Promise<void> {
   const status = await computeUserStorageAndUsage(req, siteId);
   const { plan, usage } = status;
 
@@ -624,7 +625,7 @@ export async function assertEditAllowance(req: Request, siteId?: string): Promis
   }
 }
 
-export async function recordEditUsed(req: Request): Promise<void> {
+export async function recordEditUsed(req: WebsiteActor): Promise<void> {
   const identity = await resolveEntitlement(req);
   await bumpUsage(identity.userId, "edits");
 }
@@ -633,9 +634,10 @@ export async function recordEditUsed(req: Request): Promise<void> {
  * Enforces feature availability & AI usage quota for the user's tier plan.
  */
 export async function assertTierFeatureAccess(
-  req: Request,
+  req: WebsiteActor,
   feature: keyof TierFeatureFlags,
   siteId?: string,
+  options: { skipUsageLimit?: boolean } = {},
 ): Promise<void> {
   const status = await computeUserStorageAndUsage(req, siteId);
   const { plan, features, usage } = status;
@@ -660,7 +662,7 @@ export async function assertTierFeatureAccess(
     );
   }
 
-  if (feature === "aiAssistant" && usage.aiPromptsUsed >= plan.aiPromptsLimit) {
+  if (!options.skipUsageLimit && feature === "aiAssistant" && usage.aiPromptsUsed >= plan.aiPromptsLimit) {
     throw new WebsiteError(
       403,
       `Monthly AI Assistant prompt limit reached (${usage.aiPromptsUsed}/${plan.aiPromptsLimit}) on your ${plan.name} (${tierLabels(plan.tier).promoDisplay}/mo) plan.${upgradeSentence(plan.tier, (next) => next.aiPromptsLimitLabel)}`,
@@ -668,7 +670,7 @@ export async function assertTierFeatureAccess(
   }
 }
 
-export async function recordAiPromptUsed(req: Request): Promise<void> {
+export async function recordAiPromptUsed(req: WebsiteActor): Promise<void> {
   const identity = await resolveEntitlement(req);
   await bumpUsage(identity.userId, "aiPrompts");
 }
@@ -788,7 +790,7 @@ export async function ensureWebsiteTierUsersAndPlans(): Promise<{
  * up to the user's storage quota.
  */
 export async function captureHtmlImagesIntoMediaLibrary(
-  req: Request,
+  req: WebsiteActor,
   siteId: string,
   html: string,
 ): Promise<{ html: string; capturedCount: number; totalBytesAdded: number; skippedCount: number }> {

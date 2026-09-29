@@ -1,3 +1,7 @@
+import { readPublishedAsset } from "./publishedAssets.js";
+import { getOrLoad } from "../lib/cache.js";
+import { capacity } from "../lib/capacity.js";
+import { cloudflareZones } from "./cacheInvalidation.js";
 import crypto from "node:crypto";
 import dns from "node:dns/promises";
 import type { Express, Request, Response, NextFunction, Router } from "express";
@@ -5,7 +9,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { WebsiteError } from "./website/site.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
-import { assetUrl } from "./websiteAssets.js";
+
 import { SVG_CONTENT_SECURITY_POLICY } from "../lib/svgSanitize.js";
 
 /**
@@ -53,7 +57,7 @@ function hostOf(req: Request): string {
  * typed into a form would let anyone claim a hostname they do not own and have
  * us answer for it.
  */
-async function siteForHost(host: string) {
+async function uncachedSiteForHost(host: string) {
   if (!host) return null;
   const byDomain = await prisma.site.findFirst({
     where: { customDomain: host, customDomainVerifiedAt: { not: null }, hostedEnabled: true },
@@ -67,6 +71,20 @@ async function siteForHost(host: string) {
     return prisma.site.findFirst({ where: { hostedSlug: label, hostedEnabled: true }, select: { id: true, name: true, publicUrl: true } });
   }
   return null;
+}
+
+function osHosts(): Set<string> {
+  const hosts = (process.env.OS_HOSTS ?? "").split(",").map(value => value.trim().toLowerCase()).filter(Boolean);
+  for (const value of [process.env.CLIENT_ORIGIN, process.env.APP_URL, process.env.RAILWAY_PUBLIC_DOMAIN]) {
+    if (value) { try { hosts.push(new URL(value.includes("://") ? value : `https://${value}`).hostname); } catch { /* Invalid optional URL is not trusted. */ } }
+  }
+  if (process.env.NODE_ENV !== "production") hosts.push("localhost", "127.0.0.1");
+  return new Set(hosts);
+}
+async function siteForHost(host: string) {
+  if (osHosts().has(host)) return null;
+  // Unknown hosts have a short lifetime to avoid retaining arbitrary host scans.
+  return getOrLoad({ scope: "public", resource: "hosts", identity: host }, { ttlMs: 4500 }, () => uncachedSiteForHost(host));
 }
 
 function etagFor(html: string): string {
@@ -86,32 +104,25 @@ const NOT_PUBLISHED_HTML = `<!doctype html><html lang="en"><head><meta charset="
  */
 export function publicSiteHosting() {
   return async function hostingMiddleware(req: Request, res: Response, next: NextFunction) {
-    if (req.method !== "GET" && req.method !== "HEAD") return next();
+    if (req.path === "/api/ready") return next();
     const host = hostOf(req);
-    if (!host) return next();
+    if (!host || osHosts().has(host)) return next();
 
     let site: { id: string; name: string; publicUrl: string } | null = null;
     try {
       site = await siteForHost(host);
     } catch {
-      return next();
+      return res.status(503).set("Cache-Control", "no-store").end();
     }
-    if (!site) return next();
+    if (!site) return res.status(404).set("Cache-Control", "no-store").end();
+    if (!["GET", "HEAD"].includes(req.method)) return res.status(405).set("Cache-Control", "no-store").end();
 
     const path = (req.path || "/").replace(/\/+$/, "") || "/";
     try {
       const assetPath = /(?:^|\/)(assets\/dw\/[^/]+)$/.exec(path)?.[1];
       if (assetPath) {
-        const asset = await prisma.siteAsset.findUnique({
-          where: { siteId_repoPath: { siteId: site.id, repoPath: assetPath } },
-          select: { content: true, contentType: true, repoPath: true },
-        });
-        if (!asset?.content || path !== assetUrl(site, asset.repoPath)) return res.status(404).end();
-        const published = await prisma.sitePage.findFirst({
-          where: { siteId: site.id, status: "LIVE", publishedHtml: { contains: assetUrl(site, asset.repoPath) } },
-          select: { id: true },
-        });
-        if (!published) return res.status(404).end();
+        const asset = await readPublishedAsset(site, assetPath, path);
+        if (!asset?.content) return res.status(404).set("Cache-Control", "no-store").end();
         const bytes = Buffer.from(asset.content);
         const etag = `W/"${crypto.createHash("sha1").update(bytes).digest("base64url")}"`;
         if (req.headers["if-none-match"] === etag) return res.status(304).end();
@@ -123,16 +134,17 @@ export function publicSiteHosting() {
           .set("ETag", etag)
           .send(bytes);
       }
-      const page =
+      const page = await getOrLoad({ scope: `public:${site.id}`, resource: "pages", identity: `${host}:${path}`, query: req.query },
+        { ttlMs: 25_000, cacheNull: false, maxBytes: 1024 * 1024, bypass: Boolean(req.headers.authorization || req.headers.cookie || req.headers["x-dw-cache-bypass"]) }, async () =>
         (await prisma.sitePage.findFirst({
           where: { siteId: site.id, path, status: "LIVE" },
-          select: { publishedHtml: true },
+          select: { publishedHtml: true, publishedEtag: true },
         })) ??
         // `/about.html` and `/about` are the same page to somebody typing it.
         (await prisma.sitePage.findFirst({
           where: { siteId: site.id, filePath: path.replace(/^\//, ""), status: "LIVE" },
-          select: { publishedHtml: true },
-        }));
+          select: { publishedHtml: true, publishedEtag: true },
+        })));
 
       if (!page) {
         const anyPublished = await prisma.sitePage.count({ where: { siteId: site.id, publishedHtml: { not: null } } });
@@ -150,7 +162,9 @@ export function publicSiteHosting() {
           .send(NOT_PUBLISHED_HTML);
       }
 
-      const etag = etagFor(page.publishedHtml);
+      const etag = page.publishedEtag ?? etagFor(page.publishedHtml);
+      const edgeAllowed = capacity.edge && Boolean(cloudflareZones()[host]) && !req.headers.cookie && !req.headers.authorization && !res.hasHeader("Set-Cookie");
+      res.set("ETag", etag).set("Cache-Control", edgeAllowed ? "public, max-age=0, s-maxage=25, must-revalidate" : "private, no-cache");
       if (req.headers["if-none-match"] === etag) return res.status(304).end();
       return res
         .status(200)
@@ -158,12 +172,11 @@ export function publicSiteHosting() {
         .set("ETag", etag)
         // Short, because a customer who presses Publish expects to see it. The
         // ETag is what saves the bandwidth on a reload.
-        .set("Cache-Control", "public, max-age=60, must-revalidate")
         .set("X-Content-Type-Options", "nosniff")
         .send(page.publishedHtml);
     } catch (error) {
       console.error(`[hosting] ${host}${req.path} failed:`, (error as Error).message);
-      return next();
+      return res.status(503).set("Cache-Control", "no-store").end();
     }
   };
 }
@@ -242,7 +255,7 @@ export function registerWebsiteHosting(router: Router) {
           customDomainToken: true,
           customDomainVerifiedAt: true,
           repoName: true,
-          pages: { select: { publishedHtml: true }, take: 200 },
+          pages: { select: { publishedHtml: true, publishedEtag: true }, take: 200 },
         },
       });
       if (!site) throw new WebsiteError(404, "No such website.");
@@ -318,18 +331,18 @@ export function registerWebsiteHosting(router: Router) {
  * well, which costs nothing and is useful for staging. A site without one has
  * this as its only address.
  */
-export async function ensureHostedAddress(siteId: string): Promise<void> {
-  const site = await prisma.site.findUnique({ where: { id: siteId }, select: { slug: true, hostedSlug: true, repoName: true } });
+export async function ensureHostedAddress(siteId: string, db: import("@prisma/client").Prisma.TransactionClient = prisma): Promise<void> {
+  const site = await db.site.findUnique({ where: { id: siteId }, select: { slug: true, hostedSlug: true, repoName: true } });
   if (!site || site.hostedSlug) return;
   // The slug is the obvious label, but it has to be unique among hostnames as
   // well as among sites, and two sites can be renamed into a collision.
   let label = site.slug.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "").slice(0, 50) || "site";
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const clash = await prisma.site.findFirst({ where: { hostedSlug: label }, select: { id: true } });
+    const clash = await db.site.findFirst({ where: { hostedSlug: label }, select: { id: true } });
     if (!clash) break;
     label = `${label.slice(0, 44)}-${crypto.randomBytes(2).toString("hex")}`;
   }
-  await prisma.site.update({
+  await db.site.update({
     where: { id: siteId },
     data: { hostedSlug: label, hostedEnabled: !site.repoName ? true : undefined },
   });

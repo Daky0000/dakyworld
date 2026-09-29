@@ -122,7 +122,9 @@ export function useWebsiteTierStatus(siteId?: string) {
       if (sim > 0) qs.set("simulateMonths", String(sim));
       const query = qs.toString();
       const data = await api.get<WebsiteTierStatus>(`/website/tier-status${query ? `?${query}` : ""}`);
-      setStatus(data);
+      if (data && typeof data === "object" && "features" in data && data.features && "planCode" in data) {
+        setStatus(data);
+      }
     } catch {
       // ignore non-critical fetch error
     } finally {

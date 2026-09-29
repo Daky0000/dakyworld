@@ -64,7 +64,7 @@ export function ProposalWriter({
 
   const { data: leads } = useQuery({
     queryKey: ["proposal-lead-picker", search],
-    queryFn: () => api.get<{ items: Lead[] }>(`/leads?take=25${search ? `&q=${encodeURIComponent(search)}` : ""}`),
+    queryFn: ({ signal }) => api.get<{ items: Lead[] }>(`/leads?take=25${search ? `&q=${encodeURIComponent(search)}` : ""}`, signal),
     enabled: open && !lead,
   });
 

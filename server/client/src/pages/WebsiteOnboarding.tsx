@@ -2,8 +2,10 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { Badge, Button } from "../components/ui";
 import { useWebsiteSites } from "../components/WebsiteGuard";
+import { WebsiteSubscriberOnboarding } from "../components/WebsiteSubscriberOnboarding";
 
 /**
  * Getting a client's website ready, in the order it has to happen.
@@ -44,14 +46,29 @@ const MARK: Record<Step["state"], { className: string; tone: "positive" | "warn"
 export function WebsiteOnboarding() {
   const [params, setParams] = useSearchParams();
   const sites = useWebsiteSites();
+  const { can } = useAuth();
   const [note, setNote] = useState("");
   const [handedOver, setHandedOver] = useState(false);
+
+  if (sites.isSuccess && (!sites.data || sites.data.length === 0)) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="font-display text-xl tracking-[-.02em]">Subscriber Onboarding</h1>
+          <p className="mt-1 max-w-2xl text-sm text-muted">
+            Connect your website and jump directly into the visual website builder.
+          </p>
+        </div>
+        <WebsiteSubscriberOnboarding />
+      </div>
+    );
+  }
 
   const siteId = params.get("site") ?? sites.data?.[0]?.id ?? "";
   const onboarding = useQuery({
     queryKey: ["website", "onboarding", siteId],
     enabled: Boolean(siteId),
-    queryFn: () => api.get<Onboarding>(`/website/sites/${siteId}/onboarding`),
+    queryFn: ({ signal }) => api.get<Onboarding>(`/website/sites/${siteId}/onboarding`, signal),
   });
 
   const handover = useMutation({
@@ -134,30 +151,54 @@ export function WebsiteOnboarding() {
             ))}
           </ol>
 
-          <div className="rounded-2xl border border-line bg-white p-5">
-            <h2 className="font-display text-base tracking-[-.02em]">Hand it over</h2>
-            <p className="mt-1 max-w-2xl text-sm text-muted">
-              The one thing on this page nothing can work out for itself: the conversation where the client is shown what they can
-              change, what stays with a developer, and what happens when they publish. Record it when it has happened.
-            </p>
-            {handedOver ? (
-              <p className="mt-3 text-sm text-positive-text">Recorded on this site's activity.</p>
-            ) : (
-              <>
-                <textarea
-                  className="mt-3 w-full rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-blue"
-                  rows={2}
-                  placeholder="Who it was handed to, and anything agreed about the developer-managed parts."
-                  value={note}
-                  onChange={(event) => setNote(event.target.value)}
-                />
-                <Button className="mt-2" size="sm" variant="accent" disabled={handover.isPending || !onboarding.data.complete} onClick={() => handover.mutate()}>
-                  {handover.isPending ? "Recording…" : "Record the handover"}
-                </Button>
-                {!onboarding.data.complete && <p className="mt-2 text-xs text-muted">Finish the list above first.</p>}
-              </>
-            )}
+          <div className="rounded-2xl border border-blue/30 bg-blue/5 p-5 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <span className="font-sans text-[11px] font-bold uppercase tracking-wider text-blue">Direct Action</span>
+              <h3 className="font-display text-base font-bold text-ink">Launch Visual Website Builder with Interactive Tour</h3>
+              <p className="mt-0.5 text-xs text-muted">
+                Step directly into the canvas to edit text in place, fine-tune design presets, preview mobile screens, and publish live.
+              </p>
+            </div>
+            <Link to={`/website/sites`}>
+              <Button variant="accent">
+                ✨ Enter Website Builder &amp; Tour →
+              </Button>
+            </Link>
           </div>
+
+          {can("website.manage") ? (
+            <div className="rounded-2xl border border-line bg-white p-5">
+              <h2 className="font-display text-base tracking-[-.02em]">Hand it over</h2>
+              <p className="mt-1 max-w-2xl text-sm text-muted">
+                The one thing on this page nothing can work out for itself: the conversation where the client is shown what they can
+                change, what stays with a developer, and what happens when they publish. Record it when it has happened.
+              </p>
+              {handedOver ? (
+                <p className="mt-3 text-sm text-positive-text">Recorded on this site's activity.</p>
+              ) : (
+                <>
+                  <textarea
+                    className="mt-3 w-full rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-blue"
+                    rows={2}
+                    placeholder="Who it was handed to, and anything agreed about the developer-managed parts."
+                    value={note}
+                    onChange={(event) => setNote(event.target.value)}
+                  />
+                  <Button className="mt-2" size="sm" variant="accent" disabled={handover.isPending || !onboarding.data.complete} onClick={() => handover.mutate()}>
+                    {handover.isPending ? "Recording…" : "Record the handover"}
+                  </Button>
+                  {!onboarding.data.complete && <p className="mt-2 text-xs text-muted">Finish the list above first.</p>}
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-line bg-white p-5">
+              <h2 className="font-display text-base tracking-[-.02em]">Dakyworld Care &amp; Support</h2>
+              <p className="mt-1 max-w-2xl text-sm text-muted">
+                Your website is hosted on high-performance CDN infrastructure with continuous monitoring, daily automated backups, and developer support.
+              </p>
+            </div>
+          )}
 
           <Button variant="ghost" size="sm" onClick={() => void onboarding.refetch()}>
             Check again

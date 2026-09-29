@@ -2,27 +2,11 @@ import type { Request, Response } from "express";
 import { prisma } from "../lib/prisma.js";
 import { verifyPaystackSignature } from "../lib/paystack.js";
 import { enqueuePaystackEvent, processPaystackEvents } from "../services/paystackEvents.js";
-import { settleFromProvider } from "../services/payments.js";
+import { getStripe, stripeWebhookSecret } from "../lib/stripe.js";
+import { enqueuePaymentEvent } from "../services/paymentWebhookEvents.js";
 
 /** Provider callbacks use raw bodies. Paystack signatures are checked before
  * parsing, and accepted Paystack events enter a durable queue before HTTP 200. */
-
-/** Every payload lands here before it is acted on, verified or not. */
-async function record(source: string, event: string, payload: unknown, headers: Request["headers"], verified: boolean) {
-  try {
-    await prisma.webhookEvent.create({
-      data: {
-        source,
-        event,
-        payload: (payload ?? {}) as never,
-        headers: JSON.parse(JSON.stringify(headers)) as never,
-        verified,
-      },
-    });
-  } catch (err) {
-    console.error(`[webhooks] could not record a ${source} event:`, (err as Error).message);
-  }
-}
 
 /** HMAC-SHA512 authentication and durable, redacted Paystack ingestion. */
 export async function paystackWebhook(req: Request, res: Response) {
@@ -54,28 +38,34 @@ export async function paystackWebhook(req: Request, res: Response) {
  * always, honestly, rather than claiming a check that did not happen.
  */
 export async function hubtelWebhook(req: Request, res: Response) {
-  const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body ?? ""));
-
-  let payload: { Data?: { ClientReference?: string }; data?: { clientReference?: string } } = {};
+  if (!Buffer.isBuffer(req.body)) return res.status(400).send("raw body required");
+  let payload;
+  try { payload = JSON.parse(req.body.toString("utf8")); }
+  catch { return res.status(400).send("not json"); }
+  const reference = payload?.Data?.ClientReference ?? payload?.data?.clientReference;
+  if (typeof reference !== "string" || !reference.length || reference.length > 200) return res.status(400).send("invalid reference");
   try {
-    payload = JSON.parse(raw.toString("utf8")) as typeof payload;
-  } catch {
-    await record("hubtel", "unparseable", { body: raw.toString("utf8").slice(0, 500) }, req.headers, false);
-    return res.status(400).send("not json");
-  }
+    // Unsigned callbacks can only schedule verification of an existing checkout.
+    const known = await prisma.paymentAttempt.findFirst({ where: { reference, provider: "hubtel" }, select: { id: true } })
+      ?? await prisma.invoice.findFirst({ where: { paymentRef: reference, paymentProvider: "hubtel" }, select: { id: true } });
+    if (known) await enqueuePaymentEvent("hubtel", reference, reference);
+    return res.json({ received: true });
+  } catch { return res.status(503).json({ error: "Please retry delivery" }); }
+}
 
-  await record("hubtel", "callback", payload, req.headers, false);
-  res.status(200).json({ received: true });
-
-  // Hubtel capitalises its JSON keys inconsistently between products, so both
-  // spellings are read rather than guessed at.
-  const reference = payload.Data?.ClientReference ?? payload.data?.clientReference;
-  if (!reference) return;
-
+export async function stripeWebhook(req: Request, res: Response) {
   try {
-    const settled = await settleFromProvider(reference, "hubtel");
-    if (settled?.changed) console.log(`[webhooks] hubtel settled ${settled.invoice.invoiceNumber}`);
-  } catch (err) {
-    console.error("[webhooks] hubtel settlement failed:", (err as Error).message);
-  }
+    const stripe = await getStripe();
+    const secret = await stripeWebhookSecret();
+    if (!stripe || !secret) return res.status(503).send("Stripe webhook not configured");
+    const signature = req.headers["stripe-signature"];
+    if (!Buffer.isBuffer(req.body) || typeof signature !== "string") return res.status(400).send("raw body and signature required");
+    let event;
+    try { event = stripe.webhooks.constructEvent(req.body, signature, secret); }
+    catch { return res.status(400).send("Webhook signature verification failed"); }
+    if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
+      await enqueuePaymentEvent("stripe", event.id, event.data.object.id);
+    }
+    return res.json({ received: true });
+  } catch { return res.status(503).json({ error: "Please retry delivery" }); }
 }

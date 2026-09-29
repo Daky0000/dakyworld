@@ -133,7 +133,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
 
   const { data: context } = useQuery({
     queryKey: ["email-context", recipient.leadId, recipient.clientId, recipient.toEmail],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.get<EmailContext>(
         `/emails/context/lookup?${new URLSearchParams({
           ...(recipient.leadId ? { leadId: recipient.leadId } : {}),
@@ -141,13 +141,13 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
           ...(recipient.toEmail ? { email: recipient.toEmail } : {}),
           ...(recipient.toName ? { name: recipient.toName } : {}),
         }).toString()}`,
-      ),
+      signal),
     enabled: open && hasRecipient,
   });
 
   const { data: templateData } = useQuery({
     queryKey: ["email-templates"],
-    queryFn: () => api.get<{ templates: EmailTemplate[] }>("/emails/templates/all"),
+    queryFn: ({ signal }) => api.get<{ templates: EmailTemplate[] }>("/emails/templates/all", signal),
     enabled: open,
   });
 
@@ -166,7 +166,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
    */
   const { data: planned } = useQuery({
     queryKey: ["email-auto-attachments", recipient.leadId, recipient.clientId, purpose, target?.invoiceId, target?.proposalId],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.get<{ attachments: PreviewAttachment[] }>(
         `/emails/context/attachments?${new URLSearchParams({
           purpose,
@@ -174,7 +174,7 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
           ...(target?.invoiceId ? { invoiceId: target.invoiceId } : {}),
           ...(target?.proposalId ? { proposalId: target.proposalId } : {}),
         }).toString()}`,
-      ),
+      signal),
     enabled: open && hasRecipient,
   });
 
@@ -566,9 +566,9 @@ function RecipientPicker({ onPick }: { onPick: (picked: { leadId?: string; clien
   const [search, setSearch] = useState("");
   const { data: leads } = useQuery({
     queryKey: ["leads-brief", search],
-    queryFn: () => api.get<{ items: Lead[] }>(`/leads?take=50${search.trim() ? `&q=${encodeURIComponent(search.trim())}` : ""}`),
+    queryFn: ({ signal }) => api.get<{ items: Lead[] }>(`/leads?take=50${search.trim() ? `&q=${encodeURIComponent(search.trim())}` : ""}`, signal),
   });
-  const { data: clients } = useQuery({ queryKey: ["clients"], queryFn: () => api.get<Client[]>("/clients") });
+  const { data: clients } = useQuery({ queryKey: ["clients"], queryFn: ({ signal }) => api.get<Client[]>("/clients", signal) });
 
   const term = search.trim().toLowerCase();
   const matchingLeads = (leads?.items ?? [])
@@ -709,7 +709,7 @@ function AttachmentPanel({
 
   const { data: demoData } = useQuery({
     queryKey: ["demos", ""],
-    queryFn: () => api.get<{ demos: Demo[]; base: string }>("/demos"),
+    queryFn: ({ signal }) => api.get<{ demos: Demo[]; base: string }>("/demos", signal),
     enabled: showDemos || Boolean(leadId) || Boolean(clientId),
   });
 

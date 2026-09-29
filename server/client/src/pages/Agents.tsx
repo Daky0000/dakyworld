@@ -97,7 +97,7 @@ export function Agents() {
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["agents"],
-    queryFn: () => api.get<AgentList>("/agents"),
+    queryFn: ({ signal }) => api.get<AgentList>("/agents", signal),
     refetchInterval: 10_000,
   });
 
@@ -580,7 +580,7 @@ function AgentDrawer({ agentKey, onClose }: { agentKey: string | null; onClose: 
 
   const { data: agent } = useQuery({
     queryKey: ["agent", agentKey],
-    queryFn: () => api.get<AgentDetail>(`/agents/${agentKey}`),
+    queryFn: ({ signal }) => api.get<AgentDetail>(`/agents/${agentKey}`, signal),
     enabled: Boolean(agentKey),
   });
 
@@ -963,7 +963,7 @@ interface Gates {
 function WhyItOnlyPrepares({ agentKey }: { agentKey: string }) {
   const queryClient = useQueryClient();
   const [level, setLevel] = useState(3);
-  const gates = useQuery({ queryKey: ["agent-gates", agentKey], queryFn: () => api.get<Gates>(`/agents/${agentKey}/gates`) });
+  const gates = useQuery({ queryKey: ["agent-gates", agentKey], queryFn: ({ signal }) => api.get<Gates>(`/agents/${agentKey}/gates`, signal) });
 
   const goLive = useMutation({
     mutationFn: () => api.post<{ nowAllowed: string[] }>(`/agents/${agentKey}/go-live`, { level }),

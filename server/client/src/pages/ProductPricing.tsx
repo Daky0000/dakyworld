@@ -40,7 +40,7 @@ export function ProductPricing() {
 
   const catalogue = useQuery({
     queryKey: ["products"],
-    queryFn: () => api.get<{ products: Product[]; includedWithRetainer: string }>("/products"),
+    queryFn: ({ signal }) => api.get<{ products: Product[]; includedWithRetainer: string }>("/products", signal),
   });
 
   return (

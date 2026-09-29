@@ -1,3 +1,4 @@
+import { useSiteDirectory, SiteDirectoryMore } from "../lib/siteDirectory";
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -61,10 +62,7 @@ type SiteSeoOverviewResponse = {
 
 export function WebsiteAI() {
   const qc = useQueryClient();
-  const sites = useQuery({
-    queryKey: ["website", "sites"],
-    queryFn: () => api.get<SiteSummary[]>("/website/sites"),
-  });
+  const sites = useSiteDirectory<SiteSummary>();
 
   const [selectedSiteId, setSelectedSiteId] = useState("");
   const site = sites.data?.find((s) => s.id === selectedSiteId) ?? sites.data?.[0];
@@ -114,7 +112,7 @@ export function WebsiteAI() {
   const overview = useQuery({
     queryKey: ["website", "agent", "overview", site?.id],
     enabled: Boolean(site?.id),
-    queryFn: () => api.get<SiteAgentOverview>(`/website/sites/${site!.id}/agent/overview`),
+    queryFn: ({ signal }) => api.get<SiteAgentOverview>(`/website/sites/${site!.id}/agent/overview`, signal),
   });
 
   // Owner Escalations Query
@@ -157,7 +155,7 @@ export function WebsiteAI() {
   const seoOverview = useQuery({
     queryKey: ["website", "seo", site?.id],
     enabled: Boolean(site?.id) && activeTab === "seo",
-    queryFn: () => api.get<SiteSeoOverviewResponse>(`/website/sites/${site!.id}/seo`),
+    queryFn: ({ signal }) => api.get<SiteSeoOverviewResponse>(`/website/sites/${site!.id}/seo`, signal),
   });
 
   useEffect(() => {
@@ -405,6 +403,7 @@ export function WebsiteAI() {
         subtitle="Your site-wide builder agent. Tell it to update fonts, replace colors, or change phone numbers and copy across every page of your connected website."
       />
 
+      <SiteDirectoryMore directory={sites} />
       {sites.isLoading && <p className="text-sm text-muted">Loading connected websites…</p>}
       {sites.isSuccess && !site && (
         <div className="rounded-2xl border border-line bg-white p-6 text-center">

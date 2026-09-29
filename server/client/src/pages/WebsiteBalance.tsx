@@ -27,7 +27,7 @@ export function WebsiteBalance() {
 
   const balanceQuery = useQuery({
     queryKey: ["website-balance"],
-    queryFn: () => api.get<WebsiteBalanceReport>("/website/balance"),
+    queryFn: ({ signal }) => api.get<WebsiteBalanceReport>("/website/balance", signal),
   });
 
   const orderAddonMutation = useMutation({

@@ -1,4 +1,5 @@
-import express, { Router, type Request, type Response } from "express";
+export { handleGoogleCallback } from "../services/googleCallback.js";
+import express, { Router, type Request } from "express";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { prisma } from "../lib/prisma.js";
@@ -14,64 +15,17 @@ import { deployScreenshotActor } from "../services/screenshotActorDeploy.js";
 import { DEFAULT_SEO_ACTOR, seoActorId } from "../services/seoAudit.js";
 import { CAPTURE_DEFAULTS, captureEnvManaged, readCaptureConfig, writeCaptureConfig } from "../services/captureConfig.js";
 import { TASK_KINDS, describeTasks, writeActorOverride, type CaptureTask } from "../services/captureActors.js";
-import {
-  describeCapabilities,
-  maxRunsPerTask,
-  writeCapabilityOverride,
-} from "../services/actorCapabilities.js";
+import { describeCapabilities, maxRunsPerTask, writeCapabilityOverride } from "../services/actorCapabilities.js";
 import { isValidTimezone } from "../services/scheduler.js";
 import { AnalystError, verifyKey } from "../lib/anthropic.js";
-import {
-  JOBS,
-  MODEL_JOBS,
-  FREE_LADDER_MAX,
-  PROVIDERS,
-  PROVIDER_KEYS,
-  describeProviders,
-  describeRouting,
-  IMAGE_MODELS,
-  LADDER_KEYS,
-  freeLadderFor,
-  freeLadderSource,
-  isLadderKey,
-  needsSight,
-  isModelJob,
-  isPricedModel,
-  isProviderKey,
-  providerKey,
-  ladderLabel,
-  readFreeLadders,
-  readJobModels,
-  readRoutes,
-  routeFor,
-  type LadderKey,
-  type ModelJob,
-  type ProviderKey,
-} from "../lib/models/registry.js";
+import { JOBS, MODEL_JOBS, FREE_LADDER_MAX, PROVIDERS, describeProviders, describeRouting, IMAGE_MODELS, LADDER_KEYS, freeLadderFor, freeLadderSource, isLadderKey, needsSight, isModelJob, isPricedModel, isProviderKey, providerKey, ladderLabel, readFreeLadders, readJobModels, readRoutes, routeFor, type LadderKey, type ModelJob, type ProviderKey } from "../lib/models/registry.js";
 import { listNvidiaModels, verifyProviderKey, type NvidiaModel } from "../lib/models/call.js";
-import {
-  GoogleError,
-  buildAuthUrl,
-  clearGoogleTokenCache,
-  consumeState,
-  exchangeCode,
-  googleConfigured,
-  googleConnected,
-  redirectUri,
-  rememberState,
-} from "../lib/google.js";
+import { GoogleError, buildAuthUrl, clearGoogleTokenCache, googleConfigured, googleConnected, redirectUri, rememberState } from "../lib/google.js";
 import { verifyStripeKey } from "../lib/stripe.js";
 import { verifyPaystackKey } from "../lib/paystack.js";
 import { verifyHubtelKeys } from "../lib/hubtel.js";
 import { MailerError, activeTransport, readMailerConfig, sendMail, verifySmtp } from "../lib/mailer.js";
-import {
-  HostingerMailError,
-  clearHostingerSession,
-  fetchMailboxes,
-  probeMcp,
-  type HostingerMailbox,
-  type McpProbe,
-} from "../lib/hostingerMail.js";
+import { HostingerMailError, clearHostingerSession, fetchMailboxes, probeMcp, type HostingerMailbox, type McpProbe } from "../lib/hostingerMail.js";
 import { logoSources, signature, toHtml, toText } from "../services/emailRender.js";
 import { SlackError, sendSlack, slackTransport, verifySlack } from "../lib/slack.js";
 import type { SlackDeliveryStatus } from "@prisma/client";
@@ -82,16 +36,7 @@ import { calendarReady, listCalendars } from "../lib/calendar.js";
 import { rotateWebhookSecret, webhookSecret } from "../lib/webhooks.js";
 import { clearReadinessCache } from "../services/tools/readiness.js";
 import { assertImageBytes, FileTypeError } from "../lib/fileType.js";
-import {
-  BRAND_SLOTS,
-  DEFAULT_PROFILE,
-  brandImages,
-  companyProfile,
-  deleteBrandImage,
-  saveBrandImage,
-  saveCompanyProfile,
-  type BrandSlot,
-} from "../services/systemProfile.js";
+import { BRAND_SLOTS, DEFAULT_PROFILE, brandImages, companyProfile, deleteBrandImage, saveBrandImage, saveCompanyProfile, type BrandSlot } from "../services/systemProfile.js";
 import { gateBy } from "../middleware/permissionGate.js";
 import { businessContextStatus, syncBusinessOffer } from "../services/context/business.js";
 
@@ -1403,31 +1348,7 @@ settingsRouter.get("/google/auth-url", async (req, res, next) => {
  * it answers with a redirect either way and carries the outcome in the query
  * string.
  */
-export async function handleGoogleCallback(req: Request, res: Response) {
-  const appUrl = await getSetting(SETTING.APP_URL);
-  const base = origin(req, appUrl);
-  const state = typeof req.query.state === "string" ? req.query.state : "";
-  const pending = state ? consumeState(state) : null;
 
-  const back = (params: Record<string, string>) => {
-    const url = new URL(pending?.returnTo ?? "/settings", base);
-    for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-    res.redirect(url.toString());
-  };
-
-  if (typeof req.query.error === "string") return back({ google: "error", message: req.query.error });
-  if (!pending) return back({ google: "error", message: "That sign-in link had expired. Try again." });
-
-  const code = typeof req.query.code === "string" ? req.query.code : "";
-  if (!code) return back({ google: "error", message: "Google didn't return an authorisation code." });
-
-  try {
-    const { email } = await exchangeCode(code, base);
-    back({ google: "connected", ...(email ? { account: email } : {}) });
-  } catch (err) {
-    back({ google: "error", message: err instanceof GoogleError ? err.message : "Could not complete the Google sign-in." });
-  }
-}
 
 settingsRouter.post("/google/disconnect", async (req, res, next) => {
   try {

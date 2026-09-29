@@ -41,7 +41,7 @@ export const FIELD_TYPES: LeadFieldType[] = [
 export function useLeadFields(groupId?: string | null) {
   return useQuery({
     queryKey: ["lead-fields", groupId ?? ""],
-    queryFn: () => api.get<LeadFieldSet>(`/leads/fields${groupId ? `?groupId=${groupId}` : ""}`),
+    queryFn: ({ signal }) => api.get<LeadFieldSet>(`/leads/fields${groupId ? `?groupId=${groupId}` : ""}`, signal),
     staleTime: 60_000,
   });
 }

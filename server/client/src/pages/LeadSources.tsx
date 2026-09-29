@@ -28,33 +28,33 @@ export function LeadSources() {
 
   const { data: overview } = useQuery({
     queryKey: ["scraper-overview"],
-    queryFn: () => api.get<ScraperOverview>("/scrapers/overview"),
+    queryFn: ({ signal }) => api.get<ScraperOverview>("/scrapers/overview", signal),
     // While something is scraping, the page is a live view of it.
-    refetchInterval: (query) => ((query.state.data?.runningCount ?? 0) > 0 ? 4000 : false),
+    refetchInterval: (query) => ((query.state.data?.runningCount ?? 0) > 0 ? 5000 : false),
   });
 
   const { data: sources, isLoading } = useQuery({
     queryKey: ["scraper-sources"],
-    queryFn: () => api.get<ScraperSource[]>("/scrapers/sources"),
-    refetchInterval: (overview?.runningCount ?? 0) > 0 ? 4000 : false,
+    queryFn: ({ signal }) => api.get<ScraperSource[]>("/scrapers/sources", signal),
+    refetchInterval: (overview?.runningCount ?? 0) > 0 ? 5000 : false,
   });
 
   const { data: runs } = useQuery({
     queryKey: ["scraper-runs"],
-    queryFn: () => api.get<ScraperRun[]>("/scrapers/runs?take=15"),
-    refetchInterval: (overview?.runningCount ?? 0) > 0 ? 4000 : false,
+    queryFn: ({ signal }) => api.get<ScraperRun[]>("/scrapers/runs?take=15", signal),
+    refetchInterval: (overview?.runningCount ?? 0) > 0 ? 5000 : false,
   });
 
   const { data: settings } = useQuery({
     queryKey: ["settings"],
-    queryFn: () => api.get<AppSettings>("/settings"),
+    queryFn: ({ signal }) => api.get<AppSettings>("/settings", signal),
   });
 
   // Cheap and cached: what it buys is a source card that says its actor has
   // gone missing before the 06:00 run does.
   const { data: health } = useQuery({
     queryKey: ["actor-health", 0],
-    queryFn: () => api.get<ActorHealthReport>("/scrapers/actors"),
+    queryFn: ({ signal }) => api.get<ActorHealthReport>("/scrapers/actors", signal),
   });
 
   const refresh = () => {
@@ -522,15 +522,15 @@ function SourcePicker({
 
   const { data: templates } = useQuery({
     queryKey: ["scraper-templates"],
-    queryFn: () => api.get<ScraperTemplate[]>("/scrapers/templates"),
+    queryFn: ({ signal }) => api.get<ScraperTemplate[]>("/scrapers/templates", signal),
     enabled: open,
   });
 
   const { data: catalog, isFetching } = useQuery({
     queryKey: ["scraper-catalog", submitted],
-    queryFn: () => api.get<{ store: ApifyActorSummary[]; mine: ApifyActorSummary[] }>(
+    queryFn: ({ signal }) => api.get<{ store: ApifyActorSummary[]; mine: ApifyActorSummary[] }>(
       `/scrapers/catalog?search=${encodeURIComponent(submitted)}`,
-    ),
+    signal),
     enabled: open,
   });
 
@@ -695,7 +695,7 @@ function WhyNothingRuns() {
   const { data, isFetching, refetch } = useQuery({
     queryKey: ["capture-diagnosis"],
     enabled: asked,
-    queryFn: () => api.get<{ verdict: string; blocked: boolean; checks: CaptureCheck[] }>("/scrapers/diagnose"),
+    queryFn: ({ signal }) => api.get<{ verdict: string; blocked: boolean; checks: CaptureCheck[] }>("/scrapers/diagnose", signal),
   });
 
   const tone = (state: CaptureCheck["state"]) =>

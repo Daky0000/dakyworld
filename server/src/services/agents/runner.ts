@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { capacity } from "../../lib/capacity.js";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { Agent, AgentTask, AgentStepKind } from "@prisma/client";
@@ -1844,7 +1845,7 @@ const NO_BRAND_VOICE = new Set([
 const SCOPE_CONTAINMENT_DIRECTIVE = `STRICT SCOPE BOUNDARIES & CONTEXT-GROUNDED REASONING:
 - Think and reason EXCLUSIVELY from the explicit facts provided in your task context, retrieved memory, and tool outputs. Do not extrapolate, assume, or promise capabilities outside your assigned mandate.
 - Every solution you propose must remain strictly within your assigned craft and toolkit boundaries. Never hallucinate external tools, unobserved facts, unmeasured metrics, or unverified claims.
-- If an issue or opportunity lies outside your craft or touches money, live external systems, or policy changes, do NOT attempt it yourself — escalate via \`escalate\` or route to the proper specialist via \`handOff\` / \`delegate\`.`;
+- If an issue or opportunity lies outside your craft or touches money, live external systems, or policy changes, do NOT attempt it yourself — escalate via \`escalate\` or route to the proper specialist using the delegation tools currently available to you.`;
 
 const COMMERCIAL_AGENTS = new Set([
   "lead.orchestrator",
@@ -2084,6 +2085,7 @@ export interface RunOutcome {
  * the audit re-run, the same first email drafted twice from scratch.
  */
 export async function runTask(taskId: string): Promise<RunOutcome> {
+  if (capacity.role === "api") return { status: "QUEUED", summary: null };
   if (running.has(taskId)) return { status: "RUNNING", summary: null };
   if (shuttingDown) return { status: "QUEUED", summary: null };
   running.add(taskId);

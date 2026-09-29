@@ -41,7 +41,7 @@ export function SharedMemoryPanel() {
 
   const { data } = useQuery({
     queryKey: ["shared-memory"],
-    queryFn: () => api.get<SharedMemoryList>("/agents/memory/shared"),
+    queryFn: ({ signal }) => api.get<SharedMemoryList>("/agents/memory/shared", signal),
   });
 
   const refresh = () => {

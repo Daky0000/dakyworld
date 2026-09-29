@@ -11,7 +11,7 @@ export function Clients() {
 
   const { data: clients, isLoading } = useQuery({
     queryKey: ["clients"],
-    queryFn: () => api.get<Client[]>("/clients"),
+    queryFn: ({ signal }) => api.get<Client[]>("/clients", signal),
   });
 
   const allClients = clients ?? [];

@@ -1,3 +1,5 @@
+import { capacity } from "../../lib/capacity.js";
+import { withCapacityLease } from "../../lib/leases.js";
 import PDFDocument from "pdfkit";
 import {
   ACCENT,
@@ -680,6 +682,9 @@ export interface AuditPdfData {
 }
 
 export async function renderAuditPdf(data: AuditPdfData): Promise<Buffer> {
+  return capacity.admission ? withCapacityLease("render", 1, () => renderAuditPdfUnbounded(data)) : renderAuditPdfUnbounded(data);
+}
+async function renderAuditPdfUnbounded(data: AuditPdfData): Promise<Buffer> {
   const { report } = data;
   const doc = newDoc(await letterheadIdentity());
 

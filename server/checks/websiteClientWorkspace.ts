@@ -33,6 +33,7 @@ const routeFor: Record<string, string> = {
   "/website/assets": "/sites/one/assets",
   "/website/team": "/sites/one/members",
   "/website/audit": "/sites/one/audit",
+  "/website/balance": "/balance",
 };
 for (const item of CLIENT_NAV) {
   const path = routeFor[item.to];

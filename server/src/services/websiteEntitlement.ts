@@ -1,3 +1,4 @@
+import type { WebsiteActor } from "./websiteActor.js";
 import type { Request } from "express";
 import type { WebsitePlanTier } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
@@ -167,7 +168,16 @@ async function liveSubscription(userId: string, email: string) {
   return rows.find((row) => stillEntitled(row, now)) ?? null;
 }
 
-export async function resolveEntitlement(req: Request): Promise<Entitlement> {
+const requestEntitlements = new WeakMap<WebsiteActor, { key: string; result: Promise<Entitlement> }>();
+export function resolveEntitlement(req: WebsiteActor): Promise<Entitlement> {
+  const key = JSON.stringify([req.dbUser?.id, req.headers["x-dw-test-user"], getSwitchedUserEmail(), req.headers["x-dw-simulate-months"]]);
+  const existing = requestEntitlements.get(req);
+  if (existing?.key === key) return existing.result;
+  const result = loadEntitlement(req);
+  requestEntitlements.set(req, { key, result });
+  return result;
+}
+async function loadEntitlement(req: WebsiteActor): Promise<Entitlement> {
   const user = req.dbUser;
   const headerUser =
     TEST_SWITCHING_ALLOWED && typeof req.headers["x-dw-test-user"] === "string"

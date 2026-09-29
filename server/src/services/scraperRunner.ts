@@ -1,3 +1,5 @@
+import { costControlState } from "./costControl.js";
+import { CapacityError } from "../lib/capacity.js";
 import type { Lead, LeadSource, Prisma, ScraperRun, ScraperRunStatus, ScraperRunTrigger, ScraperSource } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import {
@@ -242,6 +244,7 @@ async function costCeiling(
 }
 
 export async function runSource(sourceId: string, trigger: ScraperRunTrigger = "MANUAL") {
+  if (costControlState().pauseBulk) throw new CapacityError("New scraping runs are paused by the hosting budget.", 429, 3600);
   const source = await prisma.scraperSource.findUnique({ where: { id: sourceId } });
   if (!source) throw new Error("Lead source not found");
 

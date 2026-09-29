@@ -19,7 +19,7 @@ import { Card, EmptyState, PageHeader, RelativeTime, StatTile } from "../compone
 export function WebsiteOverview() {
   const overview = useQuery({
     queryKey: ["website", "overview"],
-    queryFn: () => api.get<WebsiteOverviewData>("/website/overview"),
+    queryFn: ({ signal }) => api.get<WebsiteOverviewData>("/website/overview", signal),
   });
 
   if (overview.isLoading) return <div className="text-sm text-muted">Loading…</div>;

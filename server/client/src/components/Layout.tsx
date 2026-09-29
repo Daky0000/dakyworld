@@ -13,6 +13,7 @@ const navGroups: NavGroup[] = [
     title: "Workspace",
     items: [
       { to: "/", label: "Dashboard", end: true, needs: "dashboard.view" },
+      { to: "/freelancer-workspace", label: "Freelancer Cockpit", needs: "clients.view" },
     ],
   },
   {

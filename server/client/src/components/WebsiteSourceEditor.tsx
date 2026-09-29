@@ -1,3 +1,4 @@
+import { useSiteDirectory, SiteDirectoryMore } from "../lib/siteDirectory";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -70,12 +71,12 @@ export function SourceFileEditor({ siteId, filePath, canPublish, focusFieldId, t
   /** The one block whose style controls are open, so the list stays readable. */
   const [styling, setStyling] = useState<string | null>(null);
   const endpoint = `/website/sites/${encodeURIComponent(siteId)}/source`;
-  const document = useQuery({ queryKey: ["website", "source", siteId, filePath], queryFn: () => api.get<SourceDocument>(`${endpoint}?filePath=${encodeURIComponent(filePath)}`), refetchOnWindowFocus: false });
+  const document = useQuery({ queryKey: ["website", "source", siteId, filePath], queryFn: ({ signal }) => api.get<SourceDocument>(`${endpoint}?filePath=${encodeURIComponent(filePath)}`, signal), refetchOnWindowFocus: false });
   // The pictures already uploaded to this site. A framework page cannot be shown
   // a drag-and-drop canvas, but somebody changing an image still needs a way to
   // name one that exists — typing a path from memory is how a broken picture
   // gets published.
-  const images = useQuery({ queryKey: ["website", "assets", siteId], queryFn: () => api.get<UploadedImage[]>(`/website/sites/${encodeURIComponent(siteId)}/assets`), refetchOnWindowFocus: false });
+  const images = useQuery({ queryKey: ["website", "assets", siteId], queryFn: ({ signal }) => api.get<UploadedImage[]>(`/website/sites/${encodeURIComponent(siteId)}/assets`, signal), refetchOnWindowFocus: false });
   const fieldRefs = useRef<Record<string, HTMLElement | null>>({});
   useEffect(() => {
     if (!focusFieldId) return;
@@ -303,7 +304,7 @@ export function WebsiteSourceEditor({ siteId, initialFilePath = "" }: { siteId: 
   // opened alongside it so the tree shows where it sits rather than the root.
   const [folder, setFolder] = useState(() => initialFilePath.split("/").slice(0, -1).join("/"));
   const [filePath, setFilePath] = useState(initialFilePath);
-  const directory = useQuery({ queryKey: ["website", "source-files", siteId, folder], enabled: access.data?.capabilities.source === true, queryFn: () => api.get<Directory>(`/website/sites/${encodeURIComponent(siteId)}/source/files?path=${encodeURIComponent(folder)}`) });
+  const directory = useQuery({ queryKey: ["website", "source-files", siteId, folder], enabled: access.data?.capabilities.source === true, queryFn: ({ signal }) => api.get<Directory>(`/website/sites/${encodeURIComponent(siteId)}/source/files?path=${encodeURIComponent(folder)}`, signal) });
   if (access.isLoading) return <p role="status" className="text-sm text-muted">Loading source access…</p>;
   if (access.error) return <p role="alert" className="text-sm text-danger-text">{(access.error as Error).message}</p>;
   if (!access.data?.capabilities.source) return <p className="rounded-2xl border border-line bg-white p-5 text-sm text-muted">Source editing needs a website manager or developer role.</p>;
@@ -323,7 +324,7 @@ export function WebsiteSourceEditor({ siteId, initialFilePath = "" }: { siteId: 
 }
 
 export function WebsiteSource() {
-  const sites = useQuery({ queryKey: ["website", "sites"], queryFn: () => api.get<SiteSummary[]>("/website/sites") });
+  const sites = useSiteDirectory<SiteSummary>();
   const available = sites.data?.filter(site => site.capabilities?.source) ?? [];
   // `?site=&file=` is how the page list hands a framework route over. Both are
   // hints: a site that is not editable here falls back to the first that is.
@@ -335,6 +336,7 @@ export function WebsiteSource() {
   return <>
     <PageHeader title="Source content" subtitle="Edit static content in connected React, Next.js, Astro, Nuxt, Vue and SvelteKit projects, with a review before each commit." />
     {sites.isLoading && <p role="status" className="text-sm text-muted">Loading websites…</p>}
+    <SiteDirectoryMore directory={sites} />
     {sites.error && <p role="alert" className="text-sm text-danger-text">{(sites.error as Error).message}</p>}
     {sites.data?.length === 0 && <p className="text-sm text-muted">Connect a website and its GitHub repository from Sites to get started.</p>}
     {siteId && <><label className="mb-6 block max-w-sm text-xs text-muted">Website<select className={`${fieldClass} mt-1`} value={siteId} onChange={event => setSelected(event.target.value)}>{available.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}</select></label><WebsiteSourceEditor key={siteId} siteId={siteId} initialFilePath={siteId === requestedSite ? requestedFile : ""} /></>}

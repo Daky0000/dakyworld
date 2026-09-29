@@ -44,7 +44,7 @@ export function WebsiteSubscriptionPanel() {
 
   const subscription = useQuery({
     queryKey: ["website", "subscription"],
-    queryFn: () => api.get<Subscription>("/website/subscription"),
+    queryFn: ({ signal }) => api.get<Subscription>("/website/subscription", signal),
   });
 
   const cancel = useMutation({

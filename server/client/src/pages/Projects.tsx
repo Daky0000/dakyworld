@@ -11,7 +11,7 @@ export function Projects() {
 
   const { data: projects, isLoading } = useQuery({
     queryKey: ["projects"],
-    queryFn: () => api.get<Project[]>("/projects"),
+    queryFn: ({ signal }) => api.get<Project[]>("/projects", signal),
   });
 
   const allProjects = projects ?? [];

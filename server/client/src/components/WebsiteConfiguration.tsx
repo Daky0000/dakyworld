@@ -1,3 +1,4 @@
+import { useSiteDirectory, SiteDirectoryMore } from "../lib/siteDirectory";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
@@ -18,15 +19,15 @@ const INPUT = "mt-1 w-full rounded-xl border border-line bg-white px-3 py-2 text
 
 export function WebsiteSettings() {
   const { can, user } = useAuth();
-  const sites = useQuery({ queryKey: ["website", "sites"], queryFn: () => api.get<ManagedSite[]>("/website/sites") });
+  const sites = useSiteDirectory<ManagedSite>();
   const manageable = sites.data?.filter(site => site.capabilities?.manage !== false) ?? [];
   const [selected, setSelected] = useState("");
   const id = manageable.some(site => site.id === selected) ? selected : manageable[0]?.id;
-  const config = useQuery({ queryKey: ["website", "config", id], enabled: !!id, queryFn: () => api.get<Config>(`/website/sites/${id}/config`) });
+  const config = useQuery({ queryKey: ["website", "config", id], enabled: !!id, queryFn: ({ signal }) => api.get<Config>(`/website/sites/${id}/config`, signal) });
   // Whose website this is. It is what decides whether a retainer covers the
   // Website Builder for them, so a site with no client can only be told that
   // nothing decides — see the "Who pays for this" line on Onboarding.
-  const clients = useQuery({ queryKey: ["clients", "for-sites"], queryFn: () => api.get<Array<{ id: string; name: string }>>("/clients") });
+  const clients = useQuery({ queryKey: ["clients", "for-sites"], queryFn: ({ signal }) => api.get<Array<{ id: string; name: string }>>("/clients", signal) });
   const [draft, setDraft] = useState<Config | null>(null);
   const [dirty, setDirty] = useState(false);
   const [colourText, setColourText] = useState("");
@@ -68,6 +69,7 @@ export function WebsiteSettings() {
 
   return <div>
     <PageHeader title="Website settings" subtitle="Connect your source and use your own design system in the editor." action={can("website.manage") ? <ConnectWebsite /> : undefined} />
+    <SiteDirectoryMore directory={sites} />
     {sites.error && <p role="alert" className="text-danger-text">{(sites.error as Error).message}</p>}
     {sites.isLoading && <p className="text-sm text-muted">Loading websites…</p>}
     {sites.isSuccess && !manageable.length && <p className="text-sm text-muted">You do not manage any websites yet. A website manager can give you access to these settings.</p>}
@@ -121,6 +123,23 @@ export function WebsiteSettings() {
                 + Add colour
               </button>
             )}
+            <button
+              type="button"
+              className="h-8 rounded-lg border border-line bg-surface-2 px-2.5 text-xs text-ink transition hover:bg-surface-3"
+              title="Automatically scan pages for declared HTML/CSS colours"
+              onClick={async () => {
+                try {
+                  const res = await api.get<{ options: { colours: string[] } }>(`/website/sites/${id}/design`);
+                  if (res.options.colours && res.options.colours.length) {
+                    const merged = Array.from(new Set([...colours, ...res.options.colours])).slice(0, 16);
+                    setColourText(merged.join(", "));
+                    changed();
+                  }
+                } catch {}
+              }}
+            >
+              Scan page colours
+            </button>
           </div>
           {paletteError && <p className="mb-3 text-xs text-danger-text">{paletteError}</p>}
           <label className="block text-xs text-muted">Fonts (one family per line)<textarea className={`${INPUT} h-24`} placeholder={"Space Grotesk\nDM Sans"} value={fontText} aria-invalid={Boolean(fontsError)} onChange={event => { setFontText(event.target.value); changed(); }} /></label>

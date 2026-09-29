@@ -1,3 +1,4 @@
+import type { WebsiteActor } from "./websiteActor.js";
 import type { NextFunction, Request, Response, Router } from "express";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -34,7 +35,7 @@ export type WebsitePrincipal = {
   deniedPermissions: readonly string[];
 };
 
-export function websitePrincipal(req: Request): WebsitePrincipal {
+export function websitePrincipal(req: WebsiteActor): WebsitePrincipal {
   const user = req.dbUser;
   if (!user?.active) throw new WebsiteError(401, "Sign in to open the website editor.");
   return {
@@ -45,11 +46,11 @@ export function websitePrincipal(req: Request): WebsitePrincipal {
 }
 
 /** Site managers do not own the OS's shared GitHub credentials. */
-export function canManageWebsiteConnection(req: Request): boolean {
+export function canManageWebsiteConnection(req: WebsiteActor): boolean {
   return websiteCapabilities(websitePrincipal(req), null).manage;
 }
 
-export function assertWebsiteConnectionChange(req: Request, current: { repoOwner: string | null; repoName: string | null; repoBranch: string; repoPath: string }, next: Partial<typeof current>): void {
+export function assertWebsiteConnectionChange(req: WebsiteActor, current: { repoOwner: string | null; repoName: string | null; repoBranch: string; repoPath: string }, next: Partial<typeof current>): void {
   if (["repoOwner", "repoName", "repoBranch", "repoPath"].some(key => next[key as keyof typeof next] !== undefined && next[key as keyof typeof next] !== current[key as keyof typeof current]) && !canManageWebsiteConnection(req)) {
     throw new WebsiteError(403, "Ask an administrator to change this website's repository connection. Your website settings can still be edited.");
   }
@@ -84,13 +85,24 @@ const accessReader: WebsiteAccessReader = {
   hasMembership: async userId => Boolean(await prisma.siteMember.findFirst({ where: { userId }, select: { id: true } })),
 };
 
-export async function getWebsiteCapabilities(req: Request, siteId: string, reader = accessReader) {
+const requestCapabilities = new WeakMap<WebsiteActor, Map<string, ReturnType<typeof loadWebsiteCapabilities>>>();
+async function loadWebsiteCapabilities(req: WebsiteActor, siteId: string, reader: WebsiteAccessReader) {
   const principal = websitePrincipal(req);
   const role = await reader.memberRole(siteId, principal.id);
   return { siteId, userId: principal.id, role, capabilities: websiteCapabilities(principal, role) };
 }
+export function getWebsiteCapabilities(req: WebsiteActor, siteId: string, reader = accessReader) {
+  // Custom readers are used by checks and must remain authoritative on every call.
+  if (reader !== accessReader) return loadWebsiteCapabilities(req, siteId, reader);
+  let entries = requestCapabilities.get(req);
+  if (!entries) { entries = new Map(); requestCapabilities.set(req, entries); }
+  const key = `${req.dbUser?.id}:${siteId}`;
+  let access = entries.get(key);
+  if (!access) { access = loadWebsiteCapabilities(req, siteId, reader); entries.set(key, access); }
+  return access;
+}
 
-export async function assertWebsiteSiteAccess(req: Request, siteId: string, action: WebsiteAction = "view", reader = accessReader) {
+export async function assertWebsiteSiteAccess(req: WebsiteActor, siteId: string, action: WebsiteAction = "view", reader = accessReader) {
   const access = await getWebsiteCapabilities(req, siteId, reader);
   if (!access.capabilities.view) throw new WebsiteError(404, "That website is not available to this account.");
   if (!access.capabilities[action]) throw new WebsiteError(403, `Your access to this website does not include ${action === "members" ? "managing members" : action === "source" ? "changing source files" : action === "manage" ? "managing settings" : action === "edit" ? "editing" : action === "publish" ? "publishing" : "reviewing"}.`);
@@ -98,7 +110,7 @@ export async function assertWebsiteSiteAccess(req: Request, siteId: string, acti
 }
 
 /** Use on every collection and aggregate, including related page/version queries. */
-export function websiteSiteFilter(req: Request): Prisma.SiteWhereInput {
+export function websiteSiteFilter(req: WebsiteActor): Prisma.SiteWhereInput {
   const principal = websitePrincipal(req);
   if (websiteCapabilities(principal, null).view) return {};
   if (!principal.external && principal.deniedPermissions.includes("website.view")) return { id: { in: [] } };
@@ -131,6 +143,7 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
   if (/^\/(?:sites|pages)\/[^/]+\/?$/.test(path)) return "manage";
   // AI suggestions, SEO actions, comments, and agent plans produce draft/site changes.
   if (/\/(?:ai|suggest|assistant|agent|seo|insert-section|comments|health-monitor|escalations)(?:\/|$)/.test(path)) return "edit";
+  if (/\/work-jobs\/[^/]+\/cancel$/.test(path)) return "edit";
   if (/^\/tier-status(?:\/|$)/.test(path)) return "view";
   return null;
 }
@@ -141,7 +154,7 @@ export function createWebsiteAccessGate(reader = accessReader) {
       const principal = websitePrincipal(req);
       // These routes operate on the signed-in customer's own account. Their
       // handlers check any optional site ID before using it.
-      if (/^\/(?:subscription(?:\/(?:cancel|manage))?|setup-assistance|balance(?:\/.*)?|activity(?:\/.*)?|escalations(?:\/[^/]+)?)\/?$/.test(req.path)) return;
+      if (/^\/(?:subscription(?:\/(?:cancel|manage))?|setup-assistance|starter-templates|balance(?:\/.*)?|activity(?:\/.*)?|escalations(?:\/[^/]+)?|freelancer-workspace(?:\/.*)?)\/?$/.test(req.path)) return;
       if (/^\/tier-status(?:\/|$)/.test(req.path)) {
         return;
       }

@@ -50,7 +50,7 @@ export function WebsiteFrameworkEditor() {
   const [publishedAt, setPublishedAt] = useState<Date | null>(null);
   const [typedOnPage, setTypedOnPage] = useState<{ fieldId: string; value: string; token: number } | null>(null);
   const frame = useRef<HTMLIFrameElement | null>(null);
-  const view = useQuery({ queryKey: ["website", "framework", pageId], queryFn: () => api.get<FrameworkPage>(`/website/pages/${encodeURIComponent(pageId)}/framework`), refetchOnWindowFocus: false });
+  const view = useQuery({ queryKey: ["website", "framework", pageId], queryFn: ({ signal }) => api.get<FrameworkPage>(`/website/pages/${encodeURIComponent(pageId)}/framework`, signal), refetchOnWindowFocus: false });
   const access = useWebsiteAccess(view.data?.site.id ?? "");
 
   // A click in the frame arrives as the id of an element on the live page. The

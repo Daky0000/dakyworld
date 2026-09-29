@@ -1,3 +1,4 @@
+import { localRateStore, rateBucketKey, takeSharedRateBucket, clearSharedRateBucket } from "../lib/rateLimitStore.js";
 import type { NextFunction, Request, Response } from "express";
 
 /**
@@ -125,42 +126,6 @@ export function forceHttps(req: Request, res: Response, next: NextFunction) {
 
 // --- Rate limiting -----------------------------------------------------------
 
-/**
- * In memory on purpose: this runs as a single Railway service, and a Redis
- * dependency to slow down a brute force on one login form is the wrong trade.
- * If a second instance ever appears this weakens rather than breaks — each
- * instance still enforces its own ceiling.
- */
-interface Bucket {
-  count: number;
-  resetAt: number;
-}
-
-const SWEEP_AT = 5000;
-
-function makeStore() {
-  const hits = new Map<string, Bucket>();
-  return {
-    /** Counts this request and returns the bucket it landed in. */
-    take(key: string, windowMs: number): Bucket {
-      const now = Date.now();
-      const seen = hits.get(key);
-      if (!seen || seen.resetAt <= now) {
-        const fresh = { count: 1, resetAt: now + windowMs };
-        hits.set(key, fresh);
-        // Cheap sweep so a long uptime can't grow this map without bound.
-        if (hits.size > SWEEP_AT) for (const [k, v] of hits) if (v.resetAt <= now) hits.delete(k);
-        return fresh;
-      }
-      seen.count += 1;
-      return seen;
-    },
-    clear(key: string) {
-      hits.delete(key);
-    },
-  };
-}
-
 interface LimitOptions {
   windowMs: number;
   max: number;
@@ -176,11 +141,19 @@ interface LimitOptions {
  * response so a real integration can back off rather than guess.
  */
 export function rateLimit(options: LimitOptions) {
-  const store = makeStore();
+  const store = localRateStore();
+  const scope = JSON.stringify([options.message, options.windowMs, options.max]);
+  const shared = () => process.env.NODE_ENV === "production" || process.env.RATE_LIMIT_SHARED === "true";
   const keyOf = options.key ?? clientIp;
 
-  const middleware = (req: Request, res: Response, next: NextFunction) => {
-    const bucket = store.take(keyOf(req), options.windowMs);
+  const middleware = async (req: Request, res: Response, next: NextFunction) => {
+    let bucket;
+    try {
+      bucket = shared() ? await takeSharedRateBucket(rateBucketKey(scope, keyOf(req)), options.windowMs, options.max)
+        : store.take(keyOf(req), options.windowMs, options.max);
+    } catch {
+      return res.status(503).set("Retry-After", "15").set("Cache-Control", "no-store").json({ error: "Request protection is temporarily unavailable. Please retry shortly." });
+    }
     const remaining = Math.max(0, options.max - bucket.count);
     const resetSeconds = Math.max(1, Math.ceil((bucket.resetAt - Date.now()) / 1000));
 
@@ -199,8 +172,9 @@ export function rateLimit(options: LimitOptions) {
   };
 
   return Object.assign(middleware, {
-    forgive(req: Request) {
+    async forgive(req: Request) {
       store.clear(keyOf(req));
+      if (shared()) await clearSharedRateBucket(rateBucketKey(scope, keyOf(req)));
     },
   });
 }
@@ -233,9 +207,9 @@ export const loginAccountRateLimit = rateLimit({
 });
 
 /** Called on a successful sign-in so a legitimate user isn't punished for typos. */
-export function clearLoginAttempts(req: Request) {
-  loginRateLimit.forgive(req);
-  loginAccountRateLimit.forgive(req);
+export async function clearLoginAttempts(req: Request) {
+  // A cleanup outage must not reject an otherwise successful authentication.
+  await Promise.allSettled([loginRateLimit.forgive(req), loginAccountRateLimit.forgive(req)]);
 }
 
 /**

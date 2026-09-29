@@ -41,6 +41,7 @@ export function ConnectWebsite() {
   const [branch, setBranch] = useState("main");
   const [html, setHtml] = useState<string | undefined>();
   const [filename, setFilename] = useState("");
+  const [templateKey, setTemplateKey] = useState("business");
   const [fileError, setFileError] = useState<string | null>(null);
   const [helpNotes, setHelpNotes] = useState("");
   const [helpAsked, setHelpAsked] = useState<string | null>(null);
@@ -49,7 +50,7 @@ export function ConnectWebsite() {
 
   const assistance = useQuery({
     queryKey: ["website", "setup-assistance"],
-    queryFn: () => api.get<Assistance>("/website/setup-assistance"),
+    queryFn: ({ signal }) => api.get<Assistance>("/website/setup-assistance", signal),
     enabled: open,
     staleTime: 10 * 60_000,
   });
@@ -65,13 +66,14 @@ export function ConnectWebsite() {
         repoOwner: route === "github" && repository.trim() ? parts[0] : null,
         repoName: route === "github" && repository.trim() ? parts[1] : null,
         repoBranch: branch,
+        templateKey: route === "hosted" && !html ? templateKey : undefined,
         html,
       });
     },
     onSuccess: async (result) => {
       await qc.invalidateQueries({ queryKey: ["website"] });
       setOpen(false);
-      navigate(result.pageId ? `/website/pages/${result.pageId}` : "/website/sites");
+      navigate(result.pageId ? `/website/pages/${result.pageId}?walkthrough=interactive` : "/website/sites");
     },
   });
 
@@ -234,6 +236,23 @@ export function ConnectWebsite() {
                     className="mt-1 h-10 w-full rounded-xl border border-line px-3 text-sm text-ink"
                   />
                 </label>
+
+                {route === "hosted" && !html && (
+                  <label className="block text-xs text-muted">
+                    Starter template
+                    <select
+                      value={templateKey}
+                      onChange={(event) => setTemplateKey(event.target.value)}
+                      className="mt-1 h-10 w-full rounded-xl border border-line bg-white px-3 text-sm text-ink outline-none"
+                    >
+                      <option value="business">Modern Business &amp; Consulting (Hero, Features, Reviews, CTA, Contact)</option>
+                      <option value="saas">Digital Product &amp; SaaS (Hero, Features, Pricing, FAQ, CTA)</option>
+                      <option value="portfolio">Creative Portfolio &amp; Studio (Hero, Features, Team, Reviews, Contact)</option>
+                      <option value="local">Local Services &amp; Storefront (Hero, Features, Pricing, Reviews, Contact)</option>
+                      <option value="blank">Clean Minimalist Canvas (Header, Hero, Footer)</option>
+                    </select>
+                  </label>
+                )}
 
                 {route === "github" && (
                   <>

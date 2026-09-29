@@ -32,7 +32,12 @@ export function WebsitePresetRollout({ siteId, presets, disabled }: { siteId: st
     if (!preset) return;
     setBusy(true); setError(""); setPlans(null); setApplied(false);
     try {
-      const list = await api.get<{ pages: SitePageRow[] }>(`/website/sites/${siteId}/pages`);
+      const list: { pages: SitePageRow[] } = { pages: [] };
+      let cursor: string | null = null;
+      do {
+        const batch: { pages: SitePageRow[]; nextCursor: string | null } = await api.get(`/website/sites/${siteId}/pages?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+        list.pages.push(...batch.pages); cursor = batch.nextCursor;
+      } while (cursor);
       const next: Plan[] = [];
       for (const row of list.pages) { const page = await api.get<SitePageDetail>(`/website/pages/${row.id}`); if (page.structure?.stale || page.problems.length) throw new Error(`Resolve the existing draft problems on ${row.title} before applying a brand style.`); next.push({ page, plan: presetPagePlan(page, preset) }); }
       setPlans(next);

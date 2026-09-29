@@ -37,7 +37,7 @@ const NEUTRAL = "border-line-strong bg-sunken text-muted";
 export function useLeadTags() {
   return useQuery({
     queryKey: ["lead-tags"],
-    queryFn: () => api.get<LeadTagList>("/leads/tags"),
+    queryFn: ({ signal }) => api.get<LeadTagList>("/leads/tags", signal),
     // The vocabulary changes when a capture runs, not when somebody clicks —
     // no need to re-ask on every mount.
     staleTime: 60_000,

@@ -1,8 +1,17 @@
+import { installShutdown } from "./lib/shutdown.js";
+import { legacyPublishedAsset } from "./services/publishedAssets.js";
+import { capacity } from "./lib/capacity.js";
+import { requestCacheContext } from "./lib/requestCache.js";
+import { startBackgroundRuntime } from "./services/backgroundRuntime.js";
+import { operationsRouter } from "./routes/operations.js";
+import { requestAdmission } from "./middleware/requestAdmission.js";
+import { startLocalInvalidations, invalidateAfterWrite } from "./services/cacheInvalidation.js";
+import { measureRequests, performanceSnapshot } from "./middleware/performance.js";
 import "dotenv/config";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import express, { type NextFunction, type Request, type Response } from "express";
+import express, { Router, type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import { attachUser, bootstrapOwner, requireAuth, scopeExternal, DEV_NO_AUTH, DEV_NO_AUTH_REFUSED } from "./middleware/auth.js";
 import { DEV_MODE, DEV_MODE_REFUSED } from "./services/tools/devMode.js";
@@ -19,7 +28,7 @@ import { invoicesRouter } from "./routes/invoices.js";
 import { carePlansRouter } from "./routes/carePlans.js";
 import { emailsRouter, unsubscribeRouter } from "./routes/emails.js";
 import { inboxRouter } from "./routes/inbox.js";
-import { hubtelWebhook, paystackWebhook } from "./routes/paymentWebhooks.js";
+import { hubtelWebhook, paystackWebhook, stripeWebhook } from "./routes/paymentWebhooks.js";
 import { webhooksRouter } from "./routes/webhooks.js";
 import { slackRouter } from "./routes/slack.js";
 import { messagingRouter } from "./routes/messaging.js";
@@ -44,6 +53,8 @@ import { countPending } from "./services/approvals.js";
 import { contextRouter } from "./routes/context.js";
 import { mcpRouter } from "./routes/mcp.js";
 import { websiteRouter } from "./routes/website.js";
+import { registerWebsiteFreelancerWorkspaceRoutes } from "./services/websiteFreelancerWorkspace.js";
+import { registerPublicReviewRoutes } from "./services/websiteApprovalAndReview.js";
 import { apiRateLimit, forceHttps, securityHeaders, webhookRateLimit } from "./middleware/security.js";
 import { allowedRepos, bareEntries } from "./lib/github.js";
 import { settingsRouter } from "./routes/settings.js";
@@ -51,8 +62,6 @@ import { prisma } from "./lib/prisma.js";
 import { ensureStandingWork } from "./services/agents/standingWork.js";
 import { SETTING } from "./lib/settings.js";
 import { pruneFreeLadders } from "./lib/models/call.js";
-import { getStripe, stripeWebhookSecret } from "./lib/stripe.js";
-import { settleManually } from "./services/payments.js";
 import { demosRouter, demoPagesRouter } from "./routes/demos.js";
 import { auditsRouter } from "./routes/audits.js";
 import { conceptsRouter } from "./routes/concepts.js";
@@ -71,6 +80,7 @@ import { publicSiteHosting } from "./services/websiteHosting.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const app = express();
+if (capacity.role === "worker") throw new Error("Use npm run start:worker for SERVICE_ROLE=worker");
 const PORT = Number(process.env.PORT ?? 4000);
 
 // The built React client, served by this same process in production so the
@@ -93,14 +103,18 @@ const hasBuiltClient = existsSync(path.join(CLIENT_DIST, "index.html"));
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
+app.use(measureRequests);
+app.use(requestCacheContext);
 app.use(forceHttps);
+app.use("/api", (_req, res, next) => { res.set("Cache-Control", "private, no-store"); next(); });
+app.use(invalidateAfterWrite);
 
 // In production the client is served from this same origin, so nothing needs a
 // cross-origin grant at all and the safe answer is to issue none. Locally, Vite
 // on :5173 does. Handing out `credentials: true` against a default of
 // localhost:5173 on the live system would be a standing offer nobody needs.
 const CORS_ORIGIN = process.env.CLIENT_ORIGIN ?? (process.env.NODE_ENV === "production" ? null : "http://localhost:5173");
-if (CORS_ORIGIN) app.use(cors({ origin: CORS_ORIGIN, credentials: true }));
+if (CORS_ORIGIN) app.use(cors({ origin: CORS_ORIGIN, credentials: true, exposedHeaders: ["X-Next-Cursor"] }));
 
 // Hosted customer websites, ahead of everything else this app does.
 //
@@ -118,56 +132,7 @@ app.use(securityHeaders);
 
 // Stripe webhook needs the raw request body for signature verification, so
 // it's mounted before the global express.json() parser below.
-app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), async (req, res) => {
-  const stripe = await getStripe();
-  const webhookSecret = await stripeWebhookSecret();
-  if (!stripe || !webhookSecret) {
-    return res.status(503).send("Stripe webhook not configured");
-  }
-  let event;
-  try {
-    const signature = req.headers["stripe-signature"] as string;
-    event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
-  } catch (err) {
-    return res.status(400).send(`Webhook signature verification failed: ${(err as Error).message}`);
-  }
-
-  // Record every Stripe event for audit trail, matching Paystack/Hubtel.
-  try {
-    await prisma.webhookEvent.create({
-      data: {
-        source: "stripe",
-        event: event.type,
-        payload: event.data.object as never,
-        headers: JSON.parse(JSON.stringify({ "stripe-signature": req.headers["stripe-signature"] })) as never,
-        verified: true,
-      },
-    });
-  } catch (err) {
-    console.error("[webhooks] could not record a stripe event:", (err as Error).message);
-  }
-
-  // Answer immediately — Stripe retries on timeout.
-  res.json({ received: true });
-
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object as {
-      metadata?: { invoiceId?: string };
-      payment_method_types?: string[];
-    };
-    const invoiceId = session.metadata?.invoiceId;
-    if (invoiceId) {
-      try {
-        const paidVia = session.payment_method_types?.[0] ?? "card";
-        const settled = await settleManually(invoiceId, { paidVia: `Stripe ${paidVia}` });
-        if (settled?.changed) console.log(`[webhooks] stripe settled ${settled.invoice.invoiceNumber}`);
-      } catch (err) {
-        console.error("[webhooks] stripe settlement failed:", (err as Error).message);
-      }
-    }
-  }
-});
-
+app.post("/api/webhooks/stripe", webhookRateLimit, express.raw({ type: "application/json", limit: "256kb" }), stripeWebhook);
 
 // Paystack and Hubtel, above the generic handler below because each verifies
 // its own way — Paystack signs with HMAC-SHA512 over the raw body keyed by the
@@ -213,25 +178,12 @@ app.use("/api/messaging", webhookRateLimit, express.raw({ type: "*/*", limit: "1
 // every business Dakyworld is pitching to stays behind the login.
 app.use("/demos", demoPagesRouter);
 
-app.get("/assets/dw/:filename", async (req, res, next) => {
-  try {
-    const filename = req.params.filename;
-    const repoPath = `assets/dw/${filename}`;
-    const asset = await prisma.siteAsset.findFirst({
-      where: { repoPath },
-      select: { content: true, contentType: true, size: true },
-    });
-    if (!asset || !asset.content) {
-      return res.status(404).send("Asset not found");
-    }
-    res.setHeader("Content-Type", asset.contentType || "image/png");
-    res.setHeader("Content-Length", asset.content.length);
-    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-    res.send(Buffer.from(asset.content));
-  } catch (err) {
-    next(err);
-  }
-});
+const publicReviewRouter = express.Router();
+publicReviewRouter.use(express.json());
+registerPublicReviewRoutes(publicReviewRouter);
+app.use("/api/public", publicReviewRouter);
+
+app.get("/assets/dw/:filename", legacyPublishedAsset);
 
 // The client is served ahead of the auth middleware below: attachUser does a
 // database round trip per request, and static assets have no business paying
@@ -239,7 +191,9 @@ app.get("/assets/dw/:filename", async (req, res, next) => {
 if (hasBuiltClient) {
   // Hashed asset filenames are safe to cache hard; index.html must not be,
   // or browsers keep serving the previous deploy's asset references.
-  app.use(express.static(CLIENT_DIST, { index: false, maxAge: "1y" }));
+  app.use(express.static(CLIENT_DIST, { index: false, maxAge: 0, setHeaders(res, file) {
+    res.setHeader("Cache-Control", /[-.][A-Za-z0-9_-]{8,}\.(?:js|css|woff2?|png|jpg|webp|svg)$/.test(file) ? "public, max-age=31536000, immutable" : "no-cache");
+  } }));
   app.get("*", (req, res, next) => {
     if (req.path.startsWith("/api/")) return next();
     res.sendFile(path.join(CLIENT_DIST, "index.html"), { headers: { "Cache-Control": "no-cache" } });
@@ -297,6 +251,7 @@ app.use("/api/public", publicProductsRouter);
 // that is going to be refused should be refused before it costs a database
 // round trip.
 app.use("/api", apiRateLimit);
+app.use("/api", requestAdmission);
 
 // Resolves the session cookie but never rejects — /api/auth/login has to stay
 // reachable without one. requireAuth below is what actually closes the door.
@@ -305,6 +260,11 @@ app.use("/api/auth", authRouter);
 app.use("/api", requireAuth);
 // Signed in is not the same as "belongs in here" — see scopeExternal.
 app.use("/api", scopeExternal);
+app.get("/api/operations/performance", (req, res) => {
+  if (!req.dbUser?.accessRole?.superAdmin) return res.status(403).json({ error: "Owner access required." });
+  res.json(performanceSnapshot());
+});
+app.use("/api/operations", operationsRouter);
 
 app.use("/api/products", productsRouter);
 app.use("/api/clients", clientsRouter);
@@ -340,6 +300,9 @@ app.use("/api/mcp", mcpRouter);
 // modules rather than under Settings: editing a page is somebody's daily work,
 // not a configuration screen.
 app.use("/api/website", websiteRouter);
+const freelancerWorkspaceRouter = Router();
+registerWebsiteFreelancerWorkspaceRoutes(freelancerWorkspaceRouter);
+app.use("/api", freelancerWorkspaceRouter);
 app.use("/api/settings", settingsRouter);
 
 if (!hasBuiltClient) {
@@ -374,12 +337,15 @@ ensureSystemRoles()
   .then(() => bootstrapOwner())
   .catch((err) => console.error("Owner bootstrap failed:", err))
   .finally(() => {
+    let stopLocalInvalidations: (() => void) | undefined;
+    let stopBackground: (() => void | Promise<void>) | undefined;
     const server = app.listen(PORT, () => {
       console.log(`Dakyworld OS API listening on http://localhost:${PORT}`);
       console.log(hasBuiltClient ? "  → Serving the built client from client/dist" : "  → No client build found — API only");
       // Daily lead capture, monthly billing, and outbound email. Harmless with
       // nothing configured: it finds nothing due and goes back to sleep.
-      startScheduler();
+      stopLocalInvalidations = startLocalInvalidations();
+      stopBackground = startBackgroundRuntime();
       // The letters that ship with the app, copied in once so they can be
       // edited. Failing here must not take the API down.
       void ensureBuiltinTemplates().catch((err) => console.error("Template seed failed:", err));
@@ -736,7 +702,7 @@ ensureSystemRoles()
       // than on the next minute tick. Silent when no mailbox is connected, and
       // the tick reads the mailbox anyway — this is an optimisation over a
       // poll that runs regardless, never the only path.
-      void startWatcher().catch((err) => console.error("Mailbox watcher failed to start:", err));
+      // The background owner starts the mailbox watcher.
       if (DEV_NO_AUTH_REFUSED) {
         // Said loudly, because a variable that is set and silently ignored is
         // one somebody believes is doing something. It is doing nothing, and
@@ -779,24 +745,10 @@ ensureSystemRoles()
      * anything that does not make it is picked up on the next boot instead,
      * from the same checkpoint.
      */
-    let stopping = false;
-    const shutdown = (signal: string) => {
-      if (stopping) return;
-      stopping = true;
-      console.log(`
-${signal} — finishing up.`);
-      // The mailbox connection goes first and is not waited on: it holds a
-      // socket the server thinks is logged in, and closing it politely is
-      // worth a moment but never worth one of the few seconds the agents need.
-      void stopWatcher().catch(() => undefined);
-      void drainRunningTasks()
-        .catch((err) => console.error("Agent drain failed:", err))
-        .finally(() => {
-          server.close(() => process.exit(0));
-          // A held-open keep-alive connection must not outlive the deploy.
-          setTimeout(() => process.exit(0), 3_000).unref();
-        });
-    };
-    process.on("SIGTERM", () => shutdown("SIGTERM"));
-    process.on("SIGINT", () => shutdown("SIGINT"));
+    installShutdown({
+      server,
+      stop: async () => { stopLocalInvalidations?.(); await stopBackground?.(); await stopWatcher(); },
+      drain: drainRunningTasks,
+      disconnect: () => prisma.$disconnect(),
+    });
   });

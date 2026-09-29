@@ -1,0 +1,222 @@
+{
+  "date": "2026-09-28",
+  "environment": "Local isolated PostgreSQL 16 / Redis 7; small HTML fixtures; not production certification",
+  "caveats": [
+    "Burst ran concurrently with baseline",
+    "Baseline preceded final SQL-join and job-safety refinements",
+    "Active user population is not simultaneous browser editor sessions",
+    "Memory is API process RSS only; no Railway cost forecast"
+  ],
+  "reports": {
+    "baseline": {
+      "mode": "reads",
+      "requestedRps": 50,
+      "seconds": 3600,
+      "concurrency": 250,
+      "requests": 180000,
+      "dropped": 0,
+      "unexpected": 0,
+      "rejected": 50,
+      "conflicts": 0,
+      "codes": {
+        "200": 179950,
+        "503": 50
+      },
+      "p50Ms": 12.420400000177324,
+      "p95Ms": 31.045100000221282,
+      "p99Ms": 43.6976999999024,
+      "databaseQueries": 1200752,
+      "cache": {
+        "hits": 133509,
+        "misses": 46214,
+        "errors": 4,
+        "oversize": 0,
+        "coalesced": 0
+      },
+      "memoryBefore": {
+        "rss": 209371136,
+        "heapTotal": 90025984,
+        "heapUsed": 82046880,
+        "external": 80943905,
+        "arrayBuffers": 67783307
+      },
+      "memoryAfter": {
+        "rss": 328073216,
+        "heapTotal": 221753344,
+        "heapUsed": 131444472,
+        "external": 81160190,
+        "arrayBuffers": 68006554
+      },
+      "actualSeconds": 3600.1430334
+    },
+    "burst": {
+      "mode": "reads",
+      "requestedRps": 100,
+      "seconds": 600,
+      "concurrency": 250,
+      "requests": 60000,
+      "dropped": 0,
+      "unexpected": 0,
+      "rejected": 171,
+      "conflicts": 0,
+      "codes": {
+        "200": 59829,
+        "503": 171
+      },
+      "p50Ms": 10.951100000005681,
+      "p95Ms": 25.210199999972247,
+      "p99Ms": 34.35759999998845,
+      "databaseQueries": 214600,
+      "cache": {
+        "hits": 44928,
+        "misses": 14510,
+        "errors": 7,
+        "oversize": 0,
+        "coalesced": 0
+      },
+      "memoryBefore": {
+        "rss": 323792896,
+        "heapTotal": 235057152,
+        "heapUsed": 87544184,
+        "external": 85852916,
+        "arrayBuffers": 68420426
+      },
+      "memoryAfter": {
+        "rss": 418541568,
+        "heapTotal": 284147712,
+        "heapUsed": 176697264,
+        "external": 85613865,
+        "arrayBuffers": 72460229
+      },
+      "jobs": [],
+      "mockCalls": 0,
+      "actualSeconds": 600.0642481
+    },
+    "cacheBypass": {
+      "mode": "cold",
+      "requestedRps": 50,
+      "seconds": 20,
+      "concurrency": 250,
+      "requests": 1000,
+      "dropped": 0,
+      "unexpected": 0,
+      "rejected": 0,
+      "conflicts": 0,
+      "codes": {
+        "200": 1000
+      },
+      "p50Ms": 11.137399999999616,
+      "p95Ms": 25.293400000002293,
+      "p99Ms": 34.00879999999961,
+      "databaseQueries": 5154,
+      "cache": {
+        "hits": 0,
+        "misses": 0,
+        "errors": 0,
+        "oversize": 0,
+        "coalesced": 0
+      },
+      "memoryBefore": {
+        "rss": 254181376,
+        "heapTotal": 98811904,
+        "heapUsed": 75611640,
+        "external": 80936959,
+        "arrayBuffers": 67783323
+      },
+      "memoryAfter": {
+        "rss": 269025280,
+        "heapTotal": 114540544,
+        "heapUsed": 83124944,
+        "external": 81035263,
+        "arrayBuffers": 67881627
+      },
+      "jobs": [],
+      "mockCalls": 0,
+      "actualSeconds": 20.0191558
+    },
+    "redisUnavailable": {
+      "mode": "reads",
+      "requestedRps": 50,
+      "seconds": 20,
+      "concurrency": 250,
+      "requests": 1000,
+      "dropped": 0,
+      "unexpected": 0,
+      "rejected": 0,
+      "conflicts": 0,
+      "codes": {
+        "200": 1000
+      },
+      "p50Ms": 10.7429000000011,
+      "p95Ms": 23.945800000000418,
+      "p99Ms": 34.36110000000008,
+      "databaseQueries": 5435,
+      "cache": {
+        "hits": 0,
+        "misses": 0,
+        "errors": 4,
+        "oversize": 0,
+        "coalesced": 0
+      },
+      "memoryBefore": {
+        "rss": 221052928,
+        "heapTotal": 83214336,
+        "heapUsed": 81303272,
+        "external": 80943905,
+        "arrayBuffers": 67783307
+      },
+      "memoryAfter": {
+        "rss": 241131520,
+        "heapTotal": 120225792,
+        "heapUsed": 88983152,
+        "external": 80963509,
+        "arrayBuffers": 67807899
+      },
+      "jobs": [],
+      "mockCalls": 0,
+      "actualSeconds": 20.0042844
+    },
+    "savesRedisUnavailable": {
+      "mode": "edit",
+      "requestedRps": 50,
+      "seconds": 20,
+      "concurrency": 250,
+      "requests": 1000,
+      "dropped": 0,
+      "unexpected": 0,
+      "rejected": 0,
+      "conflicts": 0,
+      "codes": {
+        "200": 1000
+      },
+      "p50Ms": 11.606299999999464,
+      "p95Ms": 54.23879999999963,
+      "p99Ms": 79.85039999999935,
+      "databaseQueries": 12063,
+      "cache": {
+        "hits": 0,
+        "misses": 0,
+        "errors": 4,
+        "oversize": 0,
+        "coalesced": 0
+      },
+      "memoryBefore": {
+        "rss": 250380288,
+        "heapTotal": 81506304,
+        "heapUsed": 76264432,
+        "external": 81029045,
+        "arrayBuffers": 67873435
+      },
+      "memoryAfter": {
+        "rss": 254210048,
+        "heapTotal": 114012160,
+        "heapUsed": 88958776,
+        "external": 81265347,
+        "arrayBuffers": 68046175
+      },
+      "jobs": [],
+      "mockCalls": 0,
+      "actualSeconds": 19.998897200000002
+    }
+  }
+}

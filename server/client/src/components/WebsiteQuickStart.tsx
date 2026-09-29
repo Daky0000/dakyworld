@@ -8,7 +8,13 @@ const steps = [
   ["4. Review before publishing", "Click Publish to inspect the visual diff and verify changes. Nothing goes live to your visitors until you confirm."],
 ];
 
-export function WebsiteQuickStart({ onClose }: { onClose: () => void }) {
+export function WebsiteQuickStart({
+  onClose,
+  onLaunchSpotlight,
+}: {
+  onClose: () => void;
+  onLaunchSpotlight?: () => void;
+}) {
   const [step, setStep] = useState(0);
   const [fullGuideOpen, setFullGuideOpen] = useState(false);
 
@@ -35,6 +41,15 @@ export function WebsiteQuickStart({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {onLaunchSpotlight && (
+            <button
+              type="button"
+              className="rounded-full border border-blue/40 bg-blue/10 px-3 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue hover:text-white transition-all shadow-2xs"
+              onClick={onLaunchSpotlight}
+            >
+              ✨ Spotlight Tour
+            </button>
+          )}
           <button
             type="button"
             className="rounded-full border border-line bg-white px-3 py-1.5 text-xs font-semibold text-muted hover:border-ink/40 hover:text-ink transition-all "

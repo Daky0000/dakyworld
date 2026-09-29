@@ -75,7 +75,7 @@ export function Settings() {
 
   const { data, isLoading } = useQuery({
     queryKey: ["settings"],
-    queryFn: () => api.get<AppSettings>("/settings"),
+    queryFn: ({ signal }) => api.get<AppSettings>("/settings", signal),
   });
 
   // Google's consent redirect lands back here with its outcome in the URL.
@@ -404,7 +404,7 @@ function SystemPanel({ settings }: { settings: AppSettings }) {
  * its own, and so does publishing a change to any page that describes the offer.
  */
 function BusinessContextPanel() {
-  const context = useQuery({ queryKey: ["business-context"], queryFn: () => api.get<BusinessContext>("/settings/business") });
+  const context = useQuery({ queryKey: ["business-context"], queryFn: ({ signal }) => api.get<BusinessContext>("/settings/business", signal) });
   const qc = useQueryClient();
   const sync = useMutation({
     mutationFn: () => api.post<BusinessContext & { changed: boolean; notes: string[] }>("/settings/business/sync", { force: true }),
@@ -879,7 +879,7 @@ function InboxPanel({ settings }: { settings: AppSettings }) {
 
   const { data: suggestion } = useQuery({
     queryKey: ["inbox-suggestion"],
-    queryFn: () => api.get<InboxSuggestion>("/settings/inbox/suggestion"),
+    queryFn: ({ signal }) => api.get<InboxSuggestion>("/settings/inbox/suggestion", signal),
     enabled: !inbox.configured,
   });
 
@@ -1545,7 +1545,7 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
   const qc = useQueryClient();
   const report = useQuery({
     queryKey: ["settings", "nvidia", "free"],
-    queryFn: () => api.get<FreeLadderReport>("/settings/models/nvidia/free"),
+    queryFn: ({ signal }) => api.get<FreeLadderReport>("/settings/models/nvidia/free", signal),
   });
 
   const ladders = report.data?.ladders ?? [];
@@ -3184,7 +3184,7 @@ function ActorHealthList() {
   const [refreshed, setRefreshed] = useState(0);
   const { data, isFetching } = useQuery({
     queryKey: ["actor-health", refreshed],
-    queryFn: () => api.get<ActorHealthReport>(`/scrapers/actors${refreshed ? "?refresh=1" : ""}`),
+    queryFn: ({ signal }) => api.get<ActorHealthReport>(`/scrapers/actors${refreshed ? "?refresh=1" : ""}`, signal),
   });
 
   return (
@@ -3537,7 +3537,7 @@ interface SlackDelivery {
 }
 
 function SlackHealthNote() {
-  const { data } = useQuery({ queryKey: ["slack", "health"], queryFn: () => api.get<SlackHealth>("/settings/slack/health") });
+  const { data } = useQuery({ queryKey: ["slack", "health"], queryFn: ({ signal }) => api.get<SlackHealth>("/settings/slack/health", signal) });
   if (!data) return null;
 
   return (
@@ -3613,8 +3613,8 @@ function SlackDeliveries() {
 
   const deliveries = useQuery({
     queryKey: ["slack", "deliveries", showAll],
-    queryFn: () =>
-      api.get<SlackDelivery[]>(`/settings/slack/deliveries?sinceDays=7&limit=50${showAll ? "" : "&status=FAILED,UNCERTAIN,RETRYING,PENDING"}`),
+    queryFn: ({ signal }) =>
+      api.get<SlackDelivery[]>(`/settings/slack/deliveries?sinceDays=7&limit=50${showAll ? "" : "&status=FAILED,UNCERTAIN,RETRYING,PENDING"}`, signal),
   });
 
   const retry = useMutation({
@@ -4206,7 +4206,7 @@ type TwoFactorState = {
 
 function SecurityPanel() {
   const qc = useQueryClient();
-  const { data } = useQuery({ queryKey: ["2fa"], queryFn: () => api.get<TwoFactorState>("/auth/2fa") });
+  const { data } = useQuery({ queryKey: ["2fa"], queryFn: ({ signal }) => api.get<TwoFactorState>("/auth/2fa", signal) });
 
   const [setup, setSetup] = useState<{ secret: string; uri: string } | null>(null);
   const [code, setCode] = useState("");

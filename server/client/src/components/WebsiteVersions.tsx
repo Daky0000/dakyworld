@@ -73,7 +73,7 @@ export function WebsiteVersions({ pageId, siteId, draftRevision, onClose, onRest
 
   const versions = useQuery({
     queryKey: ["website", "versions", pageId],
-    queryFn: () => api.get<SitePageVersionRow[]>(`/website/pages/${pageId}/versions`),
+    queryFn: ({ signal }) => api.get<SitePageVersionRow[]>(`/website/pages/${pageId}/versions`, signal),
   });
 
   const restore = useMutation({
@@ -118,6 +118,20 @@ export function WebsiteVersions({ pageId, siteId, draftRevision, onClose, onRest
     },
   });
 
+  const cherryPick = useMutation({
+    mutationFn: ({ versionId, fieldId }: { versionId: string; fieldId: string }) =>
+      api.post<{ ok: boolean; message: string; restoredField: string }>(
+        `/website/pages/${pageId}/versions/${versionId}/cherry-pick`,
+        { fieldId }
+      ),
+    onError: (err) => setFailure(err instanceof ApiError ? err.message : "Could not cherry-pick that field."),
+    onSuccess: (result) => {
+      setFailure(null);
+      setNote(result.message || "Restored change into active draft.");
+      onRestored();
+    },
+  });
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-ink/30">
       <div className="flex h-full w-full max-w-xl flex-col overflow-hidden border-l border-line bg-white">
@@ -145,9 +159,9 @@ export function WebsiteVersions({ pageId, siteId, draftRevision, onClose, onRest
                 <li key={version.id} className="rounded-xl border border-line p-3.5">
                   <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                     <span className="font-display text-sm tracking-[-.02em]">Version {version.number}</span>
-                    <span className="text-xs text-muted">
+                    <span className="text-xs text-muted" title={new Date(version.createdAt).toLocaleString()}>
                       {version.publishedBy?.name ? `${version.publishedBy.name} · ` : ""}
-                      <RelativeTime value={version.createdAt} />
+                      {new Date(version.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })} · {new Date(version.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
                     </span>
                     {version.commitUrl && (
                       <a
@@ -165,14 +179,25 @@ export function WebsiteVersions({ pageId, siteId, draftRevision, onClose, onRest
                   </div>
 
                   {version.summary.length > 0 ? (
-                    <ul className="mt-2 space-y-1 text-xs text-muted">
+                    <ul className="mt-2 space-y-1.5 text-xs text-muted">
                       {version.summary.slice(0, 6).map((entry, index) => (
-                        <li key={`${entry.id}-${entry.part}-${index}`} className="break-words">
-                          {summaryLine(entry)}
+                        <li key={`${entry.id}-${entry.part}-${index}`} className="flex items-center justify-between gap-2 rounded-md bg-sunken/40 px-2 py-1">
+                          <span className="min-w-0 break-words flex-1">{summaryLine(entry)}</span>
+                          {access.data?.capabilities.edit && (
+                            <button
+                              type="button"
+                              title="Restore just this field into active draft"
+                              disabled={cherryPick.isPending}
+                              onClick={() => cherryPick.mutate({ versionId: version.id, fieldId: entry.id })}
+                              className="shrink-0 rounded border border-line bg-white px-1.5 py-0.5 text-[10px] font-medium text-ink transition hover:bg-sunken disabled:opacity-50"
+                            >
+                              Copy change
+                            </button>
+                          )}
                         </li>
                       ))}
                       {version.summary.length > 6 && (
-                        <li className="text-muted">and {version.summary.length - 6} more</li>
+                        <li className="text-muted px-2">and {version.summary.length - 6} more</li>
                       )}
                     </ul>
                   ) : (

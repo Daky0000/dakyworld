@@ -93,7 +93,7 @@ export function WebsiteSurvey() {
   const survey = useQuery({
     queryKey: ["website", "survey", siteId],
     enabled: Boolean(siteId),
-    queryFn: () => api.get<Survey>(`/website/sites/${siteId}/survey`),
+    queryFn: ({ signal }) => api.get<Survey>(`/website/sites/${siteId}/survey`, signal),
   });
 
   const qc = useQueryClient();

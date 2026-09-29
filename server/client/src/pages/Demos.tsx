@@ -111,7 +111,7 @@ export function Demos() {
 
   const { data, isLoading } = useQuery({
     queryKey: ["demos", filter],
-    queryFn: () => api.get<{ demos: Demo[]; base: string }>(`/demos${filter ? `?status=${filter}` : ""}`),
+    queryFn: ({ signal }) => api.get<{ demos: Demo[]; base: string }>(`/demos${filter ? `?status=${filter}` : ""}`, signal),
   });
 
   const update = useMutation({
@@ -608,13 +608,13 @@ function ImportDemoDrawer({
 
   const { data: clients } = useQuery({
     queryKey: ["clients"],
-    queryFn: () => api.get<Client[]>("/clients"),
+    queryFn: ({ signal }) => api.get<Client[]>("/clients", signal),
     enabled: open && linkKind === "client",
   });
 
   const { data: leadsData } = useQuery({
     queryKey: ["leads-brief-demo"],
-    queryFn: () => api.get<{ items: Lead[] }>("/leads?take=100"),
+    queryFn: ({ signal }) => api.get<{ items: Lead[] }>("/leads?take=100", signal),
     enabled: open && linkKind === "lead",
   });
 

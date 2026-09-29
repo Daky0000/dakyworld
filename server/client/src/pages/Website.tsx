@@ -1,13 +1,15 @@
+import { useSiteDirectory, SiteDirectoryMore } from "../lib/siteDirectory";
 import { ConnectWebsite } from "../components/ConnectWebsite";
 import { ImportWebsitePage } from "../components/ImportWebsitePage";
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import type { SitePageRow, SiteSummary } from "../lib/types";
 import { Badge, Button, EmptyState, PageHeader, RelativeTime, Table } from "../components/ui";
 import { WebsiteClientOnboarding } from "../components/WebsiteClientOnboarding";
+import { WebsiteSubscriberOnboarding } from "../components/WebsiteSubscriberOnboarding";
 import { WebsiteGuideModal } from "../components/WebsiteGuideModal";
 
 /**
@@ -38,17 +40,21 @@ export function Website() {
   const [scanError, setScanError] = useState<string | null>(null);
   const [guideOpen, setGuideOpen] = useState(false);
 
-  const sites = useQuery({ queryKey: ["website", "sites"], queryFn: () => api.get<SiteSummary[]>("/website/sites") });
+  const sites = useSiteDirectory<SiteSummary>();
 
   const current = sites.data?.find((site) => site.id === siteId) ?? sites.data?.[0] ?? null;
   const canConnect = Boolean(user?.external) || can("website.manage");
   const canManage = current?.capabilities?.manage === true;
 
-  const pages = useQuery({
+  const pageQuery = useInfiniteQuery({
     queryKey: ["website", "pages", current?.id],
+    initialPageParam: "",
     enabled: Boolean(current),
-    queryFn: () => api.get<{ site: SiteSummary; pages: SitePageRow[] }>(`/website/sites/${current!.id}/pages`),
+    queryFn: ({ pageParam, signal }) => api.get<{ site: SiteSummary; pages: SitePageRow[]; nextCursor: string | null }>(`/website/sites/${current!.id}/pages?limit=25${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`, signal),
+    getNextPageParam: page => page.nextCursor ?? undefined,
   });
+
+  const pages = { ...pageQuery, data: pageQuery.data ? { pages: pageQuery.data.pages.flatMap(page => page.pages) } : undefined };
 
   const scan = useMutation({
     mutationFn: () => api.post<{ found: number; added: number; missing: string[]; folder: string; movedTo: string | null }>(`/website/sites/${current!.id}/scan`),
@@ -74,9 +80,9 @@ export function Website() {
 
   if (!current) {
     return (
-      <div>
-        <PageHeader title="Sites" subtitle="The websites this builder can publish to." />
-        <EmptyState message="No website has been added yet." action={canConnect ? <ConnectWebsite /> : undefined} />
+      <div className="space-y-6">
+        <PageHeader title="Website Builder" subtitle="Connect your website, customize it on the live canvas, and launch to visitors." />
+        <WebsiteSubscriberOnboarding onSiteCreated={(newSiteId) => setSiteId(newSiteId)} />
       </div>
     );
   }
@@ -96,6 +102,13 @@ export function Website() {
         }`}
         action={
           <div className="flex flex-wrap items-center gap-2">
+            {visible[0] && (
+              <Link to={`/website/pages/${visible[0].id}?walkthrough=interactive`}>
+                <Button variant="accent">
+                  ✨ Interactive Tour
+                </Button>
+              </Link>
+            )}
             <Button variant="secondary" onClick={() => setGuideOpen(true)}>
               Guide & Tips
             </Button>
@@ -110,6 +123,7 @@ export function Website() {
       />
 
       {canConnect && <div className="mb-5"><ConnectWebsite /></div>}
+      <SiteDirectoryMore directory={sites} />
       {(sites.data?.length ?? 0) > 1 && (
         <div className="mb-6 flex flex-wrap items-center gap-2">
           {sites.data!.map((site) => (
@@ -229,6 +243,7 @@ export function Website() {
               ))}
             </tbody>
           </Table>
+          {pages.hasNextPage && <Button variant="secondary" disabled={pages.isFetchingNextPage} onClick={() => void pages.fetchNextPage()}>Load more pages</Button>}
 
           {hiddenCount > 0 && (
             <button

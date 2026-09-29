@@ -40,12 +40,12 @@ export function ConnectGithubApp({
   const [entered, setEntered] = useState("");
   const [failure, setFailure] = useState<string | null>(null);
 
-  const status = useQuery({ queryKey: ["website", "github-app"], queryFn: () => api.get<AppStatus>("/website/github-app") });
+  const status = useQuery({ queryKey: ["website", "github-app"], queryFn: ({ signal }) => api.get<AppStatus>("/website/github-app", signal) });
 
   const repositories = useQuery({
     queryKey: ["website", "github-app", "repositories", entered || installationId],
     enabled: Boolean(entered || installationId),
-    queryFn: () => api.get<{ repositories: Repository[] }>(`/website/github-app/installations/${entered || installationId}/repositories`),
+    queryFn: ({ signal }) => api.get<{ repositories: Repository[] }>(`/website/github-app/installations/${entered || installationId}/repositories`, signal),
   });
 
   const connect = useMutation({

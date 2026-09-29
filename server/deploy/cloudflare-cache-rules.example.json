@@ -1,0 +1,25 @@
+{
+  "name": "Dakyworld approved public pages",
+  "kind": "zone",
+  "phase": "http_request_cache_settings",
+  "rules": [
+    {
+      "description": "Cache only anonymous published content on explicitly onboarded hosts",
+      "expression": "(http.host in {\"REPLACE_WITH_VERIFIED_PUBLIC_HOST\"} and http.request.method in {\"GET\" \"HEAD\"} and not starts_with(http.request.uri.path, \"/api/\") and not starts_with(http.request.uri.path, \"/preview\") and not any(http.request.headers.names[*] == \"authorization\") and not any(http.request.headers.names[*] == \"cookie\"))",
+      "action": "set_cache_settings",
+      "action_parameters": {
+        "cache": true,
+        "edge_ttl": { "mode": "bypass_by_default" },
+        "browser_ttl": { "mode": "respect_origin" }
+      },
+      "enabled": true
+    },
+    {
+      "description": "Never cache private requests, cookies, or APIs",
+      "expression": "(starts_with(http.request.uri.path, \"/api/\") or any(http.request.headers.names[*] == \"authorization\") or any(http.request.headers.names[*] == \"cookie\"))",
+      "action": "set_cache_settings",
+      "action_parameters": { "cache": false },
+      "enabled": true
+    }
+  ]
+}

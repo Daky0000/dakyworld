@@ -20,14 +20,11 @@ const files = readdirSync(here)
 let failed = 0;
 for (const file of files) {
   console.log(`\n\u2500\u2500 ${file} ${"\u2500".repeat(Math.max(0, 60 - file.length))}`);
-  // A path relative to the server root, not an absolute one. `shell: true` is
-  // needed on Windows to find `npx`, and it does not quote arguments — so an
-  // absolute path here resolves as far as "…/Dakyworld" and stops, because the
-  // repository lives in a folder with a space in its name.
-  const result = spawnSync("npx", ["tsx", `checks/${file}`], {
+  // Use the installed loader directly; no shell quoting or npx resolution is needed.
+  const result = spawnSync(process.execPath, ["--import", "tsx", join(here, file)], {
     cwd: root,
     stdio: "inherit",
-    shell: process.platform === "win32",
+    timeout: 600_000,
     // Set here rather than in each check, because `middleware/auth.ts` reads it
     // into a module constant at import time — a check assigning it after its
     // own imports have run would get 401 and report a defect in the route that
@@ -35,6 +32,7 @@ for (const file of files) {
     // regardless, so this cannot leak past a developer's machine.
     env: { ...process.env, DEV_NO_AUTH: "true" },
   });
+  if (result.error) console.error(`Could not complete ${file}: ${result.error.message}`);
   if (result.status !== 0) failed += 1;
 }
 

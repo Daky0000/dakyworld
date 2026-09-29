@@ -107,7 +107,8 @@ for (const name of pages) {
   const after = discoverFields(marked.html.replace(/<base [^>]*>/i, ""));
   const sameIds = after.fields.map((f) => f.id).join(",") === content.fields.map((f) => f.id).join(",");
   check(`${name}: the marked page still has the same fields`, sameIds);
-  const sameValues = content.fields.every((field) => after.fields.find((f) => f.id === field.id)?.value === field.value);
+  const unmark = (value: string | undefined) => value?.replace(/\sdata-dw-(?:field|kind|readonly)="[^"]*"/g, "");
+  const sameValues = content.fields.every((field) => unmark(after.fields.find((f) => f.id === field.id)?.value) === unmark(field.value));
   check(`${name}: and the same values`, sameValues);
 
   check(`${name}: the picker is only added when asked for`, !buildPreview(html, "https://dakyworld.com").html.includes("data-dw-field"));
@@ -165,7 +166,8 @@ console.log("What a style may contain");
 const styleCases: [string, string, string][] = [
   ["a plain declaration", "color: #3157FF", "color: #3157FF"],
   ["several", "color: red; font-size: 20px", "color: red; font-size: 20px"],
-  ["a remote image", "background: url(https://evil.example/x.png)", ""],
+  ["an HTTPS image", "background: url(https://images.example/x.png)", "background: url(https://images.example/x.png)"],
+  ["a script URL", "background: url(javascript:alert(1))", ""],
   ["an IE expression", "width: expression(alert(1))", ""],
   ["a javascript url", "background: javascript:alert(1)", ""],
   ["a quote that would leave the attribute", 'color: red" onload="alert(1)', ""],

@@ -6,7 +6,7 @@ import { attachUser } from "../middleware/auth.js";
 import { AnalystError, analystConfigured, analyzeGrids } from "../lib/anthropic.js";
 import { GoogleError, getDriveFile, listSpreadsheets, listTabs, readGrids } from "../lib/google.js";
 import { gateBy } from "../middleware/permissionGate.js";
-import { handleGoogleCallback } from "./settings.js";
+import { handleGoogleCallback } from "../services/googleCallback.js";
 import { detectTables, normalizePlan, repairPlan, type ImportPlan, type PlanTable } from "../services/sheetPlan.js";
 import {
   MAX_ROWS_PER_SHEET,

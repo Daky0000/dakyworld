@@ -820,14 +820,19 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
 
 // One process, one cache. Writes go through setSetting, which clears it.
 const cache = new Map<string, string | null>();
+let expiresAt = 0;
+let cacheGeneration = 0;
 
 export function clearSettingsCache() {
+  cacheGeneration++;
   cache.clear();
 }
 
 export async function getSetting(key: string): Promise<string | null> {
+  if (Date.now() >= expiresAt) { cacheGeneration++; cache.clear(); expiresAt = Date.now() + 60_000; }
   if (cache.has(key)) return cache.get(key) ?? null;
 
+  const generation = cacheGeneration;
   const envKey = ENV_FALLBACK[key];
   const fromEnv = envKey ? process.env[envKey]?.trim() : undefined;
   if (fromEnv) {
@@ -837,7 +842,7 @@ export async function getSetting(key: string): Promise<string | null> {
 
   const row = await prisma.appSetting.findUnique({ where: { key } });
   const value = row ? (row.secret ? decryptSecret(row.value) : row.value) : null;
-  cache.set(key, value);
+  if (generation === cacheGeneration) cache.set(key, value);
   return value;
 }
 
@@ -849,11 +854,13 @@ export async function setSetting(key: string, value: string, options: { secret?:
     update: { value: stored, secret },
     create: { key, value: stored, secret },
   });
+  cacheGeneration++;
   cache.delete(key);
 }
 
 export async function deleteSetting(key: string) {
   await prisma.appSetting.deleteMany({ where: { key } });
+  cacheGeneration++;
   cache.delete(key);
 }
 

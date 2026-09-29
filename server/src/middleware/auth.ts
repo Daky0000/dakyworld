@@ -131,8 +131,7 @@ export async function attachUser(req: Request, _res: Response, next: NextFunctio
     if (token) {
       const session = await resolveSession(token);
       if (session?.user.active) {
-        req.dbUser =
-          (await prisma.user.findUnique({ where: { id: session.user.id }, include: WITH_ACCESS })) ?? undefined;
+        req.dbUser = session.user;
         req.sessionToken = token;
         attachPermissions(req);
         return next();

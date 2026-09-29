@@ -7,7 +7,7 @@ import { Button, EmptyState, Loading, Money, Notice, PageHeader, RelativeTime } 
 
 export function Dashboard() {
   const { user, can } = useAuth();
-  const { data, isLoading, isError, refetch, isFetching } = useQuery({ queryKey: ["dashboard"], queryFn: () => api.get<DashboardData>("/dashboard") });
+  const { data, isLoading, isError, refetch, isFetching } = useQuery({ queryKey: ["dashboard"], queryFn: ({ signal }) => api.get<DashboardData>("/dashboard", signal) });
   const totalLeads = data?.leadsByStatus.reduce((sum, row) => sum + row._count, 0) ?? 0;
   const largestGroup = Math.max(1, ...(data?.leadsByStatus.map(row => row._count) ?? []));
   const plans = data?.carePlans;

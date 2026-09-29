@@ -124,7 +124,7 @@ export function WebsitePageSeoInspector({
   const seoQuery = useQuery({
     queryKey: ["website", "seo", siteId],
     enabled: Boolean(siteId),
-    queryFn: () => api.get<SiteSeoOverviewResponse>(`/website/sites/${siteId}/seo`),
+    queryFn: ({ signal }) => api.get<SiteSeoOverviewResponse>(`/website/sites/${siteId}/seo`, signal),
   });
 
   useEffect(() => {
@@ -355,7 +355,7 @@ export function WebsitePageSeoInspector({
   const healthMonitorQuery = useQuery({
     queryKey: ["website", "health-monitor", siteId],
     enabled: Boolean(siteId),
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.get<{
         checkedAt: string;
         targetUrl: string;
@@ -363,7 +363,7 @@ export function WebsitePageSeoInspector({
         statusCode: number | null;
         responseTimeMs: number | null;
         ssl: { valid: boolean; issuer: string | null; daysRemaining: number | null };
-      }>(`/website/sites/${siteId}/health-monitor`),
+      }>(`/website/sites/${siteId}/health-monitor`, signal),
   });
 
   const runHealthProbeMutation = useMutation({

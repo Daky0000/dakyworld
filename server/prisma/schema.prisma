@@ -165,10 +165,66 @@ model Session {
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
+  lastRefreshedAt DateTime @default(now())
   createdAt DateTime @default(now())
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+/// Transactional invalidation events. Delivery may be repeated safely.
+model CacheInvalidation {
+  id Int @id @default(autoincrement())
+  scope String
+  resource String
+  siteId String?
+  urls String[] @default([])
+  hostedSlugs String[] @default([])
+  createdAt DateTime @default(now())
+  deliveredAt DateTime?
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  lastError String?
+  observedBy String[] @default([])
+  @@index([deliveredAt, nextAttemptAt])
+  @@index([siteId, createdAt])
+}
+
+/// PostgreSQL ownership prevents overlapping worker deployments from running schedules twice.
+model ServiceLease {
+  key String @id
+  owner String
+  expiresAt DateTime
+}
+
+/// Customer work uses the same durable database/lease pattern as internal agent tasks.
+model WebsiteWorkJob {
+  id String @id @default(cuid())
+  userId String
+  siteId String
+  kind String
+  idempotencyKey String
+  inputHash String
+  usagePeriod String?
+  usageState String @default("NONE")
+  externalStartedAt DateTime?
+  actualCostUsd Decimal @default(0) @db.Decimal(12, 6)
+  input Json
+  result Json?
+  state String @default("QUEUED")
+  attempts Int @default(0)
+  leaseOwner String?
+  leaseUntil DateTime?
+  cancelRequested Boolean @default(false)
+  error String?
+  createdAt DateTime @default(now())
+  startedAt DateTime?
+  completedAt DateTime?
+  nextAttemptAt DateTime @default(now())
+  @@unique([userId, idempotencyKey])
+  @@index([state, nextAttemptAt, createdAt])
+  @@index([userId, createdAt])
+  @@index([siteId, state])
 }
 
 model PerformanceNote {
@@ -1611,7 +1667,30 @@ model PaymentAttempt {
   updatedAt DateTime @updatedAt
 }
 
-// Only authenticated, redacted events are stored here. Acknowledged after durable insertion.
+// Shared fixed-window counters; keys are hashed before storage.
+model RateLimitBucket {
+  id      String   @id
+  count   Int
+  resetAt DateTime
+
+  @@index([resetAt])
+}
+
+// Provider identifiers only. Callbacks are acknowledged after durable insertion.
+model PaymentWebhookEvent {
+  id         String    @id
+  provider   String
+  reference  String
+  attempts   Int       @default(0)
+  handledAt  DateTime?
+  nextTryAt  DateTime  @default(now())
+  leaseOwner String?
+  error      String?
+  createdAt  DateTime  @default(now())
+
+  @@index([handledAt, nextTryAt])
+}
+
 model PaystackEvent {
   id             String    @id
   event          String
@@ -4354,6 +4433,7 @@ model SitePage {
   /// site that has one; this is the record for a site that does not, and it is
   /// what the public hosting route serves. A draft never appears here.
   publishedHtml String?
+  publishedEtag String?
 
   lastPublishedAt DateTime?
 

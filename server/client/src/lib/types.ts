@@ -1339,6 +1339,8 @@ export interface DemoVisitClick {
   ip?: string | null;
   country?: string | null;
   countryName?: string | null;
+  city?: string | null;
+  isLocal?: boolean;
   flag?: string;
   createdAt: string;
 }
@@ -1351,6 +1353,7 @@ export interface DemoVisitSession {
   countryName?: string | null;
   flag: string;
   city?: string | null;
+  isLocal?: boolean;
   userAgent?: string | null;
   deviceType?: string | null;
   browser?: string | null;
@@ -1398,6 +1401,7 @@ export interface DemoAnalyticsReport {
   };
   breakdowns: {
     countries: Array<{ code: string; name: string; flag: string; count: number; percentage: number }>;
+    cities: Array<{ city: string; country: string; flag: string; count: number; percentage: number }>;
     devices: Array<{ deviceType: string; count: number; percentage: number }>;
     browsers: Array<{ browser: string; count: number; percentage: number }>;
     os: Array<{ os: string; count: number; percentage: number }>;

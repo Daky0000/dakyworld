@@ -208,7 +208,7 @@ export function ElementInspector({
    * only for an element that is positioned, so opening it shut would be hiding
    * the answer to the question that produced it.
    */
-  const ALWAYS_OPEN: SectionKey[] = ["content", "image", "layout", "flexContainer", "gridContainer", "flexChild", "gridChild", "position", "typography", "background", "size", "spacing", "border"];
+  const ALWAYS_OPEN: SectionKey[] = ["content", "image", "layout", "flexContainer", "gridContainer", "flexChild", "gridChild", "position", "typography"];
   const isOpen = (section: SectionKey) => openSections[section] ?? (ALWAYS_OPEN.includes(section) || sectionHasValue(section));
 
   /** The rail on the right of every row: where the value came from, and back. */

@@ -96,13 +96,31 @@ function failureMessage(body: { error?: unknown; reference?: unknown }, res: Res
 }
 
 /** Called when the server rejects a session mid-use, so the UI can fall back to the login screen. */
+let identityGeneration = 0;
+let accountIdentity: string | null = null;
+export const privateIdentity = () => `${accountIdentity ?? "anonymous"}:${identityGeneration}`;
+let identityController = new AbortController();
+let bypassUntil = 0;
+export function resetPrivateRequests(userId: string | null = null) {
+  accountIdentity = userId;
+  identityGeneration++;
+  identityController.abort();
+  identityController = new AbortController();
+  bypassUntil = 0;
+  window.dispatchEvent(new Event("dw:account-changed"));
+}
 let onUnauthorized: (() => void) | null = null;
 export function setUnauthorizedHandler(handler: () => void) {
   onUnauthorized = handler;
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, options: RequestInit = {}, includePage = false): Promise<T> {
+  const generation = identityGeneration;
+  const signal = options.signal ? AbortSignal.any([options.signal, identityController.signal]) : identityController.signal;
   const headers = new Headers(options.headers);
+  const mutating = !["GET", "HEAD"].includes(options.method ?? "GET");
+  if (mutating && !headers.has("Idempotency-Key")) headers.set("Idempotency-Key", crypto.randomUUID());
+  if (!mutating && Date.now() < bypassUntil) headers.set("X-DW-Cache-Bypass", "1");
   headers.set("Content-Type", "application/json");
   try {
     const testUser = window.localStorage.getItem("dw:test-tier-user");
@@ -115,7 +133,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   // The session lives in an HTTP-only cookie, so there's no token to attach —
   // it just has to be sent, including on the Vite dev server's proxied origin.
-  const res = await fetch(`${BASE}${path}`, { ...options, headers, credentials: "include" });
+  const res = await fetch(`${BASE}${path}`, { ...options, signal, headers, credentials: "include" });
 
   if (!res.ok) {
     const body = await failureBody(res);
@@ -124,8 +142,31 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw new ApiError(res.status, failureMessage(body, res), body);
   }
 
+  if (generation !== identityGeneration) throw new DOMException("Account changed", "AbortError");
+  if (mutating) bypassUntil = Date.now() + 60_000;
+  if (res.status === 202 && path.startsWith("/website/")) {
+    const accepted = await res.json() as { queued?: boolean; jobId: string; siteId: string };
+    if (!accepted.queued) return accepted as T;
+    window.dispatchEvent(new CustomEvent("dw:queued-work", { detail: accepted }));
+    const started = Date.now();
+    for (;;) {
+      if (signal.aborted || generation !== identityGeneration) throw new DOMException("Request cancelled", "AbortError");
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => { clearTimeout(timer); reject(new DOMException("Request cancelled", "AbortError")); };
+        const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, Date.now() - started > 60_000 ? 15_000 : 5000);
+        signal.addEventListener("abort", abort, { once: true });
+      });
+      if (document.hidden) continue;
+      const job = await request<{ state: string; result: T; error?: string; failure?: { status?: number; error?: string } }>(`/website/sites/${accepted.siteId}/work-jobs/${accepted.jobId}`, { signal });
+      window.dispatchEvent(new CustomEvent("dw:queued-work", { detail: { ...accepted, state: job.state } }));
+      if (job.state === "COMPLETED") return job.result;
+      if (["FAILED", "CANCELLED", "RECONCILIATION_REQUIRED"].includes(job.state)) throw new ApiError(job.failure?.status ?? 409, job.error ?? "This job was cancelled.", job.failure);
+    }
+  }
   if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+  const body = await res.json();
+  if (generation !== identityGeneration) throw new DOMException("Account changed", "AbortError");
+  return (includePage ? { items: body, nextCursor: res.headers.get("X-Next-Cursor") } : body) as T;
 }
 
 /**
@@ -137,9 +178,11 @@ export const apiUrl = (path: string) => `${BASE}${path}`;
 
 /** For endpoints that answer with a file rather than JSON. */
 export async function postForBlob(path: string, body: unknown): Promise<Blob> {
+  const generation = identityGeneration;
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+    signal: identityController.signal,
     credentials: "include",
     body: JSON.stringify(body),
   });
@@ -147,11 +190,14 @@ export async function postForBlob(path: string, body: unknown): Promise<Blob> {
     const detail: { error?: unknown; reference?: unknown } = await res.json().catch(() => ({}));
     throw new ApiError(res.status, failureMessage(detail, res), detail);
   }
-  return res.blob();
+  const result = await res.blob();
+  if (generation !== identityGeneration) throw new DOMException("Account changed", "AbortError");
+  return result;
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>(path),
+  page: <T>(path: string, signal?: AbortSignal) => request<{ items: T[]; nextCursor: string | null }>(path, { signal }, true),
+  get: <T>(path: string, signal?: AbortSignal) => request<T>(path, { signal }),
   post: <T>(path: string, body?: unknown) => request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined }),
   put: <T>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body: body ? JSON.stringify(body) : undefined }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: "PATCH", body: body ? JSON.stringify(body) : undefined }),

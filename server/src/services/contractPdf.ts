@@ -1,3 +1,5 @@
+import { capacity } from "../lib/capacity.js";
+import { withCapacityLease } from "../lib/leases.js";
 import PDFDocument from "pdfkit";
 import {
   ACCENT,
@@ -658,6 +660,9 @@ function fill(text: string, tokens: Record<string, string>): string {
 }
 
 export async function renderContractPdf(data: ContractPdfData): Promise<Buffer> {
+  return capacity.admission ? withCapacityLease("render", 1, () => renderContractPdfUnbounded(data)) : renderContractPdfUnbounded(data);
+}
+async function renderContractPdfUnbounded(data: ContractPdfData): Promise<Buffer> {
   const identity = await letterheadIdentity();
   const profile = await companyProfile();
   const doc = newDoc(identity);

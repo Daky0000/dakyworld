@@ -10,6 +10,7 @@ import { ensureConcept, moveStage } from "./concept/stage.js";
 import { runPreviewChecks } from "./concept/checks.js";
 import type { CompanyAudit } from "./companyAudit.js";
 import type { HomepageLook } from "./homepageLook.js";
+import { extractColorsFromHtml } from "./website/pageColors.js";
 
 /**
  * Building the demo.
@@ -823,10 +824,13 @@ export async function importDemo(input: ImportDemoInput) {
   const recipientEmail = input.recipientEmail?.trim() || lead?.contactEmail || client?.email || null;
   const recipientName = input.recipientName?.trim() || lead?.contactName || client?.name || null;
 
+  const extractedColours = extractColorsFromHtml(rawHtml, { maxColors: 16 });
   const existingBrief = existing?.brief && typeof existing.brief === "object" ? (existing.brief as Record<string, unknown>) : {};
   const brief = {
     ...existingBrief,
     imported: true,
+    colours: extractedColours,
+    palette: extractedColours,
     filename: input.filename ?? existingBrief.filename ?? null,
     headline: meta.headline,
     includeBanner,

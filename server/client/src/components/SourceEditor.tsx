@@ -84,7 +84,7 @@ export function SourceEditor({ draft, onClose }: { draft: SourceDraft | null; on
   // two sources feeding one audience is the normal case, not an edge one.
   const { data: groups } = useQuery({
     queryKey: ["lead-groups"],
-    queryFn: () => api.get<LeadGroup[]>("/leads/groups"),
+    queryFn: ({ signal }) => api.get<LeadGroup[]>("/leads/groups", signal),
   });
   const [inputText, setInputText] = useState("{}");
   const [fieldMapText, setFieldMapText] = useState("");

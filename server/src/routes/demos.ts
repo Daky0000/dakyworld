@@ -1,4 +1,5 @@
 import express, { Router } from "express";
+import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
@@ -20,9 +21,16 @@ import { companyProfile } from "../services/systemProfile.js";
 import { gateBy } from "../middleware/permissionGate.js";
 import { recordBuild } from "../services/concept/record.js";
 import { countryHint } from "./products.js";
-import { resolveIpLocation, countryFlag } from "../lib/demoGeo.js";
+import {
+  resolveIpLocation,
+  countryFlag,
+  extractClientIp,
+  extractGeoHints,
+  isPrivateOrLocalIp,
+} from "../lib/demoGeo.js";
 import { parseUserAgent } from "../lib/deviceParser.js";
 import { injectDemoTracker } from "../services/demoTracker.js";
+import { extractColorsFromHtml } from "../services/website/pageColors.js";
 
 /**
  * Demos: the pages built for prospects, and the public serving of them.
@@ -69,6 +77,19 @@ interface DemoBriefMeta {
   recipientName?: string | null;
   siteId?: string | null;
   sitePageId?: string | null;
+  accessMode?: "PUBLIC" | "LINK_ONLY" | "PASSWORD" | "INVITED_ONLY";
+  passwordHash?: string | null;
+  passwordPlain?: string | null;
+  allowedEmails?: string[];
+  expiresAt?: string | null;
+  notifyOnView?: boolean;
+  viewNotifications?: Array<{
+    id: string;
+    text: string;
+    timestamp: string;
+    durationSeconds?: number;
+    viewerName?: string;
+  }>;
 }
 
 function readBriefMeta(brief: unknown): DemoBriefMeta {
@@ -129,6 +150,7 @@ async function ensureDemoSitePage(
 
   let pageId: string;
   let siteId: string;
+  const demoColours = extractColorsFromHtml(demo.html, { maxColors: 16 });
 
   if (!site) {
     const uniqueSiteSlug = `demo-${demo.slug}-${demo.id.slice(-6)}`.slice(0, 60);
@@ -137,6 +159,7 @@ async function ensureDemoSitePage(
         name: siteName,
         slug: uniqueSiteSlug,
         publicUrl,
+        settings: demoColours.length ? { colours: demoColours } : undefined,
         pages: {
           create: {
             path: "/",
@@ -151,6 +174,13 @@ async function ensureDemoSitePage(
     siteId = createdSite.id;
     pageId = createdSite.pages[0]!.id;
   } else if (site.pages.length === 0) {
+    if (demoColours.length && (!site.settings || !(site.settings as Record<string, any>).colours?.length)) {
+      const curSettings = (site.settings && typeof site.settings === "object" ? site.settings : {}) as Record<string, any>;
+      await prisma.site.update({
+        where: { id: site.id },
+        data: { settings: { ...curSettings, colours: demoColours } },
+      }).catch(() => {});
+    }
     const createdPage = await prisma.sitePage.create({
       data: {
         siteId: site.id,
@@ -165,6 +195,13 @@ async function ensureDemoSitePage(
   } else {
     siteId = site.id;
     pageId = site.pages[0]!.id;
+    if (demoColours.length && (!site.settings || !(site.settings as Record<string, any>).colours?.length)) {
+      const curSettings = (site.settings && typeof site.settings === "object" ? site.settings : {}) as Record<string, any>;
+      await prisma.site.update({
+        where: { id: site.id },
+        data: { settings: { ...curSettings, colours: demoColours } },
+      }).catch(() => {});
+    }
     if (options.overwriteSourceHtml) {
       await prisma.sitePage.update({
         where: { id: pageId },
@@ -400,10 +437,11 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
       take: 200,
     });
 
+    const uniqueSessions = new Set(visits.map((v) => v.sessionId).filter(Boolean));
     const uniqueIps = new Set(
       visits.map((v) => v.ip).filter((ip): ip is string => Boolean(ip)),
     );
-    const uniqueVisitors = Math.max(uniqueIps.size, visits.length > 0 ? 1 : 0);
+    const uniqueVisitors = Math.max(uniqueSessions.size, uniqueIps.size, visits.length > 0 ? 1 : 0);
 
     const totalDuration = visits.reduce((acc, v) => acc + (v.durationSeconds || 0), 0);
     const avgDurationSeconds = visits.length > 0 ? Math.round(totalDuration / visits.length) : 0;
@@ -430,11 +468,14 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
       ip?: string | null;
       country?: string | null;
       countryName?: string | null;
+      city?: string | null;
+      isLocal?: boolean;
       flag?: string;
       createdAt: string;
     }> = [];
 
     const countryMap: Record<string, { code: string; name: string; flag: string; count: number }> = {};
+    const cityMap: Record<string, { city: string; country: string; flag: string; count: number }> = {};
     const deviceMap: Record<string, number> = {};
     const browserMap: Record<string, number> = {};
     const osMap: Record<string, number> = {};
@@ -444,20 +485,33 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
       const clickList = Array.isArray(v.clicks) ? (v.clicks as any[]) : [];
       totalClicks += clickList.length;
 
-      if ((v.durationSeconds || 0) < 5 && clickList.length === 0) {
+      const isBounced = (v.durationSeconds || 0) < 5 && (v.scrollDepth || 0) < 25 && clickList.length === 0;
+      if (isBounced) {
         bouncedCount++;
       }
 
-      if (v.country) {
-        if (!countryMap[v.country]) {
-          countryMap[v.country] = {
-            code: v.country,
-            name: v.countryName || v.country,
+      const cCode = v.country || (isPrivateOrLocalIp(v.ip) ? "LOCAL" : "UNKNOWN");
+      if (!countryMap[cCode]) {
+        countryMap[cCode] = {
+          code: cCode,
+          name: v.countryName || (cCode === "LOCAL" ? "Local Development" : "Unresolved"),
+          flag: countryFlag(v.country),
+          count: 0,
+        };
+      }
+      countryMap[cCode].count++;
+
+      if (v.city) {
+        const cityKey = `${v.city}||${v.country || "UNKNOWN"}`;
+        if (!cityMap[cityKey]) {
+          cityMap[cityKey] = {
+            city: v.city,
+            country: v.countryName || v.country || "Unknown",
             flag: countryFlag(v.country),
             count: 0,
           };
         }
-        countryMap[v.country].count++;
+        cityMap[cityKey].count++;
       }
 
       if (v.deviceType) {
@@ -488,6 +542,8 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
           ip: v.ip,
           country: v.country,
           countryName: v.countryName,
+          city: v.city,
+          isLocal: isPrivateOrLocalIp(v.ip),
           flag: countryFlag(v.country),
           createdAt: v.createdAt.toISOString(),
         };
@@ -508,6 +564,10 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
 
     const totalV = Math.max(1, visits.length);
     const countryBreakdown = Object.values(countryMap)
+      .map((c) => ({ ...c, percentage: Math.round((c.count / totalV) * 100) }))
+      .sort((a, b) => b.count - a.count);
+
+    const cityBreakdown = Object.values(cityMap)
       .map((c) => ({ ...c, percentage: Math.round((c.count / totalV) * 100) }))
       .sort((a, b) => b.count - a.count);
 
@@ -543,6 +603,7 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
         countryName: v.countryName,
         flag: countryFlag(v.country),
         city: v.city,
+        isLocal: isPrivateOrLocalIp(v.ip),
         userAgent: v.userAgent,
         deviceType: v.deviceType,
         browser: v.browser,
@@ -576,6 +637,7 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
       },
       breakdowns: {
         countries: countryBreakdown,
+        cities: cityBreakdown,
         devices: deviceBreakdown,
         browsers: browserBreakdown,
         os: osBreakdown,
@@ -586,6 +648,7 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
         clicks: allClicks,
         topClickedElements,
       },
+
     });
   } catch (err) {
     next(err);
@@ -780,6 +843,10 @@ const updateInput = z.object({
   dataBase64: z.string().nullish(),
   filename: z.string().max(240).nullish(),
   fileName: z.string().max(240).nullish(),
+  accessMode: z.enum(["PUBLIC", "LINK_ONLY", "PASSWORD", "INVITED_ONLY"]).optional(),
+  password: z.string().max(100).optional(),
+  expiresAt: z.string().datetime().nullable().optional(),
+  notifyOnView: z.boolean().optional(),
 });
 
 demosRouter.patch("/:id", async (req, res, next) => {
@@ -860,6 +927,10 @@ demosRouter.patch("/:id", async (req, res, next) => {
       ...(input.recipientName !== undefined ? { recipientName: input.recipientName } : {}),
       ...(input.includeBanner !== undefined ? { includeBanner: input.includeBanner } : {}),
       ...(input.makeFormsInert !== undefined ? { makeInert: input.makeFormsInert } : {}),
+      ...(input.accessMode !== undefined ? { accessMode: input.accessMode } : {}),
+      ...(input.password !== undefined ? { passwordPlain: input.password, passwordHash: createHash("sha256").update(input.password).digest("hex") } : {}),
+      ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+      ...(input.notifyOnView !== undefined ? { notifyOnView: input.notifyOnView } : {}),
     };
 
     const demo = await prisma.demo.update({
@@ -908,6 +979,188 @@ demosRouter.patch("/:id", async (req, res, next) => {
   }
 });
 
+demosRouter.get("/feed/notifications", async (req, res, next) => {
+  try {
+    const demos = await prisma.demo.findMany({
+      select: { id: true, title: true, businessName: true, slug: true, brief: true },
+      take: 50,
+    });
+    const allNotes: Array<{ id: string; demoId: string; demoTitle: string; businessName: string; text: string; timestamp: string }> = [];
+    for (const d of demos) {
+      const meta = readBriefMeta(d.brief);
+      if (Array.isArray(meta.viewNotifications)) {
+        for (const n of meta.viewNotifications) {
+          allNotes.push({
+            id: n.id,
+            demoId: d.id,
+            demoTitle: d.title,
+            businessName: d.businessName,
+            text: n.text,
+            timestamp: n.timestamp,
+          });
+        }
+      }
+    }
+    allNotes.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    res.json({ notifications: allNotes.slice(0, 30) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+demosRouter.get("/:id/analytics-pro", async (req, res, next) => {
+  try {
+    const demo = await prisma.demo.findUnique({
+      where: { id: req.params.id },
+      include: {
+        visits: {
+          orderBy: { createdAt: "desc" },
+          take: 100,
+        },
+      },
+    });
+    if (!demo) return res.status(404).json({ error: "Demo not found" });
+
+    const meta = readBriefMeta(demo.brief);
+    const visits = demo.visits;
+    const totalViews = visits.length || demo.views;
+    const lastViewedAt = demo.lastViewedAt || (visits[0]?.createdAt ?? null);
+
+    const durations = visits.map(v => v.durationSeconds).filter(d => d > 0);
+    const avgDuration = durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : 0;
+    const avgMinutes = Math.floor(avgDuration / 60);
+    const avgSeconds = avgDuration % 60;
+    const formattedAvgTime = avgMinutes > 0 ? `${avgMinutes}m ${avgSeconds}s` : `${avgSeconds}s`;
+
+    const devices = new Map<string, number>();
+    for (const v of visits) {
+      const dev = v.deviceType || "Desktop";
+      devices.set(dev, (devices.get(dev) ?? 0) + 1);
+    }
+    let topDevice = "Desktop";
+    let topDeviceCount = 0;
+    for (const [dev, count] of devices.entries()) {
+      if (count > topDeviceCount) {
+        topDevice = dev;
+        topDeviceCount = count;
+      }
+    }
+
+    const scrolls = visits.map(v => v.scrollDepth).filter(s => s > 0);
+    const avgScroll = scrolls.length > 0 ? Math.round(scrolls.reduce((a, b) => a + b, 0) / scrolls.length) : (totalViews > 0 ? 85 : 0);
+
+    const clickedButtons = new Map<string, number>();
+    let pricingRevisits = 0;
+    for (const v of visits) {
+      const clicks = Array.isArray(v.clicks) ? (v.clicks as any[]) : [];
+      for (const c of clicks) {
+        const txt = (c.targetText || "").trim();
+        const sel = (c.targetSelector || "").toLowerCase();
+        if (txt) {
+          clickedButtons.set(txt, (clickedButtons.get(txt) ?? 0) + 1);
+        }
+        if (sel.includes("price") || sel.includes("pricing") || txt.toLowerCase().includes("pricing") || txt.toLowerCase().includes("plan")) {
+          pricingRevisits++;
+        }
+      }
+    }
+
+    const topClicks = Array.from(clickedButtons.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([text, count]) => ({ text, count }));
+
+    const insights: string[] = [];
+    if (pricingRevisits > 0) {
+      insights.push(`Client revisited the pricing section ${pricingRevisits} time${pricingRevisits === 1 ? "" : "s"}.`);
+    }
+    if (avgDuration > 180) {
+      insights.push(`Client spent ${formattedAvgTime} deeply reviewing your proposal.`);
+    }
+    if (avgScroll > 80) {
+      insights.push(`High engagement: client scrolled through ${avgScroll}% of the page.`);
+    }
+
+    res.json({
+      demoId: demo.id,
+      title: demo.title,
+      businessName: demo.businessName,
+      totalViews,
+      lastViewedAt,
+      formattedAvgTime,
+      avgDurationSeconds: avgDuration,
+      topDevice: topDevice === "mobile" ? "iPhone / Mobile" : topDevice,
+      avgScrollDepth: avgScroll,
+      topClicks,
+      insights,
+      notifications: meta.viewNotifications || [],
+      protection: {
+        accessMode: meta.accessMode || "PUBLIC",
+        isProtected: meta.accessMode === "PASSWORD",
+        expiresAt: meta.expiresAt || null,
+        isExpired: meta.expiresAt ? new Date(meta.expiresAt) < new Date() : false,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+demosRouter.patch("/:id/settings", async (req, res, next) => {
+  try {
+    const body = z.object({
+      accessMode: z.enum(["PUBLIC", "PASSWORD"]).optional(),
+      password: z.string().optional(),
+      expiresAt: z.string().datetime().nullable().optional(),
+      extendDays: z.number().int().positive().optional(),
+    }).parse(req.body);
+
+    const demo = await prisma.demo.findUnique({ where: { id: req.params.id } });
+    if (!demo) return res.status(404).json({ error: "Demo not found" });
+
+    const meta = ((demo.brief as Record<string, any>) || {});
+    let nextExpiresAt = meta.expiresAt;
+
+    if (body.extendDays) {
+      const currentExpiry = meta.expiresAt ? new Date(meta.expiresAt) : new Date();
+      const baseDate = currentExpiry > new Date() ? currentExpiry : new Date();
+      nextExpiresAt = new Date(baseDate.getTime() + body.extendDays * 86400 * 1000).toISOString();
+    } else if (body.expiresAt !== undefined) {
+      nextExpiresAt = body.expiresAt;
+    }
+
+    const updatedBrief = {
+      ...meta,
+      accessMode: body.accessMode ?? meta.accessMode ?? "PUBLIC",
+      ...(body.password !== undefined
+        ? {
+            passwordPlain: body.password || null,
+            passwordHash: body.password ? createHash("sha256").update(body.password).digest("hex") : null,
+          }
+        : {}),
+      expiresAt: nextExpiresAt,
+    };
+
+    const updated = await prisma.demo.update({
+      where: { id: demo.id },
+      data: { brief: updatedBrief },
+    });
+
+    res.json({
+      ok: true,
+      demo: updated,
+      protection: {
+        accessMode: updatedBrief.accessMode,
+        isProtected: updatedBrief.accessMode === "PASSWORD",
+        expiresAt: updatedBrief.expiresAt,
+        isExpired: updatedBrief.expiresAt ? new Date(updatedBrief.expiresAt) < new Date() : false,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 demosRouter.delete("/:id", async (req, res, next) => {
   try {
     await prisma.demo.delete({ where: { id: req.params.id } });
@@ -932,6 +1185,8 @@ const analyticsBeaconInput = z.object({
   viewportHeight: z.number().int().min(0).max(10000).nullish(),
   screenWidth: z.number().int().min(0).max(10000).nullish(),
   screenHeight: z.number().int().min(0).max(10000).nullish(),
+  timezone: z.string().trim().max(100).optional(),
+  locale: z.string().trim().max(30).optional(),
   clicks: z
     .array(
       z.object({
@@ -1031,9 +1286,15 @@ demoPagesRouter.post("/:slug/analytics", async (req, res, next) => {
     }
 
     const data = parsed.data;
-    const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || null;
-    const hint = countryHint(req);
-    const geo = resolveIpLocation(ip, hint);
+    const ip = extractClientIp(req);
+    const hints = extractGeoHints(req);
+    const geo = resolveIpLocation(ip, {
+      hintCountry: hints.country,
+      hintCity: hints.city,
+      hintRegion: hints.region,
+      timezone: data.timezone,
+      locale: data.locale,
+    });
     const ua = req.headers["user-agent"] || null;
     const parsedDevice = parseUserAgent(ua);
 
@@ -1060,6 +1321,16 @@ demoPagesRouter.post("/:slug/analytics", async (req, res, next) => {
           screenWidth: data.screenWidth ? Math.round(data.screenWidth) : existingVisit.screenWidth,
           screenHeight: data.screenHeight ? Math.round(data.screenHeight) : existingVisit.screenHeight,
           clicks: mergedClicks as Prisma.InputJsonValue,
+          // Enrich location if previously unresolved or local
+          ...(geo.country && (!existingVisit.country || existingVisit.country === "LOCAL")
+            ? {
+                country: geo.country,
+                countryName: geo.countryName,
+                city: geo.city || existingVisit.city,
+              }
+            : geo.city && !existingVisit.city
+              ? { city: geo.city }
+              : {}),
         },
       });
     } else {
@@ -1070,6 +1341,7 @@ demoPagesRouter.post("/:slug/analytics", async (req, res, next) => {
           ip,
           country: geo.country,
           countryName: geo.countryName,
+          city: geo.city,
           userAgent: ua ? ua.slice(0, 500) : null,
           deviceType: parsedDevice.deviceType,
           browser: parsedDevice.browser,
@@ -1091,6 +1363,25 @@ demoPagesRouter.post("/:slug/analytics", async (req, res, next) => {
   }
 });
 
+demoPagesRouter.post("/:slug/unlock", express.urlencoded({ extended: false }), async (req, res, next) => {
+  try {
+    const demo = await prisma.demo.findUnique({ where: { slug: req.params.slug } });
+    if (!demo) return res.status(404).send("Demo not found");
+    const meta = readBriefMeta(demo.brief);
+    const password = req.body?.password?.trim();
+
+    if (!meta.passwordPlain || password === meta.passwordPlain) {
+      const hash = meta.passwordHash || createHash("sha256").update(password || "").digest("hex");
+      res.setHeader("Set-Cookie", `dw_demo_${demo.slug}=${hash}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
+      return res.redirect(`/demos/${demo.slug}`);
+    }
+
+    res.status(401).type("html").send(passwordUnlockPage(demo.slug, demo.businessName, "Incorrect password. Please try again."));
+  } catch (err) {
+    next(err);
+  }
+});
+
 demoPagesRouter.get("/:slug", async (req, res, next) => {
   try {
     if (req.params.slug.toLowerCase() === "dakyworld") {
@@ -1102,38 +1393,88 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
       return res.status(404).type("html").send(missingPage(profile.displayName));
     }
 
-    const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || null;
-    const hint = countryHint(req);
-    const geo = resolveIpLocation(ip, hint);
-    const ua = req.headers["user-agent"] || null;
-    const parsedDevice = parseUserAgent(ua);
-    const sessionId = `vs_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
-
-    // Log the visit with visitor IP, country, device details, and increment views
-    void prisma.$transaction([
-      prisma.demo.update({
-        where: { id: demo.id },
-        data: { views: { increment: 1 }, lastViewedAt: new Date() },
-      }),
-      prisma.demoVisit.create({
-        data: {
-          demoId: demo.id,
-          sessionId,
-          ip,
-          country: geo.country,
-          countryName: geo.countryName,
-          userAgent: ua ? ua.slice(0, 500) : null,
-          deviceType: parsedDevice.deviceType,
-          browser: parsedDevice.browser,
-          os: parsedDevice.os,
-          durationSeconds: 0,
-          scrollDepth: 0,
-          clicks: [],
-        },
-      }),
-    ]).catch(() => undefined);
-
     const meta = readBriefMeta(demo.brief);
+
+    // 1. Demo Expiry Check
+    if (meta.expiresAt && new Date(meta.expiresAt) < new Date()) {
+      return res.status(403).type("html").send(expiredDemoPage(demo.title, demo.businessName, meta.expiresAt));
+    }
+
+    // 2. Demo Password Protection Check
+    if (meta.accessMode === "PASSWORD" && meta.passwordPlain) {
+      const passParam = (req.query.pass as string) || (req.headers["x-demo-password"] as string);
+      const cookieHeader = req.headers.cookie || "";
+      const cookieMatches = cookieHeader.includes(`dw_demo_${demo.slug}=${meta.passwordHash}`);
+      if (passParam !== meta.passwordPlain && !cookieMatches) {
+        return res.status(401).type("html").send(passwordUnlockPage(demo.slug, demo.businessName));
+      }
+    }
+
+    // Check if this is an admin preview or heatmap modal inspection (do not pollute stats)
+    const isPreviewOrHeatmap =
+      req.query.dw_preview === "heatmap" ||
+      req.query.dw_heatmap === "1" ||
+      req.query.preview === "heatmap" ||
+      Boolean(req.headers["x-dw-preview"]);
+
+    const sessionId = isPreviewOrHeatmap
+      ? `prev_${Date.now().toString(36)}`
+      : `vs_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+
+    if (!isPreviewOrHeatmap) {
+      const ip = extractClientIp(req);
+      const hints = extractGeoHints(req);
+      const geo = resolveIpLocation(ip, {
+        hintCountry: hints.country,
+        hintCity: hints.city,
+        hintRegion: hints.region,
+      });
+      const ua = req.headers["user-agent"] || null;
+      const parsedDevice = parseUserAgent(ua);
+
+      // Log the visit with visitor IP, country, city, device details, and increment views
+      void prisma.$transaction([
+        prisma.demo.update({
+          where: { id: demo.id },
+          data: { views: { increment: 1 }, lastViewedAt: new Date() },
+        }),
+        prisma.demoVisit.create({
+          data: {
+            demoId: demo.id,
+            sessionId,
+            ip,
+            country: geo.country,
+            countryName: geo.countryName,
+            city: geo.city,
+            userAgent: ua ? ua.slice(0, 500) : null,
+            deviceType: parsedDevice.deviceType,
+            browser: parsedDevice.browser,
+            os: parsedDevice.os,
+            durationSeconds: 0,
+            scrollDepth: 0,
+            clicks: [],
+          },
+        }),
+      ]).catch(() => undefined);
+
+      // View Notification Logging
+      if (meta.notifyOnView !== false) {
+        const viewer = meta.recipientName || meta.clientName || "Prospect";
+        const locLabel = geo.city && geo.countryName ? ` from ${geo.city}, ${geo.countryName}` : "";
+        const newNote = {
+          id: randomUUID(),
+          text: `${viewer} from ${demo.businessName}${locLabel} opened your proposal demo.`,
+          timestamp: new Date().toISOString(),
+        };
+        const existingNotes = Array.isArray(meta.viewNotifications) ? meta.viewNotifications : [];
+        const updatedMeta = { ...meta, viewNotifications: [newNote, ...existingNotes].slice(0, 50) };
+        void prisma.demo.update({
+          where: { id: demo.id },
+          data: { brief: updatedMeta as any },
+        }).catch(() => {});
+      }
+    }
+
     const isImported = demo.builtBy === "Imported HTML" || meta.imported === true;
 
     let renderedHtml = demo.html;
@@ -1155,7 +1496,9 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
     const trackedHtml = injectDemoTracker(renderedHtml, {
       slug: demo.slug,
       sessionId,
+      disabled: isPreviewOrHeatmap,
     });
+
 
     res
       .status(200)
@@ -1176,6 +1519,46 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
     next(err);
   }
 });
+
+function expiredDemoPage(title: string, businessName: string, expiresAt: string): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Demo Expired</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#08101F;color:#F4F5F0;font:400 16px/1.6 system-ui,-apple-system,sans-serif;padding:2rem}
+main{max-width:32rem;text-align:center;background:#0F1B2E;padding:2.5rem;border-radius:1rem;border:1px solid #1E293B;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5)}
+.badge{display:inline-block;padding:0.25rem 0.75rem;background:#F59E0B20;color:#FBBF24;border-radius:9999px;font-size:0.75rem;font-weight:600;margin-bottom:1rem}
+h1{font-size:1.5rem;margin:0 0 0.75rem;color:#FFFFFF}p{margin:0 0 1.5rem;color:#94A3B8;font-size:0.95rem}
+.notice{background:#1E293B;padding:1rem;border-radius:0.5rem;font-size:0.85rem;color:#CBD5E1}
+</style></head><body><main>
+<span class="badge">Demo Access Expired</span>
+<h1>${businessName} Redesign Demo</h1>
+<p>Access to this proposal demo concluded on ${new Date(expiresAt).toLocaleDateString()}.</p>
+<div class="notice">To request an extension or review the full proposal, please contact the developer or team directly.</div>
+</main></body></html>`;
+}
+
+function passwordUnlockPage(slug: string, businessName: string, error?: string): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Protected Proposal Demo</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#08101F;color:#F4F5F0;font:400 16px/1.6 system-ui,-apple-system,sans-serif;padding:2rem}
+main{width:100%;max-width:26rem;background:#0F1B2E;padding:2.5rem;border-radius:1rem;border:1px solid #1E293B;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5)}
+.icon{width:48px;height:48px;margin:0 auto 1.25rem;background:#0B66C320;color:#38BDF8;border-radius:0.75rem;display:flex;align-items:center;justify-content:center;font-size:1.5rem}
+h1{font-size:1.35rem;margin:0 0 0.5rem;text-align:center;color:#FFFFFF}
+p{margin:0 0 1.5rem;color:#94A3B8;font-size:0.875rem;text-align:center}
+form{display:flex;flex-direction:column;gap:1rem}
+input{padding:0.75rem 1rem;background:#1E293B;border:1px solid #334155;border-radius:0.5rem;color:#FFFFFF;font-size:1rem;outline:none}
+input:focus{border-color:#38BDF8}
+button{padding:0.75rem;background:#0B66C3;color:#FFFFFF;border:none;border-radius:0.5rem;font-weight:600;cursor:pointer;font-size:0.95rem;transition:background 0.2s}
+button:hover{background:#09529E}
+.err{color:#F87171;font-size:0.8rem;text-align:center;margin-bottom:0.5rem}
+</style></head><body><main>
+<div class="icon">🔒</div>
+<h1>Private Proposal Demo</h1>
+<p>${businessName} Website Redesign is password protected.</p>
+${error ? `<div class="err">${error}</div>` : ""}
+<form method="POST" action="/demos/${slug}/unlock">
+  <input type="password" name="password" placeholder="Enter proposal password" required autofocus />
+  <button type="submit">View Proposal Demo</button>
+</form>
+</main></body></html>`;
+}
 
 function missingPage(company: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Not here</title>

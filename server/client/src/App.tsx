@@ -48,6 +48,8 @@ const WebsiteAudit = lazy(() => import("./pages/WebsiteAudit").then((module) => 
 const WebsiteSettings = lazy(() => import("./pages/WebsiteSettings").then((module) => ({ default: module.WebsiteSettings })));
 const WebsiteBilling = lazy(() => import("./pages/WebsiteBilling").then((module) => ({ default: module.WebsiteBilling })));
 const WebsiteBalance = lazy(() => import("./pages/WebsiteBalance").then((module) => ({ default: module.WebsiteBalance })));
+const ClientApprovalReview = lazy(() => import("./pages/ClientApprovalReview").then((module) => ({ default: module.ClientApprovalReview })));
+const FreelancerWorkspace = lazy(() => import("./pages/FreelancerWorkspace").then((module) => ({ default: module.FreelancerWorkspace })));
 
 /**
  * Screens are loaded when somebody goes to them, not all at once.
@@ -72,6 +74,7 @@ const WebsiteBalance = lazy(() => import("./pages/WebsiteBalance").then((module)
 export default function App() {
   return (
     <Routes>
+      <Route path="/review/:token" element={<ClientApprovalReview />} />
       <Route element={<Layout />}>
         <Route
           path="/"
@@ -81,6 +84,7 @@ export default function App() {
             </Landing>
           }
         />
+        <Route path="/freelancer-workspace" element={<Guard needs="clients.view"><FreelancerWorkspace /></Guard>} />
         <Route path="/leads" element={<Guard needs="leads.view"><Leads /></Guard>} />
         <Route path="/leads/import" element={<Guard needs="leads.import"><LeadImport /></Guard>} />
         <Route path="/lead-sources" element={<Guard needs="leads.sources"><LeadSources /></Guard>} />
@@ -105,7 +109,7 @@ export default function App() {
           <Route path="assets" element={<WebsiteAssets />} />
           <Route path="compatibility" element={<WebsiteCompatibility />} />
           <Route path="survey" element={<WebsiteSurvey />} />
-          <Route path="onboarding" element={<Guard needs="website.manage"><WebsiteOnboarding /></Guard>} />
+          <Route path="onboarding" element={<WebsiteGuard needs="view"><WebsiteOnboarding /></WebsiteGuard>} />
           <Route path="ai" element={<Guard needs="website.manage"><WebsiteAI /></Guard>} />
           <Route path="updates" element={<Guard needs="website.manage"><WebsiteUpdates /></Guard>} />
           <Route path="team" element={<WebsiteTeam />} />

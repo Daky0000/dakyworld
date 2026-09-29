@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { renderInvoicePdfFor } from "../services/invoicePdf.js";
 import { cloudinaryConfigured, uploadBuffer } from "../lib/cloudinary.js";
+import { stripeMinorAmount } from "../lib/stripeMoney.js";
 import { getStripe } from "../lib/stripe.js";
 import { createNumberedInvoice } from "../services/invoiceNumber.js";
 import { gateBy } from "../middleware/permissionGate.js";
@@ -166,7 +167,7 @@ invoicesRouter.post("/:id/create-payment-link", async (req, res, next) => {
           price_data: {
             currency: invoice.currency.toLowerCase(),
             product_data: { name: `Invoice ${invoice.invoiceNumber}` },
-            unit_amount: Math.round(Number(invoice.amountTotal) * 100),
+            unit_amount: stripeMinorAmount(Number(invoice.amountTotal), invoice.currency),
           },
           quantity: 1,
         },

@@ -63,12 +63,12 @@ export function AgentHiring() {
   const client = useQueryClient();
   const [open, setOpen] = useState<string | null>(null);
 
-  const policy = useQuery({ queryKey: ["hiring", "policy"], queryFn: () => api.get<HirePolicy>("/agents/hiring/policy") });
+  const policy = useQuery({ queryKey: ["hiring", "policy"], queryFn: ({ signal }) => api.get<HirePolicy>("/agents/hiring/policy", signal) });
   const requests = useQuery({
     queryKey: ["hiring", "requests"],
-    queryFn: () => api.get<{ requests: HireRequest[] }>("/agents/hiring/requests?status=PENDING"),
+    queryFn: ({ signal }) => api.get<{ requests: HireRequest[] }>("/agents/hiring/requests?status=PENDING", signal),
   });
-  const gaps = useQuery({ queryKey: ["hiring", "gaps"], queryFn: () => api.get<{ gaps: Gap[] }>("/agents/hiring/gaps") });
+  const gaps = useQuery({ queryKey: ["hiring", "gaps"], queryFn: ({ signal }) => api.get<{ gaps: Gap[] }>("/agents/hiring/gaps", signal) });
 
   const refresh = () => {
     void client.invalidateQueries({ queryKey: ["hiring"] });

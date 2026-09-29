@@ -26,3 +26,10 @@ export const PUBLIC_USER = {
 
 /** For the many places that only need something to print next to a task or a time entry. */
 export const NAMED_USER = { id: true, name: true } satisfies Prisma.UserSelect;
+
+/** Ordinary authenticated requests never need password hashes or second-factor secrets. */
+export const SESSION_USER = {
+  ...PUBLIC_USER, hourlyRate: true, accessRoleId: true, accessRole: true,
+  extraPermissions: true, deniedPermissions: true, totpConfirmedAt: true,
+  emailVerifiedAt: true, createdAt: true, updatedAt: true,
+} satisfies Prisma.UserSelect;

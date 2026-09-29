@@ -40,11 +40,11 @@ export function Tools() {
   const [granting, setGranting] = useState<string | null>(null);
   const { data, isLoading } = useQuery({
     queryKey: ["tools"],
-    queryFn: () => api.get<ToolsResponse>("/tools"),
+    queryFn: ({ signal }) => api.get<ToolsResponse>("/tools", signal),
   });
   const { data: catalogue } = useQuery({
     queryKey: ["tools", "catalogue"],
-    queryFn: () => api.get<CatalogueResponse>("/tools/catalogue"),
+    queryFn: ({ signal }) => api.get<CatalogueResponse>("/tools/catalogue", signal),
   });
 
   const tools = data?.tools ?? [];
@@ -254,7 +254,7 @@ function GrantDrawer({ toolKey, onClose }: { toolKey: string | null; onClose: ()
 
   const { data } = useQuery({
     queryKey: ["tool-agents", toolKey],
-    queryFn: () => api.get<ToolAgents>(`/tools/${encodeURIComponent(toolKey!)}/agents`),
+    queryFn: ({ signal }) => api.get<ToolAgents>(`/tools/${encodeURIComponent(toolKey!)}/agents`, signal),
     enabled: Boolean(toolKey),
   });
 
@@ -363,7 +363,7 @@ function Connections() {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<McpServerRow | null>(null);
 
-  const { data } = useQuery({ queryKey: ["mcp"], queryFn: () => api.get<McpServerList>("/mcp") });
+  const { data } = useQuery({ queryKey: ["mcp"], queryFn: ({ signal }) => api.get<McpServerList>("/mcp", signal) });
 
   const refresh = useMutation({
     mutationFn: (id: string) => api.post(`/mcp/${id}/refresh`),
@@ -706,7 +706,7 @@ interface Preset {
 function Presets() {
   const qc = useQueryClient();
   const [note, setNote] = useState<string | null>(null);
-  const { data } = useQuery({ queryKey: ["mcp-presets"], queryFn: () => api.get<{ presets: Preset[] }>("/mcp/presets") });
+  const { data } = useQuery({ queryKey: ["mcp-presets"], queryFn: ({ signal }) => api.get<{ presets: Preset[] }>("/mcp/presets", signal) });
 
   const connect = useMutation({
     mutationFn: (key: string) => api.post<{ note: string }>(`/mcp/presets/${key}`),

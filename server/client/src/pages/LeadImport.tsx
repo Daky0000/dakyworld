@@ -139,11 +139,11 @@ export function LeadImport() {
 
   const { data: connections } = useQuery({
     queryKey: ["settings"],
-    queryFn: () => api.get<AppSettings>("/settings"),
+    queryFn: ({ signal }) => api.get<AppSettings>("/settings", signal),
   });
   const { data: history } = useQuery({
     queryKey: ["imports"],
-    queryFn: () => api.get<LeadImportRecord[]>("/imports"),
+    queryFn: ({ signal }) => api.get<LeadImportRecord[]>("/imports", signal),
   });
 
   /**
@@ -731,7 +731,7 @@ function DrivePicker({
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["drive-files", term],
-    queryFn: () => api.get<{ files: DriveFile[] }>(`/imports/google/files${term ? `?q=${encodeURIComponent(term)}` : ""}`),
+    queryFn: ({ signal }) => api.get<{ files: DriveFile[] }>(`/imports/google/files${term ? `?q=${encodeURIComponent(term)}` : ""}`, signal),
     enabled: Boolean(connections?.google.connected),
   });
 

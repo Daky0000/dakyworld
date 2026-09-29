@@ -1,3 +1,4 @@
+import { mapConcurrent } from "../lib/concurrency.js";
 import { Router } from "express";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
@@ -317,10 +318,12 @@ leadsRouter.get("/grouped", async (req, res, next) => {
     // nothing is filtered — an empty list is furniture worth keeping in view,
     // but under a search it is noise standing between you and the answer.
     const filtering = Object.keys(where).some((key) => key !== "rehearsal");
+    const countedIds = new Set(counted.map(row => row.groupId));
+    const reachableById = new Map(reachable.map(row => [row.groupId, row._count._all]));
     const empties = filtering
       ? []
       : (await prisma.leadGroup.findMany({ select: { id: true } }))
-          .filter((group) => !counted.some((row) => row.groupId === group.id))
+          .filter((group) => !countedIds.has(group.id))
           .map((group) => ({ groupId: group.id, _count: { _all: 0 }, _max: { createdAt: null } }));
 
     const rows = [...counted, ...empties].sort((a, b) => {
@@ -337,8 +340,7 @@ leadsRouter.get("/grouped", async (req, res, next) => {
     const groups = await prisma.leadGroup.findMany({ where: { id: { in: ids } } });
     const byId = new Map(groups.map((group) => [group.id, group]));
 
-    const blocks = await Promise.all(
-      page.map(async (row) => {
+    const blocks = await mapConcurrent(page, 4, async (row) => {
         const group = row.groupId ? byId.get(row.groupId) : undefined;
         const leads = row._count._all
           ? await prisma.lead.findMany({
@@ -366,10 +368,10 @@ leadsRouter.get("/grouped", async (req, res, next) => {
           sourceLabel: group?.sourceLabel ?? null,
           createdAt: group?.createdAt ?? null,
           total: row._count._all,
-          withEmail: reachable.find((entry) => entry.groupId === row.groupId)?._count._all ?? 0,
+          withEmail: reachableById.get(row.groupId) ?? 0,
           leads,
         };
-      }),
+      },
     );
 
     res.json({

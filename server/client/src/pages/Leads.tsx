@@ -216,7 +216,7 @@ export function Leads() {
 
   const { data, isLoading } = useQuery({
     queryKey: ["leads", query],
-    queryFn: () => api.get<{ items: Lead[]; total: number }>(`/leads?${query}`),
+    queryFn: ({ signal }) => api.get<{ items: Lead[]; total: number }>(`/leads?${query}`, signal),
     enabled: !grouping,
   });
   /**
@@ -230,12 +230,12 @@ export function Leads() {
 
   const { data: grouped, isLoading: loadingGroups } = useQuery({
     queryKey: ["leads-grouped", query, perGroup],
-    queryFn: () => api.get<GroupedLeads>(`/leads/grouped?${query}&perGroup=${perGroup}`),
+    queryFn: ({ signal }) => api.get<GroupedLeads>(`/leads/grouped?${query}&perGroup=${perGroup}`, signal),
     enabled: grouping,
   });
   const { data: stats } = useQuery({
     queryKey: ["lead-stats", query],
-    queryFn: () => api.get<LeadStats>(`/leads/stats?${query}`),
+    queryFn: ({ signal }) => api.get<LeadStats>(`/leads/stats?${query}`, signal),
   });
   // The columns for whatever is being looked at: a batch's own set when one
   // batch is filtered to, the default set otherwise.
@@ -284,7 +284,7 @@ export function Leads() {
    */
   const { data: emptyLists } = useQuery({
     queryKey: ["empty-lists"],
-    queryFn: () => api.get<{ removable: { id: string; name: string }[]; keptFeeding: { id: string; name: string }[] }>("/leads/groups/empty"),
+    queryFn: ({ signal }) => api.get<{ removable: { id: string; name: string }[]; keptFeeding: { id: string; name: string }[] }>("/leads/groups/empty", signal),
   });
 
   const sweepEmpty = useMutation({

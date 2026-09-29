@@ -21,7 +21,7 @@ export function Emails() {
   const [composing, setComposing] = useState<ComposerTarget | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
 
-  const { data: status } = useQuery({ queryKey: ["email-status"], queryFn: () => api.get<EmailStatusSummary>("/emails/status") });
+  const { data: status } = useQuery({ queryKey: ["email-status"], queryFn: ({ signal }) => api.get<EmailStatusSummary>("/emails/status", signal) });
 
   const openComposer = (target: ComposerTarget) => {
     setComposing(target);
@@ -125,10 +125,10 @@ function Outbox({ onOpen }: { onOpen: (target: ComposerTarget) => void }) {
 
   const { data: messages, isLoading } = useQuery({
     queryKey: ["emails", filter, search],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.get<EmailMessage[]>(
         `/emails?${new URLSearchParams({ ...(filter ? { status: filter } : {}), ...(search.trim() ? { q: search.trim() } : {}) }).toString()}`,
-      ),
+      signal),
   });
 
   const refresh = () => {
@@ -254,7 +254,7 @@ function MessagePreview({ id, onClose }: { id: string | null; onClose: () => voi
 function Templates() {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<EmailTemplate | null>(null);
-  const { data } = useQuery({ queryKey: ["email-templates"], queryFn: () => api.get<{ templates: EmailTemplate[] }>("/emails/templates/all") });
+  const { data } = useQuery({ queryKey: ["email-templates"], queryFn: ({ signal }) => api.get<{ templates: EmailTemplate[] }>("/emails/templates/all", signal) });
 
   const save = useMutation({
     mutationFn: (template: EmailTemplate) =>
@@ -392,7 +392,7 @@ function Templates() {
 function Suppression() {
   const qc = useQueryClient();
   const [email, setEmail] = useState("");
-  const { data } = useQuery({ queryKey: ["email-suppression"], queryFn: () => api.get<EmailSuppression[]>("/emails/suppression/all") });
+  const { data } = useQuery({ queryKey: ["email-suppression"], queryFn: ({ signal }) => api.get<EmailSuppression[]>("/emails/suppression/all", signal) });
 
   const add = useMutation({
     mutationFn: () => api.post("/emails/suppression", { email, reason: "Added by hand" }),

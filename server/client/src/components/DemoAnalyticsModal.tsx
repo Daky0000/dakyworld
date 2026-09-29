@@ -28,6 +28,16 @@ type TabKey = "overview" | "heatmap";
 type HeatmapMode = "pins" | "heat" | "both";
 type ViewportPreset = "desktop" | "tablet" | "mobile" | "full";
 
+export interface ClickCluster {
+  id: string;
+  xPercent: number;
+  yPercent: number;
+  clicks: DemoVisitClick[];
+  primaryTag: string;
+  primaryText: string;
+  count: number;
+}
+
 function formatDuration(seconds: number): string {
   if (!seconds || seconds <= 0) return "0s";
   if (seconds < 60) return `${seconds}s`;
@@ -42,7 +52,12 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
   const [heatmapMode, setHeatmapMode] = useState<HeatmapMode>("pins");
   const [viewportPreset, setViewportPreset] = useState<ViewportPreset>("desktop");
   const [activePin, setActivePin] = useState<DemoVisitClick | null>(null);
+  const [activeCluster, setActiveCluster] = useState<ClickCluster | null>(null);
+  const [clusterPins, setClusterPins] = useState<boolean>(true);
   const [heatRadius, setHeatRadius] = useState<number>(35);
+  const [heatIntensity, setHeatIntensity] = useState<number>(0.75);
+  const [isInteractiveMode, setIsInteractiveMode] = useState<boolean>(false);
+  const [iframeHeight, setIframeHeight] = useState<number>(900);
   const [selectedElementSelector, setSelectedElementSelector] = useState<string | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -51,10 +66,41 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
 
   const { data: report, isLoading, error, refetch } = useQuery<DemoAnalyticsReport>({
     queryKey: ["demo-analytics", demo?.id],
-    queryFn: () => api.get<DemoAnalyticsReport>(`/demos/${demo!.id}/analytics`),
+    queryFn: ({ signal }) => api.get<DemoAnalyticsReport>(`/demos/${demo!.id}/analytics`, signal),
     enabled: Boolean(open && demo?.id),
     refetchInterval: open ? 10000 : false,
   });
+
+  // URL for the preview iframe that tells server and tracker not to count admin views
+  const previewUrl = useMemo(() => {
+    if (!demo?.url) return "";
+    const sep = demo.url.includes("?") ? "&" : "?";
+    return `${demo.url}${sep}dw_preview=heatmap`;
+  }, [demo?.url]);
+
+  // Dynamically measure iframe content height so canvas and pins overlay the full document
+  const measureIframe = () => {
+    try {
+      const doc = iframeRef.current?.contentDocument;
+      if (doc) {
+        const scrollH = Math.max(
+          doc.documentElement?.scrollHeight || 0,
+          doc.body?.scrollHeight || 0,
+          850,
+        );
+        if (scrollH > 100) {
+          setIframeHeight(scrollH);
+        }
+      }
+    } catch {
+      // Cross-origin fallback keeps default height
+    }
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(measureIframe, 400);
+    return () => clearTimeout(timer);
+  }, [viewportPreset, activeTab, demo?.url]);
 
   // Filter clicks based on selected visit and selected element
   const filteredClicks = useMemo(() => {
@@ -69,7 +115,43 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
     return list;
   }, [report, selectedVisitId, selectedElementSelector]);
 
-  // Draw thermal heatmap on canvas
+  // Group nearby clicks into clusters so multiple clicks on the same button don't stack invisibly
+  const clickClusters = useMemo<ClickCluster[]>(() => {
+    if (!filteredClicks || filteredClicks.length === 0) return [];
+    const clusters: ClickCluster[] = [];
+    const thresholdPercent = 2.4; // Radius in percentage space
+
+    for (const click of filteredClicks) {
+      const match = clusters.find((c) => {
+        const dx = c.xPercent - click.xPercent;
+        const dy = c.yPercent - click.yPercent;
+        return Math.sqrt(dx * dx + dy * dy) <= thresholdPercent;
+      });
+
+      if (match) {
+        match.clicks.push(click);
+        match.count += 1;
+        match.xPercent = (match.xPercent * (match.count - 1) + click.xPercent) / match.count;
+        match.yPercent = (match.yPercent * (match.count - 1) + click.yPercent) / match.count;
+        if (!match.primaryText && click.targetText) {
+          match.primaryText = click.targetText;
+        }
+      } else {
+        clusters.push({
+          id: `${click.visitId}-${click.x}-${click.y}-${clusters.length}`,
+          xPercent: click.xPercent,
+          yPercent: click.yPercent,
+          clicks: [click],
+          primaryTag: click.targetTag || "ELEMENT",
+          primaryText: click.targetText || "",
+          count: 1,
+        });
+      }
+    }
+    return clusters;
+  }, [filteredClicks]);
+
+  // Draw thermal heatmap on canvas matching full iframe document height
   useEffect(() => {
     if (activeTab !== "heatmap" || heatmapMode === "pins") return;
     const canvas = canvasRef.current;
@@ -80,7 +162,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
 
     const rect = canvas.getBoundingClientRect();
     const width = Math.max(1, Math.round(rect.width));
-    const height = Math.max(1, Math.round(rect.height));
+    const height = Math.max(1, Math.round(iframeHeight));
 
     if (canvas.width !== width || canvas.height !== height) {
       canvas.width = width;
@@ -91,17 +173,19 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
 
     if (filteredClicks.length === 0) return;
 
-    // Draw radial glow for each click
+    // Draw intensity-scaled radial glow for each click
+    const alphaScale = Math.min(1, Math.max(0.2, heatIntensity));
+
     for (const click of filteredClicks) {
       const x = (click.xPercent / 100) * width;
       const y = (click.yPercent / 100) * height;
       const rad = Math.max(15, heatRadius);
 
       const grad = ctx.createRadialGradient(x, y, 0, x, y, rad);
-      grad.addColorStop(0, "rgba(239, 68, 68, 0.75)"); // Red hot center
-      grad.addColorStop(0.3, "rgba(249, 115, 22, 0.55)"); // Orange
-      grad.addColorStop(0.6, "rgba(234, 179, 8, 0.35)"); // Yellow
-      grad.addColorStop(0.85, "rgba(34, 197, 94, 0.18)"); // Green
+      grad.addColorStop(0, `rgba(239, 68, 68, ${0.85 * alphaScale})`); // Red hot center
+      grad.addColorStop(0.25, `rgba(249, 115, 22, ${0.65 * alphaScale})`); // Orange
+      grad.addColorStop(0.55, `rgba(234, 179, 8, ${0.45 * alphaScale})`); // Yellow
+      grad.addColorStop(0.8, `rgba(34, 197, 94, ${0.2 * alphaScale})`); // Green
       grad.addColorStop(1, "rgba(59, 130, 246, 0)"); // Fading blue
 
       ctx.save();
@@ -112,7 +196,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
       ctx.fill();
       ctx.restore();
     }
-  }, [activeTab, heatmapMode, filteredClicks, heatRadius, viewportPreset]);
+  }, [activeTab, heatmapMode, filteredClicks, heatRadius, heatIntensity, viewportPreset, iframeHeight]);
 
   if (!open || !demo) return null;
 
@@ -134,7 +218,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
       <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm" onClick={onClose} aria-hidden />
 
       {/* Modal Dialog */}
-      <div className="relative flex h-[92vh] w-full max-w-[94rem] flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl">
+      <div className="relative flex h-[92vh] w-full max-w-[96rem] flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl">
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between border-b border-line bg-white px-6 py-4">
           <div className="min-w-0 pr-4">
@@ -247,7 +331,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                       </div>
                     </div>
 
-                    {/* Dwell Time / How long they took */}
+                    {/* Dwell Time */}
                     <div className="rounded-2xl border border-line bg-white p-4 shadow-xs">
                       <div className="text-xs font-semibold uppercase tracking-wider text-muted">
                         Avg Dwell Time
@@ -300,14 +384,14 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                   </div>
 
                   {/* Distribution Breakdowns */}
-                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     {/* Country Distribution */}
                     <div className="rounded-2xl border border-line bg-white p-5 shadow-xs">
                       <h3 className="flex items-center gap-1.5 font-display text-sm font-bold text-ink">
-                        <IconGlobe size={14} /> Visitor Country & Location
+                        <IconGlobe size={14} /> Visitor Countries
                       </h3>
                       <p className="mt-0.5 text-xs text-muted">
-                        Detected from client IP and network headers
+                        Resolved via IP, CDN edge & locale
                       </p>
                       <div className="mt-4 space-y-3">
                         {breakdowns?.countries && breakdowns.countries.length > 0 ? (
@@ -332,6 +416,41 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                           ))
                         ) : (
                           <p className="py-4 text-center text-xs text-muted">No location data yet.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* City Distribution */}
+                    <div className="rounded-2xl border border-line bg-white p-5 shadow-xs">
+                      <h3 className="flex items-center gap-1.5 font-display text-sm font-bold text-ink">
+                        <IconTarget size={14} className="text-blue" /> Top Cities & Metros
+                      </h3>
+                      <p className="mt-0.5 text-xs text-muted">
+                        Detected visitor city & metropolitan areas
+                      </p>
+                      <div className="mt-4 space-y-3">
+                        {breakdowns?.cities && breakdowns.cities.length > 0 ? (
+                          breakdowns.cities.map((city) => (
+                            <div key={`${city.city}-${city.country}`} className="space-y-1">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="flex items-center gap-1.5 font-medium text-ink">
+                                  <span className="text-base">{city.flag}</span>
+                                  <span>{city.city}</span>
+                                </span>
+                                <span className="font-mono text-muted">
+                                  {city.count} ({city.percentage}%)
+                                </span>
+                              </div>
+                              <div className="h-1.5 w-full overflow-hidden rounded-full bg-line/60">
+                                <div
+                                  className="h-full rounded-full bg-indigo-500"
+                                  style={{ width: `${city.percentage}%` }}
+                                />
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="py-4 text-center text-xs text-muted">City data will appear as visitors browse.</p>
                         )}
                       </div>
                     </div>
@@ -431,7 +550,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                           Individual Visitor Sessions
                         </h3>
                         <p className="text-xs text-muted">
-                          Full log of every person who clicked and opened this demo link
+                          Complete log of prospects who clicked and opened this proposal
                         </p>
                       </div>
                       <span className="font-mono text-xs text-muted">
@@ -444,7 +563,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                         <thead className="border-b border-line bg-surface/60 font-sans text-[11px] uppercase tracking-wider text-muted">
                           <tr>
                             <th className="px-4 py-3">Opened</th>
-                            <th className="px-4 py-3">Location & Country</th>
+                            <th className="px-4 py-3">Location & City</th>
                             <th className="px-4 py-3">IP Address</th>
                             <th className="px-4 py-3">Device & Browser</th>
                             <th className="px-4 py-3">Viewport</th>
@@ -463,6 +582,11 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                                   : visit.deviceType === "tablet"
                                     ? IconTablet
                                     : IconDesktop;
+
+                              const locText = [visit.city, visit.countryName || visit.country]
+                                .filter(Boolean)
+                                .join(", ") || "Unknown location";
+
                               return (
                                 <tr key={visit.id} className="transition hover:bg-surface/40">
                                   {/* Opened */}
@@ -470,7 +594,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                                     <RelativeTime value={visit.createdAt} />
                                   </td>
 
-                                  {/* Country */}
+                                  {/* Location & City */}
                                   <td className="whitespace-nowrap px-4 py-3">
                                     <span className="flex items-center gap-1.5 font-medium text-ink">
                                       {visit.flag ? (
@@ -478,7 +602,12 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                                       ) : (
                                         <IconGlobe size={14} className="text-muted" />
                                       )}
-                                      <span>{visit.countryName || visit.country || "Unknown location"}</span>
+                                      <span>{locText}</span>
+                                      {visit.isLocal ? (
+                                        <span className="rounded bg-neutral-100 px-1.5 py-0.2 font-mono text-[9px] font-semibold text-neutral-600">
+                                          Local
+                                        </span>
+                                      ) : null}
                                     </span>
                                   </td>
 
@@ -689,26 +818,77 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                         <option value="all">
                           All Visitors ({report?.heatmap?.totalClicks ?? 0} clicks)
                         </option>
-                        {visits.map((v) => (
-                          <option key={v.id} value={v.id}>
-                            {v.countryName || v.ip || "Visitor"} ({v.deviceType || "Device"}) — {v.clickCount} clicks
-                          </option>
-                        ))}
+                        {visits.map((v) => {
+                          const labelLoc = [v.city, v.countryName || v.ip || "Visitor"].filter(Boolean).join(", ");
+                          return (
+                            <option key={v.id} value={v.id}>
+                              {labelLoc} ({v.deviceType || "Device"}) — {v.clickCount} clicks
+                            </option>
+                          );
+                        })}
                       </select>
                     </div>
 
-                    {/* Heat Radius Slider */}
-                    {(heatmapMode === "heat" || heatmapMode === "both") && (
+                    {/* Cluster Toggle */}
+                    {(heatmapMode === "pins" || heatmapMode === "both") && (
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-semibold text-muted">Radius:</span>
-                        <input
-                          type="range"
-                          min="20"
-                          max="80"
-                          value={heatRadius}
-                          onChange={(e) => setHeatRadius(Number(e.target.value))}
-                          className="h-1.5 w-24 cursor-pointer accent-blue"
-                        />
+                        <button
+                          type="button"
+                          onClick={() => setClusterPins(!clusterPins)}
+                          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition ${
+                            clusterPins
+                              ? "border-blue bg-blue/10 text-blue font-semibold"
+                              : "border-line bg-white text-muted hover:text-ink"
+                          }`}
+                        >
+                          <span className={`h-1.5 w-1.5 rounded-full ${clusterPins ? "bg-blue" : "bg-neutral-300"}`} />
+                          <span>Group Clustered Clicks</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Interaction Mode Toggle */}
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsInteractiveMode(!isInteractiveMode)}
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition ${
+                          isInteractiveMode
+                            ? "border-emerald-600 bg-emerald-50 text-emerald-700 font-semibold"
+                            : "border-line bg-white text-muted hover:text-ink"
+                        }`}
+                        title="Allow clicking inside demo page"
+                      >
+                        <span>{isInteractiveMode ? "Interactive Demo ON" : "Heatmap Inspector Active"}</span>
+                      </button>
+                    </div>
+
+                    {/* Heat Radius and Intensity Sliders */}
+                    {(heatmapMode === "heat" || heatmapMode === "both") && (
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="flex items-center gap-1.5 text-xs text-muted">
+                          <span>Radius:</span>
+                          <input
+                            type="range"
+                            min="20"
+                            max="80"
+                            value={heatRadius}
+                            onChange={(e) => setHeatRadius(Number(e.target.value))}
+                            className="h-1.5 w-20 cursor-pointer accent-blue"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5 text-xs text-muted">
+                          <span>Glow:</span>
+                          <input
+                            type="range"
+                            min="0.3"
+                            max="1"
+                            step="0.05"
+                            value={heatIntensity}
+                            onChange={(e) => setHeatIntensity(Number(e.target.value))}
+                            className="h-1.5 w-20 cursor-pointer accent-rose-500"
+                          />
+                        </div>
                       </div>
                     )}
 
@@ -718,7 +898,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                         variant="secondary"
                         onClick={() => setSelectedElementSelector(null)}
                       >
-                        Clear Element Filter
+                        Clear Filter ({selectedElementSelector})
                       </Button>
                     )}
                   </div>
@@ -726,98 +906,186 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                   {/* Main Heatmap Container */}
                   <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
                     {/* Visual Preview Frame & Overlay */}
-                    <div className="lg:col-span-3 flex justify-center overflow-x-auto rounded-2xl border border-line bg-neutral-900/5 p-4">
+                    <div className="lg:col-span-3 flex justify-center rounded-2xl border border-line bg-neutral-900/5 p-4">
+                      {/* Synchronized Scroll Container */}
                       <div
                         ref={frameContainerRef}
-                        className={`relative w-full ${viewportWidthClass} overflow-hidden rounded-xl border border-line/80 bg-white shadow-lg transition-all duration-300`}
+                        className={`relative w-full ${viewportWidthClass} max-h-[74vh] overflow-y-auto overflow-x-hidden rounded-xl border border-line/80 bg-white shadow-lg transition-all duration-300`}
                         style={{ minHeight: "680px" }}
                       >
                         {/* Live Demo Preview Iframe */}
                         <iframe
                           ref={iframeRef}
-                          src={demo.url}
+                          src={previewUrl}
                           title={demo.title}
-                          className="h-[800px] w-full border-0"
+                          onLoad={measureIframe}
+                          className="w-full border-0 transition-all duration-150"
+                          style={{
+                            height: `${iframeHeight}px`,
+                            pointerEvents: isInteractiveMode ? "auto" : "none",
+                          }}
                         />
 
                         {/* Thermal Canvas Layer */}
                         {(heatmapMode === "heat" || heatmapMode === "both") && (
                           <canvas
                             ref={canvasRef}
-                            className="pointer-events-none absolute inset-0 z-10 h-full w-full opacity-85"
+                            className="pointer-events-none absolute inset-0 z-10 w-full opacity-85"
+                            style={{ height: `${iframeHeight}px` }}
                           />
                         )}
 
                         {/* Interactive Click Pins Layer */}
-                        {(heatmapMode === "pins" || heatmapMode === "both") && (
-                          <div className="absolute inset-0 z-20 pointer-events-none overflow-hidden">
-                            {filteredClicks.map((click, idx) => (
-                              <button
-                                key={`${click.visitId}-${idx}-${click.x}-${click.y}`}
-                                type="button"
-                                onClick={() => setActivePin(click)}
-                                style={{
-                                  left: `${click.xPercent}%`,
-                                  top: `${click.yPercent}%`,
-                                  transform: "translate(-50%, -50%)",
-                                }}
-                                className="pointer-events-auto group absolute flex h-6 w-6 items-center justify-center rounded-full bg-rose-600 text-[10px] font-bold text-white shadow-md ring-2 ring-white transition hover:scale-125 hover:bg-rose-700 hover:ring-4 hover:ring-rose-200"
-                                title={`Click #${idx + 1}: ${click.targetTag} "${click.targetText}"`}
-                              >
-                                {idx + 1}
-                              </button>
-                            ))}
+                        {(heatmapMode === "pins" || heatmapMode === "both") && !isInteractiveMode && (
+                          <div
+                            className="absolute inset-0 z-20 pointer-events-none"
+                            style={{ height: `${iframeHeight}px` }}
+                          >
+                            {clusterPins ? (
+                              /* Clustered Pins View */
+                              clickClusters.map((cluster, idx) => (
+                                <button
+                                  key={`cluster-${cluster.id}-${idx}`}
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveCluster(cluster);
+                                    setActivePin(cluster.clicks[0] ?? null);
+                                  }}
+                                  style={{
+                                    left: `${cluster.xPercent}%`,
+                                    top: `${cluster.yPercent}%`,
+                                    transform: "translate(-50%, -50%)",
+                                  }}
+                                  className={`pointer-events-auto group absolute flex items-center justify-center rounded-full text-white shadow-lg ring-2 ring-white transition hover:scale-125 ${
+                                    cluster.count > 3
+                                      ? "h-7 w-7 bg-rose-600 font-extrabold text-[11px] ring-rose-200"
+                                      : cluster.count > 1
+                                        ? "h-6 w-6 bg-amber-600 font-bold text-[10px] ring-amber-200"
+                                        : "h-5 w-5 bg-blue font-bold text-[10px] ring-blue/30"
+                                  }`}
+                                  title={`${cluster.count} click${cluster.count === 1 ? "" : "s"} on ${cluster.primaryTag} "${cluster.primaryText}"`}
+                                >
+                                  {cluster.count > 1 ? `${cluster.count}×` : `${idx + 1}`}
+                                </button>
+                              ))
+                            ) : (
+                              /* Individual Raw Pins View */
+                              filteredClicks.map((click, idx) => (
+                                <button
+                                  key={`${click.visitId}-${idx}-${click.x}-${click.y}`}
+                                  type="button"
+                                  onClick={() => {
+                                    setActivePin(click);
+                                    setActiveCluster(null);
+                                  }}
+                                  style={{
+                                    left: `${click.xPercent}%`,
+                                    top: `${click.yPercent}%`,
+                                    transform: "translate(-50%, -50%)",
+                                  }}
+                                  className="pointer-events-auto group absolute flex h-6 w-6 items-center justify-center rounded-full bg-rose-600 text-[10px] font-bold text-white shadow-md ring-2 ring-white transition hover:scale-125 hover:bg-rose-700 hover:ring-4 hover:ring-rose-200"
+                                  title={`Click #${idx + 1}: ${click.targetTag} "${click.targetText}"`}
+                                >
+                                  {idx + 1}
+                                </button>
+                              ))
+                            )}
                           </div>
                         )}
 
-                        {/* Floating Click Details Card (when a pin is clicked) */}
-                        {activePin && (
-                          <div className="absolute bottom-4 left-4 right-4 z-30 max-w-md rounded-xl border border-line bg-white/95 p-4 shadow-xl backdrop-blur-md">
+                        {/* Floating Click Details Card (when a pin or cluster is clicked) */}
+                        {(activePin || activeCluster) && (
+                          <div className="sticky bottom-4 left-4 right-4 mx-4 z-30 max-w-lg rounded-xl border border-line bg-white/95 p-4 shadow-2xl backdrop-blur-md">
                             <div className="flex items-start justify-between">
                               <div>
-                                <span className="inline-block rounded-md bg-rose-100 px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-rose-800">
-                                  {activePin.targetTag || "ELEMENT"}
-                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="inline-block rounded-md bg-rose-100 px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-rose-800">
+                                    {activeCluster?.primaryTag || activePin?.targetTag || "ELEMENT"}
+                                  </span>
+                                  {activeCluster && activeCluster.count > 1 && (
+                                    <span className="rounded-md bg-amber-100 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-900">
+                                      {activeCluster.count} Combined Clicks
+                                    </span>
+                                  )}
+                                </div>
                                 <h4 className="mt-1 font-semibold text-ink text-sm">
-                                  {activePin.targetText ? `"${activePin.targetText}"` : "Target element clicked"}
+                                  {activeCluster?.primaryText
+                                    ? `"${activeCluster.primaryText}"`
+                                    : activePin?.targetText
+                                      ? `"${activePin.targetText}"`
+                                      : "Target element clicked"}
                                 </h4>
                               </div>
                               <button
                                 type="button"
-                                onClick={() => setActivePin(null)}
+                                onClick={() => {
+                                  setActivePin(null);
+                                  setActiveCluster(null);
+                                }}
                                 className="text-muted hover:text-ink"
                               >
                                 <IconXCircle size={16} />
                               </button>
                             </div>
 
-                            <div className="mt-2.5 grid grid-cols-2 gap-2 text-xs text-muted">
-                              <div>
-                                <span>Visitor: </span>
-                                <strong className="inline-flex items-center gap-1 text-ink">
-                                  <IconGlobe size={13} className="text-muted" />
-                                  <span>{activePin.countryName || activePin.ip || "Visitor"}</span>
-                                </strong>
+                            {activePin && (
+                              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted border-t border-line/50 pt-2.5">
+                                <div>
+                                  <span>Location: </span>
+                                  <strong className="inline-flex items-center gap-1 text-ink">
+                                    <span>{activePin.flag || "🌐"}</span>
+                                    <span>
+                                      {[activePin.city, activePin.countryName || activePin.country]
+                                        .filter(Boolean)
+                                        .join(", ") || activePin.ip || "Visitor"}
+                                    </span>
+                                  </strong>
+                                </div>
+                                <div>
+                                  <span>Device: </span>
+                                  <strong className="text-ink">
+                                    {activePin.deviceType} ({activePin.browser})
+                                  </strong>
+                                </div>
+                                <div>
+                                  <span>Coordinates: </span>
+                                  <strong className="font-mono text-ink">
+                                    x: {activePin.xPercent}%, y: {activePin.yPercent}%
+                                  </strong>
+                                </div>
+                                <div>
+                                  <span>Timing: </span>
+                                  <strong className="text-ink">
+                                    +{formatDuration(activePin.timeOffset ?? 0)} into visit
+                                  </strong>
+                                </div>
                               </div>
-                              <div>
-                                <span>Device: </span>
-                                <strong className="text-ink">
-                                  {activePin.deviceType} ({activePin.browser})
-                                </strong>
+                            )}
+
+                            {activeCluster && activeCluster.count > 1 && (
+                              <div className="mt-3 border-t border-line/60 pt-2">
+                                <div className="text-[11px] font-semibold text-ink uppercase tracking-wider">
+                                  Clicks in this hot spot:
+                                </div>
+                                <div className="mt-1.5 max-h-28 overflow-y-auto space-y-1 pr-1 text-[11px]">
+                                  {activeCluster.clicks.map((c, i) => (
+                                    <div
+                                      key={`${c.visitId}-${i}`}
+                                      className="flex items-center justify-between rounded bg-surface px-2 py-1"
+                                    >
+                                      <span className="flex items-center gap-1 text-ink">
+                                        <span>{c.flag || "🌐"}</span>
+                                        <span>{c.city || c.countryName || "Visitor"}</span>
+                                        <span className="text-muted">({c.deviceType || "Device"})</span>
+                                      </span>
+                                      <span className="font-mono text-muted">
+                                        +{formatDuration(c.timeOffset ?? 0)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
-                              <div>
-                                <span>Page coordinates: </span>
-                                <strong className="font-mono text-ink">
-                                  x: {activePin.xPercent}%, y: {activePin.yPercent}%
-                                </strong>
-                              </div>
-                              <div>
-                                <span>Timing: </span>
-                                <strong className="text-ink">
-                                  +{formatDuration(activePin.timeOffset ?? 0)} into visit
-                                </strong>
-                              </div>
-                            </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -836,7 +1104,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                           </span>
                         </div>
                         <p className="mt-0.5 text-xs text-muted">
-                          What visitors clicked the most on this landing page
+                          What prospects engaged with most on this landing page
                         </p>
 
                         <div className="mt-4 space-y-2.5">
@@ -886,7 +1154,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                         </div>
                         <div className="mt-1 h-3 w-full rounded-full bg-gradient-to-r from-blue-400 via-emerald-400 via-amber-400 to-rose-600 shadow-inner" />
                         <p className="mt-2 text-[11px] leading-relaxed text-muted">
-                          Normalized percentages dynamically adjust across desktop, tablet, and mobile screens.
+                          Coordinates dynamically adjust across desktop, tablet, and mobile screens. Iframe and heatmap scroll in sync.
                         </p>
                       </div>
                     </div>
@@ -900,7 +1168,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-line bg-white px-6 py-3.5 text-xs text-muted">
           <span>
-            Tracking visitor IP, country, device, dwell time, and heatmap clicks automatically.
+            Tracking visitor IP, country, city, device, dwell time, and heatmap clicks automatically.
           </span>
           <Button size="sm" variant="secondary" onClick={onClose}>
             Close

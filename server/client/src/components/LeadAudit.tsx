@@ -99,7 +99,7 @@ function AuditDetail({
 
   const { data, isLoading } = useQuery({
     queryKey: ["audit", auditId],
-    queryFn: () => api.get<WebsiteAudit>(`/audits/${auditId}`),
+    queryFn: ({ signal }) => api.get<WebsiteAudit>(`/audits/${auditId}`, signal),
   });
 
   /**

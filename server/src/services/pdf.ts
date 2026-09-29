@@ -1,3 +1,5 @@
+import { capacity } from "../lib/capacity.js";
+import { withCapacityLease } from "../lib/leases.js";
 import PDFDocument from "pdfkit";
 import {
   CONTENT_BOTTOM,
@@ -122,6 +124,9 @@ function money(currency: string, amount: number): string {
 }
 
 export async function renderProposalPdf(data: ProposalPdfData): Promise<Buffer> {
+  return capacity.admission ? withCapacityLease("render", 1, () => renderProposalPdfUnbounded(data)) : renderProposalPdfUnbounded(data);
+}
+async function renderProposalPdfUnbounded(data: ProposalPdfData): Promise<Buffer> {
   const doc = newDoc(await letterheadIdentity());
   header(doc, "Service Proposal", data.title);
 
@@ -685,6 +690,9 @@ function paymentPanel(doc: PDFDoc, payment: InvoicePayment) {
 // --- The document ----------------------------------------------------------
 
 export async function renderInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
+  return capacity.admission ? withCapacityLease("render", 1, () => renderInvoicePdfUnbounded(data)) : renderInvoicePdfUnbounded(data);
+}
+async function renderInvoicePdfUnbounded(data: InvoicePdfData): Promise<Buffer> {
   const doc = newDoc(await letterheadIdentity());
   const currency = data.currency;
 

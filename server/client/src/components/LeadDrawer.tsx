@@ -42,7 +42,7 @@ export function LeadDrawer({
   const qc = useQueryClient();
   const { data: lead, isLoading } = useQuery({
     queryKey: ["lead", leadId],
-    queryFn: () => api.get<Lead>(`/leads/${leadId}`),
+    queryFn: ({ signal }) => api.get<Lead>(`/leads/${leadId}`, signal),
     enabled: Boolean(leadId),
   });
 

@@ -1,3 +1,4 @@
+import { capacity } from "../lib/capacity.js";
 import { createHash } from "node:crypto";
 import type { Prisma, PublishJob, PublishJobState, Site, SitePage } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
@@ -100,10 +101,10 @@ export async function publishJobCommitted(input: {
   page: SitePage;
   html: string;
   summary: FieldChangeSummary[];
-}): Promise<void> {
+}, db: Prisma.TransactionClient = prisma): Promise<void> {
   const isLocalHosted = !siteRepo(input.site);
   const now = new Date();
-  await prisma.publishJob.update({
+  await db.publishJob.update({
     where: { id: input.id },
     data: {
       state: isLocalHosted ? "COMPLETED" : "DEPLOYING",
@@ -282,17 +283,26 @@ export async function verifyDuePublishJobs(now = new Date()): Promise<number> {
  * database is behind, which is a state a person has to look at rather than one
  * to quietly fix. If it is not, nothing happened, and the row says so.
  */
-export async function reconcileInterruptedPublishJobs(): Promise<number> {
+export async function reconcileInterruptedPublishJobs(before?: Date): Promise<number> {
   const stuck = await prisma.publishJob.findMany({
-    where: { state: { in: ["QUEUED", "VALIDATING", "COMMITTING"] } },
+    where: { state: { in: ["QUEUED", "VALIDATING", "COMMITTING"] }, ...(before ? { createdAt: { lt: before } } : {}) },
+    orderBy: { createdAt: "asc" },
     include: { site: true, page: true },
     take: 20,
   });
 
   let handled = 0;
   for (const job of stuck) {
+    const active = await prisma.serviceLease.findFirst({ where: { key: { in: [`publication:site:${job.siteId}`, `publication:page:${job.pageId}`] }, expiresAt: { gt: new Date() } } });
+    if (active) continue;
     if (job.state !== "COMMITTING") {
       await failPublishJob(job.id, "COMMIT_FAILED", "The publish was interrupted before anything was committed. Nothing was changed; publish again.");
+      handled += 1;
+      continue;
+    }
+
+    if (job.commitSha) {
+      await failPublishJob(job.id, "RECONCILIATION_REQUIRED", "The repository commit was recorded, but publication did not finish. Compare the commit with the local page history before publishing again.");
       handled += 1;
       continue;
     }
@@ -306,11 +316,11 @@ export async function reconcileInterruptedPublishJobs(): Promise<number> {
     }
 
     const live = await readFile(repo, repoFilePath(job.site, job.page), job.site.repoBranch).catch(() => null);
-    if (live !== null && hash(live) === detail.expectedHtmlHash) {
+    if (live === null || hash(live) === detail.expectedHtmlHash) {
       await failPublishJob(
         job.id,
         "RECONCILIATION_REQUIRED",
-        "The commit reached the repository but this system was interrupted before recording it. The live site will update; the version history here is missing this publish.",
+        "The publish may have reached the repository, but local recording did not finish. Compare the repository with the local version history before publishing again.",
       );
     } else {
       await failPublishJob(job.id, "COMMIT_FAILED", "The publish was interrupted before the commit landed. Nothing was changed; publish again.");
@@ -408,6 +418,7 @@ export function registerWebsitePublishJobs(
       res.status(404).json({ error: "That publish is not on this website." });
       return;
     }
-    res.json({ ...publishJobView(job), label: publishJobView(job).stateLabel });
+    const pending = capacity.edge ? await prisma.cacheInvalidation.count({ where: { siteId: site.id, resource: "pages", deliveredAt: null } }) : 0;
+    res.json({ ...publishJobView(job), label: publishJobView(job).stateLabel, cdnState: capacity.edge ? pending ? "PENDING" : "PROPAGATED" : "DISABLED" });
   }));
 }

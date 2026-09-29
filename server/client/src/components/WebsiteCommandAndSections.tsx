@@ -507,10 +507,10 @@ export function WebsiteRevisionCommentsModal({
   const commentsQuery = useQuery({
     queryKey: ["website", "comments", siteId, pageId],
     enabled: Boolean(siteId && pageId),
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api.get<{ comments: RevisionCommentItem[] }>(
         `/website/sites/${siteId}/pages/${pageId}/comments`,
-      ),
+      signal),
   });
 
   const addMutation = useMutation({
@@ -778,8 +778,8 @@ export function WebsiteClientReportModal({
   const reportQuery = useQuery({
     queryKey: ["website", "report", siteId, pageId],
     enabled: Boolean(open && siteId && pageId),
-    queryFn: () =>
-      api.get<ClientReportResponse>(`/website/sites/${siteId}/pages/${pageId}/report`),
+    queryFn: ({ signal }) =>
+      api.get<ClientReportResponse>(`/website/sites/${siteId}/pages/${pageId}/report`, signal),
   });
 
   if (!open) return null;

@@ -27,7 +27,7 @@ export function ProjectDetail() {
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["projects", id],
-    queryFn: () => api.get<ProjectDetailData>(`/projects/${id}`),
+    queryFn: ({ signal }) => api.get<ProjectDetailData>(`/projects/${id}`, signal),
   });
 
   const addTask = useMutation({

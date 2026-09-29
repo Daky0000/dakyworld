@@ -1,3 +1,7 @@
+import { startPublishJob, advancePublishJob, publishJobCommitted } from "./websitePublishJobs.js";
+import { beforeWebsiteExternalAction } from "../lib/websiteWorkContext.js";
+import { capacity } from "../lib/capacity.js";
+import { enqueueWebsiteWork } from "./websiteWorkQueue.js";
 import { randomUUID } from "node:crypto";
 import type { Request, Response, Router } from "express";
 import type { Site, SitePage } from "@prisma/client";
@@ -11,7 +15,7 @@ import { sniff } from "../lib/fileType.js";
 import { optimizeImageBuffer } from "../lib/imageOptimization.js";
 import { assetUrl } from "./websiteAssets.js";
 import { ensureHostedAddress } from "./websiteHosting.js";
-import { withWebsitePublishLocks } from "./websitePublishing.js";
+import { withWebsitePublishLocks, commitPublication } from "./websitePublishing.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
 import { assertMediaStorageAllowance } from "./websiteTierPlans.js";
 import { check, scopesForAgent, BudgetExceeded, forgetBudgets } from "./budgets.js";
@@ -2505,6 +2509,7 @@ const uploadAttachmentSchema = z
   });
 
 const batchPublishAgentSchema = z.object({
+  revisions: z.record(z.number().int().nonnegative()).optional(),
   pageIds: z.array(z.string().max(120)).max(100).optional(),
   message: z.string().max(300).optional(),
 });
@@ -2518,6 +2523,51 @@ const escalateDeveloperSchema = z.object({
 // ============================================================================
 // Router Registration
 // ============================================================================
+
+export async function executeBuilderPlan(site: Site, input: unknown): Promise<SiteAgentPlan> {
+  const body = siteAgentCommandSchema.parse(input);
+      const pages = await prisma.sitePage.findMany({
+        where: { siteId: site.id },
+        orderBy: [{ sortOrder: "asc" }, { path: "asc" }],
+      });
+
+      let plan: SiteAgentPlan;
+      switch (body.action) {
+        case "replace_font":
+          plan = await planGlobalFontChange(site, pages, {
+            fromFont: body.fromFont,
+            toFont: body.toFont,
+            targetKinds: body.targetKinds,
+          });
+          break;
+        case "replace_color":
+          plan = await planGlobalColorChange(site, pages, {
+            fromColor: body.fromColor,
+            toColor: body.toColor,
+            properties: body.properties,
+          });
+          break;
+        case "replace_content":
+          plan = await planCrossPageContentChange(site, pages, {
+            findText: body.findText,
+            replaceText: body.replaceText,
+            kind: body.kind,
+          });
+          break;
+        default:
+        case "instruction":
+          plan = await planAgentInstruction(site, pages, body.prompt, {
+            pageId: body.pageId,
+            selectedFieldId: body.selectedFieldId,
+            edits: body.edits,
+            attachments: body.attachments,
+            history: body.history,
+          });
+          break;
+      }
+
+  return plan;
+}
 
 export function registerWebsiteBuilderAgent(
   router: Router,
@@ -2644,46 +2694,11 @@ export function registerWebsiteBuilderAgent(
     try {
       const body = siteAgentCommandSchema.parse(req.body);
       const site = await access.loadSite(req, req.params.siteId);
-      const pages = await prisma.sitePage.findMany({
-        where: { siteId: site.id },
-        orderBy: [{ sortOrder: "asc" }, { path: "asc" }],
-      });
-
-      let plan: SiteAgentPlan;
-      switch (body.action) {
-        case "replace_font":
-          plan = await planGlobalFontChange(site, pages, {
-            fromFont: body.fromFont,
-            toFont: body.toFont,
-            targetKinds: body.targetKinds,
-          });
-          break;
-        case "replace_color":
-          plan = await planGlobalColorChange(site, pages, {
-            fromColor: body.fromColor,
-            toColor: body.toColor,
-            properties: body.properties,
-          });
-          break;
-        case "replace_content":
-          plan = await planCrossPageContentChange(site, pages, {
-            findText: body.findText,
-            replaceText: body.replaceText,
-            kind: body.kind,
-          });
-          break;
-        default:
-        case "instruction":
-          plan = await planAgentInstruction(site, pages, body.prompt, {
-            pageId: body.pageId,
-            selectedFieldId: body.selectedFieldId,
-            edits: body.edits,
-            attachments: body.attachments,
-            history: body.history,
-          });
-          break;
+      if (capacity.admission) {
+        const job = await enqueueWebsiteWork(req, site.id, "BUILDER_PLAN", body);
+        res.status(202).json(job); return;
       }
-
+      const plan = await executeBuilderPlan(site, body);
       res.json(plan);
     } catch (err) {
       next(err);
@@ -2709,77 +2724,20 @@ export function registerWebsiteBuilderAgent(
   // 5. Atomic 1-Click Batch Publish of Agent-Edited Pages
   router.post("/sites/:siteId/agent/publish-batch", async (req: Request, res: Response, next) => {
     try {
-      const body = batchPublishAgentSchema.parse(req.body ?? {});
       const site = await access.loadSite(req, req.params.siteId);
-      await assertWebsiteSiteAccess(req, site.id, "publish");
-      const pages = await prisma.sitePage.findMany({
-        where: { siteId: site.id },
-        orderBy: [{ sortOrder: "asc" }, { path: "asc" }],
-      });
-
-      const requestedIds = body.pageIds?.length ? new Set(body.pageIds) : null;
-      if (requestedIds && requestedIds.size !== body.pageIds?.length) throw new WebsiteError(400, "Choose each page only once.");
-      if (requestedIds && [...requestedIds].some(id => !pages.some(page => page.id === id))) throw new WebsiteError(404, "One selected page is not on this website.");
-      const candidates = pages.filter((p) => {
-        if (p.status === "HIDDEN") return false;
-        if (requestedIds && !requestedIds.has(p.id)) return false;
-        const draft = (p.draft ?? {}) as Record<string, FieldValue>;
-        return Object.keys(draft).length > 0;
-      });
-
-      if (!candidates.length) {
-        throw new WebsiteError(400, "All selected pages are already published with no pending draft changes.");
+      const body = batchPublishAgentSchema.parse(req.body ?? {});
+      if (capacity.admission) {
+        const pages = await prisma.sitePage.findMany({ where: { siteId: site.id, status: { not: "HIDDEN" },
+          ...(body.pageIds?.length ? { id: { in: body.pageIds } } : {}) }, take: 101, select: { id: true, draftRevision: true } });
+        if (pages.length > 100) throw new WebsiteError(400, "Choose up to 100 pages for each batch publication.");
+        if (body.pageIds?.length && new Set(body.pageIds).size !== pages.length) throw new WebsiteError(404, "Choose each visible page on this website only once.");
+        res.status(202).json(await enqueueWebsiteWork(req, site.id, "PUBLISH_BATCH", {
+          ...body, pageIds: pages.map(page => page.id), revisions: Object.fromEntries(pages.map(page => [page.id, page.draftRevision])),
+        }));
+        return;
       }
-
-      const result = await withWebsitePublishLocks(candidates.map(page => page.id), async tx => {
-        const pagesToCommit: Array<{ page: SitePage; html: string; expectedSource: string; values: Record<string, FieldValue> }> = [];
-        for (const selected of candidates) {
-          const page = await tx.sitePage.findUniqueOrThrow({ where: { id: selected.id } });
-          const values = (page.draft ?? {}) as Record<string, FieldValue>;
-          if (!Object.keys(values).length) throw new WebsiteError(409, `${page.title} changed while publishing. Review its draft again.`);
-          const source = await pageSource(site, page, { fresh: true });
-          if (source.sourceFile) throw new WebsiteError(409, `${page.title} uses framework source. Publish it through the page review, which preserves its components.`);
-          const plan = buildPublishPlan({ source: source.html, values });
-          if (!plan.publishable || !plan.html) throw Object.assign(new WebsiteError(409, `${page.title} cannot be published. Review its draft again.`), { problems: plan.problems, conflicts: plan.conflicts, missing: plan.missing });
-          pagesToCommit.push({ page, html: plan.html, expectedSource: source.html, values });
-        }
-
-        const author = req.dbUser?.name ?? req.dbUser?.email ?? "Website Agent";
-        const commit = await publishPages({
-          site,
-          message: body.message?.trim() || `Website Agent: published ${pagesToCommit.length} page${pagesToCommit.length === 1 ? "" : "s"} (${author})`,
-          pages: pagesToCommit,
-        });
-        const publishedAt = new Date();
-        for (const { page, html, values } of pagesToCommit) {
-          const last = await tx.sitePageVersion.findFirst({ where: { pageId: page.id }, orderBy: { number: "desc" }, select: { number: true } });
-          await tx.sitePageVersion.create({ data: {
-            pageId: page.id, number: (last?.number ?? 0) + 1, html,
-            values: versionValues(values) as unknown as Prisma.InputJsonValue,
-            commitSha: commit.sha, commitUrl: commit.url, publishedById: req.dbUser?.id ?? null,
-          } });
-          await tx.sitePage.update({ where: { id: page.id }, data: {
-            publishedHtml: html, sourceHtml: page.sourceHtml === null ? undefined : html,
-            lastPublishedAt: publishedAt, status: "LIVE",
-          } });
-          // Preserve a draft saved while the network commit was in flight.
-          await tx.sitePage.updateMany({ where: { id: page.id, draftRevision: page.draftRevision }, data: {
-            draft: Prisma.DbNull, draftSavedAt: null, draftSavedById: null, draftRevision: { increment: 1 },
-          } });
-        }
-        await ensureHostedAddress(site.id);
-        await tx.siteAuditEvent.create({ data: {
-          siteId: site.id, kind: "PUBLISH",
-          summary: `Agent published ${pagesToCommit.length} page${pagesToCommit.length === 1 ? "" : "s"} in one commit`,
-          actorName: author, actorId: req.dbUser?.id,
-          detail: { sha: commit.sha, url: commit.url, pages: pagesToCommit.map(({ page }) => ({ id: page.id, title: page.title, path: page.path })) },
-        } });
-        return { publishedPages: pagesToCommit.length, commitSha: commit.sha, commitUrl: commit.url, pages: pagesToCommit.map(({ page }) => ({ id: page.id, title: page.title, path: page.path })) };
-      });
-      res.json(result);
-    } catch (err) {
-      next(err);
-    }
+      res.json(await executeBatchPublish(req, site));
+    } catch (error) { next(error); }
   });
 
   // 6. Escalate a code-managed or structural request to a Dakyworld developer & site owner
@@ -2788,7 +2746,7 @@ export function registerWebsiteBuilderAgent(
       const body = escalateDeveloperSchema.parse(req.body ?? {});
       const site = await access.loadSite(req, req.params.siteId);
       const author = req.dbUser?.name ?? req.dbUser?.email ?? "Website Owner";
-      
+
       const escalation = await createWebsiteEscalation({
         siteId: site.id,
         pageId: body.pageId,
@@ -2812,4 +2770,86 @@ export function registerWebsiteBuilderAgent(
 
   // 7. Register SEO & Repository Metadata routes (/sites/:siteId/seo, /seo/page, /seo/repo, /seo/auto-generate)
   registerWebsiteSeoRoutes(router, access);
+}
+
+export async function executeBatchPublish(req: Request, site: Site) {
+      const body = batchPublishAgentSchema.parse(req.body ?? {});
+      await assertWebsiteSiteAccess(req, site.id, "publish");
+      const pages = await prisma.sitePage.findMany({
+        where: { siteId: site.id, ...(body.pageIds?.length ? { id: { in: body.pageIds } } : {}) },
+        orderBy: [{ sortOrder: "asc" }, { path: "asc" }],
+        take: 101,
+      });
+      if (pages.length > 100) throw new WebsiteError(400, "Choose up to 100 pages for each batch publication.");
+
+      const requestedIds = body.pageIds?.length ? new Set(body.pageIds) : null;
+      if (requestedIds && requestedIds.size !== body.pageIds?.length) throw new WebsiteError(400, "Choose each page only once.");
+      if (requestedIds && [...requestedIds].some(id => !pages.some(page => page.id === id))) throw new WebsiteError(404, "One selected page is not on this website.");
+      const candidates = pages.filter((p) => {
+        if (p.status === "HIDDEN") return false;
+        if (requestedIds && !requestedIds.has(p.id)) return false;
+        const draft = (p.draft ?? {}) as Record<string, FieldValue>;
+        return Object.keys(draft).length > 0;
+      });
+
+      if (!candidates.length) {
+        throw new WebsiteError(400, "All selected pages are already published with no pending draft changes.");
+      }
+
+      const result = await withWebsitePublishLocks(candidates.map(page => page.id), async tx => {
+        const pagesToCommit: Array<{ page: SitePage; html: string; expectedSource: string; values: Record<string, FieldValue> }> = [];
+        for (const selected of candidates) {
+          const page = await tx.sitePage.findUniqueOrThrow({ where: { id: selected.id } });
+          if (body.revisions && body.revisions[page.id] !== page.draftRevision) throw new WebsiteError(409, `${page.title} changed while queued. Review its draft again.`);
+          const values = (page.draft ?? {}) as Record<string, FieldValue>;
+          if (!Object.keys(values).length) throw new WebsiteError(409, `${page.title} changed while publishing. Review its draft again.`);
+          const source = await pageSource(site, page, { fresh: true });
+          if (source.sourceFile) throw new WebsiteError(409, `${page.title} uses framework source. Publish it through the page review, which preserves its components.`);
+          const plan = buildPublishPlan({ source: source.html, values });
+          if (!plan.publishable || !plan.html) throw Object.assign(new WebsiteError(409, `${page.title} cannot be published. Review its draft again.`), { problems: plan.problems, conflicts: plan.conflicts, missing: plan.missing });
+          pagesToCommit.push({ page, html: plan.html, expectedSource: source.html, values });
+        }
+
+        const author = req.dbUser?.name ?? req.dbUser?.email ?? "Website Agent";
+        const watched = pagesToCommit[0]!;
+        const job = await startPublishJob({ site, pageId: watched.page.id, kind: "PAGE", startedById: req.dbUser?.id,
+          detail: { pages: pagesToCommit.map(({ page }) => page.id) } });
+        await advancePublishJob(job.id, "COMMITTING");
+        const commit = await publishPages({
+          site,
+          message: body.message?.trim() || `Website Agent: published ${pagesToCommit.length} page${pagesToCommit.length === 1 ? "" : "s"} (${author})`,
+          pages: pagesToCommit,
+        });
+        await advancePublishJob(job.id, "COMMITTING", { commitSha: commit.sha, commitUrl: commit.url });
+        await beforeWebsiteExternalAction();
+        const publishedAt = new Date();
+        await commitPublication(async tx => {
+        await publishJobCommitted({ id: job.id, commit, site, page: watched.page, html: watched.html, summary: [] }, tx);
+        for (const { page, html, values } of pagesToCommit) {
+          const last = await tx.sitePageVersion.findFirst({ where: { pageId: page.id }, orderBy: { number: "desc" }, select: { number: true } });
+          await tx.sitePageVersion.create({ data: {
+            pageId: page.id, number: (last?.number ?? 0) + 1, html,
+            values: versionValues(values) as unknown as Prisma.InputJsonValue,
+            commitSha: commit.sha, commitUrl: commit.url, publishedById: req.dbUser?.id ?? null,
+          } });
+          await tx.sitePage.update({ where: { id: page.id }, data: {
+            publishedHtml: html, sourceHtml: page.sourceHtml === null ? undefined : html,
+            lastPublishedAt: publishedAt, status: "LIVE",
+          } });
+          // Preserve a draft saved while the network commit was in flight.
+          await tx.sitePage.updateMany({ where: { id: page.id, draftRevision: page.draftRevision }, data: {
+            draft: Prisma.DbNull, draftSavedAt: null, draftSavedById: null, draftRevision: { increment: 1 },
+          } });
+        }
+        await ensureHostedAddress(site.id, tx);
+        await tx.siteAuditEvent.create({ data: {
+          siteId: site.id, kind: "PUBLISH",
+          summary: `Agent published ${pagesToCommit.length} page${pagesToCommit.length === 1 ? "" : "s"} in one commit`,
+          actorName: author, actorId: req.dbUser?.id,
+          detail: { sha: commit.sha, url: commit.url, pages: pagesToCommit.map(({ page }) => ({ id: page.id, title: page.title, path: page.path })) },
+        } });
+        });
+        return { publishedPages: pagesToCommit.length, commitSha: commit.sha, commitUrl: commit.url, pages: pagesToCommit.map(({ page }) => ({ id: page.id, title: page.title, path: page.path })) };
+      });
+  return result;
 }

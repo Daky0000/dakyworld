@@ -62,7 +62,7 @@ export function WebsiteCompatibility() {
   const report = useQuery({
     queryKey: ["website", "compatibility", siteId],
     enabled: Boolean(siteId),
-    queryFn: () => api.get<Report>(`/website/sites/${siteId}/compatibility`),
+    queryFn: ({ signal }) => api.get<Report>(`/website/sites/${siteId}/compatibility`, signal),
   });
 
   return (

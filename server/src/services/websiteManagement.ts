@@ -10,6 +10,8 @@ import { sniff } from "../lib/fileType.js";
 import { optimizeImageBuffer } from "../lib/imageOptimization.js";
 import { looksLikeSvg, SvgRejected, SVG_CONTENT_SECURITY_POLICY } from "../lib/svgSanitize.js";
 import { assetUrl, embedWebsiteAssets, unpublishedUsesOf } from "./websiteAssets.js";
+import { runPublishGuardChecks } from "./websitePublishGuard.js";
+import { runVisualRegression } from "./websiteVisualRegression.js";
 import { assertWebsiteConnectionChange, canManageWebsiteConnection, websiteSiteFilter } from "./websiteAccess.js";
 import {
   assertImportAllowance,
@@ -21,6 +23,8 @@ import {
   WEBSITE_TIER_PLANS,
 } from "./websiteTierPlans.js";
 import { resolveEntitlement } from "./websiteEntitlement.js";
+import { autoPopulateSitePaletteFromHtml, extractColorsFromHtml } from "./website/pageColors.js";
+import { generateStarterSiteHtml, STARTER_TEMPLATES } from "./websiteSectionTemplates.js";
 
 const publicUrl = z.string().url().max(2000).refine(value => {
   const url = new URL(value);
@@ -185,10 +189,17 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     res.json(events);
   }));
 
+  router.get("/starter-templates", handler(async (_req, res) => {
+    res.json(Object.values(STARTER_TEMPLATES));
+  }));
+
   router.post("/sites", handler(async (req, res) => {
-    const input = siteInput.extend({ html: z.string().min(1).max(2_000_000).optional() }).parse(req.body);
+    const input = siteInput.extend({
+      html: z.string().min(1).max(2_000_000).optional(),
+      templateKey: z.string().max(60).optional(),
+    }).parse(req.body);
     if (!!input.repoOwner !== !!input.repoName) throw new WebsiteError(400, "Enter both the repository owner and name.");
-    const { html, ...data } = input;
+    const { html, templateKey, ...data } = input;
     const external = Boolean(req.dbUser?.accessRole?.external);
     let owner: { clientId: string; userId: string; siteLimit: number } | null = null;
     if (external) {
@@ -203,18 +214,29 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       await assertImportAllowance(req);
       importedWebsiteFields(html);
     }
+    let finalHtml = html;
+    if (!finalHtml && (templateKey || !data.repoOwner)) {
+      finalHtml = generateStarterSiteHtml({
+        siteName: data.name,
+        publicUrl: data.publicUrl,
+        templateKey: templateKey || "business",
+      });
+    }
+
     const site = await prisma.$transaction(async tx => {
       if (owner) {
         await tx.$queryRaw`SELECT "id" FROM "Client" WHERE "id" = ${owner.clientId} FOR UPDATE`;
         const used = await tx.site.count({ where: { clientId: owner.clientId } });
         if (used >= owner.siteLimit) throw new WebsiteError(403, `Your plan includes ${owner.siteLimit} website${owner.siteLimit === 1 ? "" : "s"}. Upgrade before connecting another.`);
       }
+      const extractedColours = finalHtml ? extractColorsFromHtml(finalHtml, { maxColors: 16 }) : [];
       return tx.site.create({ data: {
         ...data,
         ...(owner ? { clientId: owner.clientId, members: { create: { userId: owner.userId, role: "MANAGER" as const } } } : {}),
+        ...(extractedColours.length ? { settings: { colours: extractedColours } } : {}),
         slug: `${data.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0,60) || "site"}-${randomUUID().slice(0,8)}`,
-        ...(html ? { pages: { create: { title: data.name, path: "/", filePath: "index.html", sourceHtml: html } } } : {}),
-        auditEvents: { create: { kind: "SITE_CONNECTED", summary: `Connected ${data.name}${html ? " with an imported page" : ""}`, ...actor(req), detail: { importedPage: Boolean(html) } } },
+        ...(finalHtml ? { pages: { create: { title: data.name, path: "/", filePath: "index.html", sourceHtml: finalHtml } } } : {}),
+        auditEvents: { create: { kind: "SITE_CONNECTED", summary: `Connected ${data.name}${html ? " with an imported page" : finalHtml ? " with a starter template" : ""}`, ...actor(req), detail: { importedPage: Boolean(html), starterTemplate: templateKey || (!html && !data.repoOwner ? "business" : null) } } },
       }, include: { pages: { select: { id: true } } } });
     });
     if (html) {
@@ -243,7 +265,26 @@ export function registerWebsiteManagement(router: Router, access: Access) {
 
   router.get("/sites/:siteId/design", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
-    const { colours, fonts, aiEnabled, presets } = websiteDesignOptions.parse(site.settings ?? {});
+    let { colours, fonts, aiEnabled, presets } = websiteDesignOptions.parse(site.settings ?? {});
+    if (colours.length === 0) {
+      const pages = await prisma.sitePage.findMany({
+        where: { siteId: site.id },
+        select: { sourceHtml: true, publishedHtml: true },
+        take: 10,
+      });
+      const combinedHtml = pages.map(p => p.sourceHtml || p.publishedHtml || "").filter(Boolean).join("\n");
+      if (combinedHtml) {
+        const extracted = extractColorsFromHtml(combinedHtml, { maxColors: 16 });
+        if (extracted.length > 0) {
+          colours = extracted;
+          const currentSettings = (site.settings && typeof site.settings === "object" ? site.settings : {}) as Record<string, any>;
+          await prisma.site.update({
+            where: { id: site.id },
+            data: { settings: { ...currentSettings, colours: extracted } },
+          }).catch(() => {});
+        }
+      }
+    }
     res.json({ options: { colours, fonts, aiEnabled, presets } });
   }));
 
@@ -288,9 +329,10 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw new WebsiteError(409, "A page already uses that address or file path. Choose a different page address and file name.");
       throw error;
     });
+    const extractedPalette = await autoPopulateSitePaletteFromHtml(site.id, body.html).catch(() => []);
     await recordImportUsed(req);
     const { html: _html, ...captureSummary } = capturedMedia;
-    res.status(201).json({ id: page.id, fields: count, capturedMedia: captureSummary });
+    res.status(201).json({ id: page.id, fields: count, capturedMedia: captureSummary, palette: extractedPalette });
   }));
 
   router.get("/pages/:pageId/review", handler(async (req, res) => {
@@ -298,7 +340,38 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     const source = await pageSource(site, page, { fresh: true });
     const values = (page.draft ?? {}) as Record<string, import("./website/index.js").FieldValue>;
     const plan = buildPublishPlan({ source: source.html, values });
-    res.json({ revision: page.draftRevision, sourceHash: createHash("sha256").update(source.html).digest("hex"), publishable: plan.publishable, reason: plan.reason, summary: describeChanges(discoverFields(editingSource(source.html, values)).fields, values), problems: plan.problems, conflicts: plan.conflicts, missing: plan.missing });
+
+    const candidateHtml = plan.html ?? source.html;
+    const policy = (site.settings as Record<string, any> | null)?.editingPolicy;
+
+    const guard = runPublishGuardChecks({
+      candidateHtml,
+      sourceHtml: source.html,
+      draftValues: values,
+      brandGuard: policy?.brandGuard,
+    });
+
+    const visualRegression = runVisualRegression({
+      originalHtml: source.html,
+      candidateHtml,
+      draftValues: values,
+    });
+
+    const isPublishable = plan.publishable && guard.canPublish;
+    const finalReason = !guard.canPublish ? guard.summary : plan.reason;
+
+    res.json({
+      revision: page.draftRevision,
+      sourceHash: createHash("sha256").update(source.html).digest("hex"),
+      publishable: isPublishable,
+      reason: finalReason,
+      summary: describeChanges(discoverFields(editingSource(source.html, values)).fields, values),
+      problems: plan.problems,
+      conflicts: plan.conflicts,
+      missing: plan.missing,
+      guard,
+      visualRegression,
+    });
   }));
 
   router.get("/pages/:pageId/export", handler(async (req, res) => {

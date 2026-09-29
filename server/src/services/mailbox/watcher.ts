@@ -1,6 +1,7 @@
 import type { ImapFlow } from "imapflow";
 import { buildClient, readImapConfig, type ImapConfig } from "../../lib/imap.js";
 import { syncMailbox } from "./sync.js";
+import { backgroundRunAllowed } from "../../lib/backgroundOwnership.js";
 
 /**
  * Staying connected to the mailbox.
@@ -120,6 +121,7 @@ function scheduleReconnect(reason: string) {
 }
 
 async function connect(): Promise<void> {
+  if (!backgroundRunAllowed()) return;
   if (state.stopping) return;
 
   const config = await readImapConfig();
@@ -154,7 +156,7 @@ async function connect(): Promise<void> {
   // from the cursor, so a push that arrives twice costs one wasted query.
   client.on("exists", () => {
     state.lastPushAt = new Date();
-    void readMailboxOnce();
+    if (backgroundRunAllowed()) void readMailboxOnce();
   });
 
   try {
@@ -173,7 +175,7 @@ async function connect(): Promise<void> {
     state.refreshTimer.unref?.();
 
     // Anything that arrived while the connection was down.
-    void readMailboxOnce();
+    if (backgroundRunAllowed()) void readMailboxOnce();
   } catch (err) {
     state.client = null;
     state.connectedAt = null;

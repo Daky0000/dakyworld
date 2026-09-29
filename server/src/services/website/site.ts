@@ -1,3 +1,4 @@
+import { sourceGeneration } from "./sourceCache.js";
 import { interactionCss } from "../../shared/websiteInteraction.js";
 import { websiteAssetFiles } from "../websiteAssets.js";
 import { createHash, randomBytes } from "node:crypto";
@@ -150,6 +151,7 @@ async function readPageSource(site: Site, page: SitePage, options: { fresh?: boo
     return { html: rendered.html, from: rendered.from, sourceFile: page.filePath, detail: rendered.detail };
   }
   const key = sourceKey({ siteId: site.id, repo, branch: site.repoBranch, filePath: page.filePath });
+  const generation = sourceGeneration();
   if (!options.fresh) {
     const cached = readCache(key);
     if (cached) return cached;
@@ -159,7 +161,7 @@ async function readPageSource(site: Site, page: SitePage, options: { fresh?: boo
     const html = await readFile(repo, repoFilePath(site, page), site.repoBranch).catch(() => null);
     if (html !== null) {
       const source: PageSource = { html, from: "repository" };
-      writeCache(key, { html, from: "repository" });
+      writeCache(key, { html, from: "repository" }, generation);
       return source;
     }
     // A configured repository that does not have the file is worth saying out
@@ -171,7 +173,7 @@ async function readPageSource(site: Site, page: SitePage, options: { fresh?: boo
     );
   }
   const live: PageSource = { html: await fetchLive(pageUrl(site, page)), from: "live site" };
-  writeCache(key, { html: live.html, from: "live site" });
+  writeCache(key, { html: live.html, from: "live site" }, generation);
   return live;
 }
 
@@ -271,19 +273,20 @@ async function readStylesheet(site: Site, page: SitePage, href: string): Promise
 
   const repo = siteRepo(site);
   const key = sourceKey({ siteId: site.id, repo, branch: site.repoBranch, filePath });
+  const generation = sourceGeneration();
   const cached = readCache(key);
   if (cached) return cached.html;
 
   if (repo && (await underSiteCredential(site, githubConfigured))) {
     const css = await underSiteCredential(site, () => readFile(repo, repoFilePath(site, { filePath }), site.repoBranch).catch(() => null));
     if (css !== null) {
-      writeCache(key, { html: css, from: "repository" });
+      writeCache(key, { html: css, from: "repository" }, generation);
       return css;
     }
     return null;
   }
   const css = await fetchLive(`${site.publicUrl.replace(/\/+$/, "")}/${filePath}`);
-  writeCache(key, { html: css, from: "live site" });
+  writeCache(key, { html: css, from: "live site" }, generation);
   return css;
 }
 

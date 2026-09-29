@@ -45,7 +45,7 @@ export function WebsiteHostingPanel({ siteId }: { siteId: string }) {
 
   const hosting = useQuery({
     queryKey: ["website", "hosting", siteId],
-    queryFn: () => api.get<Hosting>(`/website/sites/${siteId}/hosting`),
+    queryFn: ({ signal }) => api.get<Hosting>(`/website/sites/${siteId}/hosting`, signal),
   });
 
   const save = useMutation({

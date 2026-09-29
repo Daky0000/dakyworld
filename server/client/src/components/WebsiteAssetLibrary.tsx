@@ -39,7 +39,7 @@ export function WebsiteAssetLibrary({
   const qc = useQueryClient();
   const assets = useQuery({
     queryKey: ["website", "assets", siteId, tierStatus?.userEmail ?? "default"],
-    queryFn: () => api.get<Asset[]>(`/website/sites/${siteId}/assets`),
+    queryFn: ({ signal }) => api.get<Asset[]>(`/website/sites/${siteId}/assets`, signal),
   });
 
   const maxUploadBytes = tierStatus?.storage.maxSingleAssetBytes ?? 5_000_000;
@@ -394,8 +394,8 @@ export function WebsiteAssetLibrary({
 export function WebsiteAssets() {
   const [selected, setSelected] = useState("");
   const [search, setSearch] = useState("");
-  const sites = useQuery({ queryKey: ["website", "sites"], queryFn: () => api.get<SiteSummary[]>("/website/sites") });
-  const allAssets = useQuery({ queryKey: ["website", "assets", "all"], queryFn: () => api.get<(Asset & { siteId: string; siteName: string; size: number })[]>("/website/assets") });
+  const sites = useQuery({ queryKey: ["website", "sites"], queryFn: ({ signal }) => api.get<SiteSummary[]>("/website/sites", signal) });
+  const allAssets = useQuery({ queryKey: ["website", "assets", "all"], queryFn: ({ signal }) => api.get<(Asset & { siteId: string; siteName: string; size: number })[]>("/website/assets", signal) });
   const shown = allAssets.data?.filter((asset) =>
     (!selected || asset.siteId === selected) &&
     `${asset.filename} ${asset.alt} ${asset.siteName}`.toLowerCase().includes(search.trim().toLowerCase()),

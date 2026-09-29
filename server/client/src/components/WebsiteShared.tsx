@@ -139,7 +139,7 @@ export function SharedPublishReview({ sharedElementId, onClose, onPublished }: {
 
   const review = useQuery({
     queryKey: ["website", "shared", sharedElementId, "review"],
-    queryFn: () => api.get<SharedReview>(`/website/shared/${sharedElementId}/review`),
+    queryFn: ({ signal }) => api.get<SharedReview>(`/website/shared/${sharedElementId}/review`, signal),
   });
 
   const publish = useMutation({
@@ -300,7 +300,7 @@ export function MakeSharedPanel({
   const suggestions = useQuery({
     queryKey: ["website", "shared", siteId, "suggestions"],
     enabled: open,
-    queryFn: () => api.get<Suggestions>(`/website/sites/${siteId}/shared/suggestions`),
+    queryFn: ({ signal }) => api.get<Suggestions>(`/website/sites/${siteId}/shared/suggestions`, signal),
   });
 
   const match = suggestions.data?.candidates.find((candidate) =>

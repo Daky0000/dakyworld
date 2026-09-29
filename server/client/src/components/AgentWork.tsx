@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { jobPollInterval } from "../lib/queryPolicy";
 import type {
   AgentDetail,
   AgentMemory,
@@ -101,9 +102,10 @@ export function AgentWork({ agent }: { agent: AgentDetail }) {
 
   const { data } = useQuery({
     queryKey: ["agent-work", agent.key],
-    queryFn: () => api.get<AgentWorkData>(`/agents/${agent.key}/tasks`),
+    queryFn: ({ signal }) => api.get<AgentWorkData>(`/agents/${agent.key}/tasks`, signal),
     // Queued work can start and approvals can settle outside this drawer.
-    refetchInterval: (query) => ((query.state.data?.running.length ?? 0) > 0 ? 3000 : 10_000),
+    refetchInterval: (query) => query.state.data?.running.length
+      ? Math.min(...query.state.data.running.map(task => Number(jobPollInterval(task.status, task.startedAt)) || 15_000)) : 30_000,
   });
 
   const refresh = () => {
@@ -242,11 +244,12 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
 
   const { data: task } = useQuery({
     queryKey: ["agent-task", taskId],
-    queryFn: () => api.get<AgentTaskDetail>(`/agents/tasks/${taskId}`),
+    queryFn: ({ signal }) => api.get<AgentTaskDetail>(`/agents/tasks/${taskId}`, signal),
     enabled: Boolean(taskId),
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return status === "RUNNING" ? 2000 : status && ["QUEUED", "BLOCKED", "NEEDS_APPROVAL"].includes(status) ? 5000 : false;
+      return status === "RUNNING" || status === "QUEUED" ? jobPollInterval(status, query.state.data?.startedAt)
+        : status && ["BLOCKED", "NEEDS_APPROVAL"].includes(status) ? 30_000 : false;
     },
   });
 
@@ -616,7 +619,7 @@ export function AgentMemories({ agent }: { agent: AgentDetail }) {
 
   const { data } = useQuery({
     queryKey: ["agent-memory", agent.key],
-    queryFn: () => api.get<AgentMemoryList>(`/agents/${agent.key}/memory`),
+    queryFn: ({ signal }) => api.get<AgentMemoryList>(`/agents/${agent.key}/memory`, signal),
   });
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["agent-memory", agent.key] });

@@ -1,5 +1,6 @@
 import { prisma } from "./prisma.js";
 import { attribution } from "./runContext.js";
+import { currentWebsiteWork } from "./websiteWorkContext.js";
 
 /**
  * Every model call the app makes, priced and written down.
@@ -46,6 +47,8 @@ export interface LedgerEntry {
 
 export async function recordLlmCall(entry: LedgerEntry): Promise<void> {
   try {
+    const websiteWork = currentWebsiteWork();
+    if (websiteWork) await prisma.websiteWorkJob.update({ where: { id: websiteWork.jobId }, data: { actualCostUsd: { increment: entry.costUsd.toFixed(6) } } });
     const where = attribution({ taskId: entry.taskId, agentKey: entry.agentKey, traceId: entry.traceId });
     await prisma.llmCall.create({
       data: {

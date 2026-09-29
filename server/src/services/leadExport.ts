@@ -1,3 +1,5 @@
+import { capacity } from "../lib/capacity.js";
+import { withCapacityLease } from "../lib/leases.js";
 /**
  * Exporting leads.
  *
@@ -65,6 +67,9 @@ export interface ExportGroup {
  * columns. A flat, ungrouped view exports as a single sheet.
  */
 export async function renderLeadsXlsx(groups: ExportGroup[], title: string): Promise<Buffer> {
+  return capacity.admission ? withCapacityLease("render", 1, () => renderLeadsXlsxUnbounded(groups, title)) : renderLeadsXlsxUnbounded(groups, title);
+}
+async function renderLeadsXlsxUnbounded(groups: ExportGroup[], title: string): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Dakyworld OS";
   workbook.created = new Date();
@@ -114,6 +119,9 @@ export async function renderLeadsXlsx(groups: ExportGroup[], title: string): Pro
  * every cell wants the Excel export.
  */
 export async function renderLeadsPdf(groups: ExportGroup[], title: string, subtitle: string): Promise<Buffer> {
+  return capacity.admission ? withCapacityLease("render", 1, () => renderLeadsPdfUnbounded(groups, title, subtitle)) : renderLeadsPdfUnbounded(groups, title, subtitle);
+}
+async function renderLeadsPdfUnbounded(groups: ExportGroup[], title: string, subtitle: string): Promise<Buffer> {
   const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 36 });
   const chunks: Buffer[] = [];
   const done = new Promise<Buffer>((resolve, reject) => {

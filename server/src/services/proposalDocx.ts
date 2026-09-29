@@ -1,3 +1,5 @@
+import { capacity } from "../lib/capacity.js";
+import { withCapacityLease } from "../lib/leases.js";
 import {
   AlignmentType,
   BorderStyle,
@@ -387,6 +389,9 @@ function tail(data: ProposalPdfData): Paragraph[] {
 }
 
 export async function renderProposalDocx(data: ProposalPdfData): Promise<Buffer> {
+  return capacity.admission ? withCapacityLease("render", 1, () => renderProposalDocxUnbounded(data)) : renderProposalDocxUnbounded(data);
+}
+async function renderProposalDocxUnbounded(data: ProposalPdfData): Promise<Buffer> {
   const table = investmentTable(data);
   const identity = await letterheadIdentity();
 

@@ -98,12 +98,12 @@ function StartScreen({ onOpen }: { onOpen: (id: string) => void }) {
 
   const { data: catalogue } = useQuery({
     queryKey: ["rehearsal-scenarios"],
-    queryFn: () => api.get<RehearsalScenarioList>("/rehearsals/scenarios"),
+    queryFn: ({ signal }) => api.get<RehearsalScenarioList>("/rehearsals/scenarios", signal),
   });
 
   const { data } = useQuery({
     queryKey: ["rehearsals"],
-    queryFn: () => api.get<{ rehearsals: RehearsalSummary[] }>("/rehearsals"),
+    queryFn: ({ signal }) => api.get<{ rehearsals: RehearsalSummary[] }>("/rehearsals", signal),
     // One of them running means the list is changing. Polled gently: the run
     // view is where the second-by-second detail lives.
     refetchInterval: (query) => (query.state.data?.rehearsals.some((row) => row.status === "RUNNING") ? 10_000 : false),
@@ -319,11 +319,11 @@ function RunView({ id, onBack }: { id: string; onBack: () => void }) {
 
   const { data: run } = useQuery({
     queryKey: ["rehearsal", id],
-    queryFn: () => api.get<RehearsalDetail>(`/rehearsals/${id}`),
+    queryFn: ({ signal }) => api.get<RehearsalDetail>(`/rehearsals/${id}`, signal),
     // This poll is also what advances the run — see routes/rehearsals.ts. Two
     // seconds is chosen so a chain of agents reads as a chain rather than as a
     // still screen followed by a wall of finished work.
-    refetchInterval: (query) => (query.state.data?.status === "RUNNING" ? 2000 : false),
+    refetchInterval: (query) => (query.state.data?.status === "RUNNING" ? 5000 : false),
   });
 
   const act = useMutation<{ message?: string; note?: string }, Error, "stop" | "delete">({

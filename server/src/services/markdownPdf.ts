@@ -1,3 +1,5 @@
+import { capacity } from "../lib/capacity.js";
+import { withCapacityLease } from "../lib/leases.js";
 import PDFDocument from "pdfkit";
 import {
   ACCENT,
@@ -156,6 +158,9 @@ const HEADING_SIZES: Record<number, number> = { 1: 19, 2: 13.5, 3: 11, 4: 10.5, 
  * name twice — the dossier always opens with one.
  */
 export async function renderMarkdownPdf(markdown: string, options: { title: string; kicker?: string; subtitle?: string }): Promise<Buffer> {
+  return capacity.admission ? withCapacityLease("render", 1, () => renderMarkdownPdfUnbounded(markdown, options)) : renderMarkdownPdfUnbounded(markdown, options);
+}
+async function renderMarkdownPdfUnbounded(markdown: string, options: { title: string; kicker?: string; subtitle?: string }): Promise<Buffer> {
   const doc = newDoc(await letterheadIdentity());
 
   doc

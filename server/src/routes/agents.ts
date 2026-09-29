@@ -1,3 +1,4 @@
+import { capacity } from "../lib/capacity.js";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
@@ -1812,7 +1813,9 @@ agentsRouter.post("/tasks/:id/run", async (req, res, next) => {
     // Deliberately not awaited. The work belongs to the server, not to whoever
     // is looking at it: this returns immediately and the run carries on through
     // a closed tab, a dropped connection and a shut laptop.
-    void runTask(task.id).catch((err) => console.error(`[agent] ${task.id} died:`, (err as Error).message));
+    if (capacity.role === "api") await transition(task.id, { to: "QUEUED", expect: [task.status],
+      reason: "Requested for worker execution", actor: "owner", actorId: req.dbUser?.id ?? null });
+    else void runTask(task.id).catch((err) => console.error(`[agent] ${task.id} died:`, (err as Error).message));
     res.json({
       started: true,
       resuming,
