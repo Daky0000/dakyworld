@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": { "node": ">=22" },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "npm run build:client && prisma generate && tsc -p tsconfig.json",
