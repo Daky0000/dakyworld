@@ -5,17 +5,33 @@
  * viewport dimensions, user timezone/locale, and user clicks (x/y coordinates,
  * normalized percentages, target element and text) to power rich analytics and heatmaps.
  *
+ * Hardened for:
+ * - Unique server-issued visit ID per page view (resolves reload split)
+ * - HMAC visit token authentication (prevents forged public beacons)
+ * - Delivery retry retention with bounded queue and event ID deduplication
+ * - Sensitive form element, password, and private container masking
+ * - Heartbeat write batching to eliminate redundant server load
+ * - Fallback to fetch keepalive when sendBeacon returns false
+ *
  * Lightweight, zero dependencies, completely silent, resilient to SVG/DOM edge cases.
  */
 
 export interface InjectTrackerOptions {
   slug: string;
-  sessionId: string;
+  visitId?: string;
+  token?: string;
+  sessionId?: string;
   disabled?: boolean;
 }
 
-export function generateTrackerScript(options: { slug: string; sessionId: string; disabled?: boolean }): string {
-  const { slug, sessionId, disabled } = options;
+export function generateTrackerScript(options: {
+  slug: string;
+  visitId?: string;
+  token?: string;
+  sessionId?: string;
+  disabled?: boolean;
+}): string {
+  const { slug, visitId, token, sessionId, disabled } = options;
 
   if (disabled) {
     return `<script id="dw-demo-tracker">/* Tracking disabled in preview/heatmap mode */</script>`;
@@ -36,15 +52,30 @@ export function generateTrackerScript(options: { slug: string; sessionId: string
 
   try {
     var SLUG = ${JSON.stringify(slug)};
+    var VISIT_ID = ${JSON.stringify(visitId || sessionId || "")};
+    var VISIT_TOKEN = ${JSON.stringify(token || "")};
     var SESSION_KEY = "dw_demo_sess_" + SLUG;
+    var VISITOR_KEY = "dw_demo_visitor";
+
     var sessionId = "";
     try {
       sessionId = window.sessionStorage.getItem(SESSION_KEY) || "";
     } catch(e) {}
     if (!sessionId) {
-      sessionId = ${JSON.stringify(sessionId)};
+      sessionId = ${JSON.stringify(sessionId || "")} || ("sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 9));
       try {
         window.sessionStorage.setItem(SESSION_KEY, sessionId);
+      } catch(e) {}
+    }
+
+    var visitorId = "";
+    try {
+      visitorId = window.localStorage.getItem(VISITOR_KEY) || "";
+    } catch(e) {}
+    if (!visitorId) {
+      visitorId = "vis_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 9);
+      try {
+        window.localStorage.setItem(VISITOR_KEY, visitorId);
       } catch(e) {}
     }
 
@@ -54,6 +85,10 @@ export function generateTrackerScript(options: { slug: string; sessionId: string
     var maxScrollDepth = 0;
     var clickQueue = [];
     var isTabActive = !document.hidden;
+
+    var lastAckedDuration = 0;
+    var lastAckedScroll = 0;
+    var isFlushing = false;
 
     function getDocDims() {
       var body = document.body || {};
@@ -136,7 +171,7 @@ export function generateTrackerScript(options: { slug: string; sessionId: string
       return tag + firstCls;
     }
 
-    // Capture clicks for heatmap
+    // Capture clicks for heatmap with sensitive input protection
     document.addEventListener("click", function(e) {
       try {
         tickActiveTime();
@@ -148,7 +183,6 @@ export function generateTrackerScript(options: { slug: string; sessionId: string
         var yPct = dims.height > 0 ? Math.round((pageY / dims.height) * 10000) / 100 : 0;
 
         var target = e.target;
-        // Attribute click to enclosing interactive element (button, link) if target is an inner icon/path
         var interactive = null;
         try {
           if (target && target.closest) {
@@ -158,15 +192,59 @@ export function generateTrackerScript(options: { slug: string; sessionId: string
 
         var primary = interactive || target;
         var tag = primary && primary.tagName ? primary.tagName.toUpperCase() : "UNKNOWN";
+        var lowerTag = tag.toLowerCase();
+
+        // Sensitive content masking
+        var isSensitive = false;
+        if (
+          lowerTag === "input" ||
+          lowerTag === "textarea" ||
+          lowerTag === "select" ||
+          (primary && (primary.isContentEditable || primary.getAttribute("contenteditable") === "true" || primary.getAttribute("role") === "textbox"))
+        ) {
+          isSensitive = true;
+        }
+        try {
+          if (primary && primary.closest && primary.closest("[data-dw-mask], [data-private], [data-sensitive], .dw-mask, .private")) {
+            isSensitive = true;
+          }
+        } catch(err) {}
+
         var text = "";
-        if (primary) {
-          text = cleanText(primary.innerText || primary.textContent || primary.getAttribute("aria-label") || primary.getAttribute("title") || primary.getAttribute("alt") || primary.getAttribute("value"));
+        var customEvent = primary ? (primary.getAttribute("data-dw-event") || primary.getAttribute("data-analytics") || primary.getAttribute("data-action")) : null;
+
+        if (customEvent) {
+          text = cleanText(customEvent);
+        } else if (isSensitive) {
+          if (lowerTag === "input") {
+            var inputType = (primary.getAttribute("type") || "text").toLowerCase();
+            text = (inputType === "password" || inputType === "hidden") ? "[masked]" : ("input:" + inputType);
+          } else if (lowerTag === "textarea") {
+            text = "textarea";
+          } else {
+            text = "[masked]";
+          }
+        } else if (primary) {
+          text = cleanText(
+            primary.innerText ||
+            primary.textContent ||
+            primary.getAttribute("aria-label") ||
+            primary.getAttribute("title") ||
+            primary.getAttribute("alt")
+          );
           if (!text && primary.parentElement) {
-            text = cleanText(primary.parentElement.innerText || primary.parentElement.textContent);
+            try {
+              if (!primary.parentElement.closest || !primary.parentElement.closest("[data-dw-mask], [data-private], .dw-mask, .private")) {
+                text = cleanText(primary.parentElement.innerText || primary.parentElement.textContent);
+              }
+            } catch(err) {}
           }
         }
 
+        var eventId = "c_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
+
         var clickData = {
+          id: eventId,
           x: Math.round(pageX),
           y: Math.round(pageY),
           xPercent: Math.min(100, Math.max(0, xPct)),
@@ -188,8 +266,18 @@ export function generateTrackerScript(options: { slug: string; sessionId: string
       try {
         tickActiveTime();
         updateScrollDepth();
+
+        var currentDuration = Math.round(activeDurationSeconds);
         var clicksToSend = clickQueue.slice();
-        clickQueue = [];
+
+        // Batch writes: do not send heartbeat if nothing has changed
+        var hasNewClicks = clicksToSend.length > 0;
+        var hasNewDuration = (currentDuration - lastAckedDuration) >= 3;
+        var hasNewScroll = maxScrollDepth > lastAckedScroll;
+
+        if (!isFinal && !hasNewClicks && !hasNewDuration && !hasNewScroll) {
+          return;
+        }
 
         var timezone = "";
         try {
@@ -202,8 +290,11 @@ export function generateTrackerScript(options: { slug: string; sessionId: string
         } catch(e) {}
 
         var payload = {
+          visitId: VISIT_ID,
+          token: VISIT_TOKEN,
           sessionId: sessionId,
-          durationSeconds: Math.round(activeDurationSeconds),
+          visitorId: visitorId,
+          durationSeconds: currentDuration,
           scrollDepth: maxScrollDepth,
           viewportWidth: window.innerWidth || null,
           viewportHeight: window.innerHeight || null,
@@ -217,18 +308,59 @@ export function generateTrackerScript(options: { slug: string; sessionId: string
         var endpoint = "/demos/" + encodeURIComponent(SLUG) + "/analytics";
         var jsonStr = JSON.stringify(payload);
 
-        if (isFinal && navigator.sendBeacon) {
-          var blob = new Blob([jsonStr], { type: "application/json" });
-          navigator.sendBeacon(endpoint, blob);
-        } else {
-          fetch(endpoint, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: jsonStr,
-            keepalive: true
-          }).catch(function() {});
+        if (isFinal) {
+          var sent = false;
+          if (navigator.sendBeacon) {
+            try {
+              var blob = new Blob([jsonStr], { type: "application/json" });
+              sent = navigator.sendBeacon(endpoint, blob);
+            } catch(e) { sent = false; }
+          }
+          if (!sent) {
+            try {
+              fetch(endpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: jsonStr,
+                keepalive: true
+              }).catch(function() {});
+            } catch(e) {}
+          }
+          return;
         }
-      } catch(e) {}
+
+        if (isFlushing) return;
+        isFlushing = true;
+
+        fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: jsonStr,
+          keepalive: true
+        }).then(function(res) {
+          isFlushing = false;
+          if (res.ok) {
+            lastAckedDuration = currentDuration;
+            lastAckedScroll = maxScrollDepth;
+            // Acknowledge and remove sent clicks
+            if (clicksToSend.length > 0) {
+              var ackedMap = {};
+              for (var i = 0; i < clicksToSend.length; i++) {
+                ackedMap[clicksToSend[i].id] = true;
+              }
+              clickQueue = clickQueue.filter(function(c) { return !ackedMap[c.id]; });
+            }
+          } else {
+            // Keep in queue with cap
+            if (clickQueue.length > 50) clickQueue = clickQueue.slice(-50);
+          }
+        }).catch(function() {
+          isFlushing = false;
+          if (clickQueue.length > 50) clickQueue = clickQueue.slice(-50);
+        });
+      } catch(e) {
+        isFlushing = false;
+      }
     }
 
     // Flush initial open after 1 second

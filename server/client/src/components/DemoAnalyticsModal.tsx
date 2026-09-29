@@ -353,9 +353,11 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                       </div>
                       <div className="mt-2 flex items-baseline gap-2">
                         <span className="font-display text-3xl font-bold tracking-tight text-ink">
-                          {summary?.avgScrollDepth ?? 0}%
+                          {summary?.avgScrollDepth != null ? `${summary.avgScrollDepth}%` : "—"}
                         </span>
-                        <span className="text-xs text-muted">of page</span>
+                        <span className="text-xs text-muted">
+                          {summary?.avgScrollDepth != null ? "of page" : "unavailable"}
+                        </span>
                       </div>
                       <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-line">
                         <div
@@ -426,16 +428,21 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                         <IconTarget size={14} className="text-blue" /> Top Cities & Metros
                       </h3>
                       <p className="mt-0.5 text-xs text-muted">
-                        Detected visitor city & metropolitan areas
+                        Measured visitor cities (edge-verified)
                       </p>
                       <div className="mt-4 space-y-3">
                         {breakdowns?.cities && breakdowns.cities.length > 0 ? (
-                          breakdowns.cities.map((city) => (
+                          breakdowns.cities.map((city: any) => (
                             <div key={`${city.city}-${city.country}`} className="space-y-1">
                               <div className="flex items-center justify-between text-xs">
                                 <span className="flex items-center gap-1.5 font-medium text-ink">
                                   <span className="text-base">{city.flag}</span>
-                                  <span>{city.city}</span>
+                                  <span>{city.city || "City unavailable"}</span>
+                                  {city.unverified ? (
+                                    <span className="rounded bg-amber-50 px-1 py-0.2 font-mono text-[9px] font-semibold text-amber-700">
+                                      Unverified
+                                    </span>
+                                  ) : null}
                                 </span>
                                 <span className="font-mono text-muted">
                                   {city.count} ({city.percentage}%)
@@ -450,7 +457,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                             </div>
                           ))
                         ) : (
-                          <p className="py-4 text-center text-xs text-muted">City data will appear as visitors browse.</p>
+                          <p className="py-4 text-center text-xs text-muted">City data unavailable without edge lookup.</p>
                         )}
                       </div>
                     </div>
@@ -583,9 +590,9 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                                     ? IconTablet
                                     : IconDesktop;
 
-                              const locText = [visit.city, visit.countryName || visit.country]
-                                .filter(Boolean)
-                                .join(", ") || "Unknown location";
+                              const locText = visit.city
+                                ? `${visit.city}, ${visit.countryName || visit.country || ""}`
+                                : visit.countryName || visit.country || "Unknown location";
 
                               return (
                                 <tr key={visit.id} className="transition hover:bg-surface/40">
@@ -603,6 +610,14 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                                         <IconGlobe size={14} className="text-muted" />
                                       )}
                                       <span>{locText}</span>
+                                      {!visit.city && (visit.countryName || visit.country) ? (
+                                        <span className="text-[10px] text-muted">(City unavailable)</span>
+                                      ) : null}
+                                      {visit.citySource === "unverified" ? (
+                                        <span className="rounded bg-amber-50 px-1 py-0.2 font-mono text-[9px] font-semibold text-amber-700">
+                                          Unverified
+                                        </span>
+                                      ) : null}
                                       {visit.isLocal ? (
                                         <span className="rounded bg-neutral-100 px-1.5 py-0.2 font-mono text-[9px] font-semibold text-neutral-600">
                                           Local

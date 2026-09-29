@@ -1353,6 +1353,7 @@ export interface DemoVisitSession {
   countryName?: string | null;
   flag: string;
   city?: string | null;
+  citySource?: "edge" | "unverified" | "none" | null;
   isLocal?: boolean;
   userAgent?: string | null;
   deviceType?: string | null;
@@ -1366,6 +1367,7 @@ export interface DemoVisitSession {
   scrollDepth: number;
   clickCount: number;
   clicks?: Array<{
+    id?: string;
     x: number;
     y: number;
     xPercent: number;
@@ -1392,16 +1394,17 @@ export interface DemoAnalyticsReport {
   };
   summary: {
     totalViews: number;
+    periodViews?: number;
     uniqueVisitors: number;
     totalVisits: number;
     avgDurationSeconds: number;
-    avgScrollDepth: number;
+    avgScrollDepth: number | null;
     totalClicks: number;
     bounceRate: number;
   };
   breakdowns: {
     countries: Array<{ code: string; name: string; flag: string; count: number; percentage: number }>;
-    cities: Array<{ city: string; country: string; flag: string; count: number; percentage: number }>;
+    cities: Array<{ city: string; country: string; flag: string; count: number; percentage: number; unverified?: boolean }>;
     devices: Array<{ deviceType: string; count: number; percentage: number }>;
     browsers: Array<{ browser: string; count: number; percentage: number }>;
     os: Array<{ os: string; count: number; percentage: number }>;

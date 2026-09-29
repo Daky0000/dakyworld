@@ -27,8 +27,10 @@ import {
   extractClientIp,
   extractGeoHints,
   isPrivateOrLocalIp,
+  maskIp,
 } from "../lib/demoGeo.js";
 import { parseUserAgent } from "../lib/deviceParser.js";
+import { createVisitToken, verifyVisitToken } from "../lib/demoTokens.js";
 import { injectDemoTracker } from "../services/demoTracker.js";
 import { extractColorsFromHtml } from "../services/website/pageColors.js";
 
@@ -431,23 +433,94 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
     const base = await appUrl();
     const url = demoUrl(demo.slug, base);
 
-    const visits = await prisma.demoVisit.findMany({
-      where: { demoId: demo.id },
+    const range = req.query.range as string | undefined;
+    const includeBots = req.query.includeBots === "true";
+    const includeInternal = req.query.includeInternal === "true";
+    const format = req.query.format as string | undefined;
+
+    let dateFilter: Prisma.DateTimeFilter | undefined;
+    const now = new Date();
+    if (req.query.startDate || req.query.endDate) {
+      dateFilter = {
+        ...(req.query.startDate ? { gte: new Date(String(req.query.startDate)) } : {}),
+        ...(req.query.endDate ? { lte: new Date(String(req.query.endDate)) } : {}),
+      };
+    } else if (range === "7d") {
+      dateFilter = { gte: new Date(now.getTime() - 7 * 86400 * 1000) };
+    } else if (range === "30d") {
+      dateFilter = { gte: new Date(now.getTime() - 30 * 86400 * 1000) };
+    } else if (range === "90d") {
+      dateFilter = { gte: new Date(now.getTime() - 90 * 86400 * 1000) };
+    }
+
+    const where: Prisma.DemoVisitWhereInput = {
+      demoId: demo.id,
+      ...(dateFilter ? { createdAt: dateFilter } : {}),
+      ...(includeBots ? {} : { deviceType: { not: "bot" } }),
+    };
+
+    // Aggregate over the entire selected date range without hardcoded caps
+    const rawVisits = await prisma.demoVisit.findMany({
+      where,
       orderBy: { createdAt: "desc" },
-      take: 200,
     });
 
+    const visits = includeInternal
+      ? rawVisits
+      : rawVisits.filter((v) => !isPrivateOrLocalIp(v.ip));
+
+    // Handle CSV export matching the exact filtered population and date range
+    if (format === "csv") {
+      const csvHeader = [
+        "Visit ID",
+        "Opened At",
+        "Session ID",
+        "Country",
+        "City",
+        "Device",
+        "Browser",
+        "OS",
+        "Duration (s)",
+        "Scroll Depth (%)",
+        "Clicks",
+        "Masked IP",
+      ].join(",");
+      const csvLines = visits.map((v) => {
+        const clickList = Array.isArray(v.clicks) ? (v.clicks as any[]) : [];
+        return [
+          `"${v.id}"`,
+          `"${v.createdAt.toISOString()}"`,
+          `"${v.sessionId}"`,
+          `"${v.countryName || v.country || "Unknown"}"`,
+          `"${v.city || "City unavailable"}"`,
+          `"${v.deviceType || "desktop"}"`,
+          `"${v.browser || "unknown"}"`,
+          `"${v.os || "unknown"}"`,
+          v.durationSeconds,
+          v.scrollDepth,
+          clickList.length,
+          `"${maskIp(v.ip) || ""}"`,
+        ].join(",");
+      });
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${demo.slug}-analytics.csv"`);
+      return res.status(200).send([csvHeader, ...csvLines].join("\n"));
+    }
+
     const uniqueSessions = new Set(visits.map((v) => v.sessionId).filter(Boolean));
-    const uniqueIps = new Set(
-      visits.map((v) => v.ip).filter((ip): ip is string => Boolean(ip)),
-    );
-    const uniqueVisitors = Math.max(uniqueSessions.size, uniqueIps.size, visits.length > 0 ? 1 : 0);
+    const uniqueVisitors = uniqueSessions.size;
 
-    const totalDuration = visits.reduce((acc, v) => acc + (v.durationSeconds || 0), 0);
-    const avgDurationSeconds = visits.length > 0 ? Math.round(totalDuration / visits.length) : 0;
+    const measuredDurations = visits.map((v) => v.durationSeconds).filter((d) => d > 0);
+    const avgDurationSeconds =
+      measuredDurations.length > 0
+        ? Math.round(measuredDurations.reduce((acc, d) => acc + d, 0) / measuredDurations.length)
+        : 0;
 
-    const totalScrollDepth = visits.reduce((acc, v) => acc + (v.scrollDepth || 0), 0);
-    const avgScrollDepth = visits.length > 0 ? Math.round(totalScrollDepth / visits.length) : 0;
+    const measuredScrolls = visits.map((v) => v.scrollDepth).filter((s) => s > 0);
+    const avgScrollDepth =
+      measuredScrolls.length > 0
+        ? Math.round(measuredScrolls.reduce((acc, s) => acc + s, 0) / measuredScrolls.length)
+        : null;
 
     let totalClicks = 0;
     let bouncedCount = 0;
@@ -475,7 +548,7 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
     }> = [];
 
     const countryMap: Record<string, { code: string; name: string; flag: string; count: number }> = {};
-    const cityMap: Record<string, { city: string; country: string; flag: string; count: number }> = {};
+    const cityMap: Record<string, { city: string; country: string; flag: string; count: number; unverified: boolean }> = {};
     const deviceMap: Record<string, number> = {};
     const browserMap: Record<string, number> = {};
     const osMap: Record<string, number> = {};
@@ -509,6 +582,7 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
             country: v.countryName || v.country || "Unknown",
             flag: countryFlag(v.country),
             count: 0,
+            unverified: true, // Legacy cities classified as unverified
           };
         }
         cityMap[cityKey].count++;
@@ -539,7 +613,7 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
           deviceType: v.deviceType,
           browser: v.browser,
           os: v.os,
-          ip: v.ip,
+          ip: maskIp(v.ip),
           country: v.country,
           countryName: v.countryName,
           city: v.city,
@@ -593,16 +667,23 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
 
     const bounceRate = visits.length > 0 ? Math.round((bouncedCount / visits.length) * 100) : 0;
 
-    const formattedVisits = visits.map((v) => {
+    // Paginate detail visit rows rather than truncating aggregate analytics
+    const page = Math.max(1, parseInt(String(req.query.page || "1"), 10) || 1);
+    const limit = Math.min(200, Math.max(10, parseInt(String(req.query.limit || "50"), 10) || 50));
+    const totalPages = Math.ceil(visits.length / limit) || 1;
+    const paginatedVisits = visits.slice((page - 1) * limit, page * limit);
+
+    const formattedVisits = paginatedVisits.map((v) => {
       const clickList = Array.isArray(v.clicks) ? (v.clicks as any[]) : [];
       return {
         id: v.id,
         sessionId: v.sessionId,
-        ip: v.ip,
+        ip: maskIp(v.ip),
         country: v.country,
         countryName: v.countryName,
         flag: countryFlag(v.country),
         city: v.city,
+        citySource: v.city ? "unverified" : "none",
         isLocal: isPrivateOrLocalIp(v.ip),
         userAgent: v.userAgent,
         deviceType: v.deviceType,
@@ -628,6 +709,7 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
       },
       summary: {
         totalViews: demo.views,
+        periodViews: visits.length,
         uniqueVisitors,
         totalVisits: visits.length,
         avgDurationSeconds,
@@ -643,12 +725,17 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
         os: osBreakdown,
       },
       visits: formattedVisits,
+      pagination: {
+        page,
+        limit,
+        total: visits.length,
+        totalPages,
+      },
       heatmap: {
         totalClicks,
         clicks: allClicks,
         topClickedElements,
       },
-
     });
   } catch (err) {
     next(err);
@@ -1010,20 +1097,29 @@ demosRouter.get("/feed/notifications", async (req, res, next) => {
 
 demosRouter.get("/:id/analytics-pro", async (req, res, next) => {
   try {
+    const includeBots = req.query.includeBots === "true";
+    const includeInternal = req.query.includeInternal === "true";
+
     const demo = await prisma.demo.findUnique({
       where: { id: req.params.id },
       include: {
         visits: {
           orderBy: { createdAt: "desc" },
-          take: 100,
         },
       },
     });
     if (!demo) return res.status(404).json({ error: "Demo not found" });
 
     const meta = readBriefMeta(demo.brief);
-    const visits = demo.visits;
-    const totalViews = visits.length || demo.views;
+    const rawVisits = demo.visits;
+    const visits = rawVisits.filter((v) => {
+      if (!includeBots && v.deviceType === "bot") return false;
+      if (!includeInternal && isPrivateOrLocalIp(v.ip)) return false;
+      return true;
+    });
+
+    const totalViews = demo.views;
+    const periodViews = visits.length;
     const lastViewedAt = demo.lastViewedAt || (visits[0]?.createdAt ?? null);
 
     const durations = visits.map(v => v.durationSeconds).filter(d => d > 0);
@@ -1047,7 +1143,8 @@ demosRouter.get("/:id/analytics-pro", async (req, res, next) => {
     }
 
     const scrolls = visits.map(v => v.scrollDepth).filter(s => s > 0);
-    const avgScroll = scrolls.length > 0 ? Math.round(scrolls.reduce((a, b) => a + b, 0) / scrolls.length) : (totalViews > 0 ? 85 : 0);
+    // Display missing measurements as unavailable (null), do NOT fabricate 85%
+    const avgScroll = scrolls.length > 0 ? Math.round(scrolls.reduce((a, b) => a + b, 0) / scrolls.length) : null;
 
     const clickedButtons = new Map<string, number>();
     let pricingRevisits = 0;
@@ -1077,7 +1174,8 @@ demosRouter.get("/:id/analytics-pro", async (req, res, next) => {
     if (avgDuration > 180) {
       insights.push(`Client spent ${formattedAvgTime} deeply reviewing your proposal.`);
     }
-    if (avgScroll > 80) {
+    // Only generate high engagement insight if scroll depth was actually measured
+    if (avgScroll !== null && avgScroll > 80) {
       insights.push(`High engagement: client scrolled through ${avgScroll}% of the page.`);
     }
 
@@ -1086,6 +1184,7 @@ demosRouter.get("/:id/analytics-pro", async (req, res, next) => {
       title: demo.title,
       businessName: demo.businessName,
       totalViews,
+      periodViews,
       lastViewedAt,
       formattedAvgTime,
       avgDurationSeconds: avgDuration,
@@ -1177,8 +1276,24 @@ export const demoPagesRouter = Router();
 demoPagesRouter.use(express.json({ limit: "512kb" }));
 demoPagesRouter.use(express.text({ type: ["text/plain", "application/json"], limit: "512kb" }));
 
+const beaconRateLimits = new Map<string, { count: number; resetAt: number }>();
+
+function checkBeaconRateLimit(key: string, maxPerMin = 120): boolean {
+  const now = Date.now();
+  const entry = beaconRateLimits.get(key);
+  if (!entry || now > entry.resetAt) {
+    beaconRateLimits.set(key, { count: 1, resetAt: now + 60_000 });
+    return true;
+  }
+  entry.count += 1;
+  return entry.count <= maxPerMin;
+}
+
 const analyticsBeaconInput = z.object({
+  token: z.string().trim().min(1).max(1000).optional(),
+  visitId: z.string().trim().min(1).max(120).optional(),
   sessionId: z.string().trim().min(1).max(120),
+  visitorId: z.string().trim().max(120).optional(),
   durationSeconds: z.number().int().min(0).max(86400).optional(),
   scrollDepth: z.number().int().min(0).max(100).optional(),
   viewportWidth: z.number().int().min(0).max(10000).nullish(),
@@ -1190,11 +1305,12 @@ const analyticsBeaconInput = z.object({
   clicks: z
     .array(
       z.object({
+        id: z.string().trim().max(80).optional(),
         x: z.number().int().min(0).max(20000),
         y: z.number().int().min(0).max(200000),
         xPercent: z.number().min(0).max(100),
         yPercent: z.number().min(0).max(100),
-        targetTag: z.string().trim().max(30).optional(),
+        targetTag: z.string().trim().max(50).optional(),
         targetText: z.string().trim().max(120).optional(),
         targetSelector: z.string().trim().max(120).optional(),
         timeOffset: z.number().int().min(0).max(86400).optional(),
@@ -1265,10 +1381,21 @@ demoPagesRouter.post("/:slug/analytics", async (req, res, next) => {
     const slug = req.params.slug;
     const demo = await prisma.demo.findUnique({
       where: { slug },
-      select: { id: true },
+      select: { id: true, brief: true },
     });
     if (!demo) {
       return res.status(404).json({ error: "Demo not found" });
+    }
+
+    // Access check: reject beacons for expired demos
+    const meta = readBriefMeta(demo.brief);
+    if (meta.expiresAt && new Date(meta.expiresAt) < new Date()) {
+      return res.status(403).json({ error: "Demo proposal has expired" });
+    }
+
+    const clientIp = extractClientIp(req) || "unknown";
+    if (!checkBeaconRateLimit(clientIp)) {
+      return res.status(429).json({ error: "Rate limit exceeded" });
     }
 
     let rawBody = req.body;
@@ -1286,6 +1413,31 @@ demoPagesRouter.post("/:slug/analytics", async (req, res, next) => {
     }
 
     const data = parsed.data;
+
+    // Authenticate beacon: require valid signed visit token
+    if (!data.token) {
+      return res.status(401).json({ error: "Tracking token required" });
+    }
+
+    const verification = verifyVisitToken(data.token, {
+      demoId: demo.id,
+      slug,
+      visitId: data.visitId,
+    });
+    if (!verification.valid) {
+      return res.status(403).json({ error: verification.error || "Invalid or expired tracking token" });
+    }
+
+    const targetVisitId = data.visitId || verification.visitId;
+    const existingVisit = await prisma.demoVisit.findFirst({
+      where: { id: targetVisitId, demoId: demo.id },
+    });
+
+    // Reject unissued visits: do not create visits without a legitimate page view
+    if (!existingVisit) {
+      return res.status(404).json({ error: "Visit not found or unissued" });
+    }
+
     const ip = extractClientIp(req);
     const hints = extractGeoHints(req);
     const geo = resolveIpLocation(ip, {
@@ -1295,67 +1447,40 @@ demoPagesRouter.post("/:slug/analytics", async (req, res, next) => {
       timezone: data.timezone,
       locale: data.locale,
     });
-    const ua = req.headers["user-agent"] || null;
-    const parsedDevice = parseUserAgent(ua);
 
-    const existingVisit = await prisma.demoVisit.findFirst({
-      where: { demoId: demo.id, sessionId: data.sessionId },
-      orderBy: { createdAt: "desc" },
-    });
+    const newDuration = Math.max(existingVisit.durationSeconds ?? 0, data.durationSeconds ?? 0);
+    const newScrollDepth = Math.max(existingVisit.scrollDepth ?? 0, data.scrollDepth ?? 0);
 
-    const newDuration = Math.max(existingVisit?.durationSeconds ?? 0, data.durationSeconds ?? 0);
-    const newScrollDepth = Math.max(existingVisit?.scrollDepth ?? 0, data.scrollDepth ?? 0);
-
-    const existingClicks = Array.isArray(existingVisit?.clicks) ? (existingVisit.clicks as any[]) : [];
+    // Merge clicks with event ID deduplication
+    const existingClicks = Array.isArray(existingVisit.clicks) ? (existingVisit.clicks as any[]) : [];
+    const existingIds = new Set(existingClicks.map((c) => c.id).filter(Boolean));
     const incomingClicks = data.clicks ?? [];
-    const mergedClicks = [...existingClicks, ...incomingClicks].slice(-500);
+    const newClicks = incomingClicks.filter((c) => !c.id || !existingIds.has(c.id));
+    const mergedClicks = [...existingClicks, ...newClicks].slice(-500);
 
-    if (existingVisit) {
-      await prisma.demoVisit.update({
-        where: { id: existingVisit.id },
-        data: {
-          durationSeconds: newDuration,
-          scrollDepth: newScrollDepth,
-          viewportWidth: data.viewportWidth ? Math.round(data.viewportWidth) : existingVisit.viewportWidth,
-          viewportHeight: data.viewportHeight ? Math.round(data.viewportHeight) : existingVisit.viewportHeight,
-          screenWidth: data.screenWidth ? Math.round(data.screenWidth) : existingVisit.screenWidth,
-          screenHeight: data.screenHeight ? Math.round(data.screenHeight) : existingVisit.screenHeight,
-          clicks: mergedClicks as Prisma.InputJsonValue,
-          // Enrich location if previously unresolved or local
-          ...(geo.country && (!existingVisit.country || existingVisit.country === "LOCAL")
-            ? {
-                country: geo.country,
-                countryName: geo.countryName,
-                city: geo.city || existingVisit.city,
-              }
-            : geo.city && !existingVisit.city
-              ? { city: geo.city }
-              : {}),
-        },
-      });
-    } else {
-      await prisma.demoVisit.create({
-        data: {
-          demoId: demo.id,
-          sessionId: data.sessionId,
-          ip,
-          country: geo.country,
-          countryName: geo.countryName,
-          city: geo.city,
-          userAgent: ua ? ua.slice(0, 500) : null,
-          deviceType: parsedDevice.deviceType,
-          browser: parsedDevice.browser,
-          os: parsedDevice.os,
-          viewportWidth: data.viewportWidth ? Math.round(data.viewportWidth) : null,
-          viewportHeight: data.viewportHeight ? Math.round(data.viewportHeight) : null,
-          screenWidth: data.screenWidth ? Math.round(data.screenWidth) : null,
-          screenHeight: data.screenHeight ? Math.round(data.screenHeight) : null,
-          durationSeconds: newDuration,
-          scrollDepth: newScrollDepth,
-          clicks: mergedClicks as Prisma.InputJsonValue,
-        },
-      });
-    }
+    await prisma.demoVisit.update({
+      where: { id: existingVisit.id },
+      data: {
+        sessionId: data.sessionId || existingVisit.sessionId,
+        durationSeconds: newDuration,
+        scrollDepth: newScrollDepth,
+        viewportWidth: data.viewportWidth ? Math.round(data.viewportWidth) : existingVisit.viewportWidth,
+        viewportHeight: data.viewportHeight ? Math.round(data.viewportHeight) : existingVisit.viewportHeight,
+        screenWidth: data.screenWidth ? Math.round(data.screenWidth) : existingVisit.screenWidth,
+        screenHeight: data.screenHeight ? Math.round(data.screenHeight) : existingVisit.screenHeight,
+        clicks: mergedClicks as Prisma.InputJsonValue,
+        // Enrich location only if edge verified city or genuine country resolved
+        ...(geo.country && (!existingVisit.country || existingVisit.country === "LOCAL")
+          ? {
+              country: geo.country,
+              countryName: geo.countryName,
+              city: geo.city || existingVisit.city,
+            }
+          : geo.city && !existingVisit.city
+            ? { city: geo.city }
+            : {}),
+      },
+    });
 
     res.status(200).json({ ok: true });
   } catch (err) {
@@ -1410,7 +1535,6 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
       }
     }
 
-    // Check if this is an admin preview or heatmap modal inspection (do not pollute stats)
     const isPreviewOrHeatmap =
       req.query.dw_preview === "heatmap" ||
       req.query.dw_heatmap === "1" ||
@@ -1420,6 +1544,16 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
     const sessionId = isPreviewOrHeatmap
       ? `prev_${Date.now().toString(36)}`
       : `vs_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+
+    const visitId = isPreviewOrHeatmap
+      ? `prev_${Date.now().toString(36)}`
+      : `v_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+
+    const visitToken = createVisitToken({
+      visitId,
+      demoId: demo.id,
+      slug: demo.slug,
+    });
 
     if (!isPreviewOrHeatmap) {
       const ip = extractClientIp(req);
@@ -1431,15 +1565,13 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
       });
       const ua = req.headers["user-agent"] || null;
       const parsedDevice = parseUserAgent(ua);
+      const isBot = parsedDevice.isBot;
 
-      // Log the visit with visitor IP, country, city, device details, and increment views
-      void prisma.$transaction([
-        prisma.demo.update({
-          where: { id: demo.id },
-          data: { views: { increment: 1 }, lastViewedAt: new Date() },
-        }),
+      // Human traffic increments views; bots and link previews (WhatsApp, Slack, etc.) are excluded
+      const dbOperations: Array<Promise<unknown>> = [
         prisma.demoVisit.create({
           data: {
+            id: visitId,
             demoId: demo.id,
             sessionId,
             ip,
@@ -1455,10 +1587,21 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
             clicks: [],
           },
         }),
-      ]).catch(() => undefined);
+      ];
 
-      // View Notification Logging
-      if (meta.notifyOnView !== false) {
+      if (!isBot) {
+        dbOperations.push(
+          prisma.demo.update({
+            where: { id: demo.id },
+            data: { views: { increment: 1 }, lastViewedAt: new Date() },
+          }),
+        );
+      }
+
+      void Promise.all(dbOperations).catch(() => undefined);
+
+      // View Notification Logging only for genuine human viewers
+      if (!isBot && meta.notifyOnView !== false) {
         const viewer = meta.recipientName || meta.clientName || "Prospect";
         const locLabel = geo.city && geo.countryName ? ` from ${geo.city}, ${geo.countryName}` : "";
         const newNote = {
@@ -1492,9 +1635,11 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
       }
     }
 
-    // Inject analytics tracking script for dwell time, scroll depth, and clicks heatmap
+    // Inject analytics tracking script with server-issued visit ID and signed token
     const trackedHtml = injectDemoTracker(renderedHtml, {
       slug: demo.slug,
+      visitId,
+      token: visitToken,
       sessionId,
       disabled: isPreviewOrHeatmap,
     });
