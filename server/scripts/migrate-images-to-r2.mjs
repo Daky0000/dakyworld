@@ -76,7 +76,6 @@ async function uploadLocalAssets() {
     { baseDir: join(serverDir, "client", "public"), prefix: "public" },
   ];
 
-  let uploadedCount = 0;
   const allUploadTasks = [];
   for (const { baseDir, prefix } of directoriesToScan) {
     const files = getAllFiles(baseDir);
