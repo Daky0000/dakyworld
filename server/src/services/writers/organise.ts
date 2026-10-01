@@ -72,7 +72,7 @@ const SCHEMA = {
   },
 } as const;
 
-const SYSTEM = `You sort a written instruction into the ten named sections a Dakyworld agent prompt is made of.
+const SYSTEM = `You sort a written instruction into the ten named sections a DakyXTech agent prompt is made of.
 
 **You are filing, not writing.** Every sentence you place must be a sentence you were given, word for word. You may split a paragraph across two sections where it plainly covers both, drop a heading from the source that has become the name of a section, and put things in a sensible order within a section. You may not rewrite, summarise, shorten, improve, correct or add anything at all — not one clause. The words belong to the person who wrote them, and this is the one job where being helpful about the prose is the failure.
 

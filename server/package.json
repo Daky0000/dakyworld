@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "npm run build:client && prisma generate && tsc -p tsconfig.json",
@@ -11,7 +13,9 @@
     "build:server": "prisma generate && tsc -p tsconfig.json",
     "checks": "tsx checks/run.ts",
     "checks:types": "tsc --noEmit -p tsconfig.checks.json",
-    "start": "prisma migrate deploy && node dist/index.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "migrate:r2": "node scripts/migrate-images-to-r2.mjs",
+    "start": "prisma migrate deploy && node scripts/migrate-images-to-r2.mjs && node dist/index.js",
     "start:api": "node dist/index.js",
     "start:worker": "node dist/worker.js",
     "db:deploy": "prisma migrate deploy",
@@ -30,6 +34,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
+    "@aws-sdk/client-s3": "^3.1144.0",
     "@maxmind/geoip2-node": "^7.1.0",
     "@prisma/client": "^5.20.0",
     "@tailwindcss/aspect-ratio": "^0.4.2",
@@ -42,6 +47,7 @@
     "@types/node": "^22.7.5",
     "@types/nodemailer": "^8.0.1",
     "@types/pdfkit": "^0.13.5",
+    "@types/pg": "^8.23.1",
     "cloudinary": "^2.5.1",
     "cors": "^2.8.5",
     "docx": "^9.7.1",
@@ -56,6 +62,7 @@
     "maxmind": "^5.0.7",
     "nodemailer": "^9.1.1",
     "pdfkit": "^0.15.1",
+    "pg": "^8.23.1",
     "postcss": "^8.5.28",
     "prisma": "^5.20.0",
     "redis": "^5.12.1",

@@ -133,8 +133,8 @@ export function Layout() {
 
   const navigation = (mobile = false) => <>
     <div className="os-brand">
-      <img src="/brand/mark-on-dark-96.png" alt="Dakyworld" width={36} height={36} />
-      <div><strong>{client ? "Dakyworld" : "Dakyworld OS"}</strong><span>{client ? "Website studio" : "Business workspace"}</span></div>
+      <img src="/brand/mark-on-dark-96.png" alt="DakyXTech" width={36} height={36} />
+      <div><strong>{client ? "DakyXTech" : "DakyXTech OS"}</strong><span>{client ? "Website studio" : "Business workspace"}</span></div>
       {mobile && <button type="button" onClick={() => setMobileOpen(false)} className="os-nav-close">Close</button>}
     </div>
     {!user?.external && (
@@ -233,7 +233,7 @@ export function Layout() {
         </div>
       </header>
       <main id="workspace" tabIndex={-1} className="os-workspace"><Suspense fallback={<Loading rows={5} />}><Outlet /></Suspense></main>
-      <footer className="os-workspace-footer"><span>Dakyworld OS</span><span>{client ? "Your digital workspace" : "Built for considered work."}</span></footer>
+      <footer className="os-workspace-footer"><span>DakyXTech OS</span><span>{client ? "Your digital workspace" : "Built for considered work."}</span></footer>
     </div>
   </div>;
 }

@@ -167,7 +167,7 @@ async function renderMarkdownPdfUnbounded(markdown: string, options: { title: st
     .fillColor(ACCENT)
     .font("Helvetica-Bold")
     .fontSize(8)
-    .text(pdfText((options.kicker ?? "Dakyworld").toUpperCase()), MARGIN_X, doc.y, { width: CONTENT_W, characterSpacing: 1.6 });
+    .text(pdfText((options.kicker ?? "DakyXTech").toUpperCase()), MARGIN_X, doc.y, { width: CONTENT_W, characterSpacing: 1.6 });
   doc.fillColor(INK).font("Helvetica-Bold").fontSize(19).text(pdfText(options.title), MARGIN_X, doc.y, { width: CONTENT_W, lineGap: 2 });
   if (options.subtitle) {
     doc.fillColor(MUTED).font("Helvetica").fontSize(9).text(pdfText(options.subtitle), MARGIN_X, doc.y, { width: CONTENT_W });

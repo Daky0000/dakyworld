@@ -174,7 +174,7 @@ table {
 @media (max-width:900px) { .editor-toolbar { padding:10px; } .editor-toolbar > div:last-child { margin-left:0; width:100%; gap:6px; } .editor-sidebar { width:300px; } .editor-canvas { padding:12px; } }
 @media (max-width:600px) { .website-editor > div:last-child { position:relative; } .editor-sidebar { position:absolute; inset:0 auto 0 0; width:min(340px,90vw); z-index:20; box-shadow:8px 0 24px #0005; } .editor-canvas { padding:8px; } .editor-toolbar select { max-width:72px; } .editor-toolbar > div:last-child > span { width:100%; } }
 
-/* Dakyworld workspace: typography, proportion and quiet structure. */
+/* DakyXTech workspace: typography, proportion and quiet structure. */
 :root { color-scheme: light; --os-ink:#08101F; --os-muted:#69758A; --os-line:#DFE4EB; --os-paper:#F4F5F0; --os-blue:#3157FF; }
 body { margin:0; line-height:1.5; }
 button, input, select, textarea { font:inherit; }

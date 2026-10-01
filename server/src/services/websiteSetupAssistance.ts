@@ -34,7 +34,7 @@ const requestInput = z.object({
 });
 
 const ROUTE_LABEL: Record<"hosted" | "github", string> = {
-  hosted: "Hosted by Dakyworld — domain and DNS setup",
+  hosted: "Hosted by DakyXTech — domain and DNS setup",
   github: "GitHub repository connection and first publish",
 };
 

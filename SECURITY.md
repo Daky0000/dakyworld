@@ -5,7 +5,7 @@ four things that still need somebody with a login somewhere to finish. Written
 for whoever picks this up next, including the owner.
 
 Two products live in this repo (see [CLAUDE.md](CLAUDE.md)), and they have
-different threat models. **Dakyworld OS** (`server/`) holds every lead, client,
+different threat models. **DakyXTech OS** (`server/`) holds every lead, client,
 invoice and mailbox credential the business has, behind a login. The **website**
 (repo root) is thirteen static pages with nothing to steal, whose job is to be
 found.
@@ -31,7 +31,7 @@ the advisories that land against code nobody touched
 
 ---
 
-## Dakyworld OS
+## DakyXTech OS
 
 ### Getting in
 

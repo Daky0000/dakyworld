@@ -1280,7 +1280,7 @@ function ImportDemoDrawer({
                 className="rounded border-line"
               />
               <span>
-                Show Dakyworld preview bar at the top of the page (
+                Show DakyXTech preview bar at the top of the page (
                 <span className="text-muted">&ldquo;Preview concept built for {businessName || "Client"}&rdquo;</span>)
               </span>
             </label>

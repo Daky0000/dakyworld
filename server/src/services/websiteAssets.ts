@@ -2,6 +2,7 @@ import type { Site } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { WebsiteError } from "./website/site.js";
+import { isR2Configured, getR2PublicUrl, downloadFromR2 } from "../lib/r2.js";
 
 export function assetUrl(site: Pick<Site, "publicUrl">, repoPath: string) { return `${new URL(site.publicUrl).pathname.replace(/\/+$/, "")}/${repoPath}`; }
 
@@ -60,7 +61,13 @@ export async function embedWebsiteAssets(site: Site, html: string): Promise<stri
   let out = html;
   for (const asset of assets) {
     const content = bytes.get(asset.id);
-    if (!content) continue;
+    if (!content) {
+      if (isR2Configured()) {
+        const r2Url = getR2PublicUrl(asset.repoPath);
+        out = out.split(assetUrl(site, asset.repoPath)).join(r2Url);
+      }
+      continue;
+    }
     const replacement = asset.contentType.startsWith("image/")
       ? `data:${asset.contentType};base64,${content.toString("base64")}`
       : `/api/website/sites/${site.id}/assets/${asset.id}/content`;
@@ -80,15 +87,25 @@ export async function embedWebsiteAssets(site: Site, html: string): Promise<stri
 export async function websiteAssetFiles(site: Site, html: string) {
   const assets = await referencedAssets(site, html);
   const bytes = await assetBytes(assets.map((asset) => asset.id));
-  return assets.map((asset) => {
-    const content = bytes.get(asset.id);
-    if (!content) throw new WebsiteError(409, `The image at ${asset.repoPath} is already published and is no longer held here, so it cannot be committed again. Re-upload it if this page needs it.`);
-    return {
-      path: [site.repoPath.replace(/^\/+|\/+$/g, ""), asset.repoPath].filter(Boolean).join("/"),
-      content: content.toString("base64"),
-      encoding: "base64" as const,
-    };
-  });
+  return Promise.all(
+    assets.map(async (asset) => {
+      let content = bytes.get(asset.id);
+      if (!content && isR2Configured()) {
+        content = (await downloadFromR2(asset.repoPath)) ?? undefined;
+      }
+      if (!content) {
+        throw new WebsiteError(
+          409,
+          `The image at ${asset.repoPath} is already published and is no longer held here, so it cannot be committed again. Re-upload it if this page needs it.`,
+        );
+      }
+      return {
+        path: [site.repoPath.replace(/^\/+|\/+$/g, ""), asset.repoPath].filter(Boolean).join("/"),
+        content: content.toString("base64"),
+        encoding: "base64" as const,
+      };
+    }),
+  );
 }
 
 /**
@@ -101,11 +118,21 @@ export async function websiteAssetFiles(site: Site, html: string) {
 export async function websiteAssetFilesIn(site: Site, source: string, folder: string) {
   const assets = await referencedAssets(site, source);
   const bytes = await assetBytes(assets.map((asset) => asset.id));
-  return assets.map((asset) => {
-    const content = bytes.get(asset.id);
-    if (!content) throw new WebsiteError(409, `The image at ${asset.repoPath} is already published and is no longer held here, so it cannot be committed again. Re-upload it if this page needs it.`);
-    return { path: [folder, asset.repoPath].filter(Boolean).join("/"), content: content.toString("base64"), encoding: "base64" as const };
-  });
+  return Promise.all(
+    assets.map(async (asset) => {
+      let content = bytes.get(asset.id);
+      if (!content && isR2Configured()) {
+        content = (await downloadFromR2(asset.repoPath)) ?? undefined;
+      }
+      if (!content) {
+        throw new WebsiteError(
+          409,
+          `The image at ${asset.repoPath} is already published and is no longer held here, so it cannot be committed again. Re-upload it if this page needs it.`,
+        );
+      }
+      return { path: [folder, asset.repoPath].filter(Boolean).join("/"), content: content.toString("base64"), encoding: "base64" as const };
+    }),
+  );
 }
 
 /** Which of a site's assets a set of pages reference, as repo paths. Metadata only. */

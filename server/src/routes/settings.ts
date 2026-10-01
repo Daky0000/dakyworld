@@ -1462,7 +1462,7 @@ settingsRouter.put("/email", async (req, res, next) => {
         secure: z.boolean().optional(),
         user: z.string().min(3),
         password: z.string().min(1),
-        fromName: z.string().min(1).default("Dakyworld"),
+        fromName: z.string().min(1).default("DakyXTech"),
         fromEmail: z.string().email(),
         replyTo: z.string().email().or(z.literal("")).optional(),
         signature: z.string().max(600).optional(),
@@ -1688,7 +1688,7 @@ settingsRouter.put("/email/hostinger", async (req, res, next) => {
     // transport put it there.
     await setSetting(SETTING.MAIL_FROM_EMAIL, chosen.address);
     if (input.fromName?.trim()) await setSetting(SETTING.MAIL_FROM_NAME, input.fromName.trim());
-    else if (!(await getSetting(SETTING.MAIL_FROM_NAME))) await setSetting(SETTING.MAIL_FROM_NAME, "Dakyworld");
+    else if (!(await getSetting(SETTING.MAIL_FROM_NAME))) await setSetting(SETTING.MAIL_FROM_NAME, "DakyXTech");
     if (input.replyTo !== undefined) {
       if (input.replyTo) await setSetting(SETTING.MAIL_REPLY_TO, input.replyTo.trim());
       else await deleteSetting(SETTING.MAIL_REPLY_TO);
@@ -1887,7 +1887,7 @@ settingsRouter.post("/slack/test", async (req, res, next) => {
   try {
     const { channel } = z.object({ channel: z.string().max(80).optional() }).parse(req.body ?? {});
     const result = await sendSlack({
-      title: "Dakyworld OS",
+      title: "DakyXTech OS",
       text: "Slack is connected. Alerts about captures, sequences and escalations will arrive here.",
       channel: channel ?? null,
     });

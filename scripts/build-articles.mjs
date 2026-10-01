@@ -158,7 +158,7 @@ function articleMarkup(meta, body, minutes) {
     `      <div class="eyebrow">${escape(meta.section)}</div>`,
     `      <h1 class="display">${inline(meta.title)}</h1>`,
     `      <p class="article-standfirst">${inline(meta.summary)}</p>`,
-    `      <p class="article-byline"><time datetime="${meta.published}">${LONG_DATE(meta.published)}</time> &middot; ${minutes} min read &middot; Dakyworld</p>`,
+    `      <p class="article-byline"><time datetime="${meta.published}">${LONG_DATE(meta.published)}</time> &middot; ${minutes} min read &middot; DakyXTech</p>`,
     `    </div>`,
     `    <div class="article-prose">`,
     render(body)
@@ -202,7 +202,7 @@ function page(existing, meta, body, minutes, parts) {
        "| Dakyworld®", but a post's headline is already 50-odd characters and
        a search result truncates around 60 — at which point the suffix costs
        the end of the actual title and buys nothing. */
-    `<title>${inline(meta.title)}${meta.title.length <= 48 ? " | Dakyworld&reg;" : ""}</title>`,
+    `<title>${inline(meta.title)}${meta.title.length <= 48 ? " | DakyXTech&reg;" : ""}</title>`,
     parts.headTail.trim(),
     "</head>",
     parts.header.replace("<body>", "<body>").trimEnd(),

@@ -20,7 +20,7 @@ export async function ensureDakyworldSite(): Promise<boolean> {
 
   await prisma.site.create({
     data: {
-      name: "Dakyworld",
+      name: "DakyXTech",
       slug: "dakyworld",
       publicUrl: "https://dakyworld.com",
       // The website is the root of this same repository, served by GitHub Pages

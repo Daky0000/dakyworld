@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Dakyworld — cookie consent UI
+   DakyXTech — cookie consent UI
 
    Kept in its own file rather than folded into site.css for one reason: this
    stylesheet has to be able to paint before anything measures the visitor. If

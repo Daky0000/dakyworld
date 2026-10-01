@@ -97,9 +97,9 @@ async function deliver(to: string, toName: string, subject: string, heading: str
   <p style="margin:26px 0"><a href="${link}" style="background:#1b2029;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;display:inline-block">${escapeHtml(action)}</a></p>
   <p style="color:#5b6572;font-size:13px">If the button does not work, paste this into your browser:<br>${escapeHtml(link)}</p>
   <p style="color:#5b6572;font-size:13px">If you were not expecting this, you can ignore it and nothing will change.</p>
-  <p>Dakyworld</p>
+  <p>DakyXTech</p>
 </div>`;
-  const text = `Hello ${toName.split(" ")[0] ?? "there"},\n\n${body}\n\n${action}: ${link}\n\nIf you were not expecting this, you can ignore it and nothing will change.\n\nDakyworld`;
+  const text = `Hello ${toName.split(" ")[0] ?? "there"},\n\n${body}\n\n${action}: ${link}\n\nIf you were not expecting this, you can ignore it and nothing will change.\n\nDakyXTech`;
   await sendMail({ to, toName, subject: heading, html, text });
 }
 
@@ -116,8 +116,8 @@ export async function sendSetPasswordLink(user: { id: string; email: string; nam
   await deliver(
     user.email,
     user.name,
-    "Set your Dakyworld password",
-    reason === "purchase" ? "Your Website Builder account is ready" : "Your Dakyworld account is ready",
+    "Set your DakyXTech password",
+    reason === "purchase" ? "Your Website Builder account is ready" : "Your DakyXTech account is ready",
     reason === "purchase"
       ? "Thank you for your payment. Choose a password and your website editor is ready to use."
       : "An account has been created for you. Choose a password to sign in.",
@@ -137,7 +137,7 @@ export async function requestPasswordReset(email: string): Promise<void> {
   await deliver(
     user.email,
     user.name,
-    "Reset your Dakyworld password",
+    "Reset your DakyXTech password",
     "Reset your password",
     "Somebody asked to reset the password on this account. The link is good for one hour.",
     link,

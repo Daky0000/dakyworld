@@ -493,7 +493,7 @@ ${sectionsHtml}
   <footer class="bg-slate-900 text-slate-400 py-12 border-t border-slate-800">
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
       <p>© ${new Date().getFullYear()} ${siteName}. All rights reserved.</p>
-      <p>Powered by Dakyworld Website Builder</p>
+      <p>Powered by DakyXTech Website Builder</p>
     </div>
   </footer>
 </body>

@@ -98,7 +98,7 @@ export function WebsiteGuideModal({
                 Point, click, and edit anywhere
               </h3>
               <p className="mt-1 text-sm text-muted">
-                Dakyworld OS lets you interact directly with your actual website canvas. Double-click any heading, paragraph, button, or link to type directly on the page in its true typeface and layout.
+                DakyXTech OS lets you interact directly with your actual website canvas. Double-click any heading, paragraph, button, or link to type directly on the page in its true typeface and layout.
               </p>
 
               <div className="mt-4 grid gap-3 sm:grid-cols-3">
@@ -257,7 +257,7 @@ export function WebsiteGuideModal({
               </div>
 
               <div className="mt-4 rounded-xl border border-positive-line/50 bg-positive-surface p-3.5 text-xs text-positive-text">
-                <span className="font-bold">Automatic Optimization:</span> Images uploaded to Dakyworld are automatically compressed to modern WebP format with EXIF metadata stripped for maximum privacy and performance.
+                <span className="font-bold">Automatic Optimization:</span> Images uploaded to DakyXTech are automatically compressed to modern WebP format with EXIF metadata stripped for maximum privacy and performance.
               </div>
             </div>
           </div>
@@ -316,7 +316,7 @@ export function WebsiteGuideModal({
                 Responsive Previews & Safe Publishing
               </h3>
               <p className="mt-1 text-sm text-muted">
-                Before your changes go live to the world, Dakyworld provides complete multi-device testing and safe diff reviews.
+                Before your changes go live to the world, DakyXTech provides complete multi-device testing and safe diff reviews.
               </p>
 
               <div className="mt-4 grid gap-3 sm:grid-cols-3">

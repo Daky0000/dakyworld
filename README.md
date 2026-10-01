@@ -1,4 +1,4 @@
-# Dakyworld OS
+# DakyXTech OS
 
 Internal operations platform — leads, proposals, projects, invoices, care
 plans, time tracking, and a live revenue dashboard. Built from the Phase 1

@@ -107,7 +107,7 @@ export async function deployScreenshotActor(): Promise<DeployResult> {
     let updated = Boolean(existing);
 
     if (!id) {
-      const created = await ensureActor(name, "Dakyworld Website Screenshot", "Screenshots a batch of websites and returns one row per requested URL, carrying back the caller's own id.");
+      const created = await ensureActor(name, "DakyXTech Website Screenshot", "Screenshots a batch of websites and returns one row per requested URL, carrying back the caller's own id.");
       // The account the token belongs to decides the username half, and Apify
       // has just told us what it is. If it does not match what the setting
       // asked for, the actor we have made is not the actor this app will call —

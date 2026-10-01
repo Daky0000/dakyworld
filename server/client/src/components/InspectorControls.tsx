@@ -83,10 +83,52 @@ export const CASES = [
 export const OVERFLOWS = ["", "visible", "hidden", "auto", "scroll"];
 export const BORDER_STYLES = ["solid", "dashed", "dotted", "double", "none"];
 
+/**
+ * Splits a style string into declarations without breaking inside quotes,
+ * parentheses (e.g. url(...), data:image/svg+xml,...), or HTML entities (&quot;).
+ */
+export function splitDeclarations(style: string | undefined): string[] {
+  if (!style) return [];
+  const declarations: string[] = [];
+  let current = "";
+  let inDoubleQuote = false;
+  let inSingleQuote = false;
+  let parenDepth = 0;
+
+  for (let i = 0; i < style.length; i++) {
+    const char = style[i]!;
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      current += char;
+    } else if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      current += char;
+    } else if (char === '(' && !inDoubleQuote && !inSingleQuote) {
+      parenDepth++;
+      current += char;
+    } else if (char === ')' && !inDoubleQuote && !inSingleQuote) {
+      if (parenDepth > 0) parenDepth--;
+      current += char;
+    } else if (char === ';' && !inDoubleQuote && !inSingleQuote && parenDepth === 0) {
+      const entityMatch = /&[a-zA-Z0-9#]+$/.test(current);
+      if (entityMatch) {
+        current += char;
+      } else {
+        if (current.trim()) declarations.push(current.trim());
+        current = "";
+      }
+    } else {
+      current += char;
+    }
+  }
+  if (current.trim()) declarations.push(current.trim());
+  return declarations;
+}
+
 /** `"color: red; font-size: 20px"` → `{ color: "red", "font-size": "20px" }`. */
 export function parseStyle(style: string | undefined): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const declaration of (style ?? "").split(";")) {
+  for (const declaration of splitDeclarations(style)) {
     const colon = declaration.indexOf(":");
     if (colon < 1) continue;
     const property = declaration.slice(0, colon).trim().toLowerCase();

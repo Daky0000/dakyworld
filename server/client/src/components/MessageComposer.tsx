@@ -324,7 +324,7 @@ export function MessageComposer({ target, open, onClose }: { target: MessageTarg
                 className="input min-h-[160px] font-mono text-[13px] leading-relaxed"
                 value={body}
                 onChange={(event) => setBody(event.target.value)}
-                placeholder={channel === "WHATSAPP" ? "Hi Kwame — Daky here from Dakyworld…" : "Keep it under 160 characters if you can."}
+                placeholder={channel === "WHATSAPP" ? "Hi Kwame — Daky here from DakyXTech…" : "Keep it under 160 characters if you can."}
               />
             </Field>
           </>

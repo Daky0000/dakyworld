@@ -82,7 +82,7 @@ export async function readMailerConfig(): Promise<MailerConfig | null> {
     secure: secure === null ? portNumber === 465 : secure === "true",
     user,
     password,
-    fromName: fromName ?? "Dakyworld",
+    fromName: fromName ?? "DakyXTech",
     fromEmail,
     replyTo: replyTo ?? null,
   };

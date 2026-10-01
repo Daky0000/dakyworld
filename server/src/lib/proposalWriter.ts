@@ -74,12 +74,12 @@ function proposalSchema(SERVICE_IDS: string[]) {
       headline: {
         type: "string",
         description:
-          "One sentence the reader sees first. It must state the most specific observed problem and its consequence for them. Never a greeting, never a summary of Dakyworld.",
+          "One sentence the reader sees first. It must state the most specific observed problem and its consequence for them. Never a greeting, never a summary of DakyXTech.",
       },
       situation: {
         type: "string",
         description:
-          "Two short paragraphs about THEM — what they appear to do, what is working, and what is currently costing them. Written so that a stranger could not have written it. Acknowledge at least one thing they are doing well if the findings support it. No mention of Dakyworld here at all.",
+          "Two short paragraphs about THEM — what they appear to do, what is working, and what is currently costing them. Written so that a stranger could not have written it. Acknowledge at least one thing they are doing well if the findings support it. No mention of DakyXTech here at all.",
       },
       findings: {
         type: "array",
@@ -100,7 +100,7 @@ function proposalSchema(SERVICE_IDS: string[]) {
               description:
                 "What this costs THIS business, given what they do. Concrete and grounded — a dental clinic losing after-hours bookings, not 'reduced customer confidence'. Do not invent a cedi figure.",
             },
-            fix: { type: "string", description: "What Dakyworld would actually do about it. One or two sentences, concrete work, no adjectives." },
+            fix: { type: "string", description: "What DakyXTech would actually do about it. One or two sentences, concrete work, no adjectives." },
             service: { type: "string", enum: [...SERVICE_IDS], description: "Which service line this belongs to." },
           },
         },
@@ -154,7 +154,7 @@ function proposalSchema(SERVICE_IDS: string[]) {
       whyUs: {
         type: "string",
         description:
-          "Three sentences at most on why Dakyworld rather than a freelancer or an agency, using only the true claims supplied. This is the shortest section in the document and must read that way.",
+          "Three sentences at most on why DakyXTech rather than a freelancer or an agency, using only the true claims supplied. This is the shortest section in the document and must read that way.",
       },
       assumptions: {
         type: "array",
@@ -182,7 +182,7 @@ function proposalSchema(SERVICE_IDS: string[]) {
 }
 
 /**
- * The doctrine Dakyworld ships for a proposal.
+ * The doctrine DakyXTech ships for a proposal.
  *
  * A default, not the authority: `proposal.writer`'s own wording replaces this
  * once somebody edits that agent on the Agents screen — see
@@ -194,7 +194,7 @@ function proposalSchema(SERVICE_IDS: string[]) {
  * separately as facts, because they are live state rather than writing: a
  * rewritten voice must not be able to take the published prices with it.
  */
-export const SHIPPED_DOCTRINE = `You write service proposals for one specific company at a time, for Dakyworld.
+export const SHIPPED_DOCTRINE = `You write service proposals for one specific company at a time, for DakyXTech.
 
 ${VOICE}
 
@@ -210,7 +210,7 @@ How this proposal must work:
 
 4. **Never invent a price.** Only the catalogue's published prices may be quoted as firm. Everything else is priced after the discovery call, marked firm: false and amount: 0, and explained in the basis line. Quoting a made-up number that the Owner then has to walk back is worse than quoting nothing.
 
-5. **No filler sections.** No "In today's digital landscape". No mission statement. No bulleted list of everything Dakyworld does. The reader's time is the budget: if a sentence does not either state a fact about them or say what will be done, cut it.
+5. **No filler sections.** No "In today's digital landscape". No mission statement. No bulleted list of everything DakyXTech does. The reader's time is the budget: if a sentence does not either state a fact about them or say what will be done, cut it.
 
 6. **Do not oversell.** Recommend what the evidence supports. If they need a website and nothing else, propose a website. A proposal that recommends all seven service lines is a brochure, and reads as one.`;
 

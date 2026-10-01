@@ -109,7 +109,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`\n======================================================`);
-  console.log(`🚀 Dakyworld Local Server running at:`);
+  console.log(`🚀 DakyXTech Local Server running at:`);
   console.log(`   ➜ Local:   http://localhost:${PORT}/`);
   console.log(`   ➜ Builder: http://localhost:${PORT}/website-builder`);
   console.log(`   ➜ Pricing: http://localhost:${PORT}/pricing`);

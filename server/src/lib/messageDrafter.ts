@@ -110,7 +110,7 @@ const VOICE = `${BRAND_VOICE}
 
 For a message on somebody's phone specifically:
 
-- **Say who is writing in the first line, by name and company.** "Hi Kwame — Daky here, from Dakyworld." There is no letterhead, no signature and no sender address: if the words do not say who this is, the reader is looking at an unknown number, and an unknown number asking a question is deleted. This is the single most important rule on this channel, and it is the one an email drafter would get wrong, because an email appends all of that automatically.
+- **Say who is writing in the first line, by name and company.** "Hi Kwame — Daky here, from DakyXTech." There is no letterhead, no signature and no sender address: if the words do not say who this is, the reader is looking at an unknown number, and an unknown number asking a question is deleted. This is the single most important rule on this channel, and it is the one an email drafter would get wrong, because an email appends all of that automatically.
 - **Never open on the observation.** On a channel this personal, a stranger who leads with something they noticed about your business reads as a scam before it reads as helpful.
 - **Two short bursts, not four paragraphs.** One that says who you are and what you noticed; one that asks. A message that fills the screen before the reader has decided who you are is a broadcast.
 - **One thing noticed, and what it makes harder for them.** Not what it has cost them — that states an outcome nobody has measured to the one person who can check it. "People on a phone have to type your number out by hand" is the shape.
@@ -141,7 +141,7 @@ const CHANNEL_NOTE: Record<MessageChannel, string> = {
  * here would ask for a letter and get one, in a chat window.
  */
 const PURPOSE_BRIEF: Partial<Record<EmailPurpose, string>> = {
-  COLD_OUTREACH: `A first message to somebody who has never heard of Dakyworld, on a channel they use with people they know.
+  COLD_OUTREACH: `A first message to somebody who has never heard of DakyXTech, on a channel they use with people they know.
 
 1. Who you are, by name and company, in the first line.
 2. One thing you noticed about their business, and what it makes harder for whoever is trying to reach them. One thing only.
@@ -231,7 +231,7 @@ const LETTER_ONLY = [
 /**
  * Lines about our own pipeline rather than about them.
  *
- * A lead score, a deal size and a pipeline stage are facts about how Dakyworld
+ * A lead score, a deal size and a pipeline stage are facts about how DakyXTech
  * files this business, and the drafter is told the facts are the only things it
  * may use — which makes every one of them a sentence a model is entitled to
  * reach for. "I see you're in our qualifying stage" is not a message anybody
@@ -372,7 +372,7 @@ function strengthNote(strength: CaseStrength | null | undefined): string | null 
 
 
 /**
- * The doctrine Dakyworld ships for a message to a phone.
+ * The doctrine DakyXTech ships for a message to a phone.
  *
  * A default, not the authority: `outreach.writer`'s own wording replaces it as
  * soon as somebody edits that agent — see `services/writers/brief.ts`. The
@@ -456,8 +456,8 @@ function buildPrompt(request: MessageDraftRequest): string {
   parts.push(
     "",
     first && first !== "there"
-      ? `Open by addressing them as "${first}", and name yourself and Dakyworld in that same first line.`
-      : "No first name is known for this person, so do not use one. Open by naming yourself and Dakyworld, then go straight to what you noticed.",
+      ? `Open by addressing them as "${first}", and name yourself and DakyXTech in that same first line.`
+      : "No first name is known for this person, so do not use one. Open by naming yourself and DakyXTech, then go straight to what you noticed.",
   );
 
   // The eighteen-scenario playbook was removed in Aug 2026; what replaced it is

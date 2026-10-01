@@ -9,9 +9,22 @@ export function validFramingDeclaration(property: string, value: string): boolea
     const parts = clean.replace(/^auto\s+/, "").split("/").map(part => Number(part.trim()));
     return parts.length <= 2 && parts.every(n => Number.isFinite(n) && n > 0);
   }
-  if (property === "object-position" && /^[+\-\d.%\s]+$/.test(clean)) {
+  if (property === "object-position" || property === "background-position") {
     const parts = clean.split(/\s+/);
-    return parts.length <= 2 && parts.every(part => part === "0" || /^\d+(?:\.\d+)?%$/.test(part) && Number(part.slice(0, -1)) <= 100);
+    if (parts.length > 2) return false;
+    const validPart = (part: string) => {
+      if (part === "0" || part === "0px") return true;
+      if (/^(?:center|top|bottom|left|right)$/i.test(part)) return true;
+      if (/^[+\-]?\d+(?:\.\d+)?%$/.test(part)) {
+        const num = Number(part.slice(0, -1));
+        return num >= 0 && num <= 100;
+      }
+      if (/^[+\-]?\d+(?:\.\d+)?px$/i.test(part)) {
+        return Number.isFinite(Number(part.slice(0, -2)));
+      }
+      return false;
+    };
+    return parts.every(validPart);
   }
   return true;
 }

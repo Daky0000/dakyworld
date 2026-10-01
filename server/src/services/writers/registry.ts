@@ -39,7 +39,7 @@ export interface WriterJob {
    */
   what: string;
   /**
-   * True when the job writes something a person outside Dakyworld reads. These
+   * True when the job writes something a person outside DakyXTech reads. These
    * are the ones where a prompt edit is visible to a customer, so the screen
    * marks them and the harness checks them first.
    */
@@ -60,7 +60,7 @@ export const WRITER_JOBS: WriterJob[] = [
     label: "Cold email",
     agentKey: "outreach.writer",
     where: "lib/emailDrafter.ts",
-    what: "The first email to a business that has never heard of Dakyworld.",
+    what: "The first email to a business that has never heard of DakyXTech.",
     outward: true,
   },
   {
@@ -157,10 +157,10 @@ export const WRITER_JOBS: WriterJob[] = [
   },
   {
     key: "content.draft",
-    label: "Dakyworld's own copy",
+    label: "DakyXTech's own copy",
     agentKey: "content.writer",
     where: "services/tools/catalogue.ts",
-    what: "Posts, landing pages and one-pagers written for Dakyworld itself, through the content.draft tool.",
+    what: "Posts, landing pages and one-pagers written for DakyXTech itself, through the content.draft tool.",
     outward: true,
   },
   {
@@ -223,7 +223,7 @@ export const WRITER_JOBS: WriterJob[] = [
     label: "Ad concept",
     agentKey: "ads.designer",
     where: "services/tools/catalogue.ts",
-    what: "The hook, the copy and the call to action on paid social — the words a stranger reads about Dakyworld.",
+    what: "The hook, the copy and the call to action on paid social — the words a stranger reads about DakyXTech.",
     outward: true,
   },
   {

@@ -121,7 +121,7 @@ export async function onboardingSteps(site: Site): Promise<{ steps: OnboardingSt
           href: "/website/settings",
           action: "Change",
         })
-      : step("design", "Colours and fonts", "todo", "The editor will offer Dakyworld's palette until this site's own is set. A client picking our blue for their brand is the failure this prevents.", {
+      : step("design", "Colours and fonts", "todo", "The editor will offer DakyXTech's palette until this site's own is set. A client picking our blue for their brand is the failure this prevents.", {
           href: "/website/settings",
           action: "Set them",
         }),
@@ -167,7 +167,7 @@ export async function onboardingSteps(site: Site): Promise<{ steps: OnboardingSt
   steps.push(
     clients.length
       ? step("access", "Customer access", "done", `${clients.length} client account${clients.length === 1 ? "" : "s"} on this site.`, { href: "/website/team", action: "Manage" })
-      : step("access", "Customer access", "todo", "Nobody outside Dakyworld can open this site yet.", { href: "/website/team", action: "Invite the client" }),
+      : step("access", "Customer access", "todo", "Nobody outside DakyXTech can open this site yet.", { href: "/website/team", action: "Invite the client" }),
   );
 
   // Whether anybody owes anything for this. A retainer includes every product,

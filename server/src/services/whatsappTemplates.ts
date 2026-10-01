@@ -266,7 +266,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     category: "MARKETING",
     purpose: "COLD_OUTREACH",
     body:
-      "Hi {{1}}, Daky here from Dakyworld — we build websites for businesses in Ghana. I was looking up {{2}} and couldn't find a website for you, only the listing. That means anyone who hears about you and searches has nothing to look at before deciding whether to call.\n\nWould it help if I sent over a one-page outline of what yours could cover? No cost and nothing needed from you.",
+      "Hi {{1}}, Daky here from DakyXTech — we build websites for businesses in Ghana. I was looking up {{2}} and couldn't find a website for you, only the listing. That means anyone who hears about you and searches has nothing to look at before deciding whether to call.\n\nWould it help if I sent over a one-page outline of what yours could cover? No cost and nothing needed from you.",
     footer: "Reply STOP to opt out",
     examples: ["Kwame", "Accra Dental Centre"],
     variables: ["Their first name", "The business name"],
@@ -277,7 +277,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     category: "MARKETING",
     purpose: "COLD_OUTREACH",
     body:
-      "Hi {{1}}, Daky here from Dakyworld. I opened {{2}} on my phone before messaging and the page is hard to use at that size — the text needs zooming and the number isn't tappable, so anyone wanting to call has to type it out by hand.\n\nWant me to send you the screenshot of what it looks like? Takes me a minute and it's yours either way.",
+      "Hi {{1}}, Daky here from DakyXTech. I opened {{2}} on my phone before messaging and the page is hard to use at that size — the text needs zooming and the number isn't tappable, so anyone wanting to call has to type it out by hand.\n\nWant me to send you the screenshot of what it looks like? Takes me a minute and it's yours either way.",
     footer: "Reply STOP to opt out",
     examples: ["Ama", "amaskitchen.com"],
     variables: ["Their first name", "Their website address"],
@@ -288,7 +288,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     category: "MARKETING",
     purpose: "COLD_OUTREACH",
     body:
-      "Hi {{1}}, Daky here from Dakyworld. I tried to open {{2}} and the browser showed a security warning before letting me through — most people who see that close the tab rather than continue.\n\nHappy to send you the exact wording of the warning and what causes it, so whoever looks after the site can sort it. Want me to?",
+      "Hi {{1}}, Daky here from DakyXTech. I tried to open {{2}} and the browser showed a security warning before letting me through — most people who see that close the tab rather than continue.\n\nHappy to send you the exact wording of the warning and what causes it, so whoever looks after the site can sort it. Want me to?",
     footer: "Reply STOP to opt out",
     examples: ["Kofi", "kofimotors.com"],
     variables: ["Their first name", "Their website address"],
@@ -313,7 +313,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     category: "MARKETING",
     purpose: "COLD_OUTREACH",
     body:
-      "Hi {{1}}, Daky here from Dakyworld — we look after IT and websites for businesses in Ghana. I had a look at {{2}} before messaging and noticed {{3}}, which makes it harder for anyone trying to reach you.\n\nHappy to send you what I saw so whoever looks after it can sort it. Want me to?",
+      "Hi {{1}}, Daky here from DakyXTech — we look after IT and websites for businesses in Ghana. I had a look at {{2}} before messaging and noticed {{3}}, which makes it harder for anyone trying to reach you.\n\nHappy to send you what I saw so whoever looks after it can sort it. Want me to?",
     footer: "Reply STOP to opt out",
     examples: ["Kwame", "accradental.com", "the phone number isn't tappable on a phone"],
     variables: ["Their first name", "Their website address", "The one thing noticed, as a short clause"],
@@ -324,8 +324,8 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     category: "UTILITY",
     purpose: "INVOICE_REMINDER",
     body:
-      "Hi {{1}}, a reminder from Dakyworld that invoice {{2}} for GHS {{3}} is now past its due date. If it's already been paid, please ignore this — it may have crossed with your payment.\n\nYou can settle it here or reply and I'll send the details again.",
-    footer: "Dakyworld",
+      "Hi {{1}}, a reminder from DakyXTech that invoice {{2}} for GHS {{3}} is now past its due date. If it's already been paid, please ignore this — it may have crossed with your payment.\n\nYou can settle it here or reply and I'll send the details again.",
+    footer: "DakyXTech",
     examples: ["Kwame", "DW-2026-014", "4,500"],
     variables: ["Their first name", "The invoice number", "The amount"],
   },

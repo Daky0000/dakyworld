@@ -2761,7 +2761,7 @@ export function registerWebsiteBuilderAgent(
       res.status(201).json({
         ticketId: escalation.id,
         reportNumber: escalation.reportNumber,
-        message: `Request sent to the business owner and Dakyworld technical team (Report #${escalation.reportNumber}). We have full context of the page and element you were working on.`,
+        message: `Request sent to the business owner and DakyXTech technical team (Report #${escalation.reportNumber}). We have full context of the page and element you were working on.`,
       });
     } catch (err) {
       next(err);

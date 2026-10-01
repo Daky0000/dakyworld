@@ -216,7 +216,7 @@ async function renderProposalPdfUnbounded(data: ProposalPdfData): Promise<Buffer
     sectionTitle(doc, "Timeline");
     paragraph(doc, body.timeline);
 
-    sectionTitle(doc, "Why Dakyworld");
+    sectionTitle(doc, "Why DakyXTech");
     paragraph(doc, body.whyUs);
 
     if (body.assumptions.length) {

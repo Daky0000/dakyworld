@@ -193,7 +193,7 @@ export function WebsiteOnboarding() {
             </div>
           ) : (
             <div className="rounded-2xl border border-line bg-white p-5">
-              <h2 className="font-display text-base tracking-[-.02em]">Dakyworld Care &amp; Support</h2>
+              <h2 className="font-display text-base tracking-[-.02em]">DakyXTech Care &amp; Support</h2>
               <p className="mt-1 max-w-2xl text-sm text-muted">
                 Your website is hosted on high-performance CDN infrastructure with continuous monitoring, daily automated backups, and developer support.
               </p>

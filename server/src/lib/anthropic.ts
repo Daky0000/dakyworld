@@ -110,7 +110,7 @@ const PLAN_SCHEMA = {
                 label: {
                   type: "string",
                   description:
-                    "What to call this column in Dakyworld OS. For an unlabelled column, name it from what its cells contain.",
+                    "What to call this column in DakyXTech OS. For an unlabelled column, name it from what its cells contain.",
                 },
                 field: {
                   type: "string",

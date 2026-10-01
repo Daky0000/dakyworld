@@ -298,7 +298,7 @@ export function Loading({ label = "Loading", rows = 0 }: { label?: string; rows?
  * Before this there were about five hundred hand-written alert boxes drawing on
  * twelve steps of Tailwind's amber, ten of its red and eight of its emerald —
  * so the same warning could be `amber-200` on one screen and `amber-300` on the
- * next, and none of the three families were Dakyworld colours at all.
+ * next, and none of the three families were DakyXTech colours at all.
  */
 export function Notice({
   tone = "info",

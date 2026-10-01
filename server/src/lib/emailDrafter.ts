@@ -38,7 +38,7 @@ const VOICE = `${BRAND_VOICE}
 For email specifically:
 
 - **Start with a greeting.** "Hi Kwame," on its own line, using their real first name. If no real person's name is known — only a company — use "Hello,". Never invent a name, and never open on a bare sentence with no greeting at all: it reads as a broadcast, because it is how one looks.
-- **The opening is about them, and the identification follows immediately.** On a cold email, open on the thing that was actually seen — something you could not have said about any other business — and name yourself and Dakyworld in the very next breath, inside the first three lines. Not what Dakyworld does; not a company introduction. Leading with ourselves is the commonest reason a stranger stops reading, and an email that never says who is writing is an anonymous remark about somebody's website, which reads as a threat rather than a favour.
+- **The opening is about them, and the identification follows immediately.** On a cold email, open on the thing that was actually seen — something you could not have said about any other business — and name yourself and DakyXTech in the very next breath, inside the first three lines. Not what DakyXTech does; not a company introduction. Leading with ourselves is the commonest reason a stranger stops reading, and an email that never says who is writing is an anonymous remark about somebody's website, which reads as a threat rather than a favour.
 - **Every observation is followed by what it makes harder for them.** "Your site has no X" is half a sentence. The other half is what the reader may notice or what it makes more difficult — a phone visitor having to type the number out by hand, a searcher with less to go on before deciding to click. Not in our vocabulary — "unprofessional", "not best practice" and "makes it look unfinished" are opinions and read as sales. **And not as a prediction:** "customers are leaving your website" states an outcome nobody has measured, and the one person who can check it is the one reading. Say what is harder, not what it has already cost.
 - Short. A cold email is 70–120 words: enough to say who is writing, what was noticed, why it may matter and what happens next, and not a word past that. A client update is under 200. If it needs to be longer, it needs a call instead.
 - One ask, at the end, and make it small. On a **first** email to a stranger the ask offers something rather than requesting something — the screenshot, the exact setting, the short checklist — and never asks for a meeting: time is the biggest thing you can ask of somebody who has not agreed there is a problem yet. A call is what the *second* conversation is for. Never two asks.
@@ -108,7 +108,7 @@ const PURPOSE_BRIEF: Record<EmailPurpose, string> = {
   // as one line each so the record is complete and so nothing tempts a future
   // reader into re-enabling a description that would now contradict the
   // doctrine.
-  COLD_OUTREACH: `A first approach to somebody who has never heard of Dakyworld. The doctrine in the system prompt governs it completely — do not infer a second shape from this line.`,
+  COLD_OUTREACH: `A first approach to somebody who has never heard of DakyXTech. The doctrine in the system prompt governs it completely — do not infer a second shape from this line.`,
   FOLLOW_UP: `A follow-up to an email that was not answered. The doctrine in the system prompt governs it completely, including which touch in the sequence this is — do not infer a second shape from this line.`,
   MEETING_REQUEST:
     "Asking for a specific conversation. Say what the call would cover, say how long it takes (thirty minutes), and offer to work around them rather than listing your own availability.",
@@ -276,7 +276,7 @@ export async function buildColdEmailPrompt(request: DraftRequest): Promise<{ sys
 }
 
 /**
- * The doctrine Dakyworld ships for outbound email.
+ * The doctrine DakyXTech ships for outbound email.
  *
  * **This is a default, not the authority.** The moment somebody edits the
  * owning agent on the Agents screen — `outreach.writer` for a cold email,

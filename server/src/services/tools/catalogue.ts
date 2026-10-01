@@ -131,7 +131,7 @@ const leadSummary = {
  * agent's once somebody has edited it, the shape of the answer is not. See
  * `services/writers/brief.ts`.
  */
-export const CONTENT_DRAFT_DOCTRINE = `You write for Dakyworld.
+export const CONTENT_DRAFT_DOCTRINE = `You write for DakyXTech.
 
 ${VOICE}
 
@@ -261,7 +261,7 @@ export const WEB_PAGE_DOCTRINE = `You build web pages.
 - The brand system: Ink #08101F, Navy #0B0A16, Blue #3157FF, Blue-light #6490FF, Cyan #6FE4FF, Lime #B8FF3D, Cream #F4F5F0, Muted #69758A, Line #DFE4EB. Space Grotesk for display, DM Sans for body.
 - Lime is a mark and an action colour only, roughly 1-5% of the surface, and never type on white. Blue is structure and emphasis.
 - Responsive with real breakpoints. Semantic HTML, one h1, alt text on every image, visible focus states, and contrast that passes AA.
-- Real copy in Dakyworld's voice, not lorem ipsum.`;
+- Real copy in DakyXTech's voice, not lorem ipsum.`;
 
 /**
  * What the page has to *be* rather than how it should look.
@@ -675,7 +675,7 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     name: "Read the hunt theses",
     group: "Pipeline",
     purpose:
-      "Every reason Dakyworld goes looking for anybody — who each hunt targets, why, what qualifies a business, and how the last few cycles went.",
+      "Every reason DakyXTech goes looking for anybody — who each hunt targets, why, what qualifies a business, and how the last few cycles went.",
     scope: "read",
     requires: "database",
     spends: false,
@@ -1418,7 +1418,7 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         theOneThing: run.report.synthesis?.theOneThing ?? null,
         // The decision, in two fields. Not the whole section: an agent that
         // wants the argument reads the Markdown, and an agent that wants to
-        // know whether Dakyworld is proposing a rebuild wants this.
+        // know whether DakyXTech is proposing a rebuild wants this.
         redesign: run.report.redesign
           ? { call: run.report.redesign.call, score: run.report.redesign.score ?? null, headline: run.report.redesign.headline }
           : null,
@@ -1558,7 +1558,7 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         theOneThing: report.synthesis?.theOneThing ?? null,
         emailBrief: report.synthesis?.emailBrief ?? null,
         // The redesign call, with the paragraph it was written to be quoted
-        // from. A proposal writer asking what Dakyworld thinks of this site is
+        // from. A proposal writer asking what DakyXTech thinks of this site is
         // asking for exactly this, and without it here the only honest answer
         // it can give is one it has made up.
         redesign: report.redesign
@@ -1703,7 +1703,7 @@ export const TOOLS: ToolDefinition<any, any>[] = [
   // produced so far printed with no way to settle it.
   //
   // All three of these are `outward` — a payment request arrives in front of a
-  // client under Dakyworld's name — so an agent below autonomy 3 prepares one
+  // client under DakyXTech's name — so an agent below autonomy 3 prepares one
   // and it waits in the approval queue with its reasoning attached.
   {
     key: "payment.link",
@@ -2161,7 +2161,7 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         title: input.title,
         // Said on the pull request itself, so somebody reading it on GitHub
         // rather than in this app still knows what wrote it.
-        body: `${input.body}\n\n---\nOpened by a Dakyworld OS agent. Nothing here is merged automatically.`,
+        body: `${input.body}\n\n---\nOpened by a DakyXTech OS agent. Nothing here is merged automatically.`,
       });
       return { ...pr, commit: commit.sha };
     },
@@ -2312,7 +2312,7 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     key: "content.draft",
     name: "Draft content",
     group: "Documents",
-    purpose: "Writes marketing or client-facing copy in Dakyworld's voice. A draft for a person to approve, never published.",
+    purpose: "Writes marketing or client-facing copy in DakyXTech's voice. A draft for a person to approve, never published.",
     scope: "write",
     requires: "models",
     job: "text",
@@ -3116,7 +3116,7 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     key: "agent.gaps",
     name: "Read the skill gaps",
     group: "Operations",
-    purpose: "Every craft an agent has said Dakyworld does not have, and how many separate agents have asked for it.",
+    purpose: "Every craft an agent has said DakyXTech does not have, and how many separate agents have asked for it.",
     scope: "read",
     requires: "database",
     spends: false,
@@ -3205,7 +3205,7 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     key: "agent.closeGap",
     name: "Close a skill gap",
     group: "Operations",
-    purpose: "Records that a reported gap is not a new agent — the work belongs to somebody who already exists, or Dakyworld does not do it.",
+    purpose: "Records that a reported gap is not a new agent — the work belongs to somebody who already exists, or DakyXTech does not do it.",
     scope: "write",
     requires: "database",
     spends: false,

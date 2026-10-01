@@ -10,6 +10,7 @@ import { sniff } from "../lib/fileType.js";
 import { optimizeImageBuffer } from "../lib/imageOptimization.js";
 import { looksLikeSvg, SvgRejected, SVG_CONTENT_SECURITY_POLICY } from "../lib/svgSanitize.js";
 import { assetUrl, embedWebsiteAssets, unpublishedUsesOf } from "./websiteAssets.js";
+import { isR2Configured, uploadToR2, deleteFromR2, getR2PublicUrl } from "../lib/r2.js";
 import { runPublishGuardChecks } from "./websitePublishGuard.js";
 import { runVisualRegression } from "./websiteVisualRegression.js";
 import { assertWebsiteConnectionChange, canManageWebsiteConnection, websiteSiteFilter } from "./websiteAccess.js";
@@ -114,6 +115,10 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     // Published uploads can have their duplicate bytes swept from storage.
     // Their previews must use the published file instead of an empty image.
     if (!asset.content) {
+      if (isR2Configured()) {
+        res.redirect(getR2PublicUrl(asset.repoPath));
+        return;
+      }
       if (!asset.publishedAt) throw new WebsiteError(404, "That image is no longer available. Upload it again.");
       res.redirect(new URL(assetUrl(site, asset.repoPath), site.publicUrl).href);
       return;
@@ -139,13 +144,46 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       throw error;
     }
     await assertMediaStorageAllowance(req, optimized.content.length, site.id);
+    const repoPath = `assets/dw/${randomUUID()}.${optimized.extension}`;
+    let r2Url: string | null = null;
+    if (isR2Configured()) {
+      const uploadedToR2 = await uploadToR2(optimized.content, {
+        mimeType: optimized.contentType,
+        key: repoPath,
+      });
+      r2Url = uploadedToR2.url;
+    }
     const asset = await prisma.$transaction(async tx => {
-      const uploaded = await tx.siteAsset.create({ data: { siteId: site.id, filename: input.filename, repoPath: `assets/dw/${randomUUID()}.${optimized.extension}`, contentType: optimized.contentType, content: optimized.content, size: optimized.content.length, alt: input.alt } });
-      await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "ASSET_UPLOAD", summary: `Uploaded ${input.filename}`, ...actor(req), detail: { assetId: uploaded.id, contentType: optimized.contentType, bytes: optimized.content.length, strippedExif: optimized.strippedExif } } });
+      const uploaded = await tx.siteAsset.create({
+        data: {
+          siteId: site.id,
+          filename: input.filename,
+          repoPath,
+          contentType: optimized.contentType,
+          content: isR2Configured() ? null : optimized.content,
+          size: optimized.content.length,
+          alt: input.alt,
+        },
+      });
+      await tx.siteAuditEvent.create({
+        data: {
+          siteId: site.id,
+          kind: "ASSET_UPLOAD",
+          summary: `Uploaded ${input.filename}`,
+          ...actor(req),
+          detail: {
+            assetId: uploaded.id,
+            contentType: optimized.contentType,
+            bytes: optimized.content.length,
+            strippedExif: optimized.strippedExif,
+            storage: isR2Configured() ? "cloudflare_r2" : "postgres",
+          },
+        },
+      });
       return uploaded;
     });
     recordMediaStorageAdded(req, optimized.content.length);
-    res.status(201).json({ id: asset.id, url: assetUrl(site, asset.repoPath), alt: asset.alt, size: optimized.content.length });
+    res.status(201).json({ id: asset.id, url: r2Url || assetUrl(site, asset.repoPath), alt: asset.alt, size: optimized.content.length });
   }));
   /**
    * Removing an uploaded image.
@@ -180,6 +218,9 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       await tx.siteAsset.delete({ where: { id: asset.id } });
       await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "ASSET_DELETED", summary: `Deleted ${asset.filename}`, ...actor(req), detail: { assetId: asset.id, repoPath: asset.repoPath, bytes: asset.size } } });
     });
+    if (isR2Configured()) {
+      await deleteFromR2(asset.repoPath);
+    }
     recordMediaStorageAdded(req, -asset.size);
     res.status(204).end();
   }));

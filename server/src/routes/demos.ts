@@ -23,6 +23,7 @@ import { companyProfile } from "../services/systemProfile.js";
 import { gateBy } from "../middleware/permissionGate.js";
 import { recordBuild } from "../services/concept/record.js";
 import { countryHint } from "./products.js";
+import { isR2Configured, getR2PublicUrl } from "../lib/r2.js";
 import {
   resolveIpLocation,
   countryFlag,
@@ -261,8 +262,8 @@ async function ensureDefaultDakyworldDemo(): Promise<void> {
       const result = await importDemo({
         html: htmlContent,
         filename: "dakyworld.html",
-        businessName: "Dakyworld",
-        title: "Dakyworld® — Your IT Department, Without the Overhead",
+        businessName: "DakyXTech",
+        title: "DakyXTech® — Your IT Department, Without the Overhead",
         slug: "dakyworld",
         includeBanner: false,
         makeInert: true,
@@ -1363,6 +1364,9 @@ demoPagesRouter.get("/:slug/assets/dw/:filename", async (req, res, next) => {
       select: { content: true, contentType: true, size: true },
     });
     if (!asset || !asset.content) {
+      if (isR2Configured()) {
+        return res.redirect(302, getR2PublicUrl(repoPath));
+      }
       return res.status(404).send("Asset not found");
     }
     res.setHeader("Content-Type", asset.contentType || "image/png");

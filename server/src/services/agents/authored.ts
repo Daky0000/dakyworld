@@ -50,7 +50,7 @@ export function authoredInstruction(agent: Pick<Agent, "prompt" | "promptText" |
     .map((layer) => `## ${LAYER_HEADINGS[layer]}\n${prompt[layer]!.trim()}`)
     .join("\n\n");
 
-  return layers || `You are the Dakyworld ${agent.title}. ${agent.mission}`;
+  return layers || `You are the DakyXTech ${agent.title}. ${agent.mission}`;
 }
 
 /**

@@ -97,7 +97,7 @@ const SCHEMA = {
   },
 } as const;
 
-const SYSTEM = `You turn a short instruction into a lead-capture plan for Dakyworld, an outsourced IT department in Ghana that sells to established local businesses.
+const SYSTEM = `You turn a short instruction into a lead-capture plan for DakyXTech, an outsourced IT department in Ghana that sells to established local businesses.
 
 You are reading what a member of staff typed into a capture box. They may paste a link, describe a search, or both. Your only job is to say what should be captured — you never capture anything yourself, and a person approves your plan before it costs money.
 

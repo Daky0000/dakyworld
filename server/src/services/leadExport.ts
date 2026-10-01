@@ -71,7 +71,7 @@ export async function renderLeadsXlsx(groups: ExportGroup[], title: string): Pro
 }
 async function renderLeadsXlsxUnbounded(groups: ExportGroup[], title: string): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "Dakyworld OS";
+  workbook.creator = "DakyXTech OS";
   workbook.created = new Date();
 
   const used = new Set<string>();
@@ -135,7 +135,7 @@ async function renderLeadsPdfUnbounded(groups: ExportGroup[], title: string, sub
   const usable = right - left;
   const bottom = doc.page.height - doc.page.margins.bottom;
 
-  doc.fillColor(INK).font("Helvetica-Bold").fontSize(18).text("Dakyworld");
+  doc.fillColor(INK).font("Helvetica-Bold").fontSize(18).text("DakyXTech");
   doc.fillColor(MUTED).font("Helvetica").fontSize(8).text(title.toUpperCase());
   doc.moveDown(0.4);
   doc.strokeColor(ACCENT).lineWidth(2).moveTo(left, doc.y).lineTo(right, doc.y).stroke();

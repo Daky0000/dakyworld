@@ -111,7 +111,7 @@ export function AgentHiring() {
             {policy.data?.note && <p className="mt-1 text-sm text-warn-text">{policy.data.note}</p>}
             {policy.data?.slackConnected && (
               <p className="mt-1 text-xs text-muted">
-                Also answerable in Slack — the card carries the same buttons, and <code>/dakyworld hiring auto</code> changes this setting.
+                Also answerable in Slack — the card carries the same buttons, and <code>/dakyxtech hiring auto</code> changes this setting.
               </p>
             )}
           </div>

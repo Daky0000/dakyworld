@@ -46,12 +46,12 @@ export function Login() {
 
   return (
     <div className="os-login">
-      <section className="os-login-intro"><span className="os-caption">Dakyworld OS</span><h2>Good work.<br />Clear direction.</h2><p>One considered workspace for your business, your clients and everything ahead.</p><span className="os-login-edition">The business workspace</span></section>
+      <section className="os-login-intro"><span className="os-caption">DakyXTech OS</span><h2>Good work.<br />Clear direction.</h2><p>One considered workspace for your business, your clients and everything ahead.</p><span className="os-login-edition">The business workspace</span></section>
       <div className="os-login-form">
         <div className="mb-8 flex items-center gap-3">
           <img src="/brand/mark-on-light-96.png" alt="" width={36} height={36} className="h-9 w-9" />
           <div className="leading-none">
-            <div className="font-display text-base font-medium tracking-[-.03em] text-ink">Dakyworld OS</div>
+            <div className="font-display text-base font-medium tracking-[-.03em] text-ink">DakyXTech OS</div>
             <div className="mt-1 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Internal Operations</div>
           </div>
         </div>
@@ -122,7 +122,7 @@ export function Login() {
           </Button>
 
           {/* Until this existed, a forgotten password meant emailing somebody
-              at Dakyworld and waiting for them to set a new one by hand. */}
+              at DakyXTech and waiting for them to set a new one by hand. */}
           {!challenge && (
             <a href="/forgot-password" className="mt-4 block text-center text-sm text-muted hover:underline">
               Forgotten your password?

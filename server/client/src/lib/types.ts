@@ -2179,7 +2179,7 @@ export interface WriterBrief {
   text: string;
   source: "override" | "agent" | "shipped";
   explains: string;
-  /** The wording Dakyworld ships, so "put it back" needs no second call. */
+  /** The wording DakyXTech ships, so "put it back" needs no second call. */
   shipped: string;
   edited: boolean;
 }
@@ -2200,7 +2200,7 @@ export interface WriterJobStatus {
   job: string;
   label: string;
   what: string;
-  /** True when somebody outside Dakyworld reads it. */
+  /** True when somebody outside DakyXTech reads it. */
   outward: boolean;
   /** The file that composes the call, for anyone reading the server. */
   where: string;

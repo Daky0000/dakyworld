@@ -871,7 +871,7 @@ export async function publishPagesAsPullRequest(input: {
         branchOverride: branch,
       });
 
-      const prBody = input.body || `### Website Content Updates\n\n- **Target branch**: \`${input.site.repoBranch}\`\n- **Pages modified**: ${input.pages.map(p => `\`${p.page.path}\``).join(", ")}\n\nSubmitted via Dakyworld Website Editor.`;
+      const prBody = input.body || `### Website Content Updates\n\n- **Target branch**: \`${input.site.repoBranch}\`\n- **Pages modified**: ${input.pages.map(p => `\`${p.page.path}\``).join(", ")}\n\nSubmitted via DakyXTech Website Editor.`;
       const pr = await openPullRequest({
         repo,
         branch,
@@ -920,7 +920,7 @@ export function previewDocument(html: string, baseUrl: string, editable?: SiteFi
   const body = [...walk(parseHtml(out))].find(node => node.tag === "body");
   const at = body?.innerEnd ?? out.length;
   out = out.slice(0, at) + pickerAssets(nonce, allowEditing) + out.slice(at);
-  return { html: out, csp: policy + "; style-src-attr 'unsafe-inline'" };
+  return { html: out, csp: policy.replace("script-src 'self'", `script-src 'self' 'nonce-${nonce}'`) + "; style-src-attr 'unsafe-inline'" };
 }
 
 /**

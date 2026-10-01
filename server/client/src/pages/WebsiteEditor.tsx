@@ -14,6 +14,7 @@ import { WebsiteQuickStart } from "../components/WebsiteQuickStart";
 
 
 import { WebsiteImageFraming } from "../components/WebsiteImageFraming";
+import { ImagePositionControl } from "../components/ImagePositionControl";
 import { WebsitePresetPicker } from "../components/WebsiteBrandPresets";
 import type { BrandPreset } from "../lib/websiteBrandPresets";
 import { WebsiteAssetLibrary, WebsiteAssetPickerModal, type CapturedHtmlImage } from "../components/WebsiteAssetLibrary";
@@ -3311,6 +3312,37 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                                 </select>
                               </div>
 
+                              {/* Image / Container Background Position Control */}
+                              <ImagePositionControl
+                                value={isContainer ? (styleMap["background-position"] ?? computed["background-position"]) : (styleMap["object-position"] ?? computed["object-position"])}
+                                device={device}
+                                disabled={readOnly}
+                                onChange={(nextPos) => {
+                                  const nextMap = { ...styleMap };
+                                  if (isContainer) {
+                                    if (nextPos) nextMap["background-position"] = nextPos;
+                                    else delete nextMap["background-position"];
+                                  } else {
+                                    if (nextPos) nextMap["object-position"] = nextPos;
+                                    else delete nextMap["object-position"];
+                                  }
+                                  changePickedStyle(writeStyle(nextMap), true);
+                                  try {
+                                    const doc = frame.current?.contentDocument;
+                                    const targetEl = doc?.querySelector<HTMLElement>(`[data-dw-field="${CSS.escape(picked.id)}"]`);
+                                    if (targetEl) {
+                                      if (isContainer) targetEl.style.backgroundPosition = nextPos || "";
+                                      else {
+                                        targetEl.style.objectPosition = nextPos || "";
+                                        const innerImg = targetEl.querySelector<HTMLElement>("img, video");
+                                        if (innerImg) innerImg.style.objectPosition = nextPos || "";
+                                      }
+                                    }
+                                  } catch {}
+                                }}
+                                onCommit={() => commitHistory(edits)}
+                              />
+
                               {isIcon && (
                                 <div className="flex items-center justify-between gap-2 pt-1">
                                   <span className="text-[11px] font-medium text-ink-2">Image Address</span>
@@ -3471,13 +3503,41 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                           const bgUrlMatch = /url\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(rawBg);
                           const bgUrl = bgUrlMatch?.[1] ?? "";
                           const posVal = (styleMap.position ?? computed.position ?? "static").trim();
-                          const bgCol = styleMap["background-color"] ?? computed["background-color"] ?? "";
+                          const compoundBgColorMatch = styleMap.background ? /,\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|[a-zA-Z]+)\s*$/i.exec(styleMap.background) : null;
+                          const bgCol = styleMap["background-color"] ?? compoundBgColorMatch?.[1] ?? computed["background-color"] ?? "";
                           const txtCol = styleMap.color ?? computed.color ?? "";
                           const childFields = allFields.filter((f) => f.parentId === picked.id);
                           const updateProp = (prop: string, val: string) => {
                             const nextMap = { ...styleMap };
-                            if (val) nextMap[prop] = val;
-                            else delete nextMap[prop];
+                            if (prop === "background-color") {
+                              if (val) {
+                                nextMap["background-color"] = val;
+                                if (nextMap.background && /,\s*(?:#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|[a-zA-Z]+)\s*$/i.test(nextMap.background)) {
+                                  nextMap.background = nextMap.background.replace(/,\s*(?:#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|[a-zA-Z]+)\s*$/i, `, ${val}`);
+                                }
+                              } else {
+                                delete nextMap["background-color"];
+                                if (nextMap.background && /,\s*(?:#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|[a-zA-Z]+)\s*$/i.test(nextMap.background)) {
+                                  nextMap.background = nextMap.background.replace(/,\s*(?:#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|[a-zA-Z]+)\s*$/i, "");
+                                }
+                              }
+                            } else if (prop === "background-image") {
+                              if (val && val !== "none") {
+                                nextMap["background-image"] = val;
+                              } else {
+                                delete nextMap["background-image"];
+                                if (nextMap.background) {
+                                  const colorMatch = /,\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|[a-zA-Z]+)\s*$/i.exec(nextMap.background);
+                                  if (colorMatch?.[1]) {
+                                    nextMap["background-color"] = colorMatch[1];
+                                  }
+                                  delete nextMap.background;
+                                }
+                              }
+                            } else {
+                              if (val) nextMap[prop] = val;
+                              else delete nextMap[prop];
+                            }
                             changePickedStyle(writeStyle(nextMap), true);
                           };
                           return (
@@ -3552,13 +3612,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                                     value={bgUrl}
                                     onChange={(e) => {
                                       const v = e.target.value.trim();
-                                      const nextMap = { ...styleMap };
-                                      if (!v) {
-                                        delete nextMap["background-image"];
-                                      } else {
-                                        nextMap["background-image"] = `url('${v.replace(/['"\\]/g, "")}')`;
-                                      }
-                                      changePickedStyle(writeStyle(nextMap), true);
+                                      updateProp("background-image", v ? `url('${v.replace(/['"\\]/g, "")}')` : "");
                                     }}
                                     className="flex-1 rounded-lg border border-line bg-white px-2 py-1 font-mono text-[11px] text-ink outline-none focus:border-blue"
                                   />

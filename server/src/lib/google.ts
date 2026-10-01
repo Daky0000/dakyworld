@@ -194,7 +194,7 @@ export async function exchangeCode(code: string, origin: string): Promise<{ emai
   if (!tokens.refresh_token) {
     throw new GoogleError(
       400,
-      "Google didn't return a refresh token. Remove Dakyworld OS from your Google account's third-party access and connect again.",
+      "Google didn't return a refresh token. Remove DakyXTech OS from your Google account's third-party access and connect again.",
     );
   }
 

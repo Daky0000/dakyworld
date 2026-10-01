@@ -190,7 +190,7 @@ export function VerifyEmail() {
       {state === "failed" && <p className="text-muted">{message}</p>}
       {state !== "working" && (
         <a className="text-blue hover:underline" href="/">
-          Go to Dakyworld OS
+          Go to DakyXTech OS
         </a>
       )}
     </Shell>

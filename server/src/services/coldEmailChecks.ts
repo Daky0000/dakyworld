@@ -229,8 +229,8 @@ export function preSendCheck(input: PreSendInput): PreSendReport {
     "identified",
     "The sender is identified in the first two lines",
     firstEmail ? "BLOCK" : "WARN",
-    /dakyworld/i.test(firstLines),
-    /dakyworld/i.test(firstLines) ? "" : "Neither the sender nor Dakyworld is named before the observation.",
+    /dakyxtech|dakyworld/i.test(firstLines),
+    /dakyxtech|dakyworld/i.test(firstLines) ? "" : "Neither the sender nor DakyXTech is named before the observation.",
   );
 
   // 9. Exactly one main issue and one question.

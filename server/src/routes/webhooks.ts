@@ -53,6 +53,8 @@ const MAX_BODY = 128 * 1024;
  * origin to buy one form a response it can read.
  */
 const SITE_ORIGINS = new Set([
+  "https://dakyxtech.com",
+  "https://www.dakyxtech.com",
   "https://dakyworld.com",
   "https://www.dakyworld.com",
 ]);

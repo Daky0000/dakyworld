@@ -4,7 +4,7 @@ import { WEBSITE_TIER_PLANS, ensureWebsiteTierUsersAndPlans, tierLabels } from "
 import { PLAN_CURRENCIES, USD_PRICES, enabledPlanCurrencies, priceFor, type PlanCurrency } from "./websitePricing.js";
 
 /**
- * What Dakyworld sells that is not capacity, and who has to pay for it.
+ * What DakyXTech sells that is not capacity, and who has to pay for it.
  *
  * The three Website Builder tiers take their prices from `USD_PRICES` in
  * websitePricing.ts and nowhere else — a `Product` row is seeded from it, so
@@ -195,7 +195,7 @@ export async function publicCatalogue() {
   const products = await prisma.product.findMany({ where: { active: true }, orderBy: { sortOrder: "asc" } });
   const enabled = enabledPlanCurrencies();
   return {
-    includedWithRetainer: "Included at no extra cost with every Dakyworld retainer. 3-month promotional pricing reverts to standard price after month 3.",
+    includedWithRetainer: "Included at no extra cost with every DakyXTech retainer. 3-month promotional pricing reverts to standard price after month 3.",
     /** What the page may offer. One entry means no currency switch is shown. */
     currencies: enabled,
     /** Ghana is the home market, so cedis are what a page shows before it knows better. */

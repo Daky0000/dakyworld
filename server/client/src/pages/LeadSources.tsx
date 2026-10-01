@@ -138,7 +138,7 @@ export function LeadSources() {
         <div className="text-sm text-muted">Loading…</div>
       ) : !sources || sources.length === 0 ? (
         <EmptyState
-          message="No lead sources yet. Start from a template — the Google Maps one is set up for exactly the businesses Dakyworld sells to."
+          message="No lead sources yet. Start from a template — the Google Maps one is set up for exactly the businesses DakyXTech sells to."
           action={<Button onClick={() => setPicking(true)}>Add your first source</Button>}
         />
       ) : (

@@ -343,7 +343,7 @@ ensureSystemRoles()
     let stopLocalInvalidations: (() => void) | undefined;
     let stopBackground: (() => void | Promise<void>) | undefined;
     const server = app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Dakyworld OS API listening on http://0.0.0.0:${PORT}`);
+      console.log(`DakyXTech OS API listening on http://0.0.0.0:${PORT}`);
       console.log(hasBuiltClient ? "  → Serving the built client from client/dist" : "  → No client build found — API only");
       // Daily lead capture, monthly billing, and outbound email. Harmless with
       // nothing configured: it finds nothing due and goes back to sleep.

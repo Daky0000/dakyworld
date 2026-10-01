@@ -2,7 +2,7 @@
  * What can reasonably be changed about the selected element.
  *
  * The inspector used to answer a different question — which CSS properties does
- * Dakyworld know how to edit — and answered it identically for a heading, a
+ * DakyXTech know how to edit — and answered it identically for a heading, a
  * photograph and a flex row. This module is the model that replaces that: the
  * element's capabilities are derived once, from what the element actually is in
  * the rendered page, and every section of the panel is drawn or not drawn from
@@ -246,6 +246,9 @@ export const PROPERTY_OWNER: Record<string, SectionKey | SectionKey[]> = {
 
   "background-color": "background",
   "background-image": "background",
+  "background-size": "background",
+  "background-position": "background",
+  "background-repeat": "background",
 
   border: "border",
   "border-radius": "border",
@@ -456,6 +459,10 @@ export const BROWSER_DEFAULTS: Record<string, string[]> = {
   "letter-spacing": ["normal"],
   "background-color": ["rgba(0, 0, 0, 0)", "transparent"],
   "background-image": ["none"],
+  "background-position": ["0% 0%", "center", "center center", "initial"],
+  "background-size": ["auto", "auto auto", "initial"],
+  "background-repeat": ["repeat", "initial"],
+  "object-position": ["50% 50%", "center", "center center", "initial"],
   "border-radius": ["0px"],
   "box-shadow": ["none"],
   "text-shadow": ["none"],

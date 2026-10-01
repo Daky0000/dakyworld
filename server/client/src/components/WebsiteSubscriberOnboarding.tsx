@@ -188,7 +188,7 @@ export function WebsiteSubscriberOnboarding({
               <Badge tone="positive">{planBadge}</Badge>
             </div>
             <h1 className="font-display text-2xl font-bold tracking-[-.03em] text-ink sm:text-3xl">
-              Welcome to Dakyworld Website Builder
+              Welcome to DakyXTech Website Builder
             </h1>
             <p className="max-w-2xl text-sm leading-relaxed text-muted">
               Connect your website in under a minute, preview across devices, and seamlessly jump forward into our visual in-place editor with an interactive walkthrough.
@@ -363,7 +363,7 @@ export function WebsiteSubscriberOnboarding({
                   <span className="text-xl">🤝</span>
                 </div>
                 <h3 className="mt-3 font-display text-base font-bold text-ink">
-                  Dakyworld Concierge Setup Assistance
+                  DakyXTech Concierge Setup Assistance
                 </h3>
                 <p className="mt-1.5 text-xs leading-relaxed text-muted">
                   Would rather not configure DNS or repositories yourself? Our engineering team sets up your custom domain and initial pages.

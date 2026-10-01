@@ -9,7 +9,7 @@ import { subscriptionManagementLink } from "../lib/paystack.js";
 
 /**
  * What a customer can do about their own subscription and their own data,
- * without asking anybody at Dakyworld to do it for them.
+ * without asking anybody at DakyXTech to do it for them.
  *
  * Three things, and they are the three a paying customer is entitled to expect:
  * see what they are on, stop paying, and take their content with them or have

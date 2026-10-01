@@ -87,7 +87,7 @@ export function SharedMemoryPanel() {
           <p className="mt-1 max-w-2xl text-sm text-muted">
             Written once here and put in front of every agent, alongside whatever that one has worked out for itself. This is where a
             house rule goes — the thing you would otherwise have to tell each of them separately. An agent can add to it too, when it
-            concludes something about how Dakyworld works rather than about its own way of working.
+            concludes something about how DakyXTech works rather than about its own way of working.
           </p>
         </div>
         <Button size="sm" onClick={() => setWriting((open) => !open)}>

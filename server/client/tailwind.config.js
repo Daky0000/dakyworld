@@ -1,21 +1,21 @@
 /** @type {import('tailwindcss').Config} */
 
-/* The canonical Dakyworld palette — same values as the website's
+/* The canonical DakyXTech palette — same values as the website's
    assets/site.css and services/letterhead.ts. The admin UI is internal, but it
-   is still Dakyworld, so it draws from the one system.
+   is still DakyXTech, so it draws from the one system.
    The gold/bronze/ivory identity this replaced is dead; do not reintroduce it.
 
    Two layers live here, and the distinction matters:
 
    PRIMITIVES are the brand's own colours, fixed by
-   DAKYWORLD-BRAND-DESIGN-SYSTEM.md §03. They never change.
+   DAKYXTECH-BRAND-DESIGN-SYSTEM.md §03. They never change.
 
    SEMANTICS say what a colour is *for*. They exist because the design system
    defines a brand and not an operations tool: it has nothing to say about what
    colour a failed send is, so the pages invented one each time. That is how the
    UI ended up with twelve steps of Tailwind's stock amber, ten of its red and
    eight of its emerald — five hundred class names, no rule behind any of them,
-   and a palette that belonged to Tailwind rather than to Dakyworld. The status
+   and a palette that belonged to Tailwind rather than to DakyXTech. The status
    families below are the missing half of §03, mixed to sit with ink and blue:
    the reds lean cool, the ambers lean ochre rather than yellow, and `positive`
    is lime walked down towards ink rather than an unrelated emerald, so that

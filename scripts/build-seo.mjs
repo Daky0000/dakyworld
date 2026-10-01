@@ -26,7 +26,7 @@ import { articles } from "./build-articles.mjs";
 const ORIGIN = "https://dakyworld.com";
 const SHARE_IMAGE = `${ORIGIN}/assets/brand/og-share.png`;
 const SHARE_IMAGE_ALT =
-  "Dakyworld — your outsourced digital systems and automation team. Websites, automation and AI, integrations and training for growing businesses.";
+  "DakyXTech — your outsourced digital systems and automation team. Websites, automation and AI, integrations and training for growing businesses.";
 
 /**
  * Search-engine ownership verification. Both are the `content` value of the
@@ -57,8 +57,8 @@ const END = "<!-- END SEO -->";
  * could import them — if that file changes, change these.
  */
 const COMPANY = {
-  name: "Dakyworld",
-  legalName: "Dakyworld",
+  name: "DakyXTech",
+  legalName: "DakyXTech",
   email: "info@dakyworld.com",
   phone: "+233545950611",
   phoneDisplay: "+233 545 950 611",
@@ -161,7 +161,7 @@ export const PAGES = [
     priority: "0.8",
     changefreq: "monthly",
     breadcrumb: [["Products", "/products"]],
-    keywords: "Dakyworld products, business software Ghana, digital tools for business, Dakyworld Website Builder",
+    keywords: "DakyXTech products, business software Ghana, digital tools for business, DakyXTech Website Builder",
     schema: ["collection", "software"],
   },
   {
@@ -179,7 +179,7 @@ export const PAGES = [
     priority: "0.6",
     changefreq: "monthly",
     breadcrumb: [["Products", "/products"], ["Website Builder", "/website-builder"], ["Setup guide", "/website-builder-setup"]],
-    keywords: "website builder setup guide, connect GitHub repository, publish website changes, Dakyworld documentation",
+    keywords: "website builder setup guide, connect GitHub repository, publish website changes, DakyXTech documentation",
     schema: ["webpage"],
   },
   {
@@ -197,7 +197,7 @@ export const PAGES = [
     priority: "0.7",
     changefreq: "monthly",
     breadcrumb: [["How We Work", "/how-we-work"]],
-    keywords: "how Dakyworld works, digital project process, written scope and proposal, monthly partnership process",
+    keywords: "how DakyXTech works, digital project process, written scope and proposal, monthly partnership process",
     schema: ["webpage"],
   },
   {
@@ -206,7 +206,7 @@ export const PAGES = [
     priority: "0.7",
     changefreq: "monthly",
     breadcrumb: [["About", "/about"]],
-    keywords: "about Dakyworld, digital systems company Kumasi, Dan Kwame Ayipah, automation company Ghana",
+    keywords: "about DakyXTech, digital systems company Kumasi, Dan Kwame Ayipah, automation company Ghana",
     schema: ["about"],
   },
   {
@@ -224,7 +224,7 @@ export const PAGES = [
     priority: "0.8",
     changefreq: "monthly",
     breadcrumb: [["Contact", "/contact"]],
-    keywords: "contact Dakyworld, digital systems consultation Kumasi, hire automation partner Ghana, website enquiry",
+    keywords: "contact DakyXTech, digital systems consultation Kumasi, hire automation partner Ghana, website enquiry",
     schema: ["contact"],
   },
   {
@@ -377,10 +377,10 @@ const website = {
  * move this one too and re-run.
  */
 const WEBSITE_BUILDER = {
-  name: "Dakyworld Website Builder",
+  name: "DakyXTech Website Builder",
   path: "/website-builder",
   description:
-    "Edit your own website in place and publish when you are ready. Included at no extra cost on any Dakyworld monthly partnership.",
+    "Edit your own website in place and publish when you are ready. Included at no extra cost on any DakyXTech monthly partnership.",
   price: "36",
   setup: null,
 };
@@ -405,7 +405,7 @@ function schemaFor(page, title, description, faq) {
       graph.push({
         "@type": "OfferCatalog",
         "@id": `${url}#catalogue`,
-        name: "What Dakyworld does",
+        name: "What DakyXTech does",
         url,
         provider: { "@id": `${ORIGIN}/#organization` },
         itemListElement: SERVICE_CATALOGUE.map(([name, text], index) => ({

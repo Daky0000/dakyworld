@@ -199,7 +199,7 @@ interface FetchAttempt {
 /** A browser's own UA, for the second attempt at a host that refused ours. */
 const BROWSER_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
-const CRAWLER_UA = "DakyworldOS-SiteCheck/1.0 (+https://dakyworld.com)";
+const CRAWLER_UA = "DakyXTechOS-SiteCheck/1.0 (+https://dakyworld.com)";
 
 /** Node's error codes, grouped by what they actually tell us. */
 function classify(err: unknown): { failure: FetchFailure; detail: string } {

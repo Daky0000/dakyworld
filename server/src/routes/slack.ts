@@ -148,7 +148,7 @@ slackRouter.post("/actions", async (req, res, next) => {
           });
         }
         if (!view.id) return res.status(400).send("No modal id.");
-        res.json({ response_action: "update", view: decisionView("Saving your decision… If this does not update, check Approvals in Dakyworld OS before trying again.") });
+        res.json({ response_action: "update", view: decisionView("Saving your decision… If this does not update, check Approvals in DakyXTech OS before trying again.") });
         void (async () => {
           try {
             const outcome = await decline(requestId, { slackUserId: userId, note: `Declined in Slack by ${who}: ${reason.trim()}` });
@@ -182,7 +182,7 @@ slackRouter.post("/actions", async (req, res, next) => {
       }
 
       if (!view.id) return res.status(400).send("No modal id.");
-      res.json({ response_action: "update", view: decisionView("Saving your answer… If this does not update, check the task in Dakyworld OS before trying again.") });
+      res.json({ response_action: "update", view: decisionView("Saving your answer… If this does not update, check the task in DakyXTech OS before trying again.") });
       void (async () => {
         try {
           const outcome = await answerTask(taskId, typed, { slackUserId: userId, who: `${who} in Slack` });
@@ -230,9 +230,9 @@ slackRouter.post("/actions", async (req, res, next) => {
         // reason is the part that is lost, not the decision.
         await replyToInteraction(
           responseUrl ?? "",
-          openError ? `The dialog could not open: ${openError} Use the original card or Dakyworld OS to answer.` : declining
+          openError ? `The dialog could not open: ${openError} Use the original card or DakyXTech OS to answer.` : declining
             ? "Typing a reason here needs a bot token. Either add one under Settings → Alerts, or use the plain Decline button on this card and add the reason under Approvals."
-            : `Typing an answer here needs a bot token. Either add one under Settings → Alerts, or answer with \`/dakyworld answer ${action.value} your answer\`.`,
+            : `Typing an answer here needs a bot token. Either add one under Settings → Alerts, or answer with \`/dakyxtech answer ${action.value} your answer\`.`,
         ).catch(() => undefined);
       }
       return;
@@ -415,7 +415,7 @@ async function handleAction(
       case HIRE_ACTIONS.policyAuto: {
         await setHirePolicy("AUTO", `${ctx.who} in Slack`);
         await say(
-          "Hiring is now *automatic*. The Agent Creator's proposals are created as soon as it makes them, still at autonomy 1 with dry run on — nothing a new agent decides takes effect until you raise it. Every hire still lands here with an Undo on it. Say `/dakyworld hiring ask` to go back.",
+          "Hiring is now *automatic*. The Agent Creator's proposals are created as soon as it makes them, still at autonomy 1 with dry run on — nothing a new agent decides takes effect until you raise it. Every hire still lands here with an Undo on it. Say `/dakyxtech hiring ask` to go back.",
         );
         return;
       }
@@ -433,14 +433,14 @@ async function handleAction(
       return;
     }
     console.error("[slack] could not carry out that action:", (err as Error).message);
-    await say("The result could not be confirmed. Check the task or approval in Dakyworld OS before trying again.");
+    await say("The result could not be confirmed. Check the task or approval in DakyXTech OS before trying again.");
   }
 }
 
 // --- The slash command ------------------------------------------------------
 
 /**
- * `/dakyworld hiring` and friends.
+ * `/dakyxtech hiring` and friends.
  *
  * The standing policy has to be changeable somewhere other than a hiring card,
  * or it can only be changed while one is on the screen. Commands acknowledge
@@ -474,16 +474,16 @@ slackRouter.post("/commands", async (req, res, next) => {
       return await ephemeral(
         [
           "*What I answer:*",
-          "`/dakyworld ping` — prove this workspace can reach Dakyworld OS",
-          "`/dakyworld status` — what is waiting on you right now",
-          "`/dakyworld tasks` — agents that stopped and asked something",
-          "`/dakyworld answer <task id> <your answer>` — answer one of them, and it carries on",
-          "`/dakyworld approvals` — actions prepared and waiting on a decision",
-          "`/dakyworld hiring` — whether new agents are approved automatically or asked about first",
-          "`/dakyworld hiring auto` — hire without asking me (still autonomy 1, dry run on)",
-          "`/dakyworld hiring ask` — ask me first (the default)",
-          "`/dakyworld hires` — what is waiting on a hiring decision",
-          "`/dakyworld gaps` — crafts the agents say Dakyworld does not have",
+          "`/dakyxtech ping (or /dakyworld ping)` — prove this workspace can reach DakyXTech OS",
+          "`/dakyxtech status` — what is waiting on you right now",
+          "`/dakyxtech tasks` — agents that stopped and asked something",
+          "`/dakyxtech answer <task id> <your answer>` — answer one of them, and it carries on",
+          "`/dakyxtech approvals` — actions prepared and waiting on a decision",
+          "`/dakyxtech hiring` — whether new agents are approved automatically or asked about first",
+          "`/dakyxtech hiring auto` — hire without asking me (still autonomy 1, dry run on)",
+          "`/dakyxtech hiring ask` — ask me first (the default)",
+          "`/dakyxtech hires` — what is waiting on a hiring decision",
+          "`/dakyxtech gaps` — crafts the agents say DakyXTech does not have",
         ].join("\n"),
       );
     }
@@ -505,7 +505,7 @@ slackRouter.post("/commands", async (req, res, next) => {
       const health = await slackHealth();
       return await ephemeral(
         [
-          ":white_check_mark: *Slack can reach Dakyworld OS.* That proves the signing secret, the request URL and the app install all line up.",
+          ":white_check_mark: *Slack can reach DakyXTech OS.* That proves the signing secret, the request URL and the app install all line up.",
           health.outbound.ready
             ? `Outbound is configured — ${health.outbound.transport === "TOKEN" ? `bot token, default channel ${health.outbound.channel}` : "incoming webhook"}. Use the test message in Settings to verify delivery.`
             : ":warning: Posting *out* is not set up, so cards will not appear here. Settings → Alerts.",
@@ -550,7 +550,7 @@ slackRouter.post("/commands", async (req, res, next) => {
             [
               `• *${task.agent.name}* — ${task.blockedReason ?? task.title}`,
               task.options.length > 0 ? `   _Choices:_ ${task.options.join(" · ")}` : null,
-              `   \`/dakyworld answer ${task.id} your answer\``,
+              `   \`/dakyxtech answer ${task.id} your answer\``,
             ]
               .filter(Boolean)
               .join("\n"),
@@ -560,7 +560,7 @@ slackRouter.post("/commands", async (req, res, next) => {
     }
 
     /**
-     * `/dakyworld answer <task id> <words>`.
+     * `/dakyxtech answer <task id> <words>`.
      *
      * The road that works on every setup. A dialog needs a bot token and a
      * button needs Interactivity; this needs neither, so a workspace connected
@@ -577,7 +577,7 @@ slackRouter.post("/commands", async (req, res, next) => {
       const [taskId, ...words] = rest.split(/\s+/);
       const answer = rest.slice(taskId ? taskId.length : 0).trim();
       if (!taskId || words.length === 0 || !answer) {
-        return await ephemeral("Say which task and what to do — `/dakyworld answer <task id> <your answer>`. `/dakyworld tasks` lists them with their ids.");
+        return await ephemeral("Say which task and what to do — `/dakyxtech answer <task id> <your answer>`. `/dakyxtech tasks` lists them with their ids.");
       }
       try {
         const outcome = await answerTask(taskId, answer, { slackUserId: userId, who: `${who} in Slack` });
@@ -618,8 +618,8 @@ slackRouter.post("/commands", async (req, res, next) => {
       const waiting = (await listHireRequests("PENDING")).length;
       return await ephemeral(
         current === "AUTO"
-          ? `Hiring is *automatic* — the Agent Creator's proposals become agents immediately, at autonomy 1 with dry run on. \`/dakyworld hiring ask\` to change it.`
-          : `Hiring is *ask first*${waiting ? `, and ${waiting} proposal(s) are waiting on you` : ""}. \`/dakyworld hiring auto\` to change it.`,
+          ? `Hiring is *automatic* — the Agent Creator's proposals become agents immediately, at autonomy 1 with dry run on. \`/dakyxtech hiring ask\` to change it.`
+          : `Hiring is *ask first*${waiting ? `, and ${waiting} proposal(s) are waiting on you` : ""}. \`/dakyxtech hiring auto\` to change it.`,
       );
     }
 
@@ -643,7 +643,7 @@ slackRouter.post("/commands", async (req, res, next) => {
       );
     }
 
-    return await ephemeral(`I do not know “${topic}”. Try \`/dakyworld help\`.`);
+    return await ephemeral(`I do not know “${topic}”. Try \`/dakyxtech help\`.`);
   } catch (err) {
     if (res.headersSent) {
       console.error("[slack] command failed:", (err as Error).message);
@@ -665,5 +665,5 @@ function decisionView(text: string) {
 function decisionError(err: unknown): string {
   if (err instanceof AnswerRefused || err instanceof ApprovalRefused || err instanceof HireRefused) return err.message;
   console.error("[slack] decision failed:", err instanceof Error ? err.message : err);
-  return "The result could not be confirmed. Check the task or approval in Dakyworld OS before trying again.";
+  return "The result could not be confirmed. Check the task or approval in DakyXTech OS before trying again.";
 }

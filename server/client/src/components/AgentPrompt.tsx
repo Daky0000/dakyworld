@@ -622,7 +622,7 @@ function WriterBriefRow({
           {label}
         </button>
         {outward && (
-          <span className="font-sans text-[11px] uppercase tracking-[.06em] text-blue" title="Somebody outside Dakyworld reads this">
+          <span className="font-sans text-[11px] uppercase tracking-[.06em] text-blue" title="Somebody outside DakyXTech reads this">
             goes outside
           </span>
         )}

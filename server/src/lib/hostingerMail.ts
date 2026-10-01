@@ -87,7 +87,7 @@ export async function readHostingerConfig(): Promise<HostingerConfig | null> {
   // The address is what a recipient sees and the resource id is what the API
   // addresses; without both, a send would either be anonymous or unroutable.
   if (!token || !resourceId || !address) return null;
-  return { token, mailbox: { resourceId, address }, fromName: fromName ?? "Dakyworld" };
+  return { token, mailbox: { resourceId, address }, fromName: fromName ?? "DakyXTech" };
 }
 
 export async function hostingerConfigured(): Promise<boolean> {

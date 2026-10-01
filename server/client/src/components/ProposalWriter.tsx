@@ -392,7 +392,7 @@ function Review({
           <h4 className="mt-6 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Timeline</h4>
           <p className="mt-1 text-sm text-ink">{draft.timeline}</p>
 
-          <h4 className="mt-6 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Why Dakyworld</h4>
+          <h4 className="mt-6 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Why DakyXTech</h4>
           <p className="mt-1 text-sm text-ink">{draft.whyUs}</p>
 
           {draft.assumptions.length > 0 && (
@@ -425,7 +425,7 @@ function Review({
       <section>
         <SectionTitle>Before you save it</SectionTitle>
         <p className="mb-3 text-xs text-muted">
-          The writer may only quote prices Dakyworld publishes, so anything it couldn&rsquo;t price is left at zero. The number
+          The writer may only quote prices DakyXTech publishes, so anything it couldn&rsquo;t price is left at zero. The number
           that goes on the proposal is yours.
         </p>
         <div className="grid gap-4 sm:grid-cols-2">

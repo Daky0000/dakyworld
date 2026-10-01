@@ -84,7 +84,7 @@ export function ConnectGithubApp({
       {accessLostAt && (
         <p role="alert" className="mt-2 rounded-xl border border-warn-line bg-warn-surface px-3 py-2 text-sm text-warn-text">
           GitHub told us this installation no longer reaches {repoFullName ?? "this repository"}. The customer may have removed it from the
-          Dakyworld app. Publishing will not work until they add it back.
+          DakyXTech app. Publishing will not work until they add it back.
         </p>
       )}
 
@@ -105,7 +105,7 @@ export function ConnectGithubApp({
             <li>
               1.{" "}
               <a href={status.data.installUrl ?? "#"} target="_blank" rel="noreferrer" className="font-semibold text-blue underline-offset-2 hover:underline">
-                Send the customer to install the Dakyworld app
+                Send the customer to install the DakyXTech app
               </a>{" "}
               <span className="text-muted">— they choose “Only select repositories”.</span>
             </li>

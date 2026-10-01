@@ -2281,7 +2281,7 @@ function GooglePanel({
             </ol>
             <p className="border-t border-line px-4 py-3 text-xs text-muted">
               On first sign-in Google shows “Google hasn't verified this app” — that's expected for an unverified app asking for
-              read access to Drive. Choose <strong>Advanced → Go to Dakyworld OS</strong>.
+              read access to Drive. Choose <strong>Advanced → Go to DakyXTech OS</strong>.
             </p>
           </details>
         </>
@@ -3442,7 +3442,7 @@ function StoragePanel({ settings }: { settings: AppSettings }) {
             <input
               value={cloudName}
               onChange={(event) => setCloudName(event.target.value)}
-              placeholder={cloudinary.cloudName ?? "dakyworld"}
+              placeholder={cloudinary.cloudName ?? "dakyxtech"}
               className="input"
             />
           </Field>
@@ -3578,7 +3578,7 @@ function SlackHealthNote() {
           </p>
         ) : (
           <p>
-            No request from Slack has ever arrived here. Run <code className="font-mono">/dakyworld ping</code> in the channel — it proves
+            No request from Slack has ever arrived here. Run <code className="font-mono">/dakyxtech ping</code> in the channel — it proves
             the signing secret, the request URL and the app install in one go.
           </p>
         )}
@@ -3866,7 +3866,7 @@ function AlertsPanel({ settings }: { settings: AppSettings }) {
           <div className="sm:col-span-2 border-t border-line pt-4">
             <p className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Letting Slack answer back</p>
             <p className="mt-1 text-sm text-muted">
-              Needed for the Approve and Decline buttons on a hiring card, and for <code className="font-mono">/dakyworld</code>. Create a
+              Needed for the Approve and Decline buttons on a hiring card, and for <code className="font-mono">/dakyxtech</code>. Create a
               Slack app, switch on Interactivity with the request URL{" "}
               <code className="font-mono text-xs">{`${window.location.origin}/api/slack/actions`}</code>, add a slash command pointing at{" "}
               <code className="font-mono text-xs">{`${window.location.origin}/api/slack/commands`}</code>, and paste the signing secret from
@@ -3989,13 +3989,13 @@ function DeveloperPanel({ settings }: { settings: AppSettings }) {
             <input
               value={owner}
               onChange={(event) => setOwner(event.target.value)}
-              placeholder="dakyworld"
+              placeholder="dakyxtech"
               className="input"
             />
           </Field>
           <p className="text-xs text-muted sm:col-span-2">
             With a default owner set, a repository can be named <code className="font-mono">os</code> rather than{" "}
-            <code className="font-mono">dakyworld/os</code>.
+            <code className="font-mono">dakyxtech/os</code>.
           </p>
           <div className="sm:col-span-2">
             <Button type="submit" disabled={connect.isPending}>

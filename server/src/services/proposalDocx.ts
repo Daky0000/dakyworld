@@ -373,7 +373,7 @@ function tail(data: ProposalPdfData): Paragraph[] {
   const out: Paragraph[] = [para([text(doc.investment.basis, { size: 8.5, italics: true, color: MUTED })], { before: 5, after: 4 })];
 
   out.push(sectionHeading("Timeline"), para([text(doc.timeline, { size: 10, color: MUTED })]));
-  out.push(sectionHeading("Why Dakyworld"), para([text(doc.whyUs, { size: 10, color: MUTED })]));
+  out.push(sectionHeading("Why DakyXTech"), para([text(doc.whyUs, { size: 10, color: MUTED })]));
 
   if (doc.assumptions.length) {
     out.push(sectionHeading("What this assumes"));

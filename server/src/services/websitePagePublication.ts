@@ -173,7 +173,7 @@ export async function publishPageCommand(actor: WebsiteActor, input: {
             branch: string;
         } | null = null;
         if (isPR && repo && branchOverride) {
-            const prBody = `### Website Content Updates\n\n- **Page**: \`${page.path}\`\n- **Target Branch**: \`${site.repoBranch}\`\n- **Author**: ${author}\n\n### Summary of Changes\n${summary.map(s => `- **${s.label}** (${s.part}): \`${s.from}\` → \`${s.to}\``).join("\n")}\n\nSubmitted via Dakyworld Website Editor.`;
+            const prBody = `### Website Content Updates\n\n- **Page**: \`${page.path}\`\n- **Target Branch**: \`${site.repoBranch}\`\n- **Author**: ${author}\n\n### Summary of Changes\n${summary.map(s => `- **${s.label}** (${s.part}): \`${s.from}\` → \`${s.to}\``).join("\n")}\n\nSubmitted via DakyXTech Website Editor.`;
             const pr = await underSiteCredential(site, () => openPullRequest({
                 repo,
                 branch: branchOverride,

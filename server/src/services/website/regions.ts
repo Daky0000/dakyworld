@@ -600,7 +600,7 @@ function plain(html: string): string {
 function styleOf(element: ElementNode): Pick<SiteField, "style" | "styleSpan" | "attrInsert"> {
   const style = attrNode(element, "style");
   return {
-    style: style?.value,
+    style: style ? decodeEntities(style.value) : undefined,
     styleSpan: style ? { start: style.valueStart, end: style.valueEnd } : undefined,
     attrInsert: element.attrInsert,
   };
@@ -1226,26 +1226,97 @@ function attrEscape(value: string): string {
  * `expression(` because old IE ran it, and anything with a quote, angle bracket
  * or semicolon-escape in it because that is how you leave the attribute.
  */
+/**
+ * Splits a style string into declarations without breaking inside quotes,
+ * parentheses (e.g. url(...), data:image/svg+xml,...), or HTML entities (&quot;).
+ */
+export function splitDeclarations(style: string | undefined): string[] {
+  if (!style) return [];
+  const declarations: string[] = [];
+  let current = "";
+  let inDoubleQuote = false;
+  let inSingleQuote = false;
+  let parenDepth = 0;
+
+  for (let i = 0; i < style.length; i++) {
+    const char = style[i]!;
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      current += char;
+    } else if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      current += char;
+    } else if (char === '(' && !inDoubleQuote && !inSingleQuote) {
+      parenDepth++;
+      current += char;
+    } else if (char === ')' && !inDoubleQuote && !inSingleQuote) {
+      if (parenDepth > 0) parenDepth--;
+      current += char;
+    } else if (char === ';' && !inDoubleQuote && !inSingleQuote && parenDepth === 0) {
+      const entityMatch = /&[a-zA-Z0-9#]+$/.test(current);
+      if (entityMatch) {
+        current += char;
+      } else {
+        if (current.trim()) declarations.push(current.trim());
+        current = "";
+      }
+    } else {
+      current += char;
+    }
+  }
+  if (current.trim()) declarations.push(current.trim());
+  return declarations;
+}
+
 const STYLE_PROPERTY = /^(?:--[a-z0-9_-]{1,48}|[a-z-]{2,40})$/i;
 const STYLE_FORBIDDEN = /url\s*\(|expression\s*\(|javascript:|[<>"'`\\]/i;
-const SAFE_SITE_ASSET_BG = /^url\(\s*['"]?(?:\/[a-zA-Z0-9/._%-]+|data:image\/(?:png|jpeg|jpg|webp|gif|avif|svg\+xml);base64,[a-zA-Z0-9+/=]+|https?:\/\/(?:images\.unsplash\.com\/[a-zA-Z0-9/._?=&%-]+|[a-zA-Z0-9/._:-]+\.(?:jpg|jpeg|png|webp|gif|avif|svg)(?:\?[a-zA-Z0-9=&_%-]*)?))['"]?\s*\)$/i;
+function isSafeBackground(value: string): boolean {
+  if (/javascript:|expression\s*\(|<script/i.test(value)) return false;
+  const withoutUrls = value.replace(/url\(\s*(?:"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|([^)]*))\s*\)/gi, (token, d, s, u) => {
+    const raw = (d ?? s ?? u ?? "").trim();
+    if (/^(?:https?:|\/|data:image\/|#)/i.test(raw) && !/javascript:/i.test(raw)) {
+      return " url_token ";
+    }
+    return token;
+  });
+  const withoutGradients = withoutUrls.replace(/(?:linear|radial|conic|repeating-linear|repeating-radial)-gradient\([^)]*\)/gi, " gradient_token ");
+  return /^[\s,a-zA-Z0-9#()./%_-]+$/.test(withoutGradients);
+}
+
+function normalizeDeclaration(d: string): string {
+  const colon = d.indexOf(":");
+  if (colon < 1) return decodeEntities(d).replace(/\s+/g, " ").trim();
+  const prop = d.slice(0, colon).trim().toLowerCase();
+  const val = decodeEntities(d.slice(colon + 1)).replace(/\s+/g, " ").trim();
+  return `${prop}: ${val}`;
+}
 
 export function safeStyle(style: string, originalStyle = ""): string {
-  const original = new Set(originalStyle.split(";").map(part => part.trim()).filter(Boolean));
-  return style
-    .split(";")
+  const original = new Set(splitDeclarations(originalStyle).map(normalizeDeclaration).filter(Boolean));
+  return splitDeclarations(style)
     .map((declaration) => declaration.trim())
     .filter(Boolean)
     .filter((declaration) => {
+      const normalized = normalizeDeclaration(declaration);
+      if (original.has(normalized)) return true;
       const colon = declaration.indexOf(":");
       if (colon < 1) return false;
       const property = declaration.slice(0, colon).trim().toLowerCase();
       const value = declaration.slice(colon + 1).trim();
-      const isSafeAssetBg = (property === "background-image" || property === "background") && SAFE_SITE_ASSET_BG.test(value);
+      const isBg = (property === "background-image" || property === "background" || property === "background-color" || property === "background-position" || property === "background-size" || property === "background-repeat");
+      const isSafeAssetBg = isBg && isSafeBackground(value);
       // Preserve a developer's existing background URL or quoted CSS exactly
       // while editing other controls. Newly supplied fetching CSS stays forbidden
       // except for safe image assets (/assets/dw/, local / paths, data:image, or image extensions).
-      return original.has(declaration) || (validFramingDeclaration(property, value) && STYLE_PROPERTY.test(property) && value.length > 0 && value.length <= (isSafeAssetBg ? 2048 : 120) && (!STYLE_FORBIDDEN.test(declaration) || (property === "font-family" && /^[a-zA-Z0-9 ,\x22\x27-]+$/.test(value)) || isSafeAssetBg));
+      return (
+        validFramingDeclaration(property, value) &&
+        STYLE_PROPERTY.test(property) &&
+        value.length > 0 &&
+        value.length <= (isSafeAssetBg ? 500000 : 120) &&
+        (!STYLE_FORBIDDEN.test(declaration) ||
+          (property === "font-family" && /^[a-zA-Z0-9 ,\x22\x27-]+$/.test(value)) ||
+          isSafeAssetBg)
+      );
     })
     .join("; ");
 }

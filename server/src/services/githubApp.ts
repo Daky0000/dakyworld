@@ -55,7 +55,7 @@ const base64url = (value: Buffer | string) => Buffer.from(value).toString("base6
 async function appJwt(): Promise<string> {
   const id = await getSetting(SETTING.GITHUB_APP_ID);
   const key = (await getSetting(SETTING.GITHUB_APP_PRIVATE_KEY))?.replace(/\\n/g, "\n");
-  if (!id || !key) throw new GitHubError(503, "The Dakyworld GitHub App is not set up. Add its ID and private key under Settings → Developer.");
+  if (!id || !key) throw new GitHubError(503, "The DakyXTech GitHub App is not set up. Add its ID and private key under Settings → Developer.");
 
   const now = Math.floor(Date.now() / 1000);
   const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
@@ -99,7 +99,7 @@ export async function installationToken(installationId: string): Promise<string>
 
   if (response.status === 404) {
     tokens.delete(installationId);
-    throw new GitHubError(404, "That GitHub installation no longer exists. The customer may have removed the Dakyworld app; ask them to install it again.");
+    throw new GitHubError(404, "That GitHub installation no longer exists. The customer may have removed the DakyXTech app; ask them to install it again.");
   }
   if (!response.ok) {
     const body = await response.text().catch(() => "");

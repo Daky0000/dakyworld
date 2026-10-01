@@ -39,14 +39,14 @@ export function registerGithubAppRoutes(router: Router, access: Access) {
       // Said plainly rather than left as an empty screen: this is a thing
       // somebody has to go and create once, and the product should say so.
       note: configured
-        ? "Customers install the Dakyworld app on the repositories they choose. Their access can be narrowed or removed by them at any time."
-        : "The Dakyworld GitHub App has not been set up yet, so websites connect with the shared access token instead. Create the app on GitHub and add its ID, slug and private key under Settings → Developer.",
+        ? "Customers install the DakyXTech app on the repositories they choose. Their access can be narrowed or removed by them at any time."
+        : "The DakyXTech GitHub App has not been set up yet, so websites connect with the shared access token instead. Create the app on GitHub and add its ID, slug and private key under Settings → Developer.",
     });
   }));
 
   /** The repositories one installation actually reaches, to pick from. */
   router.get("/github-app/installations/:installationId/repositories", handler(async (req, res) => {
-    if (!(await githubAppConfigured())) throw new WebsiteError(503, "The Dakyworld GitHub App is not set up yet.");
+    if (!(await githubAppConfigured())) throw new WebsiteError(503, "The DakyXTech GitHub App is not set up yet.");
     const repositories = await installationRepositories(req.params.installationId);
     res.json({ repositories });
   }));
@@ -92,7 +92,7 @@ export function registerGithubAppRoutes(router: Router, access: Access) {
     if (!chosen) {
       throw new WebsiteError(
         400,
-        `That installation does not include the repository. Ask the customer to add it to the Dakyworld app's repository access — it currently reaches ${repositories.length} repositor${repositories.length === 1 ? "y" : "ies"}.`,
+        `That installation does not include the repository. Ask the customer to add it to the DakyXTech app's repository access — it currently reaches ${repositories.length} repositor${repositories.length === 1 ? "y" : "ies"}.`,
       );
     }
 

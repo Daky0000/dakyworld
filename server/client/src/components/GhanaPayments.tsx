@@ -295,7 +295,7 @@ export function HubtelPanel({ settings }: { settings: AppSettings }) {
               full
               hint="Up to 11 characters. An alphanumeric sender must be registered with Hubtel first, or messages fail one at a time. Leave blank to send from the merchant number."
             >
-              <input className="input" maxLength={11} value={sender} placeholder="Dakyworld" onChange={(event) => setSender(event.target.value)} />
+              <input className="input" maxLength={11} value={sender} placeholder="DakyXTech" onChange={(event) => setSender(event.target.value)} />
             </Field>
             <div className="sm:col-span-2">
               <Button disabled={connectSms.isPending || !smsId.trim() || !smsSecret.trim()} onClick={() => connectSms.mutate()}>

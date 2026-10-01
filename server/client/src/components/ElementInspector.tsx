@@ -11,6 +11,7 @@ import {
   type Device, type ElementFacts, type InspectorValue, type SectionKey,
 } from "../lib/elementInspector";
 import { IconImage, IconLink } from "./WebsiteIcons";
+import { ImagePositionControl } from "./ImagePositionControl";
 
 /**
  * One contextual inspector, in place of a layout panel and a style panel that
@@ -476,7 +477,13 @@ export function ElementInspector({
         {shown.has("image") && (
           <Section name="image" title={SECTION_TITLE.image} open={isOpen("image")} changed={sectionChanged("image")} onToggle={() => toggleSection("image")}>
             <Choice property="object-fit" label="Fit" options={["cover", "contain", "fill", "none", "scale-down"]} />
-            <Text property="object-position" label="Focal point" />
+            <ImagePositionControl
+              value={declarations["object-position"] ?? source.computed["object-position"]}
+              device={device}
+              disabled={disabled}
+              onChange={(nextPos) => set("object-position", nextPos)}
+              onCommit={onCommit}
+            />
           </Section>
         )}
 
@@ -1146,24 +1153,13 @@ export function ElementInspector({
                       </select>
                     </div>
 
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[11px] font-medium text-ink-2">Position</span>
-                      <select
-                        disabled={disabled}
-                        value={declarations["background-position"] ?? source.computed["background-position"] ?? "center"}
-                        onChange={(e) => {
-                          set("background-position", e.target.value);
-                          onCommit?.();
-                        }}
-                        className="h-7 w-36 rounded-lg border border-line bg-white px-2 text-[11px] font-medium text-ink outline-none focus:border-blue"
-                      >
-                        <option value="center">Center Center</option>
-                        <option value="top">Top Center</option>
-                        <option value="bottom">Bottom Center</option>
-                        <option value="left">Center Left</option>
-                        <option value="right">Center Right</option>
-                      </select>
-                    </div>
+                    <ImagePositionControl
+                      value={declarations["background-position"] ?? source.computed["background-position"]}
+                      device={device}
+                      disabled={disabled}
+                      onChange={(nextPos) => set("background-position", nextPos)}
+                      onCommit={onCommit}
+                    />
 
                     <div className="space-y-1">
                       <span className="block text-[10px] font-medium text-muted">Image Link / URL</span>

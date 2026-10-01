@@ -198,7 +198,7 @@ export async function checkStatus(clientReference: string): Promise<HubtelStatus
 /**
  * Sends one text message.
  *
- * The sender id matters more than it looks: an alphanumeric one ("Dakyworld")
+ * The sender id matters more than it looks: an alphanumeric one ("DakyXTech")
  * has to be registered with Hubtel before it will deliver, and an unregistered
  * one fails per-message rather than at setup. When none is configured the
  * merchant account number is used, which always works and looks like a number.
@@ -213,7 +213,7 @@ export async function sendSms(to: string, message: string): Promise<{ messageId:
   const recipient = toE164(to, await defaultCallingCode())?.e164 ?? normaliseGhanaNumber(to);
   if (!recipient) throw new HubtelError(`"${to}" is not a mobile number this can send to.`, 400);
 
-  const from = (await getSetting(SETTING.HUBTEL_SMS_SENDER)) || (await getSetting(SETTING.HUBTEL_MERCHANT_ID)) || "Dakyworld";
+  const from = (await getSetting(SETTING.HUBTEL_SMS_SENDER)) || (await getSetting(SETTING.HUBTEL_MERCHANT_ID)) || "DakyXTech";
   const data = await callJson<{ status?: number; messageId?: string; statusDescription?: string }>(`${SMS_BASE}/v1/messages/send`, auth, {
     method: "POST",
     body: { From: from.slice(0, 11), To: recipient, Content: message.slice(0, 1000) },

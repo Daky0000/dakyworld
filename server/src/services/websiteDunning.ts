@@ -109,9 +109,9 @@ export async function sendDunningNotice(purchaseId: string): Promise<void> {
   <p>${escapeHtml(notice.body)}</p>
   <p style="margin:26px 0"><a href="${updateUrl}" style="background:#1b2029;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;display:inline-block">Update payment details</a></p>
   <p>${escapeHtml(notice.closing)}</p>
-  <p>Dakyworld</p>
+  <p>DakyXTech</p>
 </div>`;
-  const text = `Hello ${first},\n\n${notice.body}\n\nUpdate payment details: ${updateUrl}\n\n${notice.closing}\n\nDakyworld`;
+  const text = `Hello ${first},\n\n${notice.body}\n\nUpdate payment details: ${updateUrl}\n\n${notice.closing}\n\nDakyXTech`;
 
   await sendMail({ to: purchase.email, toName: purchase.contactName, subject: notice.subject, html, text }).catch((error) =>
     console.error(`[dunning] could not write to ${purchase.email}:`, (error as Error).message),

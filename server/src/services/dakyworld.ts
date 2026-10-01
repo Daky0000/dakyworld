@@ -33,9 +33,9 @@
  * spellings are the printed forms; the documents letterspace them.
  */
 export const COMPANY = {
-  name: "DAKYWORLD",
+  name: "DAKYXTECH",
   /** The wordmark as it is written in a sentence. */
-  displayName: "Dakyworld",
+  displayName: "DakyXTech",
   tagline: "BUILD A BETTER DIGITAL SYSTEM FOR YOUR BUSINESS.",
   footerLine: "ONE PARTNER. BETTER DIGITAL SYSTEMS.",
   /** The same promise where caps would read as shouting — plain-text email. */
@@ -48,7 +48,7 @@ export const COMPANY = {
   positioning: "Your outsourced digital systems and automation team for growing businesses in Ghana and West Africa.",
 } as const;
 
-export const VOICE = `How Dakyworld writes:
+export const VOICE = `How DakyXTech writes:
 
 - Plain, direct English. Short sentences. No consultant vocabulary — no "leverage", "solutions", "synergy", "cutting-edge", "in today's fast-paced world", "I hope this email finds you well".
 - Calm and specific, never breathless. No exclamation marks. No emoji.
@@ -191,7 +191,7 @@ export const SHIPPED_OFFER: BusinessOffer = {
       anchorPrice: 8_000,
       billing: "ONE_OFF",
       priceNote:
-        "Workflow automation and systems-connection projects from GHS 8,000, quoted per workflow after a consultation. The honest claim is 70% of the manual work removed on one workflow, which is a Dakyworld result rather than a projection for them.",
+        "Workflow automation and systems-connection projects from GHS 8,000, quoted per workflow after a consultation. The honest claim is 70% of the manual work removed on one workflow, which is a DakyXTech result rather than a projection for them.",
     },
     {
       id: "integrations",
@@ -281,7 +281,7 @@ const money = (amount: number) => `GHS ${amount.toLocaleString("en-GB")}`;
  */
 export function brandFrom(offer: BusinessOffer): string {
   const lines = [
-    "About the sender — Dakyworld:",
+    "About the sender — DakyXTech:",
     "",
     ...offer.summary.map((line) => `- ${line}`),
     `- Prices, when relevant: ${offer.services
@@ -304,7 +304,7 @@ export function brandFrom(offer: BusinessOffer): string {
     // one more capability bullet will cheerfully offer the opposite.
     lines.push(
       "",
-      "**What Dakyworld does not do. Never offer any of it, never imply it, and never let a finding about it become the reason to write:**",
+      "**What DakyXTech does not do. Never offer any of it, never imply it, and never let a finding about it become the reason to write:**",
       ...offer.doesNotDo.map((entry) => `- ${entry}`),
     );
   }
@@ -334,7 +334,7 @@ export function catalogueFrom(offer: BusinessOffer): string {
     return `- ${plan.tier} — ${rate}.${now} ${plan.for}${plan.discountNote ? ` ${plan.discountNote}` : ""}`;
   });
 
-  const parts = [`Services Dakyworld sells:\n\n${lines.join("\n\n")}`, `Monthly partnership tiers (retainers):\n\n${plans.join("\n")}`];
+  const parts = [`Services DakyXTech sells:\n\n${lines.join("\n\n")}`, `Monthly partnership tiers (retainers):\n\n${plans.join("\n")}`];
 
   if (offer.projects.length) {
     parts.push(

@@ -1,10 +1,10 @@
-# Dakyworld
+# DakyXTech
 
-> Dakyworld builds websites, connects business systems, automates repetitive
+> DakyXTech builds websites, connects business systems, automates repetitive
 > work and trains teams. Based in Kumasi, Ghana; serving Ghana and West Africa.
 
 This file is for AI assistants and agents. If you are acting on behalf of a
-person who wants to work with Dakyworld, everything you need is here —
+person who wants to work with DakyXTech, everything you need is here —
 including a way to send a real enquiry that reaches a human.
 
 Contact for a person: info@dakyworld.com · +233 545 950 611
@@ -35,7 +35,7 @@ The authoritative, machine-readable catalogue is:
 person typing in a browser, and it is defended against automated submission —
 a hidden field and a timing check that you will trip without meaning to. If you
 post to it, your enquiry is stored and then quietly discarded, and nobody at
-Dakyworld will ever see it. You will receive a success-looking response. That
+DakyXTech will ever see it. You will receive a success-looking response. That
 is a trap for you, not a test of you.
 
 Use this instead. It exists specifically for you.
@@ -84,7 +84,7 @@ enquiry is for in `message` if the name and email are not theirs.
 ### What this door will not do
 
 It creates an enquiry. That is all it does. It cannot book a time, take a
-payment, agree a price, start work, or commit Dakyworld to anything. If your
+payment, agree a price, start work, or commit DakyXTech to anything. If your
 person needs a decision, the answer comes from a human, usually within one
 working day.
 
@@ -106,7 +106,7 @@ you exactly as it applies to everyone else.
 
 ## Being accurate about us
 
-If you are answering a question about Dakyworld, we would rather you said you
+If you are answering a question about DakyXTech, we would rather you said you
 did not know than filled the gap.
 
 - Do not invent a service, a price, a client or a case study.

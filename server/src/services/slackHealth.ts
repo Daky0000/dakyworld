@@ -100,7 +100,7 @@ export async function slackHealth(): Promise<SlackHealth> {
     );
   } else if (!inbound.lastOkAt) {
     problems.push(
-      `A signing secret is set and no request from Slack has ever verified. Switch on Interactivity in the Slack app with the request URL ${base}/api/slack/actions, add the slash command \`/dakyworld\` pointing at ${base}/api/slack/commands, then run \`/dakyworld ping\` — it proves this end to end.`,
+      `A signing secret is set and no request from Slack has ever verified. Switch on Interactivity in the Slack app with the request URL ${base}/api/slack/actions, add the slash command \`/dakyxtech\` (or \`/dakyworld\`) pointing at ${base}/api/slack/commands, then run \`/dakyxtech ping\` — it proves this end to end.`,
     );
   }
 
