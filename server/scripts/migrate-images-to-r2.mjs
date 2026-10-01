@@ -77,6 +77,7 @@ async function uploadLocalAssets() {
   ];
 
   let uploadedCount = 0;
+  const allUploadTasks = [];
   for (const { baseDir, prefix } of directoriesToScan) {
     const files = getAllFiles(baseDir);
     for (const filePath of files) {
@@ -84,23 +85,33 @@ async function uploadLocalAssets() {
       const key = `${prefix}/${rel}`;
       const ext = filePath.slice(filePath.lastIndexOf(".")).toLowerCase();
       const mime = MIMES[ext] || "application/octet-stream";
-
-      try {
-        const bytes = readFileSync(filePath);
-        await s3.send(
-          new PutObjectCommand({
-            Bucket: bucketName,
-            Key: key,
-            Body: bytes,
-            ContentType: mime,
-            CacheControl: "public, max-age=31536000, immutable",
-          }),
-        );
-        uploadedCount++;
-      } catch (err) {
-        console.error(`Local asset upload failed for ${key}:`, err.message);
-      }
+      allUploadTasks.push({ filePath, key, mime });
     }
+  }
+
+  let uploadedCount = 0;
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < allUploadTasks.length; i += BATCH_SIZE) {
+    const batch = allUploadTasks.slice(i, i + BATCH_SIZE);
+    await Promise.all(
+      batch.map(async ({ filePath, key, mime }) => {
+        try {
+          const bytes = readFileSync(filePath);
+          await s3.send(
+            new PutObjectCommand({
+              Bucket: bucketName,
+              Key: key,
+              Body: bytes,
+              ContentType: mime,
+              CacheControl: "public, max-age=31536000, immutable",
+            }),
+          );
+          uploadedCount++;
+        } catch (err) {
+          console.error(`Local asset upload failed for ${key}:`, err.message);
+        }
+      })
+    );
   }
   console.log(`Local assets uploaded: ${uploadedCount} file(s).`);
 }
@@ -176,23 +187,28 @@ async function migrateDatabaseImages() {
       console.log(`Found ${storedFiles.length} StoredFile blob(s) in PostgreSQL.`);
 
       let storedSuccess = 0;
-      for (let i = 0; i < storedFiles.length; i++) {
-        const file = storedFiles[i];
-        const key = `files/${file.id}-${file.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-        try {
-          await s3.send(
-            new PutObjectCommand({
-              Bucket: bucketName,
-              Key: key,
-              Body: file.data,
-              ContentType: file.contentType || "application/octet-stream",
-              CacheControl: "public, max-age=31536000, immutable",
-            }),
-          );
-          storedSuccess++;
-        } catch (err) {
-          console.error(`StoredFile ${file.id} upload failed:`, err.message);
-        }
+      const BATCH_SIZE = 15;
+      for (let i = 0; i < storedFiles.length; i += BATCH_SIZE) {
+        const batch = storedFiles.slice(i, i + BATCH_SIZE);
+        await Promise.all(
+          batch.map(async (file) => {
+            const key = `files/${file.id}-${file.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+            try {
+              await s3.send(
+                new PutObjectCommand({
+                  Bucket: bucketName,
+                  Key: key,
+                  Body: file.data,
+                  ContentType: file.contentType || "application/octet-stream",
+                  CacheControl: "public, max-age=31536000, immutable",
+                }),
+              );
+              storedSuccess++;
+            } catch (err) {
+              console.error(`StoredFile ${file.id} upload failed:`, err.message);
+            }
+          })
+        );
       }
       console.log(`Uploaded ${storedSuccess}/${storedFiles.length} StoredFiles to R2.`);
     } catch (err) {

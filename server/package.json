@@ -15,7 +15,7 @@
     "checks:types": "tsc --noEmit -p tsconfig.checks.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "migrate:r2": "node scripts/migrate-images-to-r2.mjs",
-    "start": "prisma migrate deploy && node scripts/migrate-images-to-r2.mjs && node dist/index.js",
+    "start": "prisma migrate deploy && node dist/index.js",
     "start:api": "node dist/index.js",
     "start:worker": "node dist/worker.js",
     "db:deploy": "prisma migrate deploy",
