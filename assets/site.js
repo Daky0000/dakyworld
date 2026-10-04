@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Dakyworld — site behaviour
+   DakyXTech — site behaviour
    Loaded by every page. Everything here degrades safely if an element
    is absent, so the same file can serve the home page and the legal pages.
    ========================================================================== */
@@ -12,11 +12,11 @@
     '<header class="site-header" id="siteHeader">',
     '  <div class="header-shell" id="headerShell">',
     '',
-    '    <a href="/" class="brand" aria-label="Dakyworld home">',
+    '    <a href="/" class="brand" aria-label="DakyXTech home">',
     '      <img',
     '        class="brand-logo"',
     '        src="/assets/brand/header-lockup-on-dark.png"',
-    '        alt="Dakyworld"',
+    '        alt="DakyXTech"',
     '        width="379"',
     '        height="68"',
     '        decoding="async"',
@@ -60,8 +60,8 @@
     '  <div class="wrap">',
     '    <div class="footer-grid">',
     '      <div>',
-    '        <a href="/" class="brand-footer" aria-label="Dakyworld home"><img src="/assets/brand/footer-lockup-on-dark.png" alt="Dakyworld" width="535" height="96" loading="lazy" decoding="async"></a>',
-    '        <p class="footer-blurb">Dakyworld is your outsourced digital systems and automation team for growing businesses in Ghana and West Africa. We build, connect and improve the systems that help businesses win customers and operate more efficiently.</p>',
+    '        <a href="/" class="brand-footer" aria-label="DakyXTech home"><img src="/assets/brand/footer-lockup-on-dark.png" alt="DakyXTech" width="535" height="96" loading="lazy" decoding="async"></a>',
+    '        <p class="footer-blurb">DakyXTech is your outsourced digital systems and automation team for growing businesses in Ghana and West Africa. We build, connect and improve the systems that help businesses win customers and operate more efficiently.</p>',
     '      </div>',
     '      <div>',
     '        <h3>Explore</h3>',
@@ -87,14 +87,14 @@
     '      <div>',
     '        <h3>Get in touch</h3>',
     '        <ul>',
-    '          <li><a href="mailto:info@dakyworld.com">info@dakyworld.com</a></li>',
+    '          <li><a href="mailto:info@dakyx.com">info@dakyx.com</a></li>',
     '          <li><a href="tel:+233545950611">+233 545 950 611</a></li>',
     '          <li>Kumasi, Ghana</li>',
     '        </ul>',
     '        <a href="/contact" class="footer-cta">Start a conversation <span aria-hidden="true">&#8599;</span></a>',
     '      </div>',
     '    </div>',
-    '    <div class="footer-bottom"><span>&copy; <span id="year">2026</span> Dakyworld &middot; All rights reserved</span><span>Kumasi &middot; Serving Ghana and West Africa</span><span>One partner. Better digital systems.</span></div>',
+    '    <div class="footer-bottom"><span>&copy; <span id="year">2026</span> DakyXTech &middot; All rights reserved</span><span>Kumasi &middot; Serving Ghana and West Africa</span><span>One partner. Better digital systems.</span></div>',
     '  </div>',
     '</footer>'
   ].join('\n');
@@ -380,7 +380,7 @@
 
   /* Forms.
 
-     The contact form posts to the intake endpoint on Dakyworld OS, which
+     The contact form posts to the intake endpoint on DakyXTech OS, which
      de-duplicates the enquiry against the pipeline, scores it and files it at
      QUALIFYING. See server/src/services/webhookIntake.ts.
 
@@ -457,7 +457,7 @@
         restore();
         say(
           status,
-          'That did not send — please email info@dakyworld.com or call ' +
+          'That did not send — please email info@dakyx.com or call ' +
           '+233 545 950 611 and we will reply the same day. Your message is ' +
           'still in the form above.'
         );
@@ -491,7 +491,7 @@
       if (!newsletter.reportValidity()) return;
       say(
         document.getElementById('newsletterStatus'),
-        'Sign-up is not live yet. Email info@dakyworld.com with “subscribe” and we will add you.'
+        'Sign-up is not live yet. Email info@dakyx.com with “subscribe” and we will add you.'
       );
       var button = newsletter.querySelector('button');
       if (button) settle(button, 'Not live yet');

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Dakyworld — Website Builder Modern Checkout (ChatGPT / Gemini Standard)
+   DakyXTech — Website Builder Modern Checkout (ChatGPT / Gemini Standard)
    ========================================================================== */
 (function () {
   'use strict';
@@ -360,7 +360,7 @@
     try { savedKey = sessionStorage.getItem('dakyworld.checkoutKey'); } catch (_) {}
     var polls = 0;
     function checkReturnedPayment() {
-      if (!savedKey) { note.textContent = 'Payment must be verified by Dakyworld. Contact support with your Paystack reference before paying again.'; return; }
+      if (!savedKey) { note.textContent = 'Payment must be verified by DakyXTech. Contact support with your Paystack reference before paying again.'; return; }
       fetch(API + '/website-payment-status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checkoutKey: savedKey }), signal: AbortSignal.timeout(15000) })
         .then(function (response) { if (!response.ok) throw new Error('pending'); return response.json(); })
         .then(function (body) {
@@ -650,7 +650,7 @@
           var msg = error.message || 'An unexpected error occurred.';
           var unavailable = /unauthor|not found|answered 404|answered 401|offline|fetch/i.test(msg);
           if (unavailable) {
-            setStatus('Online checkout is temporarily unavailable. Contact info@dakyworld.com or call +233 545 950 611 for direct setup.', 'error');
+            setStatus('Online checkout is temporarily unavailable. Contact info@dakyx.com or call +233 545 950 611 for direct setup.', 'error');
           } else {
             setStatus(msg, 'error');
           }

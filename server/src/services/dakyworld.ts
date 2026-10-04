@@ -41,7 +41,7 @@ export const COMPANY = {
   /** The same promise where caps would read as shouting — plain-text email. */
   promise: "One partner. Better digital systems.",
   location: "Kumasi, Ghana",
-  email: "info@dakyworld.com",
+  email: "info@dakyx.com",
   phone: "+233 545 950 611",
   web: "dakyworld.com",
   /** What the company is, in the one sentence the website leads its footer with. */

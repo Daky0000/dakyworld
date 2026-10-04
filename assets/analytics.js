@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Dakyworld — analytics
+   DakyXTech — analytics
 
    ONE THING TO FILL IN. Paste the GA4 Measurement ID between the quotes below
    and analytics starts working on every page. Leave it empty and this file does

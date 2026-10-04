@@ -59,7 +59,7 @@ const END = "<!-- END SEO -->";
 const COMPANY = {
   name: "DakyXTech",
   legalName: "DakyXTech",
-  email: "info@dakyworld.com",
+  email: "info@dakyx.com",
   phone: "+233545950611",
   phoneDisplay: "+233 545 950 611",
   locality: "Kumasi",

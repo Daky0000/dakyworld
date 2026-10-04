@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Dakyworld — cookie consent
+   DakyXTech — cookie consent
 
    The whole mechanism, in one file, with no third-party dependency. A consent
    platform is a script from someone else's server that reads every visitor

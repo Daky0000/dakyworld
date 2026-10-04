@@ -1,10 +1,10 @@
 /* ==========================================================================
-   Dakyworld — product prices, read from the system that owns them.
+   DakyXTech — product prices, read from the system that owns them.
 
    The number in the markup is real and correct at publish time, so this page
    is right with JavaScript switched off, right for a crawler, and right for
    anybody whose network drops this request. What this file adds is that a price
-   changed in Dakyworld OS reaches the public page without a deploy.
+   changed in DakyXTech OS reaches the public page without a deploy.
 
    The currency is the server's answer, not the visitor's choice. There is one
    price list, authored in dollars: the API looks up where the request comes
