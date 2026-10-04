@@ -8,7 +8,7 @@ Last verified: 2026-10-04.
 - Default and production branch: `main`
 - Marketing site: repository root, published with GitHub Pages
 - Internal OS: `server/`, deployed to Railway
-- GitHub Pages still uses `dakyworld.com` until `dakyx.com` DNS is available and verified.
+- GitHub Pages custom domain is `dakyx.com`.
 
 ## Railway production
 
@@ -18,7 +18,7 @@ Last verified: 2026-10-04.
 - PostgreSQL: `Postgres` (`9c52b82d-b813-4432-ba89-88969d3c1ad2`)
 - Region: `us-west2`
 - Source: `Daky0000/dakyworld`, branch `main`, root `/server`
-- Legacy production domain: `os.dakyworld.com`, port `8080`
+- Production domains: `os.dakyx.com` and legacy `os.dakyworld.com`, port `8080`
 - Object storage: Cloudflare R2; no Railway bucket
 - Redis: not provisioned
 - Dedicated worker: not provisioned
@@ -26,9 +26,9 @@ Last verified: 2026-10-04.
 
 Production PostgreSQL uses a persistent 5 GB volume. Its connection is private Railway networking. Secret values are intentionally omitted.
 
-## Domain blocker
+## Domain migration
 
-`dakyx.com` resolves through Hostinger nameservers, but the connected Hostinger API account reports that it does not own the domain. Do not replace the GitHub Pages `CNAME`, remove legacy DNS, or switch application origins until the correct Hostinger account is connected and the new hostnames pass HTTPS checks.
+`dakyx.com` uses Hostinger nameservers. The marketing apex points to GitHub Pages. Railway owns `os.dakyx.com`; its CNAME and ownership TXT record are present. Keep legacy domains and mail records during validation. Do not remove MX, SPF, DKIM, or DMARC records.
 
 ## Known security follow-up
 
