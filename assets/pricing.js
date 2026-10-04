@@ -20,7 +20,7 @@
 (function () {
   'use strict';
 
-  var SOURCE = 'https://os.dakyworld.com/api/public/products';
+  var SOURCE = 'https://os.dakyx.com/api/public/products';
 
   var slots = document.querySelectorAll('[data-dw-price]');
   // The checkout has no price slots of its own, but it must still learn the

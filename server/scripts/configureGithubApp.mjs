@@ -26,7 +26,7 @@ const flag = (name, fallback) => {
 
 const file = resolve(flag("file", "../.github-app.json"));
 const service = flag("service", "dakyworld");
-const webhookUrl = flag("webhook", process.env.GITHUB_APP_WEBHOOK_URL ?? "https://os.dakyworld.com/api/github/webhook");
+const webhookUrl = flag("webhook", process.env.GITHUB_APP_WEBHOOK_URL ?? "https://os.dakyx.com/api/github/webhook");
 const app = JSON.parse(readFileSync(file, "utf8"));
 
 for (const key of ["id", "slug", "privateKey", "webhookSecret"]) {

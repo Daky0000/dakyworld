@@ -120,5 +120,5 @@ function describeDropped(diagnostics: RunDiagnostics | null): string {
 }
 
 async function appUrl(): Promise<string> {
-  return ((await getSetting(SETTING.APP_URL)) ?? "https://os.dakyworld.com").replace(/\/$/, "");
+  return ((await getSetting(SETTING.APP_URL)) ?? "https://os.dakyx.com").replace(/\/$/, "");
 }

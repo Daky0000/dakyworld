@@ -4159,7 +4159,7 @@ function GeneralPanel({ settings }: { settings: AppSettings }) {
           <input
             value={appUrl}
             onChange={(event) => setAppUrl(event.target.value)}
-            placeholder="https://os.dakyworld.com"
+            placeholder="https://os.dakyx.com"
             disabled={settings.general.appUrlEnvManaged}
             className="input"
           />

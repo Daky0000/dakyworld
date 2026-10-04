@@ -23,7 +23,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { articles } from "./build-articles.mjs";
 
-const ORIGIN = "https://dakyworld.com";
+const ORIGIN = "https://dakyx.com";
 const SHARE_IMAGE = `${ORIGIN}/assets/brand/og-share.png`;
 const SHARE_IMAGE_ALT =
   "DakyXTech — your outsourced digital systems and automation team. Websites, automation and AI, integrations and training for growing businesses.";
@@ -568,11 +568,11 @@ const CSP = [
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self' data:",
   "img-src 'self' data: https://www.googletagmanager.com https://www.google-analytics.com",
-  // os.dakyworld.com serves the product prices this site prints. The number is
+  // os.dakyx.com serves the product prices this site prints. The number is
   // already in the markup and correct; the request only replaces it when the
   // office has moved it since the last publish. No credentials are sent, and
   // the endpoint is above the OS's session middleware, so none could be read.
-  "connect-src 'self' https://os.dakyworld.com https://www.google-analytics.com https://www.googletagmanager.com",
+  "connect-src 'self' https://os.dakyx.com https://www.google-analytics.com https://www.googletagmanager.com",
   "frame-src 'none'",
   "upgrade-insecure-requests",
 ].join("; ");

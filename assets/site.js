@@ -401,7 +401,7 @@
      - **It does not disable the button forever.** If the post fails the form
        has to be usable again.
   */
-  var INTAKE = 'https://os.dakyworld.com/api/webhooks/website-form';
+  var INTAKE = 'https://os.dakyx.com/api/webhooks/website-form';
 
   function settle(button, label, ms) {
     var original = button.innerHTML;

@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  var API = 'https://os.dakyworld.com/api/public';
+  var API = 'https://os.dakyx.com/api/public';
   // The checkout is its own page now. This script therefore runs in two
   // places and neither has everything: /checkout has the form and no dialog,
   // and the product pages have the purchase buttons and no form. Every lookup

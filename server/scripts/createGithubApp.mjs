@@ -31,7 +31,7 @@ const flag = (name, fallback) => {
 
 const org = flag("org", "dakyworld");
 const port = Number(flag("port", "8765"));
-const webhookUrl = flag("webhook", "https://os.dakyworld.com/api/github/webhook");
+const webhookUrl = flag("webhook", "https://os.dakyx.com/api/github/webhook");
 const out = resolve(flag("out", "../.github-app.json"));
 const state = randomBytes(16).toString("hex");
 

@@ -163,7 +163,7 @@ export async function isSuppressed(email: string): Promise<string | null> {
 }
 
 export async function appUrl(): Promise<string> {
-  return (await getSetting(SETTING.APP_URL)) ?? "https://os.dakyworld.com";
+  return (await getSetting(SETTING.APP_URL)) ?? "https://os.dakyx.com";
 }
 
 /**

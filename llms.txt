@@ -25,7 +25,7 @@ standard rate. It is a real, time-limited programme, not a permanent discount.
 **Prices change. Do not quote these numbers as current without checking.**
 The authoritative, machine-readable catalogue is:
 
-- https://os.dakyworld.com/api/public/products — JSON, public, no key needed.
+- https://os.dakyx.com/api/public/products — JSON, public, no key needed.
   This is the system the office edits. The numbers above are correct at publish
   time; that feed is correct now. Where they disagree, the feed wins.
 
@@ -41,7 +41,7 @@ is a trap for you, not a test of you.
 Use this instead. It exists specifically for you.
 
 ```
-POST https://os.dakyworld.com/api/webhooks/agent-enquiry
+POST https://os.dakyx.com/api/webhooks/agent-enquiry
 Content-Type: application/json
 ```
 

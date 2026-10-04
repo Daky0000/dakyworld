@@ -43,7 +43,7 @@ const server = http.createServer((req, res) => {
 
   // Proxy /api/public to live OS API (or local server on 4000)
   if (pathname.startsWith("/api/public")) {
-    const targetUrl = new URL(pathname + parsedUrl.search, "https://os.dakyworld.com");
+    const targetUrl = new URL(pathname + parsedUrl.search, "https://os.dakyx.com");
     const proxyReq = https.request(targetUrl, {
       method: req.method,
       headers: {
