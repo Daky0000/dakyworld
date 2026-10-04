@@ -4,9 +4,9 @@
 
 | Hostname | Owner | Status |
 | --- | --- | --- |
-| `dakyx.com` | GitHub Pages marketing site | DNS active; HTTPS certificate provisioning |
+| `dakyx.com` | GitHub Pages marketing site | Active over HTTPS |
 | `www.dakyx.com` | Alias to marketing site | DNS active; HTTPS certificate provisioning |
-| `os.dakyx.com` | Existing Railway OS service | Attached; HTTPS certificate provisioning |
+| `os.dakyx.com` | Existing Railway OS service | Active over HTTPS |
 | `app.dakyx.com` | Future customer workspace | Not built |
 | `editor.dakyx.com` | Future isolated editor | Boundary not safe yet |
 | `dakyworld.com` | Legacy hostname | Permanent redirect requested in Hostinger |

@@ -20,15 +20,18 @@ Last verified: 2026-10-04.
 - Source: `Daky0000/dakyworld`, branch `main`, root `/server`
 - Production domains: `os.dakyx.com` and legacy `os.dakyworld.com`, port `8080`
 - Object storage: Cloudflare R2; no Railway bucket
-- Redis: not provisioned
-- Dedicated worker: not provisioned
-- Staging: not provisioned
+- Redis: private `redis` service (`1b3eb748-be14-40f9-8f37-dd18780a8dd2`)
+- Dedicated worker: `worker` (`ad9ebe10-b5d3-4506-aac0-e6ac35c935e1`), no public domain
+- API role: existing `dakyworld` service with `SERVICE_ROLE=api`
+- Staging: isolated environment (`b8a2bf9e-c93e-4e39-a11a-0e6a81cf1ed8`) with separate API, worker, PostgreSQL, Redis, and volumes
 
 Production PostgreSQL uses a persistent 5 GB volume. Its connection is private Railway networking. Secret values are intentionally omitted.
 
+A readable custom-format PostgreSQL backup was created before the role split at `/var/lib/postgresql/data/dakyx-pre-migration-20261004.dump` on the production Postgres volume (320,944,680 bytes).
+
 ## Domain migration
 
-`dakyx.com` uses Hostinger nameservers. The marketing apex points to GitHub Pages. Railway owns `os.dakyx.com`; its CNAME and ownership TXT record are present. Keep legacy domains and mail records during validation. Do not remove MX, SPF, DKIM, or DMARC records.
+`dakyx.com` uses Hostinger nameservers. The marketing apex points to GitHub Pages. Railway owns `os.dakyx.com`; its CNAME, ownership record, and certificate are valid. Keep legacy domains and mail records during validation. Do not remove MX, SPF, DKIM, or DMARC records.
 
 ## Known security follow-up
 
