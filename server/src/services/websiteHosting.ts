@@ -78,6 +78,7 @@ function osHosts(): Set<string> {
   for (const value of [process.env.CLIENT_ORIGIN, process.env.APP_URL, process.env.RAILWAY_PUBLIC_DOMAIN]) {
     if (value) { try { hosts.push(new URL(value.includes("://") ? value : `https://${value}`).hostname); } catch { /* Invalid optional URL is not trusted. */ } }
   }
+  hosts.push("os.dakyx.com", "app.dakyx.com", "editor.dakyx.com", "os.dakyworld.com");
   if (process.env.NODE_ENV !== "production") hosts.push("localhost", "127.0.0.1");
   return new Set(hosts);
 }

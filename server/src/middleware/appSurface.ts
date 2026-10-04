@@ -11,7 +11,8 @@ export function appSurface(req?: Request): AppSurface {
     return value;
   }
   if (req) {
-    const host = (req.hostname || req.get("host") || "").toLowerCase().split(":")[0];
+    const rawHost = req.get("x-forwarded-host") || req.hostname || req.get("host") || "";
+    const host = rawHost.split(",")[0].trim().toLowerCase().split(":")[0];
     if (host === "editor.dakyx.com") return "editor";
     if (host === "app.dakyx.com") return "app";
   }

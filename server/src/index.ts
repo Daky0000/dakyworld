@@ -112,12 +112,28 @@ app.use(forceHttps);
 app.use("/api", (_req, res, next) => { res.set("Cache-Control", "private, no-store"); next(); });
 app.use(invalidateAfterWrite);
 
-// In production the client is served from this same origin, so nothing needs a
-// cross-origin grant at all and the safe answer is to issue none. Locally, Vite
-// on :5173 does. Handing out `credentials: true` against a default of
-// localhost:5173 on the live system would be a standing offer nobody needs.
-const CORS_ORIGIN = process.env.CLIENT_ORIGIN ?? (process.env.NODE_ENV === "production" ? null : "http://localhost:5173");
-if (CORS_ORIGIN) app.use(cors({ origin: CORS_ORIGIN, credentials: true, exposedHeaders: ["X-Next-Cursor"] }));
+const ALLOWED_ORIGINS = new Set([
+  "https://os.dakyx.com",
+  "https://app.dakyx.com",
+  "https://editor.dakyx.com",
+  "https://dakyx.com",
+  "https://www.dakyx.com",
+  "https://os.dakyworld.com",
+]);
+
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.has(origin)) return callback(null, true);
+    if (process.env.CLIENT_ORIGIN && origin === process.env.CLIENT_ORIGIN) return callback(null, true);
+    if (process.env.NODE_ENV !== "production" && (origin.includes("localhost") || origin.includes("127.0.0.1"))) {
+      return callback(null, true);
+    }
+    callback(null, false);
+  },
+  credentials: true,
+  exposedHeaders: ["X-Next-Cursor"],
+}));
 
 // Hosted customer websites, ahead of everything else this app does.
 //
@@ -132,7 +148,7 @@ if (CORS_ORIGIN) app.use(cors({ origin: CORS_ORIGIN, credentials: true, exposedH
 app.use(publicSiteHosting());
 
 app.use(securityHeaders);
-app.use((_req, res, next) => { res.set("X-DakyX-Surface", surface); next(); });
+app.use((req, res, next) => { res.set("X-DakyX-Surface", appSurface(req)); next(); });
 // Enforce the product boundary before public webhooks or authenticated routers.
 app.use(editorPublicSurfaceGate);
 
