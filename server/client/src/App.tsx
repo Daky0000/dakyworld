@@ -1,5 +1,5 @@
 import { lazy } from "react";
-import { Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { Guard, Landing } from "./components/Guard";
 const Dashboard = lazy(() => import("./pages/Dashboard").then((module) => ({ default: module.Dashboard })));
@@ -72,6 +72,36 @@ const FreelancerWorkspace = lazy(() => import("./pages/FreelancerWorkspace").the
  * the alternative is a page that renders and then fails one query at a time.
  */
 export default function App() {
+  const editorSurface = window.location.hostname === "editor.dakyx.com"
+    || import.meta.env.VITE_APP_SURFACE === "editor";
+  if (editorSurface) return (
+    <Routes>
+      <Route path="/review/:token" element={<ClientApprovalReview />} />
+      <Route element={<Layout />}>
+        <Route path="/" element={<Navigate to="/website/sites" replace />} />
+        <Route path="/website" element={<WebsiteGuard><WebsiteLayout /></WebsiteGuard>}>
+          <Route index element={<WebsiteOverview />} />
+          <Route path="sites" element={<Website />} />
+          <Route path="assets" element={<WebsiteAssets />} />
+          <Route path="compatibility" element={<WebsiteCompatibility />} />
+          <Route path="survey" element={<WebsiteSurvey />} />
+          <Route path="onboarding" element={<WebsiteGuard needs="view"><WebsiteOnboarding /></WebsiteGuard>} />
+          <Route path="ai" element={<Guard needs="website.manage"><WebsiteAI /></Guard>} />
+          <Route path="updates" element={<Guard needs="website.manage"><WebsiteUpdates /></Guard>} />
+          <Route path="team" element={<WebsiteTeam />} />
+          <Route path="audit" element={<WebsiteAudit />} />
+          <Route path="balance" element={<WebsiteBalance />} />
+          <Route path="settings" element={<WebsiteGuard needs="manage"><WebsiteSettings /></WebsiteGuard>} />
+          <Route path="source" element={<WebsiteGuard needs="source"><WebsiteSource /></WebsiteGuard>} />
+          <Route path="billing" element={<Guard needs="website.manage"><WebsiteBilling /></Guard>} />
+        </Route>
+        <Route path="/products/pricing" element={<Guard needs="website.view"><ProductPricing /></Guard>} />
+        <Route path="/website/pages/:pageId" element={<WebsiteGuard><ErrorBoundary label="website editor"><WebsiteEditor /></ErrorBoundary></WebsiteGuard>} />
+        <Route path="/website/pages/:pageId/source" element={<WebsiteGuard needs="source"><ErrorBoundary label="source editor"><WebsiteFrameworkEditor /></ErrorBoundary></WebsiteGuard>} />
+        <Route path="*" element={<Navigate to="/website/sites" replace />} />
+      </Route>
+    </Routes>
+  );
   return (
     <Routes>
       <Route path="/review/:token" element={<ClientApprovalReview />} />

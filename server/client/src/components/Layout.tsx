@@ -69,6 +69,8 @@ const navGroups: NavGroup[] = [
 
 
 export function Layout() {
+  const editorSurface = window.location.hostname === "editor.dakyx.com"
+    || import.meta.env.VITE_APP_SURFACE === "editor";
   const { user, can, logout } = useAuth();
   const websites = useWebsiteSites();
   const navigate = useNavigate();
@@ -79,7 +81,7 @@ export function Layout() {
   const mobileRef = useRef<HTMLElement>(null);
   const menuRef = useRef<HTMLButtonElement>(null);
   const [workspaceMode, setWorkspaceMode] = useWorkspaceMode(user?.external);
-  const client = user?.external === true || workspaceMode === "client";
+  const client = editorSurface || user?.external === true || workspaceMode === "client";
 
   const handleSetMode = (nextMode: "admin" | "client") => {
     setWorkspaceMode(nextMode);
@@ -137,7 +139,7 @@ export function Layout() {
       <div><strong>{client ? "DakyXTech" : "DakyXTech OS"}</strong><span>{client ? "Website studio" : "Business workspace"}</span></div>
       {mobile && <button type="button" onClick={() => setMobileOpen(false)} className="os-nav-close">Close</button>}
     </div>
-    {!user?.external && (
+    {!editorSurface && !user?.external && (
       <div className="px-3 pb-3">
         <div className="flex rounded-xl bg-[#161F2E] p-1 border border-[#354052]/60" role="group" aria-label="Workspace view mode">
           <button
@@ -204,7 +206,7 @@ export function Layout() {
         <div className="flex min-w-0 items-center gap-4">
           <button ref={menuRef} type="button" className="os-menu-button" aria-expanded={mobileOpen} onClick={() => setMobileOpen(true)}>Menu</button>
           <span className="os-workspace-label">{client ? "Client workspace" : "Workspace"}</span><span className="os-breadcrumb-divider">/</span><span className="truncate">{current?.label || "Detail"}</span>
-          {!user?.external && (
+          {!editorSurface && !user?.external && (
             <div className="ml-2 hidden sm:flex items-center gap-1 rounded-full border border-line bg-white/90 px-1.5 py-0.5 text-xs shadow-2xs">
               <button
                 type="button"
@@ -233,7 +235,7 @@ export function Layout() {
         </div>
       </header>
       <main id="workspace" tabIndex={-1} className="os-workspace"><Suspense fallback={<Loading rows={5} />}><Outlet /></Suspense></main>
-      <footer className="os-workspace-footer"><span>DakyXTech OS</span><span>{client ? "Your digital workspace" : "Built for considered work."}</span></footer>
+      <footer className="os-workspace-footer"><span>{editorSurface ? "DakyXTech Editor" : "DakyXTech OS"}</span><span>{client ? "Your digital workspace" : "Built for considered work."}</span></footer>
     </div>
   </div>;
 }

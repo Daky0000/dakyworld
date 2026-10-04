@@ -79,8 +79,10 @@ import { ensureDakyworldSite } from "./services/website/ensureSite.js";
 import { ensureWebsiteTierUsersAndPlans } from "./services/websiteTierPlans.js";
 import { publicSiteHosting } from "./services/websiteHosting.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { appSurface, editorPublicSurfaceGate } from "./middleware/appSurface.js";
 
 const app = express();
+const surface = appSurface();
 if (capacity.role === "worker") throw new Error("Use npm run start:worker for SERVICE_ROLE=worker");
 const PORT = Number(process.env.PORT ?? 4000);
 
@@ -130,6 +132,9 @@ if (CORS_ORIGIN) app.use(cors({ origin: CORS_ORIGIN, credentials: true, exposedH
 app.use(publicSiteHosting());
 
 app.use(securityHeaders);
+app.use((_req, res, next) => { res.set("X-DakyX-Surface", surface); next(); });
+// Enforce the product boundary before public webhooks or authenticated routers.
+app.use(editorPublicSurfaceGate);
 
 // Stripe webhook needs the raw request body for signature verification, so
 // it's mounted before the global express.json() parser below.
