@@ -8,6 +8,7 @@ import { startWebsiteWorkQueue } from "./websiteWorkQueue.js";
 import { deliverInvalidations } from "./cacheInvalidation.js";
 import { prisma } from "../lib/prisma.js";
 import { renewBackgroundOwnership, stopBackgroundOwnership } from "../lib/backgroundOwnership.js";
+import { appSurface } from "../middleware/appSurface.js";
 
 export let backgroundReady = false;
 export function startBackgroundRuntime() {
@@ -33,9 +34,14 @@ export function startBackgroundRuntime() {
       renewBackgroundOwnership();
       if (!owned) {
         owned = true;
-        startCostAlerts();
-        startScheduler();
-        void startWatcher().catch(() => console.error("Mailbox watcher failed to start"));
+        // The editor product owns publishing work only. Internal cost alerts,
+        // mailbox ingestion, lead retention, and the OS scheduler must never
+        // run in its failure domain.
+        if (appSurface() === "os") {
+          startCostAlerts();
+          startScheduler();
+          void startWatcher().catch(() => console.error("Mailbox watcher failed to start"));
+        }
         if (capacity.admission) stopQueue = startWebsiteWorkQueue();
         delivery = setInterval(() => { void deliverInvalidations().catch(() => undefined); }, 1000);
         backgroundReady = true;
@@ -58,7 +64,8 @@ export function startBackgroundRuntime() {
     stopBackgroundOwnership();
     clearInterval(timer); if (delivery) clearInterval(delivery);
     backgroundReady = false;
-    const results = await Promise.allSettled([stopScheduler(), stopWatcher(), Promise.resolve().then(() => stopQueue?.())]);
+    const osStops = appSurface() === "os" ? [stopScheduler(), stopWatcher()] : [];
+    const results = await Promise.allSettled([...osStops, Promise.resolve().then(() => stopQueue?.())]);
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
     if (failures.length) throw new AggregateError(failures.map(result => result.reason), "Background shutdown did not drain cleanly");
     // Leave the lease to expire, protecting against work still draining during shutdown.
