@@ -144,9 +144,10 @@ export function sanitizeValue(
   const next: FieldValue = {};
 
   // An icon's drawing is never typed. It is swapped whole, by `iconEdit`.
-  if (raw.value !== undefined && field.kind !== "container" && field.kind !== "icon") {
+  // Unsupported elements are read-only to preserve code and widget integrity.
+  if (raw.value !== undefined && field.kind !== "container" && field.kind !== "icon" && field.kind !== "unsupported") {
     const cleaned =
-      (field.kind === "richtext" || (field.content && field.tag !== "title" && field.tag !== "meta")) ? sanitizeRich(raw.value) : field.kind === "image" ? raw.value.trim() : sanitizePlain(raw.value);
+      (field.kind === "richtext" || (field.content && field.tag !== "title" && field.tag !== "meta")) ? sanitizeRich(raw.value) : (field.kind === "image" || field.kind === "background") ? raw.value.trim() : sanitizePlain(raw.value);
     if (cleaned !== field.value) next.value = cleaned;
   }
   if (raw.href !== undefined && raw.href.trim() !== (field.href ?? "")) next.href = raw.href.trim();
@@ -515,3 +516,16 @@ export function categoriseChanges(summaries: FieldChangeSummary[]): ChangeCatego
     seo: summaries.some((entry) => entry.id.startsWith("meta.")),
   };
 }
+
+export {
+  PROPERTY_INVENTORY,
+  getPropertyInventoryByCategory,
+  findPropertyControl,
+  auditPropertyInventory,
+  type PropertyCategory,
+  type TierRequirement,
+  type ViewportScope,
+  type PreviewAction,
+  type PropertyInventoryItem,
+} from "./propertyInventory.js";
+

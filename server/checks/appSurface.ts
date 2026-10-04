@@ -30,6 +30,14 @@ check("editor conceals invoices", statusFor("/api/invoices") === 404);
 check("editor conceals agents", statusFor("/api/agents") === 404);
 check("editor conceals settings", statusFor("/api/settings") === 404);
 
+process.env.APP_SURFACE = "app";
+check("app surface parses", appSurface() === "app");
+check("app permits products API", statusFor("/api/products") === 200);
+check("app permits authentication", statusFor("/api/auth/session") === 200);
+check("app conceals leads", statusFor("/api/leads") === 404);
+check("app conceals invoices", statusFor("/api/invoices") === 404);
+check("app conceals agents", statusFor("/api/agents") === 404);
+
 process.env.APP_SURFACE = "invalid";
 let invalidRejected = false;
 try { appSurface(); } catch { invalidRejected = true; }

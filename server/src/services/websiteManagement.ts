@@ -27,6 +27,8 @@ import { resolveEntitlement } from "./websiteEntitlement.js";
 import { autoPopulateSitePaletteFromHtml, extractColorsFromHtml } from "./website/pageColors.js";
 import { generateStarterSiteHtml, STARTER_TEMPLATES } from "./websiteSectionTemplates.js";
 import { prepareImportedHtml } from "./htmlCompiler.js";
+import { analyzeImportPackage, commitPackageToSite } from "./websitePackageImport.js";
+import { generatePagePrepublishReport, generateSitePrepublishReport } from "./websitePrepublishReport.js";
 
 const publicUrl = z.string().url().max(2000).refine(value => {
   const url = new URL(value);
@@ -108,7 +110,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
   router.get("/sites/:siteId/assets/:assetId/content", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
     const asset = await prisma.siteAsset.findFirst({ where: { id: req.params.assetId, siteId: site.id } });
-    if (!asset) throw new WebsiteError(404, "That image is not part of this site.");
+    if (!asset) throw new WebsiteError(404, "That asset is not part of this site.");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "private, no-store");
     if (asset.contentType === "image/svg+xml") res.setHeader("Content-Security-Policy", SVG_CONTENT_SECURITY_POLICY);
@@ -119,10 +121,26 @@ export function registerWebsiteManagement(router: Router, access: Access) {
         res.redirect(getR2PublicUrl(asset.repoPath));
         return;
       }
-      if (!asset.publishedAt) throw new WebsiteError(404, "That image is no longer available. Upload it again.");
+      if (!asset.publishedAt) throw new WebsiteError(404, "That asset is no longer available. Upload it again.");
       res.redirect(new URL(assetUrl(site, asset.repoPath), site.publicUrl).href);
       return;
     }
+    res.type(asset.contentType).send(asset.content);
+  }));
+
+  router.get("/sites/:siteId/raw/*", handler(async (req, res) => {
+    const site = await access.loadSite(req, req.params.siteId);
+    const rawPath = (req.params as Record<string, string>)[0];
+    if (!rawPath) throw new WebsiteError(400, "Missing asset path.");
+    const asset = await prisma.siteAsset.findFirst({
+      where: { siteId: site.id, repoPath: rawPath },
+    });
+    if (!asset || !asset.content) {
+      throw new WebsiteError(404, `Asset '${rawPath}' not found on this site.`);
+    }
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "private, no-store");
+    if (asset.contentType === "image/svg+xml") res.setHeader("Content-Security-Policy", SVG_CONTENT_SECURITY_POLICY);
     res.type(asset.contentType).send(asset.content);
   }));
   router.post("/sites/:siteId/assets", handler(async (req, res) => {
@@ -239,9 +257,11 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     const input = siteInput.extend({
       html: z.string().min(1).max(15_000_000).optional(),
       templateKey: z.string().max(60).optional(),
+      packageData: z.string().min(1).max(35_000_000).optional(),
+      packageFilename: z.string().max(200).optional(),
     }).parse(req.body);
     if (!!input.repoOwner !== !!input.repoName) throw new WebsiteError(400, "Enter both the repository owner and name.");
-    let { html, templateKey, ...data } = input;
+    let { html, templateKey, packageData, packageFilename, ...data } = input;
     if (html) {
       html = prepareImportedHtml(html);
     }
@@ -255,12 +275,19 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       if (data.repoOwner || data.repoName || data.clientId) throw new WebsiteError(403, "Connect a hosted website first. Attach your own GitHub installation from its settings.");
       owner = { clientId: purchase.clientId, userId: entitlement.userId, siteLimit: WEBSITE_TIER_PLANS[entitlement.tier].websiteLimit };
     }
-    if (html) {
+
+    let packageAnalysis = null;
+    if (packageData) {
+      await assertImportAllowance(req);
+      const buffer = Buffer.from(packageData, "base64");
+      packageAnalysis = await analyzeImportPackage({ buffer, filename: packageFilename || "package.zip" });
+    } else if (html) {
       await assertImportAllowance(req);
       importedWebsiteFields(html);
     }
+
     let finalHtml = html;
-    if (!finalHtml && (templateKey || !data.repoOwner)) {
+    if (!finalHtml && !packageAnalysis && (templateKey || !data.repoOwner)) {
       finalHtml = generateStarterSiteHtml({
         siteName: data.name,
         publicUrl: data.publicUrl,
@@ -281,9 +308,16 @@ export function registerWebsiteManagement(router: Router, access: Access) {
         ...(extractedColours.length ? { settings: { colours: extractedColours } } : {}),
         slug: `${data.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0,60) || "site"}-${randomUUID().slice(0,8)}`,
         ...(finalHtml ? { pages: { create: { title: data.name, path: "/", filePath: "index.html", sourceHtml: finalHtml } } } : {}),
-        auditEvents: { create: { kind: "SITE_CONNECTED", summary: `Connected ${data.name}${html ? " with an imported page" : finalHtml ? " with a starter template" : ""}`, ...actor(req), detail: { importedPage: Boolean(html), starterTemplate: templateKey || (!html && !data.repoOwner ? "business" : null) } } },
+        auditEvents: { create: { kind: "SITE_CONNECTED", summary: `Connected ${data.name}${packageAnalysis ? " with an imported package" : html ? " with an imported page" : finalHtml ? " with a starter template" : ""}`, ...actor(req), detail: { importedPage: Boolean(html), importedPackage: Boolean(packageAnalysis), starterTemplate: templateKey || (!html && !packageAnalysis && !data.repoOwner ? "business" : null) } } },
       }, include: { pages: { select: { id: true } } } });
     });
+
+    if (packageAnalysis) {
+      const packageResult = await commitPackageToSite({ req, siteId: site.id, analysis: packageAnalysis });
+      res.status(201).json({ id: site.id, pageId: packageResult.pages[0]?.id ?? null, package: packageResult });
+      return;
+    }
+
     if (html) {
       const capturedMedia = await captureHtmlImagesIntoMediaLibrary(req, site.id, html);
       if (capturedMedia.html !== html && site.pages[0]) await prisma.sitePage.update({ where: { id: site.pages[0].id }, data: { sourceHtml: capturedMedia.html } });
@@ -362,14 +396,42 @@ export function registerWebsiteManagement(router: Router, access: Access) {
   router.post("/sites/:siteId/import", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
     await assertImportAllowance(req, site.id);
-    const body = z.object({ title: z.string().trim().min(1).max(120), filePath: z.string().regex(/^[a-zA-Z0-9_/-]+\.html$/).max(200), path: z.string().regex(/^\/[a-zA-Z0-9_/-]*$/).max(200), html: z.string().min(1).max(15_000_000) }).parse(req.body);
+
+    // If a ZIP package is provided
+    if (req.body?.data && typeof req.body.data === "string" && (req.body.filename?.endsWith(".zip") || /^[A-Za-z0-9+/=]+$/.test(req.body.data.slice(0, 100)))) {
+      const buffer = Buffer.from(req.body.data, "base64");
+      const isZip = buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4B;
+      if (isZip) {
+        const analysis = await analyzeImportPackage({ buffer, filename: req.body.filename || "import.zip" });
+        const result = await commitPackageToSite({ req, siteId: site.id, analysis });
+        res.status(201).json(result);
+        return;
+      }
+    }
+
+    const body = z.object({
+      title: z.string().trim().min(1).max(120),
+      filePath: z.string().regex(/^[a-zA-Z0-9_/-]+\.(html|htm)$/i).max(200),
+      path: z.string().regex(/^\/[a-zA-Z0-9_/-]*$/).max(200),
+      html: z.string().min(1).max(15_000_000),
+    }).parse(req.body);
     const preparedHtml = prepareImportedHtml(body.html);
     const count = importedWebsiteFields(preparedHtml);
     const capturedMedia = await captureHtmlImagesIntoMediaLibrary(req, site.id, preparedHtml);
     const page = await prisma.$transaction(async tx => {
       if (await tx.sitePage.findFirst({ where: { siteId: site.id, OR: [{ filePath: body.filePath }, { path: body.path }] }, select: { id: true } })) throw new WebsiteError(409, "A page already uses that address or file path. Choose a different page address and file name.");
       const imported = await tx.sitePage.create({ data: { siteId: site.id, title: body.title, filePath: body.filePath, path: body.path, sourceHtml: capturedMedia.html } });
-      await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "PAGE_IMPORTED", summary: `Imported ${body.title}`, ...actor(req), detail: { pageId: imported.id, filePath: body.filePath, path: body.path, fields: count, capturedMediaCount: capturedMedia.capturedCount, capturedMediaBytes: capturedMedia.totalBytesAdded } } });
+      const versionCount = await tx.sitePageVersion.count({ where: { pageId: imported.id } });
+      await tx.sitePageVersion.create({
+        data: {
+          pageId: imported.id,
+          number: versionCount + 1,
+          html: capturedMedia.html,
+          values: { initialImport: true, filePath: body.filePath, fields: count },
+          publishedById: req.dbUser?.id ?? null,
+        },
+      });
+      await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "PAGE_IMPORTED", summary: `Imported ${body.title}`, ...actor(req), detail: { pageId: imported.id, filePath: body.filePath, path: body.path, fields: count, capturedMediaCount: capturedMedia.capturedCount, capturedMediaBytes: capturedMedia.totalBytesAdded, captureDetails: capturedMedia.details } } });
       return imported;
     }).catch(error => {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw new WebsiteError(409, "A page already uses that address or file path. Choose a different page address and file name.");
@@ -379,6 +441,59 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     await recordImportUsed(req);
     const { html: _html, ...captureSummary } = capturedMedia;
     res.status(201).json({ id: page.id, fields: count, capturedMedia: captureSummary, palette: extractedPalette });
+  }));
+
+  router.post("/sites/:siteId/import-package", handler(async (req, res) => {
+    const site = await access.loadSite(req, req.params.siteId);
+    await assertImportAllowance(req, site.id);
+    const input = z.object({
+      filename: z.string().max(200).default("package.zip"),
+      data: z.string().min(1).max(35_000_000), // base64 package
+    }).parse(req.body);
+    const buffer = Buffer.from(input.data, "base64");
+    const analysis = await analyzeImportPackage({ buffer, filename: input.filename });
+    const result = await commitPackageToSite({ req, siteId: site.id, analysis });
+    res.status(201).json(result);
+  }));
+
+  router.get("/pages/:pageId/prepublish-report", handler(async (req, res) => {
+    const { page, site } = await access.loadPage(req, req.params.pageId);
+    const source = await pageSource(site, page, { fresh: true });
+    const values = (page.draft ?? {}) as Record<string, import("./website/index.js").FieldValue>;
+    const plan = buildPublishPlan({ source: source.html, values });
+    const candidateHtml = plan.html ?? source.html;
+    const currentSettings = (site.settings && typeof site.settings === "object" ? site.settings : {}) as Record<string, any>;
+    const ackList = (currentSettings.acknowledgedPublishLimits ?? []) as string[];
+    const report = await generatePagePrepublishReport({
+      site,
+      page,
+      candidateHtml,
+      draftValues: values,
+      acknowledgedLimits: new Set(ackList),
+    });
+    res.json(report);
+  }));
+
+  router.get("/sites/:siteId/prepublish-report", handler(async (req, res) => {
+    const site = await access.loadSite(req, req.params.siteId);
+    const currentSettings = (site.settings && typeof site.settings === "object" ? site.settings : {}) as Record<string, any>;
+    const ackList = (currentSettings.acknowledgedPublishLimits ?? []) as string[];
+    const report = await generateSitePrepublishReport(site.id, ackList);
+    res.json(report);
+  }));
+
+  router.post("/sites/:siteId/acknowledge-publish-limits", handler(async (req, res) => {
+    const site = await access.loadSite(req, req.params.siteId);
+    const input = z.object({ riskIds: z.array(z.string().min(1)).max(100) }).parse(req.body);
+    const currentSettings = (site.settings && typeof site.settings === "object" ? site.settings : {}) as Record<string, any>;
+    const existingAcks = new Set<string>(currentSettings.acknowledgedPublishLimits || []);
+    for (const id of input.riskIds) existingAcks.add(id);
+    const updatedList = Array.from(existingAcks);
+    await prisma.site.update({
+      where: { id: site.id },
+      data: { settings: { ...currentSettings, acknowledgedPublishLimits: updatedList } },
+    });
+    res.json({ acknowledged: updatedList });
   }));
 
   router.get("/pages/:pageId/review", handler(async (req, res) => {
@@ -403,8 +518,18 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       draftValues: values,
     });
 
-    const isPublishable = plan.publishable && guard.canPublish;
-    const finalReason = !guard.canPublish ? guard.summary : plan.reason;
+    const currentSettings = (site.settings && typeof site.settings === "object" ? site.settings : {}) as Record<string, any>;
+    const ackList = (currentSettings.acknowledgedPublishLimits ?? []) as string[];
+    const prepublishReport = await generatePagePrepublishReport({
+      site,
+      page,
+      candidateHtml,
+      draftValues: values,
+      acknowledgedLimits: ackList,
+    });
+
+    const isPublishable = plan.publishable && guard.canPublish && prepublishReport.canPublish;
+    const finalReason = !guard.canPublish ? guard.summary : !prepublishReport.canPublish ? "Acknowledge or resolve prepublish risks before publishing." : plan.reason;
 
     res.json({
       revision: page.draftRevision,
@@ -417,6 +542,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       missing: plan.missing,
       guard,
       visualRegression,
+      prepublishReport,
     });
   }));
 

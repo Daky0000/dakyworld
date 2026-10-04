@@ -165,17 +165,18 @@ async function readPageSource(site: Site, page: SitePage, options: { fresh?: boo
       writeCache(key, { html, from: "repository" }, generation);
       return source;
     }
-    // A configured repository that does not have the file is worth saying out
-    // loud rather than silently falling back to a live page that might be a
-    // cached copy of something already deleted.
+  }
+
+  try {
+    const live: PageSource = { html: await fetchLive(pageUrl(site, page)), from: "live site" };
+    writeCache(key, { html: live.html, from: "live site" }, generation);
+    return live;
+  } catch (liveErr) {
     throw new WebsiteError(
       404,
-      `${repoFilePath(site, page)} is not in ${repo} on branch ${site.repoBranch}. It may have been renamed — remove the page here, or rescan the site.`,
+      `${repoFilePath(site, page)} could not be read from ${repo || "repository"} or live site (${pageUrl(site, page)}): ${(liveErr as Error).message}`,
     );
   }
-  const live: PageSource = { html: await fetchLive(pageUrl(site, page)), from: "live site" };
-  writeCache(key, { html: live.html, from: "live site" }, generation);
-  return live;
 }
 
 /**
@@ -1051,8 +1052,20 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
     post({ type: "editing", id: null });
   }
 
+  document.addEventListener("submit", function (event) {
+    event.preventDefault();
+    event.stopPropagation();
+    post({ type: "inert_action", kind: "form_submission", target: (event.target && event.target.tagName) || "FORM" });
+    return false;
+  }, true);
+
   document.addEventListener("click", function (event) {
+    var a = event.target && event.target.closest ? event.target.closest("a") : null;
     var el = event.target && event.target.closest ? event.target.closest("[data-dw-field]") : null;
+    // Keep links inert while in editor preview so clicks don't unload the iframe
+    if (a && !editing) {
+      event.preventDefault();
+    }
     // While typing, a click inside the same element is the caret being placed.
     if (editing && el === editing) return;
     // A click on nothing in particular clears the selection rather than
@@ -1247,10 +1260,27 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
       post({ type: "applied", id: data.id, want: "variant" });
     }
   });
+  function auditScriptDriven() {
+    var nodes = document.querySelectorAll("script, [onclick], [onload], [onsubmit], [onchange]");
+    var items = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      n.setAttribute("data-dw-script-driven", "true");
+      items.push({
+        tag: n.tagName.toLowerCase(),
+        type: n.tagName.toLowerCase() === "script" ? "script_tag" : "event_handler"
+      });
+    }
+    if (items.length > 0) {
+      post({ type: "script_driven_detected", count: items.length, items: items.slice(0, 50) });
+    }
+  }
+
   // Announced after the listener above exists, and again on load, because an
   // editor that pushed before this point would have pushed into nothing.
+  auditScriptDriven();
   post({ type: "ready" });
-  if (document.readyState !== "complete") window.addEventListener("load", function () { post({ type: "ready" }); });
+  if (document.readyState !== "complete") window.addEventListener("load", function () { auditScriptDriven(); post({ type: "ready" }); });
 })();
 </script>`;
 }

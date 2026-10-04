@@ -195,6 +195,19 @@ export async function postForBlob(path: string, body: unknown): Promise<Blob> {
   return result;
 }
 
+export function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const res = reader.result as string;
+      const base64 = res.includes(",") ? res.split(",")[1] : res;
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 export const api = {
   page: <T>(path: string, signal?: AbortSignal) => request<{ items: T[]; nextCursor: string | null }>(path, { signal }, true),
   get: <T>(path: string, signal?: AbortSignal) => request<T>(path, { signal }),
@@ -203,3 +216,4 @@ export const api = {
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: "PATCH", body: body ? JSON.stringify(body) : undefined }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 };
+

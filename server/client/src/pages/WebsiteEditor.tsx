@@ -1315,19 +1315,22 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const [frameCapturedImages, setFrameCapturedImages] = useState<CapturedHtmlImage[]>([]);
   const [assetTargetMode, setAssetTargetMode] = useState<"image" | "background">("image");
 
-  // Automatically switch to 'layout' tab when a container is clicked (since containers only have Layout & Style tabs)
+  // Maintain valid active tab as selection changes between containers, elements, and page-level
   useEffect(() => {
     const pickedField = pickedId ? allFields.find((f) => f.id === pickedId) ?? null : null;
     if (!pickedField) {
-      if (inspectorTab === "layout" || inspectorTab === "style" || inspectorTab === "interactions") {
+      const allowed: Array<typeof inspectorTab> = ["content", "theme", "seo"];
+      if (!allowed.includes(inspectorTab)) {
         setInspectorTab("content");
       }
     } else if (pickedField.kind === "container") {
-      if (inspectorTab !== "layout" && inspectorTab !== "style") {
+      const allowed: Array<typeof inspectorTab> = ["layout", "style", "interactions"];
+      if (!allowed.includes(inspectorTab)) {
         setInspectorTab("layout");
       }
     } else {
-      if (inspectorTab === "layout" || inspectorTab === "seo" || inspectorTab === "theme") {
+      const allowed: Array<typeof inspectorTab> = ["content", "style", "interactions"];
+      if (!allowed.includes(inspectorTab)) {
         setInspectorTab("content");
       }
     }
@@ -1812,7 +1815,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
   return (
     <div className={`website-editor editor-${editorTheme} flex h-full min-h-0 flex-col`}>
-      {reviewOpen && <PublishReview pageId={pageId} pending={publish.isPending} onClose={() => setReviewOpen(false)} onConfirm={review => publish.mutate(review)} />}
+      {reviewOpen && <PublishReview pageId={pageId} siteId={site.id} pending={publish.isPending} onClose={() => setReviewOpen(false)} onConfirm={review => publish.mutate(review)} />}
       {showAI && canEdit && <WebsiteAssistant pageId={pageId} selectedFieldId={pickedId} fieldLabel={picked?.label} values={edits} onClose={() => setShowAI(false)} onApply={async (values, structuralActions) => {
         if (structuralActions && structuralActions.length > 0) {
           for (const action of structuralActions) {
@@ -2832,7 +2835,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               {(!picked
                 ? (["content", "theme", "seo"] as const)
                 : picked.kind === "container"
-                  ? (["layout", "style"] as const)
+                  ? (["layout", "style", "interactions"] as const)
                   : (["content", "style", "interactions"] as const)
               ).map((tab) => {
                 const locked =
@@ -2845,7 +2848,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     aria-selected={inspectorTab === tab}
                     key={tab}
                     onClick={() => setInspectorTab(tab)}
-                    title={locked ? `Requires Pro ($10 ($16)/mo) or Business ($25 ($45)/mo) tier` : undefined}
+                    title={locked ? "Requires Pro or Business tier plan" : undefined}
                   >
                     {tab === "seo" ? (
                       locked ? (
@@ -2882,18 +2885,18 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
                     <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-amber-400">
                       <IconLock size={13} />
-                      <span>Feature Locked on {tierStatus.tierName} ({tierStatus.pricing?.priceDisplay ?? ""}/mo)</span>
+                      <span>Feature Locked on {tierStatus.tierName}{tierStatus.pricing?.priceDisplay ? ` (${tierStatus.pricing.priceDisplay}/mo)` : ""}</span>
                     </div>
                     <p className="mt-1.5 text-xs leading-relaxed text-ink">
                       The <strong>SEO Inspector &amp; Alt-Text Auto-Fixer</strong> is available starting on the{" "}
-                      <strong>Pro ($10 ($16)/mo)</strong> and <strong>Business ($25 ($45)/mo)</strong> plans.
+                      <strong>Pro</strong> and <strong>Business</strong> plans.
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Button size="sm" onClick={() => void switchTestUser("pro@dakyworld.test")}>
-                        Test as Pro User ($10 ($16)/mo)
+                        Test as Pro User
                       </Button>
                       <Button size="sm" variant="secondary" onClick={() => void switchTestUser("business@dakyworld.test")}>
-                        Test as Business User ($25 ($45)/mo)
+                        Test as Business User
                       </Button>
                     </div>
                   </div>
@@ -2903,18 +2906,18 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
                     <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-amber-400">
                       <IconLock size={13} />
-                      <span>Feature Locked on {tierStatus.tierName} ({tierStatus.pricing?.priceDisplay ?? ""}/mo)</span>
+                      <span>Feature Locked on {tierStatus.tierName}{tierStatus.pricing?.priceDisplay ? ` (${tierStatus.pricing.priceDisplay}/mo)` : ""}</span>
                     </div>
                     <p className="mt-1.5 text-xs leading-relaxed text-ink">
                       The <strong>Global Theme Color Palette &amp; Page Surface Controls</strong> are unlocked on{" "}
-                      <strong>Pro ($10 ($16)/mo)</strong> and <strong>Business ($25 ($45)/mo)</strong>.
+                      <strong>Pro</strong> and <strong>Business</strong> plans.
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Button size="sm" onClick={() => void switchTestUser("pro@dakyworld.test")}>
-                        Test as Pro User ($10 ($16)/mo)
+                        Test as Pro User
                       </Button>
                       <Button size="sm" variant="secondary" onClick={() => void switchTestUser("business@dakyworld.test")}>
-                        Test as Business User ($25 ($45)/mo)
+                        Test as Business User
                       </Button>
                     </div>
                   </div>
@@ -3094,7 +3097,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   <div hidden={inspectorTab !== "style" && inspectorTab !== "layout"} className="editor-scope-strip border-b border-line px-3 py-2">
                     <div className="flex items-center justify-between gap-2">
                       <span className={`rounded-[10px] px-1.5 py-0.5 text-xs font-semibold ${device === "desktop" ? "bg-white text-ink" : "bg-blue/10 text-blue"}`}>
-                        {device === "desktop" ? "All sizes" : device === "tablet" ? "Tablet and below" : "Phone only"}
+                        {device === "desktop" ? "Desktop (All screens)" : device === "tablet" ? "Tablet override (≤ 768px)" : "Phone override (≤ 480px)"}
                       </span>
                       <span className="font-mono text-xs text-muted">
                         {computed.width || "—"} × {computed.height || "—"}
@@ -3102,8 +3105,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     </div>
                     <p className="mt-1.5 text-xs leading-relaxed text-muted">
                       {device === "desktop"
-                        ? "Tablet and phone overrides win at smaller widths."
-                        : "Only what you change here overrides the larger layout. Reset a value to inherit it again."}
+                        ? "Desktop styles govern all screen widths unless overridden at tablet or phone widths."
+                        : device === "tablet"
+                          ? "Edits here apply to tablet screens and below (≤ 768px). Reset any property to inherit from desktop."
+                          : "Edits here apply strictly to mobile phone screens (≤ 480px). Reset any property to inherit from larger screens."}
                     </p>
                     {device !== "desktop" && /!\s*important/i.test(edits[picked.id]?.style ?? picked.style ?? "") && (
                       <p className="mt-1.5 text-xs leading-relaxed text-warn-text">
@@ -3428,12 +3433,43 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                             </button>
                           </div>
                         )}
-                        {absentIds.has(picked.id) && (
-                          <p className="mb-2 rounded-xl bg-cream/70 px-2.5 py-2 text-xs leading-relaxed text-muted">
-                            {picked.id.startsWith("meta.")
-                              ? "This one is not on the page itself — it is what browsers and search results show. Nothing here will change in the preview."
-                              : "This one cannot be shown while you type. It appears in the page once the draft saves."}
-                          </p>
+                        {(absentIds.has(picked.id) || picked.id.startsWith("meta.") || picked.tag === "title" || picked.tag === "meta") && (
+                          <div className="mb-3 rounded-xl border border-line bg-cream/70 p-3 text-xs leading-relaxed text-muted">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-semibold text-ink">
+                                {picked.id.startsWith("meta.") || picked.tag === "meta" || picked.tag === "title"
+                                  ? "Page Metadata / Header Tag"
+                                  : "Requires Preview Reload"}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  dirty.current = false;
+                                  void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
+                                  setPreviewToken((token) => token + 1);
+                                }}
+                                className="rounded-md border border-line bg-white px-2 py-0.5 text-[11px] font-semibold text-ink shadow-2xs transition hover:border-blue hover:text-blue"
+                              >
+                                Reload Preview
+                              </button>
+                            </div>
+                            <p className="mt-1 text-muted">
+                              {picked.id.startsWith("meta.") || picked.tag === "meta" || picked.tag === "title"
+                                ? "This property is stored in the document head for browsers and search engines. Changes take effect on publish or reload."
+                                : "This element cannot be updated live while typing. Save draft and reload the preview to view your changes."}
+                            </p>
+                          </div>
+                        )}
+                        {picked.kind === "unsupported" && (
+                          <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-ink">
+                            <div className="flex items-center gap-1.5 font-semibold text-amber-500">
+                              <IconLock size={12} />
+                              <span>Preserved Element ({picked.tag.toUpperCase()})</span>
+                            </div>
+                            <p className="mt-1 text-muted">
+                              This element ({picked.tag}) is preserved byte-for-byte from your original HTML. Visual editing is limited to maintain script and layout stability.
+                            </p>
+                          </div>
                         )}
                         {/* Carousel / Ticker Item-by-Item Editor */}
                         {(() => {

@@ -27,7 +27,15 @@ const REF = { id: true, repoPath: true, contentType: true, size: true } as const
 /** The site's assets that this HTML actually points at. Metadata only. */
 async function referencedAssets(site: Pick<Site, "id" | "publicUrl">, html: string): Promise<AssetRef[]> {
   const assets = await prisma.siteAsset.findMany({ where: { siteId: site.id }, select: REF });
-  return assets.filter((asset) => html.includes(assetUrl(site, asset.repoPath)));
+  return assets.filter((asset) => {
+    const hosted = assetUrl(site, asset.repoPath);
+    return (
+      html.includes(hosted) ||
+      html.includes(asset.repoPath) ||
+      html.includes(`/${asset.repoPath}`) ||
+      html.includes(`./${asset.repoPath}`)
+    );
+  });
 }
 
 /**
@@ -48,7 +56,7 @@ async function assetBytes(ids: string[]): Promise<Map<string, Buffer>> {
 
 /**
  * Draft uploads are local until publication, so a preview has to carry them
- * itself; embed only this site's images.
+ * itself; embed this site's images, fonts, styles, and scripts.
  *
  * An asset whose bytes have been swept is **left alone deliberately**. Its URL
  * is the address it already occupies on the published site, and `previewDocument`
@@ -68,10 +76,44 @@ export async function embedWebsiteAssets(site: Site, html: string): Promise<stri
       }
       continue;
     }
-    const replacement = asset.contentType.startsWith("image/")
-      ? `data:${asset.contentType};base64,${content.toString("base64")}`
-      : `/api/website/sites/${site.id}/assets/${asset.id}/content`;
-    out = out.split(assetUrl(site, asset.repoPath)).join(replacement);
+
+    const isImage = asset.contentType.startsWith("image/");
+    const isFont = asset.contentType.startsWith("font/") || asset.contentType.includes("fontobject");
+    const replacement =
+      isImage || isFont
+        ? `data:${asset.contentType};base64,${content.toString("base64")}`
+        : `/api/website/sites/${site.id}/assets/${asset.id}/content`;
+
+    const hosted = assetUrl(site, asset.repoPath);
+    if (out.includes(hosted)) {
+      out = out.split(hosted).join(replacement);
+    }
+
+    // Also match relative attributes and CSS url references
+    const variants = [
+      `"${asset.repoPath}"`,
+      `'${asset.repoPath}'`,
+      `"./${asset.repoPath}"`,
+      `'./${asset.repoPath}'`,
+      `"/${asset.repoPath}"`,
+      `'/${asset.repoPath}'`,
+      `url(${asset.repoPath})`,
+      `url("${asset.repoPath}")`,
+      `url('${asset.repoPath}')`,
+      `url(/${asset.repoPath})`,
+      `url("/${asset.repoPath}")`,
+      `url('/${asset.repoPath}')`,
+    ];
+
+    for (const v of variants) {
+      if (out.includes(v)) {
+        if (v.startsWith("url(")) {
+          out = out.split(v).join(`url("${replacement}")`);
+        } else {
+          out = out.split(v).join(`"${replacement}"`);
+        }
+      }
+    }
   }
   return out;
 }

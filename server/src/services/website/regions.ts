@@ -55,7 +55,9 @@ export type FieldKind =
    * icon or an image file, or removed, but its paths are never edited here.
    */
   | "icon"
-  | "container";
+  | "container"
+  | "background"
+  | "unsupported";
 
 type Span = { start: number; end: number };
 
@@ -63,6 +65,7 @@ export type SiteField = {
   id: string;
   /** Preview-only: selection remains available when source content is read-only. */
   previewReadOnly?: boolean;
+  unsupportedReason?: string;
   confidence?: "annotated" | "discovered";
   parentId?: string;
   /** Document order, without exposing source byte offsets. */
@@ -237,8 +240,8 @@ export type FieldValue = {
   originalIcon?: string;
 };
 
-/** Elements that never hold editable copy. */
-const SKIP = new Set(["script", "style", "svg", "noscript", "template", "head", "meta", "link", "br", "hr", "iframe", "canvas", "video", "audio", "source", "picture", "path", "use"]);
+/** Elements that never hold editable copy or fields. */
+const SKIP = new Set(["script", "style", "svg", "noscript", "template", "head", "meta", "link", "br", "hr", "path", "use"]);
 
 /** Elements whose presence means the thing above them is a container, not a field. */
 const BLOCK = new Set([
@@ -732,6 +735,56 @@ function fontIconField(source: string, element: ElementNode, id: string): SiteFi
   };
 }
 
+function unsupportedField(child: ElementNode, id: string): SiteField {
+  const reason =
+    child.tag === "form"
+      ? "Interactive form: inputs and submission handling are configured in form settings"
+      : child.tag === "iframe"
+      ? "Embedded frame: external source is managed directly"
+      : child.tag === "canvas"
+      ? "Canvas element: rendered dynamically by JavaScript"
+      : child.tag.includes("-")
+      ? "Custom web component: script-managed component"
+      : "Media element: playback controls and source are read-only";
+  return {
+    id,
+    kind: "unsupported",
+    label: `${child.tag.toUpperCase()} element (read-only)`,
+    tag: child.tag,
+    value: "",
+    preview: `${child.tag.toUpperCase()} element`,
+    previewReadOnly: true,
+    unsupportedReason: reason,
+    attrInsert: child.attrInsert,
+    ...styleOf(child),
+  };
+}
+
+function backgroundField(child: ElementNode, id: string): SiteField | null {
+  const style = attrNode(child, "style");
+  if (!style) return null;
+  const match = /background(?:-image)?\s*:[^;}"']*url\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(style.value);
+  if (!match || !match[1]) return null;
+  const rawUrl = match[1].trim();
+  const urlIdx = style.value.indexOf(match[0]);
+  const innerIdx = style.value.indexOf(rawUrl, urlIdx);
+  const start = style.valueStart + innerIdx;
+  const end = start + rawUrl.length;
+  return {
+    id,
+    kind: "background",
+    label: "Background image",
+    tag: child.tag,
+    value: rawUrl,
+    preview: rawUrl,
+    srcSpan: { start, end },
+    style: style.value,
+    styleSpan: { start: style.valueStart, end: style.valueEnd },
+    attrInsert: child.attrInsert,
+    ...styleOf(child),
+  };
+}
+
 /**
  * Walks one section and collects its fields.
  *
@@ -754,6 +807,37 @@ function collect(source: string, element: ElementNode, out: SiteField[], section
     }
 
     const id = `${sectionId}.${out.length}`;
+    if (child.tag === "picture") {
+      for (const srcNode of child.children.filter((c) => c.tag === "source")) {
+        const srcset = attrNode(srcNode, "srcset");
+        const media = attrNode(srcNode, "media")?.value;
+        if (srcset) {
+          out.push({
+            id: `${sectionId}.${out.length}`,
+            kind: "image",
+            label: `Responsive image source${media ? ` (${media})` : ""}`,
+            tag: "source",
+            value: srcset.value,
+            preview: srcset.value,
+            srcSpan: { start: srcset.valueStart, end: srcset.valueEnd },
+            attrInsert: srcNode.attrInsert,
+          });
+        }
+      }
+      collect(source, child, out, sectionId);
+      continue;
+    }
+    if (["form", "iframe", "canvas", "video", "audio"].includes(child.tag) || (child.tag.includes("-") && !["svg", "math"].includes(child.tag))) {
+      out.push(unsupportedField(child, id));
+      if (child.tag !== "iframe" && child.tag !== "canvas") {
+        collect(source, child, out, sectionId);
+      }
+      continue;
+    }
+    const bg = backgroundField(child, `${sectionId}.bg.${out.length}`);
+    if (bg && child.tag !== "img" && child.tag !== "button" && child.tag !== "a") {
+      out.push(bg);
+    }
     if (child.tag === "img") {
       const field = imageField(child, id);
       if (field) out.push(field);
@@ -856,6 +940,53 @@ function metaSection(source: string, root: ElementNode): SiteSection | null {
     });
     break;
   }
+  for (const element of walk(root)) {
+    if (element.tag !== "meta") continue;
+    const key = (element.attrs.find((c) => c.name === "property")?.value || element.attrs.find((c) => c.name === "name")?.value || "").toLowerCase().trim();
+    const content = attrNode(element, "content");
+    if (!content) continue;
+    if (key === "og:title") {
+      fields.push({
+        id: "meta.og_title",
+        kind: "text",
+        label: "Social preview title (og:title)",
+        tag: "meta",
+        value: content.value,
+        preview: firstLine(decodeEntities(content.value)),
+        content: { start: content.valueStart, end: content.valueEnd },
+      });
+    } else if (key === "og:description") {
+      fields.push({
+        id: "meta.og_description",
+        kind: "text",
+        label: "Social preview description (og:description)",
+        tag: "meta",
+        value: content.value,
+        preview: firstLine(decodeEntities(content.value)),
+        content: { start: content.valueStart, end: content.valueEnd },
+      });
+    } else if (key === "og:image") {
+      fields.push({
+        id: "meta.og_image",
+        kind: "image",
+        label: "Social preview image (og:image)",
+        tag: "meta",
+        value: content.value,
+        preview: content.value,
+        srcSpan: { start: content.valueStart, end: content.valueEnd },
+      });
+    } else if (key === "keywords") {
+      fields.push({
+        id: "meta.keywords",
+        kind: "text",
+        label: "Search keywords",
+        tag: "meta",
+        value: content.value,
+        preview: firstLine(decodeEntities(content.value)),
+        content: { start: content.valueStart, end: content.valueEnd },
+      });
+    }
+  }
   return fields.length ? { id: "meta", label: "Page details", kind: "meta", fields } : null;
 }
 
@@ -936,6 +1067,8 @@ export function readPage(source: string): PageContent {
   containers.forEach((container, index) => {
     const id = `s${index}`;
     const fields: SiteField[] = [];
+    const containerBg = backgroundField(container, `${id}.bg`);
+    if (containerBg) fields.push(containerBg);
     collect(source, container, fields, id);
     if (!fields.length) return;
     const kind = container.tag === "header" ? "header" : container.tag === "footer" ? "footer" : "section";
@@ -951,6 +1084,37 @@ export function readPage(source: string): PageContent {
       if (claimed.has(child) || SKIP.has(child.tag)) continue;
       if (["header", "footer", "section", "article"].includes(child.tag)) continue;
       const id = `loose.${loose.length}`;
+      if (child.tag === "picture") {
+        for (const srcNode of child.children.filter((c) => c.tag === "source")) {
+          const srcset = attrNode(srcNode, "srcset");
+          const media = attrNode(srcNode, "media")?.value;
+          if (srcset) {
+            loose.push({
+              id: `loose.${loose.length}`,
+              kind: "image",
+              label: `Responsive image source${media ? ` (${media})` : ""}`,
+              tag: "source",
+              value: srcset.value,
+              preview: srcset.value,
+              srcSpan: { start: srcset.valueStart, end: srcset.valueEnd },
+              attrInsert: srcNode.attrInsert,
+            });
+          }
+        }
+        collectLoose(child);
+        continue;
+      }
+      if (["form", "iframe", "canvas", "video", "audio"].includes(child.tag) || (child.tag.includes("-") && !["svg", "math"].includes(child.tag))) {
+        loose.push(unsupportedField(child, id));
+        if (child.tag !== "iframe" && child.tag !== "canvas") {
+          collectLoose(child);
+        }
+        continue;
+      }
+      const bg = backgroundField(child, `loose.bg.${loose.length}`);
+      if (bg && child.tag !== "img" && child.tag !== "button" && child.tag !== "a") {
+        loose.push(bg);
+      }
       if (child.tag === "img") {
         const field = imageField(child, id);
         if (field) loose.push(field);
@@ -1001,6 +1165,8 @@ export function readPage(source: string): PageContent {
       collectLoose(child);
     }
   };
+  const bodyBg = backgroundField(body, "body.bg");
+  if (bodyBg) loose.push(bodyBg);
   collectLoose(body);
   if (loose.length) sections.push({ id: "loose", label: "Other content", kind: "section", fields: loose });
 
@@ -1393,7 +1559,7 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
 
     let touched = false;
     if (edit.value !== undefined && edit.value !== field.value) {
-      if (field.kind === "image") {
+      if (field.kind === "image" || field.kind === "background") {
         if (field.srcSpan) {
           edits.push({ span: field.srcSpan, text: attrEscape(edit.value) });
           if (field.srcsetSpan) edits.push({ span: field.srcsetSpan, text: "" });

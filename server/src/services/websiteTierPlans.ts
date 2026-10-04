@@ -789,11 +789,25 @@ export async function ensureWebsiteTierUsersAndPlans(): Promise<{
  * Automatically captures external/data-URI images found in imported HTML into the site's Media Library
  * up to the user's storage quota.
  */
+export type CaptureResultItem = {
+  url: string;
+  status: "captured" | "failed" | "skipped";
+  reason?: string;
+  repoPath?: string;
+  bytes?: number;
+};
+
 export async function captureHtmlImagesIntoMediaLibrary(
   req: WebsiteActor,
   siteId: string,
   html: string,
-): Promise<{ html: string; capturedCount: number; totalBytesAdded: number; skippedCount: number }> {
+): Promise<{
+  html: string;
+  capturedCount: number;
+  totalBytesAdded: number;
+  skippedCount: number;
+  details: CaptureResultItem[];
+}> {
   const status = await computeUserStorageAndUsage(req, siteId);
   const site = await prisma.site.findUniqueOrThrow({ where: { id: siteId }, select: { publicUrl: true } });
   let remainingQuota = status.storage.remainingBytes;
@@ -801,6 +815,7 @@ export async function captureHtmlImagesIntoMediaLibrary(
   let totalBytesAdded = 0;
   let skippedCount = 0;
   let updatedHtml = html;
+  const details: CaptureResultItem[] = [];
 
   // Extract data:image/*;base64,... embedded images or <img src="..."> tags
   const imgTagRegex = /<img\b[^>]*?\bsrc=["']([^"']+)["'][^>]*>/gi;
@@ -816,7 +831,15 @@ export async function captureHtmlImagesIntoMediaLibrary(
   }
 
   for (const rawUrl of urls) {
-    if (capturedCount >= 50 || remainingQuota <= 0) { skippedCount += 1; continue; }
+    if (capturedCount >= 50 || remainingQuota <= 0) {
+      skippedCount += 1;
+      details.push({
+        url: rawUrl,
+        status: "skipped",
+        reason: capturedCount >= 50 ? "Per-import limit of 50 images reached" : "Media library storage quota reached",
+      });
+      continue;
+    }
     try {
       const limit = Math.min(status.plan.maxUploadBytes, remainingQuota);
       let bytes: Buffer;
@@ -847,12 +870,23 @@ export async function captureHtmlImagesIntoMediaLibrary(
       remainingQuota -= optimized.content.length;
       totalBytesAdded += optimized.content.length;
       capturedCount += 1;
-    } catch {
+      details.push({
+        url: rawUrl,
+        status: "captured",
+        repoPath,
+        bytes: optimized.content.length,
+      });
+    } catch (err) {
       skippedCount += 1;
+      details.push({
+        url: rawUrl,
+        status: "failed",
+        reason: err instanceof Error ? err.message : "Failed to capture image",
+      });
     }
   }
 
-  return { html: updatedHtml, capturedCount, totalBytesAdded, skippedCount };
+  return { html: updatedHtml, capturedCount, totalBytesAdded, skippedCount, details };
 }
 
 export function registerWebsiteTierRoutes(router: Router) {

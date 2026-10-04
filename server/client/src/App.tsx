@@ -50,6 +50,7 @@ const WebsiteBilling = lazy(() => import("./pages/WebsiteBilling").then((module)
 const WebsiteBalance = lazy(() => import("./pages/WebsiteBalance").then((module) => ({ default: module.WebsiteBalance })));
 const ClientApprovalReview = lazy(() => import("./pages/ClientApprovalReview").then((module) => ({ default: module.ClientApprovalReview })));
 const FreelancerWorkspace = lazy(() => import("./pages/FreelancerWorkspace").then((module) => ({ default: module.FreelancerWorkspace })));
+const CustomerWorkspace = lazy(() => import("./pages/CustomerWorkspace").then((module) => ({ default: module.CustomerWorkspace })));
 
 /**
  * Screens are loaded when somebody goes to them, not all at once.
@@ -72,8 +73,20 @@ const FreelancerWorkspace = lazy(() => import("./pages/FreelancerWorkspace").the
  * the alternative is a page that renders and then fails one query at a time.
  */
 export default function App() {
-  const editorSurface = window.location.hostname === "editor.dakyx.com"
-    || import.meta.env.VITE_APP_SURFACE === "editor";
+  const hostname = window.location.hostname;
+  const isAppSurface = hostname === "app.dakyx.com" || import.meta.env.VITE_APP_SURFACE === "app";
+  const editorSurface = hostname === "editor.dakyx.com" || import.meta.env.VITE_APP_SURFACE === "editor";
+
+  if (isAppSurface) {
+    return (
+      <Routes>
+        <Route path="/" element={<CustomerWorkspace />} />
+        <Route path="/workspace" element={<CustomerWorkspace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    );
+  }
+
   if (editorSurface) return (
     <Routes>
       <Route path="/review/:token" element={<ClientApprovalReview />} />

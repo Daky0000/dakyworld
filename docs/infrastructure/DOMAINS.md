@@ -1,28 +1,25 @@
 # DakyXTech domains
 
-## Intended production map
+## Production domain topology
 
-| Hostname | Owner | Status |
-| --- | --- | --- |
-| `dakyx.com` | GitHub Pages marketing site | Active over HTTPS |
-| `www.dakyx.com` | Alias to marketing site | DNS active; HTTPS certificate provisioning |
-| `os.dakyx.com` | Existing Railway OS service | Active over HTTPS |
-| `app.dakyx.com` | Future customer workspace | Not built |
-| `editor.dakyx.com` | Future isolated editor | Boundary not safe yet |
-| `dakyworld.com` | Legacy hostname | Permanent redirect requested in Hostinger |
-| `os.dakyworld.com` | Legacy Railway OS domain | Keep active |
+| Hostname | Owner | Status | Target / Port |
+| --- | --- | --- | --- |
+| `dakyx.com` | GitHub Pages marketing site | Active over HTTPS (200 OK) | GitHub Pages A / AAAA |
+| `www.dakyx.com` | Alias to marketing site | Active over HTTPS (200 OK) | CNAME `daky0000.github.io` |
+| `os.dakyx.com` | DakyXTech Company OS (Railway) | Active over HTTPS (200 OK) | CNAME `m490k52o.up.railway.app` (Port 8080) |
+| `app.dakyx.com` | Customer Workspace & Product Launcher | Attached in Railway | CNAME `0kg4s78c.up.railway.app` (Port 8080) |
+| `editor.dakyx.com` | Standalone Website Editor Product | Attached in Railway | CNAME `pf5fc5xw.up.railway.app` (Port 8080) |
+| `os.dakyworld.com` | Legacy Railway OS domain | Maintained for staff continuity | Port 8080 |
 
-## Cutover order
+## Architecture policy
 
-1. Restore and verify the existing OS.
-2. Back up PostgreSQL and export DNS.
-3. Attach `os.dakyx.com` to the existing Railway service.
-4. Add only Railway-required DNS records in the authoritative `dakyx.com` zone.
-5. Wait for ownership verification and TLS issuance.
-6. Change `APP_URL` and `CLIENT_ORIGIN` to `https://os.dakyx.com`.
-7. Verify login, protected routes, forms, callbacks, and `/api/ready`.
-8. Keep `os.dakyworld.com` active during the transition.
-9. Change GitHub Pages to `dakyx.com` only after apex and `www` DNS are ready.
-10. Add permanent legacy redirects only after all integrations use DakyXTech hostnames.
+- **Direct Native Domain**: All DakyXTech customer and operations software run directly and natively on `*.dakyx.com`. No legacy domain redirects or external URL forwarders are required.
+- **Surface Isolation**:
+  - `editor.dakyx.com`: Exclusively serves the Website Editor, site management, asset library, and publishing pipeline. All internal company operations, leads, proposals, invoices, and agent configs return 404.
+  - `app.dakyx.com`: Exclusively serves the Central Customer Workspace, organization/account management, and multi-product launcher (Website Editor, Automations, Analytics).
+  - `os.dakyx.com`: Serves the internal DakyXTech company operating system for staff operations.
+- **DNS Records Required for New Product Subdomains**:
+  - `editor.dakyx.com`: CNAME `pf5fc5xw.up.railway.app`
+  - `app.dakyx.com`: CNAME `0kg4s78c.up.railway.app`
 
 Never modify MX, SPF, DKIM, or DMARC records as part of this application-domain migration.

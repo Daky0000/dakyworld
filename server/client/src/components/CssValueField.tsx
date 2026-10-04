@@ -121,7 +121,7 @@ export function CssValueField({
   const [isFocused, setIsFocused] = useState(false);
   const [numText, setNumText] = useState(isLength ? parsed.num : value);
   const [unit, setUnit] = useState(unitOverride ?? parsed.unit);
-  const [error, setError] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
     const nextParsed = splitCssNumericAndUnit(value, unitOverride ?? units[0] ?? "px");
@@ -129,28 +129,28 @@ export function CssValueField({
       setNumText(isLength ? nextParsed.num : value);
       setUnit(unitOverride ?? nextParsed.unit);
     }
-    setError(false);
+    setErrorMsg(null);
   }, [value, unitOverride, isLength, isFocused]);
 
   const emitLength = (nextNum: string, nextUnit: string) => {
     const clean = nextNum.trim();
     if (!clean) {
-      setError(false);
+      setErrorMsg(null);
       if (value !== "") onChange("");
       return;
     }
     if (clean === "auto" || clean === "none" || clean === "normal") {
-      setError(false);
+      setErrorMsg(null);
       onChange(clean);
       return;
     }
     const numVal = Number(clean);
     if (!Number.isFinite(numVal)) {
-      setError(true);
+      setErrorMsg("Enter a valid length (e.g. 16px, 1.5rem, 50%).");
       return;
     }
     const candidate = `${clean}${nextUnit}`;
-    setError(false);
+    setErrorMsg(null);
     if (candidate !== value) onChange(candidate);
   };
 
@@ -160,21 +160,29 @@ export function CssValueField({
       return;
     }
     const next = numText.trim();
-    if (
-      next &&
-      (!CSS.supports(property, next) ||
-        next.length > 120 ||
-        /url\s*\(|expression\s*\(|[<>"'`\\]/i.test(next))
-    ) {
-      setError(true);
+    if (!next) {
+      setErrorMsg(null);
+      if (value !== "") onChange("");
       return;
     }
-    setError(false);
+    if (/url\s*\(|expression\s*\(|[<>"'`\\]/i.test(next)) {
+      setErrorMsg("Unsafe characters or URL expressions are not permitted.");
+      return;
+    }
+    if (next.length > 120) {
+      setErrorMsg("Value exceeds maximum permitted length.");
+      return;
+    }
+    if (typeof CSS !== "undefined" && typeof CSS.supports === "function" && !CSS.supports(property, next)) {
+      setErrorMsg("Enter a valid CSS property value.");
+      return;
+    }
+    setErrorMsg(null);
     if (next !== value) onChange(next);
   };
 
   const box = `h-7 w-full rounded-lg border bg-white px-2 text-center font-mono text-[11px] text-ink outline-none transition placeholder:text-faint focus:border-blue focus:ring-2 focus:ring-blue/20 hover:border-line-strong ${
-    error ? "border-danger-solid" : "border-line"
+    errorMsg ? "border-danger-solid" : "border-line"
   }`;
 
   const isNumeric = isLength && (property === "width" || property === "height");
@@ -183,7 +191,7 @@ export function CssValueField({
   const field = (
     <input
       aria-label={label}
-      aria-invalid={error}
+      aria-invalid={Boolean(errorMsg)}
       type={isNumeric ? "number" : "text"}
       step={isNumeric ? "any" : undefined}
       inputMode={isLength ? "decimal" : undefined}
@@ -218,15 +226,15 @@ export function CssValueField({
         if (event.key === "Escape") {
           setNumText(isLength ? parsed.num : value);
           setIsFocused(false);
-          setError(false);
+          setErrorMsg(null);
         }
       }}
     />
   );
 
-  const problem = error ? (
+  const problem = errorMsg ? (
     <span role="alert" className="mt-1 block text-[11px] text-danger-text">
-      Enter a valid number.
+      {errorMsg}
     </span>
   ) : null;
 

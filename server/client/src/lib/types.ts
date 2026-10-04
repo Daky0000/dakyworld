@@ -3252,7 +3252,7 @@ export type SitePageRow = {
   lastPublishedAt: string | null;
 };
 
-export type FieldKind = "text" | "richtext" | "link" | "button" | "image" | "icon" | "container";
+export type FieldKind = "text" | "richtext" | "link" | "button" | "image" | "icon" | "container" | "background" | "unsupported";
 
 /** One thing on a page somebody can change. Offsets stay on the server. */
 export type SiteFieldRow = {
@@ -3262,6 +3262,7 @@ export type SiteFieldRow = {
   order?: number;
   repeatable?: boolean;
   confidence?: "annotated" | "discovered";
+  unsupportedReason?: string;
   kind: FieldKind;
   label: string;
   tag: string;

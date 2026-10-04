@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { api } from "../lib/api";
+import { api, fileToBase64 } from "../lib/api";
 import { Button } from "./ui";
 
 /**
@@ -40,6 +40,8 @@ export function ConnectWebsite() {
   const [repository, setRepo] = useState("");
   const [branch, setBranch] = useState("main");
   const [html, setHtml] = useState<string | undefined>();
+  const [packageData, setPackageData] = useState<string | undefined>();
+  const [packageFilename, setPackageFilename] = useState<string | undefined>();
   const [filename, setFilename] = useState("");
   const [templateKey, setTemplateKey] = useState("business");
   const [fileError, setFileError] = useState<string | null>(null);
@@ -66,8 +68,10 @@ export function ConnectWebsite() {
         repoOwner: route === "github" && repository.trim() ? parts[0] : null,
         repoName: route === "github" && repository.trim() ? parts[1] : null,
         repoBranch: branch,
-        templateKey: route === "hosted" && !html ? templateKey : undefined,
+        templateKey: route === "hosted" && !html && !packageData ? templateKey : undefined,
         html,
+        packageData,
+        packageFilename,
       });
     },
     onSuccess: async (result) => {
@@ -279,36 +283,63 @@ export function ConnectWebsite() {
                 )}
 
                 <label className="block rounded-xl border border-dashed border-line-strong bg-sunken p-4 text-sm">
-                  Import an HTML file (optional)
+                  Import an HTML page or ZIP package (optional)
                   <input
                     type="file"
-                    accept=".html,.htm,text/html"
+                    accept=".html,.htm,.zip,application/zip,text/html"
                     className="mt-2 block w-full text-xs"
                     onChange={async (event) => {
                       const file = event.target.files?.[0];
                       setFileError(null);
                       setHtml(undefined);
+                      setPackageData(undefined);
+                      setPackageFilename(undefined);
                       setFilename("");
                       if (!file) return;
-                      if (file.size > 2_000_000) {
-                        setFileError("Choose a file smaller than 2 MB.");
+                      const isZip = file.name.toLowerCase().endsWith(".zip") || file.type === "application/zip";
+                      if (isZip && file.size > 25_000_000) {
+                        setFileError("Choose a ZIP package smaller than 25 MB.");
+                        return;
+                      }
+                      if (!isZip && file.size > 15_000_000) {
+                        setFileError("Choose an HTML file smaller than 15 MB.");
                         return;
                       }
                       try {
-                        setHtml(await file.text());
-                        setFilename(file.name);
+                        if (isZip) {
+                          const base64 = await fileToBase64(file);
+                          setPackageData(base64);
+                          setPackageFilename(file.name);
+                          setFilename(file.name);
+                          if (!name) {
+                            const siteName = file.name.replace(/\.zip$/i, "").replace(/[-_]/g, " ");
+                            setName(siteName.charAt(0).toUpperCase() + siteName.slice(1));
+                          }
+                        } else {
+                          setHtml(await file.text());
+                          setFilename(file.name);
+                          if (!name) {
+                            const siteName = file.name.replace(/\.html?$/i, "").replace(/[-_]/g, " ");
+                            setName(siteName.charAt(0).toUpperCase() + siteName.slice(1));
+                          }
+                        }
                       } catch {
                         setFileError("That file could not be read.");
                       }
                     }}
                   />
-                  {filename && <span className="mt-2 block text-xs text-muted">{filename} is ready to import.</span>}
+                  {filename && (
+                    <span className="mt-2 block text-xs text-muted">
+                      {packageData
+                        ? `ZIP package ${filename} ready to import (discovers pages, CSS, fonts, and images).`
+                        : `${filename} is ready to import.`}
+                    </span>
+                  )}
                 </label>
 
                 <p className="text-xs leading-relaxed text-muted">
-                  A website address supplies relative images and styles. React/Next.js app shells require source
-                  integration; uploading compiled HTML does not update React components. Imported scripts are kept in
-                  downloads and disabled in the editor.
+                  A website address supplies relative images and styles. Package ZIPs discover local CSS, images, and fonts automatically.
+                  React/Next.js app shells require source integration; uploading compiled HTML does not update React components.
                 </p>
 
                 {(create.error || fileError) && (

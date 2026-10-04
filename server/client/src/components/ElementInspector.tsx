@@ -214,7 +214,7 @@ export function ElementInspector({
 
   /** The rail on the right of every row: where the value came from, and back. */
   const rail = (property: string) => (
-    <Origin value={value(property)} palette={swatches} disabled={disabled} onReset={() => clear(property)} />
+    <Origin value={value(property)} palette={swatches} disabled={disabled} device={device} onReset={() => clear(property)} />
   );
 
   /**
@@ -471,6 +471,16 @@ export function ElementInspector({
 
   return (
     <PaletteContext.Provider value={swatches}>
+      {readOnly && (
+        <div className="mx-3 my-2 rounded-xl border border-line bg-sunken p-2.5 text-xs text-muted">
+          <span className="font-semibold text-ink">Read-Only View:</span> You have view-only access to this site. Changes cannot be made in this session.
+        </div>
+      )}
+      {facts.kind === "unsupported" && (
+        <div className="mx-3 my-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-ink">
+          <span className="font-semibold text-amber-500">Preserved Element ({facts.tag.toUpperCase()}):</span> This component is preserved byte-for-byte from your original HTML. Direct visual editing is disabled to preserve script execution and embedded structure.
+        </div>
+      )}
       <div className={disabled ? "pointer-events-none opacity-50" : ""}>
         {shown.has("content") && content && <Section name="content" title={SECTION_TITLE.content}>{content}</Section>}
 
@@ -1435,11 +1445,13 @@ function Origin({
   value,
   palette,
   disabled,
+  device,
   onReset,
 }: {
   value: InspectorValue;
   palette: { label: string; value: string }[];
   disabled: boolean;
+  device?: Device;
   onReset: () => void;
 }) {
   if (!meaningfulValue(value)) return null;
@@ -1457,7 +1469,13 @@ function Origin({
         <button
           type="button"
           onClick={onReset}
-          title={value.source ? `Put this back to the website's ${value.source}` : "Put this back to the website's own styling"}
+          title={
+            device && device !== "desktop"
+              ? `Remove ${device} override to inherit from desktop styling`
+              : value.source
+                ? `Put this back to the website's ${value.source}`
+                : "Put this back to the website's own styling"
+          }
           aria-label={`Reset ${value.property}`}
           className="text-[11px] leading-none text-muted transition hover:text-ink"
         >

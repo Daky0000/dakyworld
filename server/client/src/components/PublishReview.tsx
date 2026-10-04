@@ -82,15 +82,66 @@ export type WebsiteReview = Pick<PublicationOptions, "mode" | "prTitle"> & {
   } | null;
   editingBoundary?: string;
   editingMode?: string;
+  prepublishReport?: {
+    pageId: string;
+    pagePath: string;
+    title: string;
+    filePath: string;
+    editableCounts: {
+      total: number;
+      text: number;
+      links: number;
+      buttons: number;
+      images: number;
+      backgrounds: number;
+      metadata: number;
+      icons: number;
+      unsupported: number;
+    };
+    missingAssets: Array<{
+      url: string;
+      tag: string;
+      attribute: string;
+      resolvedPath: string;
+      reason: string;
+    }>;
+    unsupportedElements: Array<{
+      id: string;
+      tag: string;
+      label: string;
+      reason: string;
+      previewReadOnly: boolean;
+    }>;
+    scriptDrivenElements: Array<{
+      tag: string;
+      type: "script_tag" | "event_handler" | "custom_element";
+      detail: string;
+      safetyNote: string;
+    }>;
+    publishRisks: Array<{
+      id: string;
+      severity: "blocker" | "warning" | "info";
+      category: string;
+      title: string;
+      description: string;
+      acknowledged?: boolean;
+    }>;
+    canPublish: boolean;
+    requiresAcknowledgment: boolean;
+    recoverySnapshotAvailable: boolean;
+    latestVersionNumber: number;
+  };
 };
 
 export function PublishReview({
   pageId,
+  siteId,
   pending,
   onClose,
   onConfirm,
 }: {
   pageId: string;
+  siteId?: string;
   pending: boolean;
   onClose: () => void;
   onConfirm: (review: WebsiteReview) => void;
@@ -101,10 +152,18 @@ export function PublishReview({
   const busy = useRef(pending);
   const [mode, setMode] = useState<"commit" | "pull_request">("commit");
   const [prTitle, setPrTitle] = useState("");
-  const [viewTab, setViewTab] = useState<"guard" | "diff" | "regression" | "visual">("guard");
+  const [viewTab, setViewTab] = useState<"guard" | "diff" | "regression" | "visual" | "prepublish">("guard");
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedApprovalLink, setCopiedApprovalLink] = useState(false);
   const [regressionDevice, setRegressionDevice] = useState<"desktop" | "tablet" | "mobile">("desktop");
+
+  const acknowledgeLimits = useMutation({
+    mutationFn: (limits: string[]) =>
+      api.post(`/website/sites/${siteId}/acknowledge-publish-limits`, { limits }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["website", "review", pageId] });
+    },
+  });
 
   // Scheduled Publishing State
   const [showScheduleForm, setShowScheduleForm] = useState(false);
@@ -320,6 +379,16 @@ export function PublishReview({
               >
                 <IconEye size={13} />
                 <span>Preview</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewTab("prepublish")}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                  viewTab === "prepublish" ? "bg-ink text-white" : "text-muted hover:text-ink"
+                }`}
+              >
+                <IconSparkles size={13} />
+                <span>Prepublish</span>
               </button>
             </div>
           </div>
@@ -693,6 +762,152 @@ export function PublishReview({
                     placeholder="Update page content"
                     className="w-full rounded-[10px] border border-line bg-white px-2.5 py-1.5 text-xs outline-none focus:border-blue"
                   />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 5: PREPUBLISH REPORT */}
+          {viewTab === "prepublish" && data?.prepublishReport && (
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-line bg-gradient-to-br from-sunken/40 to-white p-4.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-bold text-ink">
+                      Page Prepublish Verification & Limits
+                    </h3>
+                    <p className="mt-0.5 text-xs text-muted">
+                      Full coverage breakdown of discovered fields, external dependencies, unsupported components, and version snapshots.
+                    </p>
+                  </div>
+                  {data.prepublishReport.recoverySnapshotAvailable && (
+                    <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
+                      Version #{data.prepublishReport.latestVersionNumber} Snapshot Preserved
+                    </span>
+                  )}
+                </div>
+
+                {/* Editable Counts Grid */}
+                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <div className="rounded-xl border border-line bg-white p-3">
+                    <span className="block text-[11px] font-medium text-muted">Total Fields</span>
+                    <span className="mt-0.5 block text-lg font-bold text-ink">
+                      {data.prepublishReport.editableCounts.total}
+                    </span>
+                  </div>
+                  <div className="rounded-xl border border-line bg-white p-3">
+                    <span className="block text-[11px] font-medium text-muted">Text & Headings</span>
+                    <span className="mt-0.5 block text-lg font-bold text-ink">
+                      {data.prepublishReport.editableCounts.text}
+                    </span>
+                  </div>
+                  <div className="rounded-xl border border-line bg-white p-3">
+                    <span className="block text-[11px] font-medium text-muted">Images & Backgrounds</span>
+                    <span className="mt-0.5 block text-lg font-bold text-ink">
+                      {data.prepublishReport.editableCounts.images + data.prepublishReport.editableCounts.backgrounds}
+                    </span>
+                  </div>
+                  <div className="rounded-xl border border-line bg-white p-3">
+                    <span className="block text-[11px] font-medium text-muted">Links & Buttons</span>
+                    <span className="mt-0.5 block text-lg font-bold text-ink">
+                      {data.prepublishReport.editableCounts.links + data.prepublishReport.editableCounts.buttons}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Publish Risks & Limits */}
+              {data.prepublishReport.publishRisks.length > 0 && (
+                <div className="rounded-xl border border-line bg-white">
+                  <div className="flex items-center justify-between border-b border-line px-4 py-2.5 bg-sunken/40">
+                    <span className="text-xs font-bold uppercase tracking-wider text-muted">
+                      Prepublish Risks & Limit Warnings ({data.prepublishReport.publishRisks.length})
+                    </span>
+                    {data.prepublishReport.requiresAcknowledgment && siteId && (
+                      <Button
+                        size="sm"
+                        disabled={acknowledgeLimits.isPending}
+                        onClick={() => {
+                          const unack = data.prepublishReport!.publishRisks
+                            .filter((r) => !r.acknowledged && r.severity === "warning")
+                            .map((r) => r.id);
+                          if (unack.length) acknowledgeLimits.mutate(unack);
+                        }}
+                      >
+                        {acknowledgeLimits.isPending ? "Acknowledging…" : "Acknowledge limits & enable publish"}
+                      </Button>
+                    )}
+                  </div>
+                  <div className="divide-y divide-line">
+                    {data.prepublishReport.publishRisks.map((risk) => (
+                      <div key={risk.id} className="p-3 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
+                              risk.severity === "blocker"
+                                ? "bg-red-100 text-red-700"
+                                : risk.severity === "warning"
+                                ? "bg-amber-100 text-amber-800"
+                                : "bg-blue/10 text-blue"
+                            }`}
+                          >
+                            {risk.severity}
+                          </span>
+                          <span className="font-semibold text-ink">{risk.title}</span>
+                          {risk.acknowledged && (
+                            <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
+                              Acknowledged
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-1 text-muted">{risk.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Missing Assets */}
+              {data.prepublishReport.missingAssets.length > 0 && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4 text-xs">
+                  <h4 className="font-semibold text-amber-950">
+                    Missing Asset References ({data.prepublishReport.missingAssets.length})
+                  </h4>
+                  <div className="mt-2 space-y-1.5 font-mono text-[11px] text-amber-900">
+                    {data.prepublishReport.missingAssets.map((asset, i) => (
+                      <div key={i} className="flex items-center justify-between">
+                        <span>
+                          &lt;{asset.tag}&gt; {asset.url}
+                        </span>
+                        <span className="text-amber-700">{asset.reason}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Unsupported Elements */}
+              {data.prepublishReport.unsupportedElements.length > 0 && (
+                <div className="rounded-xl border border-line bg-white p-4 text-xs">
+                  <h4 className="font-semibold text-ink">
+                    Preserved Unsupported Elements ({data.prepublishReport.unsupportedElements.length})
+                  </h4>
+                  <p className="mt-1 text-muted">
+                    These components are preserved exactly as imported and kept inert in the visual editor to protect your design.
+                  </p>
+                  <div className="mt-2.5 divide-y divide-line">
+                    {data.prepublishReport.unsupportedElements.map((el) => (
+                      <div key={el.id} className="py-2 flex items-center justify-between">
+                        <div>
+                          <span className="font-semibold text-ink">&lt;{el.tag}&gt; {el.label}</span>
+                          <p className="text-muted text-[11px]">{el.reason}</p>
+                        </div>
+                        <span className="rounded bg-sunken px-2 py-0.5 text-[10px] font-semibold text-muted">
+                          Read-Only in Editor
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
