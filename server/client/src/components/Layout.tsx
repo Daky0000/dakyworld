@@ -135,8 +135,7 @@ export function Layout() {
 
   const navigation = (mobile = false) => <>
     <div className="os-brand">
-      <img src="/brand/mark-on-dark-96.png" alt="DakyXTech" width={36} height={36} />
-      <div><strong>{client ? "DakyXTech" : "DakyXTech OS"}</strong><span>{client ? "Website studio" : "Business workspace"}</span></div>
+      <div><img src="/brand/lockup-on-dark.png" alt="DakyXTech" className="block h-7 w-auto" /><span>{client ? "Website studio" : "Business workspace"}</span></div>
       {mobile && <button type="button" onClick={() => setMobileOpen(false)} className="os-nav-close">Close</button>}
     </div>
     {!editorSurface && !user?.external && (

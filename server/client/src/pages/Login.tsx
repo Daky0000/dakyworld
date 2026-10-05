@@ -49,10 +49,9 @@ export function Login() {
       <section className="os-login-intro"><span className="os-caption">DakyXTech OS</span><h2>Good work.<br />Clear direction.</h2><p>One considered workspace for your business, your clients and everything ahead.</p><span className="os-login-edition">The business workspace</span></section>
       <div className="os-login-form">
         <div className="mb-8 flex items-center gap-3">
-          <img src="/brand/mark-on-light-96.png" alt="" width={36} height={36} className="h-9 w-9" />
           <div className="leading-none">
-            <div className="font-display text-base font-medium tracking-[-.03em] text-ink">DakyXTech OS</div>
-            <div className="mt-1 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Internal Operations</div>
+            <img src="/brand/lockup-on-light.png" alt="DakyXTech OS" className="block h-8 w-auto" />
+            <div className="mt-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Internal Operations</div>
           </div>
         </div>
 

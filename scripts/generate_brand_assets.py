@@ -23,16 +23,17 @@ def run():
     mark_navy_raw = Image.open(os.path.join(masters_dir, "mark-navy.png")).convert("RGBA")
     mark_blue = master("mark-blue.png")
     mark_white = master("mark-white.png")
-    lockup_color = master("lockup-color.png")  # blue mark, navy "Daky", blue X
-
-    # On-dark colour cut: navy parts of the colour lockup turn white, blue stays.
-    lockup_dark = Image.new("RGBA", lockup_color.size, (0, 0, 0, 0))
-    src = lockup_color.load(); dst = lockup_dark.load()
+    # Primary logo (5 Oct 2026): "DakyX" with the blue X, no "Tech".
+    lockup_color = master("primary-on-light.png")  # navy "Daky", blue mark and X
+    lockup_dark = master("primary-on-dark.png")    # white "Daky", blue mark and X
+    # The light master carries a white "Tech" that ghosts on light grounds: drop it.
+    px = lockup_color.load()
     for y in range(lockup_color.height):
         for x in range(lockup_color.width):
-            r, g, b, a = src[x, y]
-            if a:
-                dst[x, y] = (r, g, b, a) if b > r + 100 else (255, 255, 255, a)
+            r, g, b, a = px[x, y]
+            if a and min(r, g, b) > 200:
+                px[x, y] = (0, 0, 0, 0)
+    lockup_color = lockup_color.crop(lockup_color.getbbox())
 
     def make_horizontal_lockup(lockup, canvas_size, **_):
         cw, ch = canvas_size
@@ -173,6 +174,10 @@ def run():
     email_dark = Image.new("RGB", (400, 96), (5, 10, 20))
     email_dark.paste(email_dark_raw, (0, 0), email_dark_raw)
     email_dark.save(os.path.join(server_assets_dir, "logo-email-dark.png"), optimize=True)
+    # OS shell and login lockups (trimmed, ~3.3:1).
+    for name, lk in (("lockup-on-dark.png", lockup_dark), ("lockup-on-light.png", lockup_color)):
+        h = 120
+        lk.resize((round(lk.width * h / lk.height), h), Image.LANCZOS).save(os.path.join(client_public_brand, name))
     print("Saved server assets (logo.png, mark.png, logo-email.png, logo-email-dark.png)")
 
     # 9. Generate SVG: bimi-logo.svg and favicon.svg
