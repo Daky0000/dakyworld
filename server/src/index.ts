@@ -331,13 +331,13 @@ if (!hasBuiltClient) {
   // No client build present (local API-only run) — show what's running.
   app.get("/", (_req, res) => {
     res.type("html").send(`<!doctype html>
-<html><head><meta charset="utf-8"><title>DakyXTech OS API</title>
+<html><head><meta charset="utf-8"><title>DakyXTech OS API</title><link rel="icon" href="/brand/favicon-32.png" sizes="32x32" type="image/png">
 <style>body{font-family:"DM Sans",system-ui,sans-serif;background:#08101F;color:#F4F5F0;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
 .card{border:1px solid rgba(255,255,255,.10);padding:2.5rem 3rem;text-align:center}
 h1{font-size:1.1rem;letter-spacing:.08em;text-transform:uppercase;margin:0 0 .5rem}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#B8FF3D;margin-right:8px}
 a{color:#B8FF3D;text-decoration:none}</style></head>
-<body><div class="card"><h1><span class="dot"></span>DakyXTech OS API — Running</h1>
+<body><div class="card"><img src="/brand/lockup-on-dark.png" alt="DakyXTech" style="height:40px;display:block;margin:0 auto 1.25rem"><h1><span class="dot"></span>OS API — Running</h1>
 <p><a href="/api/health">/api/health</a></p></div></body></html>`);
   });
 }
