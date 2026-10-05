@@ -664,7 +664,7 @@ British English. No exclamation marks, no "leverage", no "optimise" — say what
 async function speedSummarySystem(business: { name: string; trade: string | null; town: string | null }): Promise<string> {
   const brief = await resolveBrief("audit.speed", SHIPPED_DOCTRINE);
   const who = brief.agentName ?? "SEO Specialist";
-  const preamble = `You are the Dakyworld ${who} writing the speed-and-findability section of a website review for ${business.name}${business.trade ? `, ${business.trade}` : ""}${business.town ? ` in ${business.town}` : ""}.`;
+  const preamble = `You are the DakyXTech ${who} writing the speed-and-findability section of a website review for ${business.name}${business.trade ? `, ${business.trade}` : ""}${business.town ? ` in ${business.town}` : ""}.`;
   return composeWriterSystem(brief, { preamble: [preamble], contract: CONTRACT });
 }
 

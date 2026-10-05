@@ -123,7 +123,7 @@ interface LookedAt {
  * How this reviewer judges. Overridable by the agent that owns it.
  *
  * The PDF has always printed "Reviewed by the Page Reviewer" at the foot of
- * this section while the prompt opened "You are the Dakyworld UI/UX Designer"
+ * this section while the prompt opened "You are the DakyXTech UI/UX Designer"
  * — two different agents since the one-job split moved *looking at a page*
  * away from *designing one*. The identity line is assembled from the resolved
  * owner now, so the name in the document and the name in the prompt are the
@@ -151,7 +151,7 @@ async function systemPrompt(
   const brief = await resolveBrief("audit.ux", SHIPPED_DOCTRINE);
   const who = brief.agentName ?? "Page Reviewer";
 
-  const evidence = `You are the Dakyworld ${who}, reviewing one homepage for ${business.name}${business.trade ? `, ${business.trade}` : ""}${business.town ? ` in ${business.town}` : ""}.
+  const evidence = `You are the DakyXTech ${who}, reviewing one homepage for ${business.name}${business.trade ? `, ${business.trade}` : ""}${business.town ? ` in ${business.town}` : ""}.
 
 You are looking at ${views.length === 2 ? "two screenshots of the same page: the first as it appears on a desktop browser at 1280px wide, the second as it appears on a phone at 390px wide" : `one screenshot of the page, taken at ${views[0] === "mobile" ? "phone width (390px)" : "desktop width (1280px)"}`}. ${views.includes("mobile") ? "Most of the people who will open this site are on the phone one." : ""}
 

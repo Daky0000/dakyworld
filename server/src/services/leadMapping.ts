@@ -565,7 +565,7 @@ export function scoreLead(lead: NormalizedLead): number {
     score += 15;
     const domain = websiteDomain(lead.website);
     // A free page-builder or social page instead of a real domain is the
-    // strongest buying signal Dakyworld has: they need a proper site.
+    // strongest buying signal DakyXTech has: they need a proper site.
     if (domain && /(wixsite|weebly|blogspot|wordpress\.com|business\.site|godaddysites|squarespace\.com)$/i.test(domain)) {
       score += 10;
     }

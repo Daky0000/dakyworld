@@ -412,7 +412,7 @@ export function Agents() {
 /**
  * Hiring a specialist.
  *
- * The nine shipped specialists are the crafts Dakyworld already sells. They
+ * The nine shipped specialists are the crafts DakyXTech already sells. They
  * will not be the last — the next one is a 3D artist, a bookkeeper, a
  * translator — and every one of those needing a deploy would make the roster a
  * developer's list rather than the Owner's.

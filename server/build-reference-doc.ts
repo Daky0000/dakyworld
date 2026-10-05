@@ -162,7 +162,7 @@ function rosterTable(): string {
 
 /** What each of the ten layers governs, in the order the runner composes them. */
 const LAYER_NOTE: Record<string, [string, string]> = {
-  role: ["Role", "Who the agent is, and what Dakyworld is. The only layer that says “you are”."],
+  role: ["Role", "Who the agent is, and what DakyXTech is. The only layer that says “you are”."],
   mission: ["Mission", "The one thing it exists to produce. Matches the mission on its card."],
   scope: ["Scope", "What is inside its craft — and the instruction to hand back anything that is not."],
   dataRules: ["Data rules", "What it may treat as fact. Shared wording: observed and inferred stay apart, and nothing is invented."],
@@ -529,8 +529,8 @@ const EXTRA_CSS = `<style>
 const head = fs
   .readFileSync(path.join(SRC, "workflow-head.html"), "utf8")
   .replace(
-    "<title>Dakyworld Agent Master Workflow</title>",
-    "<title>Dakyworld OS — Agents, Instructions, Workflows and Tools</title>",
+    "<title>DakyXTech Agent Master Workflow</title>",
+    "<title>DakyXTech OS — Agents, Instructions, Workflows and Tools</title>",
   )
   .replace("__FONTS__", fontFaces())
   .replace("</head>", `${EXTRA_CSS}\n</head>`);
@@ -538,10 +538,10 @@ const head = fs
 const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
 const cover = `<div class="cover">
-  <img class="lockup" src="${brand.logoDark}" alt="Dakyworld">
+  <img class="lockup" src="${brand.logoDark}" alt="DakyXTech">
   <div class="rule"><i></i><i></i></div>
   <h1>Agents, Instructions, Workflows&nbsp;&amp; Tools</h1>
-  <p class="sub">Every agent in the Dakyworld workforce, the exact words each one runs on, the work that starts without anybody asking, and every tool any of them can reach. Read out of the running code, not written alongside it.</p>
+  <p class="sub">Every agent in the DakyXTech workforce, the exact words each one runs on, the work that starts without anybody asking, and every tool any of them can reach. Read out of the running code, not written alongside it.</p>
   <nav class="contents">
     <div class="col">
       <b>Part 1 · The workforce</b>
@@ -676,7 +676,7 @@ async function part2(): Promise<string> {
   </div>
   ${writerTable()}
 
-  <h3 class="band">The wording Dakyworld ships for each</h3>
+  <h3 class="band">The wording DakyXTech ships for each</h3>
   <p style="color:var(--muted)">This is the doctrine running today wherever nobody has edited the owning agent. Editing that agent replaces it.</p>
   ${await doctrines()}
 </div>`;

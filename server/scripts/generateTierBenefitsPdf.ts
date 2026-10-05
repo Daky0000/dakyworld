@@ -15,8 +15,8 @@ function generatePdf(targetPath: string): Promise<void> {
       size: "A4",
       margin: 36,
       info: {
-        Title: "Dakyworld Website Builder — Tier Plans & Benefits Guide",
-        Author: "Dakyworld OS",
+        Title: "DakyXTech Website Builder — Tier Plans & Benefits Guide",
+        Author: "DakyXTech OS",
         Subject: "Starter $3 ($5), Pro $10 ($16), and Business $25 ($45) Tier Plans, Storage Quotas & Feature Benefits",
       },
     });
@@ -36,7 +36,7 @@ function generatePdf(targetPath: string): Promise<void> {
       .fillColor("#B8FF3D")
       .font("Helvetica-Bold")
       .fontSize(9)
-      .text("DAKYWORLD OS • WEBSITE BUILDER & MEDIA LIBRARY STORAGE SYSTEM", 36, 24, {
+      .text("DAKYXTECH OS • WEBSITE BUILDER & MEDIA LIBRARY STORAGE SYSTEM", 36, 24, {
         characterSpacing: 1.1,
       });
 
@@ -140,7 +140,7 @@ function generatePdf(targetPath: string): Promise<void> {
           "UNLOCKED: Unlimited HTML Page Imports, Unlimited Page Edits/Saves & Unlimited AI Assistant / Builder Agent Runs",
           "Highest-Priority Concierge Support + 240 Technical Hours (4 hrs/mo) + Monthly Conversion & Performance Reviews",
         ],
-        locked: "None — 100% of Dakyworld Website Builder, Media Library, AI & Developer features are unlocked.",
+        locked: "None — 100% of DakyXTech Website Builder, Media Library, AI & Developer features are unlocked.",
       },
     ];
 

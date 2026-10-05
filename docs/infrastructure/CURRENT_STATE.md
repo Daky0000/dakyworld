@@ -23,7 +23,7 @@ Last verified: 2026-10-04.
   - `os.dakyx.com` (Active, valid TLS, 200 OK)
   - `editor.dakyx.com` (Attached in Railway; CNAME target: `pf5fc5xw.up.railway.app`)
   - `app.dakyx.com` (Attached in Railway; CNAME target: `0kg4s78c.up.railway.app`)
-  - `os.dakyworld.com` (Legacy domain)
+  - `os.dakyx.com` (Legacy domain)
 - Object storage: Cloudflare R2
 - Staging environment: `staging` (`b8a2bf9e-c93e-4e39-a11a-0e6a81cf1ed8`) with isolated services
 

@@ -1,6 +1,6 @@
 # The mail room, demo pages, and the website audit team
 
-> Part of the Dakyworld OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
+> Part of the DakyXTech OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
 
 **The mail room** — `src/lib/imap.ts`, `src/services/mailbox/`, `routes/inbox.ts`,
 the `mail.room` agent. Every email module before Aug 2026 was outbound: the app
@@ -232,7 +232,7 @@ sentence in a proposal to have got wrong, in both directions.
   record or a measured millisecond, and each one is checkable by the person
   reading. A model asked to review a stranger's site for security will find
   *something*, and what it finds is a plausible vulnerability that may not
-  exist — in a document that goes out under Dakyworld's name to somebody who
+  exist — in a document that goes out under DakyXTech's name to somebody who
   knows the truth. The speed section's model call writes the summary and cannot
   add a finding.
 - **The speed half is measured in a browser, the verdict is not**

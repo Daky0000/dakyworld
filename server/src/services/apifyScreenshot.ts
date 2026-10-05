@@ -3,7 +3,7 @@ import { apifyConfigured, findActor, getApifyToken } from "../lib/apify.js";
 import { runActor, type ActorRunCode } from "./actorRun.js";
 
 /**
- * Talking to the Dakyworld screenshot actor.
+ * Talking to the DakyXTech screenshot actor.
  *
  * This file is the whole of what the server knows about taking a picture:
  * which actor, what the body looks like, and how to read the rows back. It is
@@ -17,7 +17,7 @@ import { runActor, type ActorRunCode } from "./actorRun.js";
  * fallback profile for an actor nobody had mapped. All of it existed for one
  * reason — Apify ignores an unknown input key in silence, so guessing produces
  * a perfectly successful run at the wrong size with nothing anywhere saying
- * so. With one actor that Dakyworld writes, there is nothing to guess.
+ * so. With one actor that DakyXTech writes, there is nothing to guess.
  *
  * ## The contract
  *
@@ -36,7 +36,7 @@ import { runActor, type ActorRunCode } from "./actorRun.js";
  */
 
 /**
- * Dakyworld's own actor.
+ * DakyXTech's own actor.
  *
  * **`daky_world`, with the underscore.** That is the Apify account this
  * company's token belongs to, and it was not a guess: the first automatic
@@ -255,7 +255,7 @@ export async function runScreenshotActor(job: ScreenshotJob, options: { waitMs: 
       actorId,
       code: "ACTOR_FAILED",
       message:
-        `The run finished, but not one of its ${result.items.length} result(s) carried an id — so "${actorId}" is not the Dakyworld ` +
+        `The run finished, but not one of its ${result.items.length} result(s) carried an id — so "${actorId}" is not the DakyXTech ` +
         `screenshot actor. Only that actor speaks this app's screenshot contract; an actor from the Apify store cannot be substituted for it. ` +
         `Deploy it from apify/dakyworld-screenshot in this repository, or set Settings → Lead Sources → Screenshot actor back to a copy of it.`,
       costUsd: result.costUsd,

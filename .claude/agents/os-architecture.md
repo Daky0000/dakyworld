@@ -1,6 +1,6 @@
 ---
 name: os-architecture
-description: Read-only navigator for the Dakyworld OS architecture notes in docs/claude/ and the code they describe. Use when a question needs the design rules behind an area (model routing, the agent runtime, capture, outreach, the Website Builder, access control) rather than a code search. Returns the rules that bear on the change, and names any that the proposed change would break.
+description: Read-only navigator for the DakyXTech OS architecture notes in docs/claude/ and the code they describe. Use when a question needs the design rules behind an area (model routing, the agent runtime, capture, outreach, the Website Builder, access control) rather than a code search. Returns the rules that bear on the change, and names any that the proposed change would break.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---

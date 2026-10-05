@@ -161,7 +161,7 @@ console.log("\nDeploying an actor the account has never had");
   check("it reports success", result.ok, result.message);
   check("it created the actor", calls.some((c) => c.method === "POST" && c.path === "/acts"), calls.map((c) => c.path).join(", "));
   check("under the name the app calls", calls.find((c) => c.path === "/acts")?.body?.name === "website-screenshot");
-  // Private, always. This actor is Dakyworld's own tooling, not something to
+  // Private, always. This actor is DakyXTech's own tooling, not something to
   // publish on the store.
   check("and private", calls.find((c) => c.path === "/acts")?.body?.isPublic === false);
 

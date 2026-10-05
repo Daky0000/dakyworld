@@ -384,7 +384,7 @@ export function auditMarkdown(report: WebsiteAuditReport, options: MarkdownOptio
     );
   }
 
-  say("---", "", `Prepared by the Dakyworld website audit team. Cost of this review: $${report.costUsd.toFixed(4)}.`, "");
+  say("---", "", `Prepared by the DakyXTech website audit team. Cost of this review: $${report.costUsd.toFixed(4)}.`, "");
 
   return lines.join("\n");
 }

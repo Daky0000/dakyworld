@@ -95,7 +95,7 @@ const SCHEMA = {
   },
 } as const;
 
-const SYSTEM = `You are checking one business against one written test, for Dakyworld, an outsourced technology partner in Ghana.
+const SYSTEM = `You are checking one business against one written test, for DakyXTech, an outsourced technology partner in Ghana.
 
 You are given: a target description, some numbered statements, and the evidence that was actually gathered about this business — a technical audit of their website and mail domain, and, where somebody looked, what their homepage shows a visitor.
 

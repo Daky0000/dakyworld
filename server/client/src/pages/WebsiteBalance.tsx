@@ -76,7 +76,7 @@ export function WebsiteBalance() {
               </a>
             )}
             <a
-              href="mailto:support@dakyworld.com?subject=Billing%20Support%20Request"
+              href="mailto:support@dakyx.com?subject=Billing%20Support%20Request"
               className="inline-flex h-9 items-center justify-center rounded-xl border border-line bg-white px-3 text-xs font-semibold text-ink shadow-2xs hover:bg-cream"
             >
               Contact Billing
@@ -316,7 +316,7 @@ export function WebsiteBalance() {
                 </span>
                 {data.aiUsage.canUpgrade && (
                   <a
-                    href="mailto:support@dakyworld.com?subject=Upgrade%20Tier%20Request"
+                    href="mailto:support@dakyx.com?subject=Upgrade%20Tier%20Request"
                     className="text-xs font-semibold text-blue hover:underline"
                   >
                     Upgrade Plan →

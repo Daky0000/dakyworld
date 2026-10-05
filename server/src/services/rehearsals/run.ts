@@ -106,7 +106,7 @@ export async function startRehearsal(input: StartInput) {
   const website = normaliseSiteUrl(input.website);
   if (!website) {
     throw new RehearsalRefused(
-      "That is not a web address this can open. Give something like dakyworld.com or https://dakyworld.com — a rehearsal needs a real site to look at.",
+      "That is not a web address this can open. Give something like dakyx.com or https://dakyx.com — a rehearsal needs a real site to look at.",
     );
   }
   const host = hostOf(website);

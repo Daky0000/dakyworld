@@ -7,7 +7,7 @@ import { brandImage, companyProfile, decodeDataUrl, type CompanyProfile } from "
 type PDFDoc = InstanceType<typeof PDFDocument>;
 
 /**
- * The Dakyworld letterhead, drawn onto every page of every document the app
+ * The DakyXTech letterhead, drawn onto every page of every document the app
  * produces.
  *
  * A proposal and an invoice are the two things a client actually keeps. Until
@@ -16,7 +16,7 @@ type PDFDoc = InstanceType<typeof PDFDocument>;
  * printed identity from the letterhead template: the corner ribbons, the
  * wordmark lock-up, the contact block, the footer rule and the watermark.
  *
- * Colours and type follow the website design system (`Dakyworld Website/
+ * Colours and type follow the website design system (`DakyXTech Website/
  * assets/site.css`) so a proposal and the site read as one company. Accent is
  * kept to two corner wedges, four hairline icons and one rule.
  *

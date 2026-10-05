@@ -30,7 +30,7 @@ export type { RenderedMeasurements };
  */
 
 const SMALL_FETCH_TIMEOUT_MS = 8000;
-const CRAWLER_UA = "DakyworldOS-SiteAudit/1.0 (+https://dakyworld.com)";
+const CRAWLER_UA = "DakyXTechOS-SiteAudit/1.0 (+https://dakyx.com)";
 
 export interface PageResource {
   url: string;
@@ -236,7 +236,7 @@ function absolute(url: string, base: URL): string {
  * a company puts after its own name.
  *
  * This matters more than it looks. The first run of this reported a page title
- * of `Dakyworld&reg; &mdash; Your Outsourced IT Department`: eleven characters
+ * of `DakyXTech&reg; &mdash; Your Outsourced IT Department`: eleven characters
  * longer than the real title, which is enough to change a length finding, and
  * unreadable in a document that was about to be shown to the business whose
  * title it is.

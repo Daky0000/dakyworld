@@ -9,7 +9,7 @@ import { DISCIPLINE_AGENTS, scoreFindings, sortBySeverity, type AuditFindingDeta
  * language model asked to review a stranger's website for security will find
  * something, because that is what it was asked to do — and what it finds will
  * be a plausible-sounding vulnerability that may not exist. This report goes
- * out under Dakyworld's name, about somebody else's business, and gets
+ * out under DakyXTech's name, about somebody else's business, and gets
  * forwarded to whoever built their site. A fabricated security finding in it
  * is not an embarrassment, it is a false accusation.
  *

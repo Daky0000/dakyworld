@@ -1,7 +1,7 @@
 import { VOICE } from "./dakyworld.js";
 
 /**
- * How Dakyworld writes to a stranger.
+ * How DakyXTech writes to a stranger.
  *
  * ## What this replaced, and why
  *
@@ -14,7 +14,7 @@ import { VOICE } from "./dakyworld.js";
  * It is not a reworded playbook. The two disagree, on purpose, in four places:
  *
  *  - **Who the first line is about.** The playbook opened every letter with
- *    "Daky here from Dakyworld" *before* the observation. This opens on the
+ *    "Daky here from DakyXTech" *before* the observation. This opens on the
  *    reader's own situation and identifies immediately after. Leading with
  *    yourself is the single most common reason a stranger stops reading.
  *  - **Scenarios.** There are none. A scripted scenario produces twenty
@@ -33,7 +33,7 @@ import { VOICE } from "./dakyworld.js";
  * the peer voice and the follow-up cadence; `copywriting` for specificity and
  * customer language; `stop-slop` for the sentence-level tells; `offers` for
  * what actually makes an ask easy to say yes to. Tailored throughout to what
- * Dakyworld is: a remote IT department in Kumasi writing to owners and
+ * DakyXTech is: a remote IT department in Kumasi writing to owners and
  * managers of established businesses in Ghana and West Africa, signed by the
  * founder himself.
  *
@@ -42,7 +42,7 @@ import { VOICE } from "./dakyworld.js";
  * `services/coldEmailChecks.ts` runs over the finished text and can block a
  * send. Three of its rules constrain the wording here and are stated in the
  * doctrine so the model satisfies them by writing well rather than by being
- * corrected afterwards: **Dakyworld must be named within the first three
+ * corrected afterwards: **DakyXTech must be named within the first three
  * lines**, there must be **exactly one question**, and **no price** may appear
  * in a first email.
  */
@@ -76,7 +76,7 @@ const REGISTER = `**The voice: one person who looked, writing to another person 
 - **Never name a private individual** — not whoever registered the domain, not a former supplier, not a staff member on the contact page. Talk about the business, never about a person you found.`;
 
 /**
- * The first letter to a business that has never heard of Dakyworld.
+ * The first letter to a business that has never heard of DakyXTech.
  *
  * Structure is offered as a choice of shapes rather than a fixed four
  * paragraphs, which is the largest single change from the playbook: a fixed

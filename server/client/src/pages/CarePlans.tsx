@@ -5,7 +5,7 @@ import type { BillOutcome, CarePlan, CarePlanCycle } from "../lib/types";
 import { Badge, Button, Card, EmptyState, Loading, Money, PageHeader, RelativeTime, StatGrid, StatTile, StatusDot } from "../components/ui";
 import { CarePlanEditor } from "../components/CarePlanEditor";
 
-/** The tiers as dakyworld.com names them. See `services/carePlanCatalogue.ts`. */
+/** The tiers as dakyx.com names them. See `services/carePlanCatalogue.ts`. */
 const TIER_LABEL: Record<string, string> = {
   FOUNDATION: "Foundation",
   GROWTH: "Growth",

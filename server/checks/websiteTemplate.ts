@@ -32,7 +32,7 @@ const title = "Home";
 import Layout from "../layouts/Layout.astro";
 ---
 <Layout title={title}>
-  <h1>Welcome to Dakyworld</h1>
+  <h1>Welcome to DakyXTech</h1>
   <p>We build websites. <a href="/contact">Talk to us</a></p>
   <p>Signed in as {user.name}</p>
   <img src="/hero.png" alt="The team" />
@@ -41,7 +41,7 @@ import Layout from "../layouts/Layout.astro";
 `;
 const astroFound = discoverTemplateFields(astro, "src/pages/index.astro");
 assert.equal(astroFound.adapter, "template-literal-v1"); passed++;
-assert.deepEqual(values(astroFound.fields), ["/contact", "/hero.png", "Home", "Talk to us", "The team", "We build websites.", "Welcome to Dakyworld"]); passed++;
+assert.deepEqual(values(astroFound.fields), ["/contact", "/hero.png", "Home", "Talk to us", "The team", "We build websites.", "Welcome to DakyXTech"]); passed++;
 // "Home" is the frontmatter `const title`, and it is offered on purpose: it is
 // the page's browser tab and its search result, which are the two things a
 // customer most wants to change and could not.
@@ -64,14 +64,14 @@ assert.ok(astroFound.issues.some((issue) => issue.code === "unsupported" && /<st
 // A component's props are the component's business.
 assert.ok(astroFound.issues.some((issue) => issue.code === "unsupported" && /<Layout>/.test(issue.message))); passed++;
 
-const heading = astroFound.fields.find((entry) => entry.value === "Welcome to Dakyworld")!;
-const astroEdited = applyTemplateValues(astro, { filePath: "src/pages/index.astro", sourceHash: astroFound.sourceHash, changes: [{ fieldId: heading.id, value: "Welcome to Dakyworld Ltd" }] });
+const heading = astroFound.fields.find((entry) => entry.value === "Welcome to DakyXTech")!;
+const astroEdited = applyTemplateValues(astro, { filePath: "src/pages/index.astro", sourceHash: astroFound.sourceHash, changes: [{ fieldId: heading.id, value: "Welcome to DakyXTech Ltd" }] });
 assert.deepEqual(astroEdited.problems, []); passed++;
-assert.ok(astroEdited.source.includes("<h1>Welcome to Dakyworld Ltd</h1>")); passed++;
+assert.ok(astroEdited.source.includes("<h1>Welcome to DakyXTech Ltd</h1>")); passed++;
 assert.ok(astroEdited.source.startsWith("---\nconst title")); passed++;
 const astroAgain = discoverTemplateFields(astroEdited.source, "src/pages/index.astro");
 assert.equal(astroAgain.fields.length, astroFound.fields.length); passed++;
-assert.equal(astroAgain.fields.find((entry) => entry.id === heading.id)?.value, "Welcome to Dakyworld Ltd"); passed++;
+assert.equal(astroAgain.fields.find((entry) => entry.id === heading.id)?.value, "Welcome to DakyXTech Ltd"); passed++;
 
 // A value carrying a brace is escaped rather than written as an expression.
 const braced = applyTemplateValues(astro, { filePath: "src/pages/index.astro", sourceHash: astroFound.sourceHash, changes: [{ fieldId: heading.id, value: "Save {50%} today" }] });
@@ -154,9 +154,9 @@ assert.deepEqual(values(svelteFound.fields), ["/about", "About us", "Coded", "He
 // opaque, so nothing from either is offered.
 assert.ok(!svelteFound.fields.some((entry) => entry.value.includes("{") || entry.value === "/go" || entry.value.includes("export let"))); passed++;
 const greeting = svelteFound.fields.find((entry) => entry.value === "Hello there")!;
-const svelteEdited = applyTemplateValues(svelte, { filePath: "src/routes/+page.svelte", sourceHash: svelteFound.sourceHash, changes: [{ fieldId: greeting.id, value: "Hello from Dakyworld" }] });
+const svelteEdited = applyTemplateValues(svelte, { filePath: "src/routes/+page.svelte", sourceHash: svelteFound.sourceHash, changes: [{ fieldId: greeting.id, value: "Hello from DakyXTech" }] });
 assert.deepEqual(svelteEdited.problems, []); passed++;
-assert.ok(svelteEdited.source.includes("<h1>Hello from Dakyworld</h1>")); passed++;
+assert.ok(svelteEdited.source.includes("<h1>Hello from DakyXTech</h1>")); passed++;
 assert.ok(svelteEdited.source.includes("{#if name}") && svelteEdited.source.includes("const url = \"/go\";")); passed++;
 
 // ── The contract every caller depends on ────────────────────────────────────

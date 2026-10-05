@@ -28,8 +28,8 @@ type Assistance = {
 type Route = "hosted" | "github";
 
 const GUIDE = {
-  hosted: "https://dakyworld.com/website-builder-setup#hosted",
-  github: "https://dakyworld.com/website-builder-setup#github",
+  hosted: "https://dakyx.com/website-builder-setup#hosted",
+  github: "https://dakyx.com/website-builder-setup#github",
 };
 
 export function ConnectWebsite() {

@@ -57,7 +57,7 @@ import { tickScheduledPublishes } from "./websitePublishScheduler.js";
  * and advanced *before* the work starts, so a failure can't be retried in a
  * loop and a restart can't fire the same slot twice.
  *
- * Deliberately in-process rather than a cron container: Dakyworld OS runs as a
+ * Deliberately in-process rather than a cron container: DakyXTech OS runs as a
  * single Railway service, and one setInterval has no moving parts to keep in
  * sync with a deploy.
  */
@@ -285,7 +285,7 @@ async function housekeepingTick(now: Date) {
   //
   // A published retention period that nothing enforces is a false statement in
   // a privacy policy, which is worse than the vague "as long as necessary" it
-  // replaced — so this is what makes dakyworld.com/privacy §03 true rather than
+  // replaced — so this is what makes dakyx.com/privacy §03 true rather than
   // aspirational. Only one of the five published periods is this tick's to
   // enforce; services/retention.ts says why for each of the other four.
   //
@@ -312,9 +312,9 @@ async function housekeepingTick(now: Date) {
 
   // What the company sells, from the company's own website.
   //
-  // The workforce describes Dakyworld on every cold email, every proposal and
+  // The workforce describes DakyXTech on every cold email, every proposal and
   // every agent turn, and it used to describe it from a constant that nothing
-  // kept in step with dakyworld.com. A price that came down, a plan that was
+  // kept in step with dakyx.com. A price that came down, a plan that was
   // renamed, a service line that was dropped — none of it reached an agent
   // until somebody edited TypeScript. On the ordinary day this costs seven
   // cached page reads and no model call at all: `syncBusinessOffer` fingerprints

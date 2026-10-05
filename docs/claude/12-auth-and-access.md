@@ -1,6 +1,6 @@
 # Auth, access control and security
 
-> Part of the Dakyworld OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
+> Part of the DakyXTech OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
 
 **Auth** — `src/middleware/auth.ts`. `DEV_NO_AUTH=true` runs the API as one
 implicit Owner and is force-disabled when `NODE_ENV=production`. Sign-in is

@@ -10,7 +10,7 @@ import { briefSettingKey, writerJob, type WriterJob } from "./registry.js";
  * Every writing job in this system is composed of parts that must not be
  * confused:
  *
- *  - **The doctrine.** How Dakyworld writes this thing — the voice, the
+ *  - **The doctrine.** How DakyXTech writes this thing — the voice, the
  *    judgement, what may and may not be claimed. This is the founder's, it is
  *    what the Agents screen shows, and editing it is the entire point.
  *  - **The contract.** The shape of the answer — the fields, the plain-text
@@ -101,8 +101,8 @@ export async function resolveBrief(jobKey: string, shipped: string): Promise<Res
     text: shipped,
     source: "shipped",
     explains: agent
-      ? `The wording Dakyworld ships. Edit ${agent.name}'s prompt on the Agents screen and that takes over here.`
-      : `The wording Dakyworld ships. There is no agent called ${job.agentKey} in the database, so nothing can override it.`,
+      ? `The wording DakyXTech ships. Edit ${agent.name}'s prompt on the Agents screen and that takes over here.`
+      : `The wording DakyXTech ships. There is no agent called ${job.agentKey} in the database, so nothing can override it.`,
     agentName: agent?.name ?? null,
   };
 }
@@ -118,7 +118,7 @@ const CONTRACT_HEADING =
  *
  *  - **The doctrine** goes first because it is the part being reasoned from,
  *    and it is the only part a person edits.
- *  - **The company facts** — who Dakyworld is, the contact details from
+ *  - **The company facts** — who DakyXTech is, the contact details from
  *    Settings → System — sit outside the doctrine and are always present, even
  *    when a founder's own wording has replaced everything else. They are live
  *    state, not writing: an edit that accidentally dropped the company's own

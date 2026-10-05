@@ -47,7 +47,7 @@
  * prospect receiving the same sentence a competitor down the road received is
  * not a hypothetical failure: it is what every outreach tool on the market does.
  *
- * Source: Dakyworld Cold Email Playbook v3 (`server/docs/cold-email-playbook.md`).
+ * Source: DakyXTech Cold Email Playbook v3 (`server/docs/cold-email-playbook.md`).
  * Where the two disagree, the playbook is the authority and this is the bug.
  */
 

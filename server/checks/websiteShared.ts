@@ -12,7 +12,7 @@ function equal(name: string, actual: unknown, expected: unknown) { assert.deepEq
 /* ------------------------------------------------------------- fixtures */
 
 const header = (current: string) =>
-  `<header class="site-header"><a class="brand" href="/"><img src="/logo.svg" alt="Dakyworld"></a><nav class="main-nav">` +
+  `<header class="site-header"><a class="brand" href="/"><img src="/logo.svg" alt="DakyXTech"></a><nav class="main-nav">` +
   `<a href="/services"${current === "services" ? ' class="nav-link active" aria-current="page"' : ' class="nav-link"'}>Services</a>` +
   `<a href="/contact"${current === "contact" ? ' class="nav-link active" aria-current="page"' : ' class="nav-link"'}>Contact</a>` +
   `</nav></header>`;

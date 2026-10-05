@@ -14,7 +14,7 @@ import { WebsiteSubscriberOnboarding } from "../components/WebsiteSubscriberOnbo
  * whoever did it, so the list cannot say "done" about something that has since
  * broken — a branch that stopped being readable goes back to blocked on its own.
  *
- * The audience is Dakyworld, not the client. This is the screen somebody works
+ * The audience is DakyXTech, not the client. This is the screen somebody works
  * down before handing a website over, and the last line is the handover itself,
  * which is the one thing here nothing can derive.
  */

@@ -1,5 +1,5 @@
 /**
- * The wording Dakyworld ships for each writing job, fetched on demand.
+ * The wording DakyXTech ships for each writing job, fetched on demand.
  *
  * The API needs this so the Agents screen can show a brief *before* anybody has
  * edited it — an editor that opens empty and silently replaces a doctrine the

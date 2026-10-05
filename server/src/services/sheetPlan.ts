@@ -32,7 +32,7 @@ export interface PlanColumn {
   index: number;
   /** The header cell as it reads in the file, for the review screen. */
   header: string;
-  /** What the column is called in Dakyworld OS. */
+  /** What the column is called in DakyXTech OS. */
   label: string;
   /** A built-in Lead key, or "custom", or "ignore". */
   field: PlanFieldTarget;

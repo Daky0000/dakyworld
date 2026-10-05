@@ -49,10 +49,10 @@ const SPENDING = TOOLS.filter((t) => t.spends).length;
 const REGIONS: Array<{ label: string; source: string; editable: boolean; when: string }> = [
   { label: "Its instructions", source: "The agent's own text, or the ten shipped sections run together in order.", editable: true, when: "Always" },
   { label: "What it is relied on for", source: "The skills on this agent, edited on the same screen.", editable: false, when: "When it has any" },
-  { label: "Who Dakyworld is", source: "services/dakyworld.ts — the same for every agent.", editable: false, when: "Always" },
+  { label: "Who DakyXTech is", source: "services/dakyworld.ts — the same for every agent.", editable: false, when: "Always" },
   { label: "The company's details", source: "Settings → System. Change it there and every agent and document follows.", editable: false, when: "Always" },
   { label: "How it writes", source: "services/dakyworld.ts — the brand voice.", editable: false, when: "Agents that write for outside" },
-  { label: "What Dakyworld holds", source: "Shared memory, recalled for this task's subjects. Every agent is shown these.", editable: false, when: "When anything was recalled" },
+  { label: "What DakyXTech holds", source: "Shared memory, recalled for this task's subjects. Every agent is shown these.", editable: false, when: "When anything was recalled" },
   { label: "What it already knows", source: "Its own memory, recalled for this task's subjects.", editable: false, when: "When anything was recalled" },
   { label: "How it does the work", source: "services/agents/runner.ts — the same four passes for every agent, seeded or hired.", editable: false, when: "Working runs only" },
   { label: "How it works here", source: "Generated from live state — tool etiquette, dry run, and the size of the roster.", editable: false, when: "Always" },
@@ -158,7 +158,7 @@ function build(bodyFile: string, out: string, title: string): void {
   console.log(`wrote ${out} — ${(html.length / 1024).toFixed(0)} KB`);
 }
 
-build("system-front-body.html", OUT_FRONT, "The Dakyworld OS Agent System");
+build("system-front-body.html", OUT_FRONT, "The DakyXTech OS Agent System");
 build("system-current-body.html", OUT_CURRENT, "What Runs Now");
 console.log(`${AGENT_SEEDS.length} agents, ${TOOLS.length} tools, ${PROMPT_LAYERS.length} layers, ${REGIONS.length} prompt regions`);
 process.exit(0);

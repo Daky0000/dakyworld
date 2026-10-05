@@ -106,7 +106,7 @@ assert.equal(after.fields.find((field) => field.id === title.id)?.value, "Websit
 // Half of these exports keep their copy in `src/data/site.ts`, which has no JSX
 // in it and was therefore a file with nothing to edit.
 const data = `export const site = {
-  name: "Dakyworld",
+  name: "DakyXTech",
   tagline: "Your outsourced digital systems team",
   nav: [{ label: "Work", href: "/work" }, { label: "Pricing", href: "/pricing" }],
   apiKey: "sk-not-content",
@@ -114,7 +114,7 @@ const data = `export const site = {
 };`;
 const dataFound = discoverJsxFields(data, "src/data/site.ts");
 const dataValues = dataFound.fields.map((field) => field.value).sort();
-assert.deepEqual(dataValues, ["/pricing", "/work", "Dakyworld", "Pricing", "Work", "Your outsourced digital systems team"]); passed++;
+assert.deepEqual(dataValues, ["/pricing", "/work", "DakyXTech", "Pricing", "Work", "Your outsourced digital systems team"]); passed++;
 // A key that is not content stays where it is, whatever its value looks like.
 assert.ok(!dataValues.includes("sk-not-content") && !dataValues.includes("#0A2540") && !dataValues.includes("12px")); passed++;
 

@@ -19,7 +19,7 @@ nothing exists but this line.
 Taken by the founder on 27 Aug 2026 when the plan was read. Do not quietly
 reverse any of them.
 
-1. **Hosted seats on os.dakyworld.com.** The customer logs into this OS with an
+1. **Hosted seats on os.dakyx.com.** The customer logs into this OS with an
    external role scoped to their own site. There is **no installed module, no
    license server, no signed release packages and no update endpoint** — for a
    hosted product, "module updates" is a Railway deploy. This is why §2B and §7A
@@ -105,7 +105,7 @@ Two things already decided:
   is the resize/compress/strip pipeline. With no Cloudinary key — today's state —
   it degrades rather than fails: JPEG and WebP accepted under a size cap with a
   note saying they were not recompressed. **`downscalePng` no longer exists** —
-  it was removed on 2 Sep 2026 when screenshot resizing moved into Dakyworld's
+  it was removed on 2 Sep 2026 when screenshot resizing moved into DakyXTech's
   own Apify actor, which does it with Sharp. `services/png.ts` still has
   `decodePng`/`encodePng` for the audit's annotations, so a box filter could be
   written back if it is ever wanted; the better precedent is the actor's, which

@@ -4,7 +4,7 @@ import { prisma } from "../../lib/prisma.js";
  * The company's own website, put into the editor once.
  *
  * Seeded rather than created through the UI because it is not a choice anybody
- * makes — dakyworld.com exists, it is in this repository, and an editor that
+ * makes — dakyx.com exists, it is in this repository, and an editor that
  * opened onto an empty list would be asking the owner to tell it something it
  * already knows.
  *
@@ -22,7 +22,7 @@ export async function ensureDakyworldSite(): Promise<boolean> {
     data: {
       name: "DakyXTech",
       slug: "dakyworld",
-      publicUrl: "https://dakyworld.com",
+      publicUrl: "https://dakyx.com",
       // The website is the root of this same repository, served by GitHub Pages
       // — see DOMAINS.md. `repoPath` is empty for exactly that reason.
       repoOwner: "Daky0000",

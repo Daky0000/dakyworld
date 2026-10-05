@@ -368,7 +368,7 @@ export async function slackInbound(): Promise<SlackInbound> {
  * Who, if anyone, is allowed to decide things from Slack.
  *
  * Empty means anybody in the channel, which is deliberate rather than
- * forgotten: Dakyworld is one person today, and demanding a user id be pasted
+ * forgotten: DakyXTech is one person today, and demanding a user id be pasted
  * before a button works would mean the button never works. The moment a second
  * person is in the channel it is worth filling in — see the setting's note.
  */
@@ -472,7 +472,7 @@ export async function openSlackModal(triggerId: string, view: unknown): Promise<
  */
 export async function replyToInteraction(responseUrl: string, text: string, replaceOriginal = false): Promise<void> {
   const response = await post(responseUrl, { text, replace_original: replaceOriginal, response_type: "ephemeral" });
-  if (!response.ok) throw new SlackError(response.status, "Slack could not deliver the reply. Check the decision in Dakyworld OS.");
+  if (!response.ok) throw new SlackError(response.status, "Slack could not deliver the reply. Check the decision in DakyXTech OS.");
 }
 
 /** Keeps a submitted modal visible until its decision has a confirmed outcome. */

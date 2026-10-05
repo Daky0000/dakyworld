@@ -10,7 +10,7 @@ import { looksAutomated, looksLikeSpamContent } from "./botCheck.js";
  * What to do with an event somebody else sent us.
  *
  * One handler exists today and it is the one that pays for itself: a contact
- * form on dakyworld.com posting here creates a lead, in the pipeline, scored,
+ * form on dakyx.com posting here creates a lead, in the pipeline, scored,
  * de-duplicated against everything the scrapers have already found — instead
  * of an email in an inbox that somebody retypes on Monday.
  *

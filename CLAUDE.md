@@ -8,24 +8,24 @@ Read this before touching anything at the root — the layout is not obvious.
 
 | Path | Product | Deployed to |
 |---|---|---|
-| `server/` | Dakyworld OS, the internal ops app (API + React client) | Railway → **os.dakyworld.com** |
-| repo root (`index.html`, `about.html`, … `assets/`) | the public marketing website, static HTML | GitHub Pages → **dakyworld.com** |
+| `server/` | DakyXTech OS, the internal ops app (API + React client) | Railway → **os.dakyx.com** |
+| repo root (`index.html`, `about.html`, … `assets/`) | the public marketing website, static HTML | GitHub Pages → **dakyx.com** |
 | `website-drafts/` | superseded homepage explorations | served but unlinked |
-| `apify/dakyworld-screenshot/` | the screenshot actor Dakyworld OS calls | Apify, via `apify push` |
+| `apify/dakyworld-screenshot/` | the screenshot actor DakyXTech OS calls | Apify, via `apify push` |
 
 The website sits *at the root, beside `server/`* because GitHub Pages can only
 serve from the root or `/docs` on this repo, and changing that needs a
 dashboard setting. It is not a mistake — don't "tidy" it into a subfolder
 without also changing the Pages source, or the live site 404s.
 
-`CNAME` contains `dakyworld.com`. It claimed `os.dakyworld.com` for months
+`CNAME` contains `dakyx.com`. It claimed `os.dakyx.com` for months
 while that subdomain actually pointed at Railway, so Pages served nothing and
 the apex returned 404 with a bad certificate. If the apex ever breaks again,
 check `CNAME` against DNS before anything else.
 
 **[DOMAINS.md](DOMAINS.md) is the runbook** — which host owns which domain, the
 DNS records that must never be deleted (email, SPF, the `os` CNAME), and the
-outstanding zone cleanup that is blocking `dakyworld.com`. Read it before
+outstanding zone cleanup that is blocking `dakyx.com`. Read it before
 touching DNS or Pages settings.
 
 Railway's Root Directory is set to `server`, so **`server/railway.json` is the
@@ -92,7 +92,7 @@ one is dense and every paragraph in it was paid for by a defect.
 | Express routing, mounting order, the tool catalogue, MCP tools | [01-server-and-tools.md](docs/claude/01-server-and-tools.md) |
 | `callModel`, jobs vs vendors, NVIDIA/Perplexity/ChatGPT, free ladders, structured output, effort, prompt cache, what a turn costs | [02-model-routing-and-cost.md](docs/claude/02-model-routing-and-cost.md) |
 | Lead research, the scan, contact rules, `caseStrength()`, evidence rules | [03-lead-evidence.md](docs/claude/03-lead-evidence.md) |
-| Screenshots, the Dakyworld Apify actor, both viewports, Apify ceilings, fetching a site | [04-capture-and-screenshots.md](docs/claude/04-capture-and-screenshots.md) |
+| Screenshots, the DakyXTech Apify actor, both viewports, Apify ceilings, fetching a site | [04-capture-and-screenshots.md](docs/claude/04-capture-and-screenshots.md) |
 | Cold email doctrine, red flags, the writers, prompt surfaces, WhatsApp and SMS | [05-outreach-and-writers.md](docs/claude/05-outreach-and-writers.md) |
 | IMAP, the mailbox, demo landing pages, the four-reviewer audit team | [06-mailroom-demos-audits.md](docs/claude/06-mailroom-demos-audits.md) |
 | Agent tasks, the loop, workflow tools, hiring, Slack, escalations, memory, prompt structure, state | [07-agent-runtime.md](docs/claude/07-agent-runtime.md) |
@@ -305,7 +305,7 @@ substitute, so headings come out serif. The files are still correct — do not
   BigInt" — so `MailMessage.uid` and `uidValidity` are excluded by an explicit
   `select` in `routes/inbox.ts` (`MESSAGE_FIELDS`). A route that returned a whole
   row would 500 on a message it had stored perfectly.
-- **A bounce is very often *from* your own domain.** `mailer-daemon@dakyworld.com`
+- **A bounce is very often *from* your own domain.** `mailer-daemon@dakyx.com`
   is us by every test the loop guard applies, so a delivery report was filed as
   something we sent and suppressed nothing. Direction is `isOurs(from) &&
   !parsed.bounce` for that one reason.

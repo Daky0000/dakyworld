@@ -108,7 +108,7 @@ function deptTable(): string {
 }
 
 const LAYER_NOTE: Record<string, [string, string]> = {
-  role: ["Role", "Who the agent is, and what Dakyworld is. The only layer that says &ldquo;you are&rdquo;."],
+  role: ["Role", "Who the agent is, and what DakyXTech is. The only layer that says &ldquo;you are&rdquo;."],
   mission: ["Mission", "The one thing it exists to produce. Matches the mission on its card."],
   scope: ["Scope", "What is inside its craft — and the instruction to hand back anything that is not."],
   dataRules: ["Data rules", "What it may treat as fact. Shared wording: observed and inferred stay apart, and nothing is invented."],

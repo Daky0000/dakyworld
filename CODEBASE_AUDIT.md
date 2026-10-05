@@ -1,4 +1,4 @@
-# Dakyworld OS architecture and code audit
+# DakyXTech OS architecture and code audit
 
 Date: 2026-09-28. Checkout: `repo`, baseline commit `319bd42`, including the working tree's existing changes.
 

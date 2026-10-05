@@ -39,7 +39,7 @@ import { DISCIPLINE_AGENTS, DISCIPLINE_NAMES, reportScored, type AuditFindingDet
  * This is the artefact the whole team exists to produce: one thing a person
  * can open, read in order, and either act on or hand to whoever built the
  * site. It goes out on the house letterhead like every other document the app
- * makes — see services/letterhead.ts — so it is unmistakably from Dakyworld
+ * makes — see services/letterhead.ts — so it is unmistakably from DakyXTech
  * rather than a generic scan report with a name typed at the top.
  *
  * The two decisions worth knowing:

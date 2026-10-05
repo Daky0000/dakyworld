@@ -1,6 +1,6 @@
 # Costs, ceilings, effort and model tiers
 
-> Part of the Dakyworld OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
+> Part of the DakyXTech OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
 
 **What it all costs, and a ceiling on it** — `src/services/costs.ts`,
 `src/services/budgets.ts`, `routes/costs.ts`, the `/costs` screen. `llmLedger.ts`

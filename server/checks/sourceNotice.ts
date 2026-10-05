@@ -92,14 +92,14 @@ async function main() {
 
   const notice = sourceNotice({
     source: "GOOGLE_MAPS",
-    privacyUrl: "https://dakyworld.com/privacy",
-    companyName: "Dakyworld",
-    privacyEmail: "privacy@dakyworld.com",
+    privacyUrl: "https://dakyx.com/privacy",
+    companyName: "DakyXTech",
+    privacyEmail: "privacy@dakyx.com",
   });
   check("the notice states the legal basis", notice.text.includes("legitimate interest"));
-  check("the notice points at the policy", notice.text.includes("https://dakyworld.com/privacy"));
-  check("the notice gives an address to write to", notice.text.includes("privacy@dakyworld.com"));
-  check("the HTML form links the policy", notice.html.includes('<a href="https://dakyworld.com/privacy"'));
+  check("the notice points at the policy", notice.text.includes("https://dakyx.com/privacy"));
+  check("the notice gives an address to write to", notice.text.includes("privacy@dakyx.com"));
+  check("the HTML form links the policy", notice.html.includes('<a href="https://dakyx.com/privacy"'));
   check("the HTML form escapes the sentence", !notice.html.includes("<script"));
 
   // A site with no website on file must still produce a usable notice, because
@@ -107,10 +107,10 @@ async function main() {
   const linkless = sourceNotice({
     source: "DIRECTORY",
     privacyUrl: null,
-    companyName: "Dakyworld",
-    privacyEmail: "privacy@dakyworld.com",
+    companyName: "DakyXTech",
+    privacyEmail: "privacy@dakyx.com",
   });
-  check("with no policy URL it still says how to reach us", linkless.text.includes("privacy@dakyworld.com"));
+  check("with no policy URL it still says how to reach us", linkless.text.includes("privacy@dakyx.com"));
   check("and does not print a broken link", !linkless.html.includes("href=\"null\""));
 
   // --- a real cold email -----------------------------------------------------
@@ -219,9 +219,9 @@ async function main() {
 
   // --- the short form, for a channel with no footer -------------------------
 
-  const short = shortSourceNotice({ source: "GOOGLE_MAPS", privacyUrl: "https://dakyworld.com/privacy" });
+  const short = shortSourceNotice({ source: "GOOGLE_MAPS", privacyUrl: "https://dakyx.com/privacy" });
   check("the short form names the source", short.includes("Google Business listing"));
-  check("the short form carries the link", short.includes("https://dakyworld.com/privacy"));
+  check("the short form carries the link", short.includes("https://dakyx.com/privacy"));
   check(
     "the short form fits a message, not a letter",
     short.length < 110,

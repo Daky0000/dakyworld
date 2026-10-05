@@ -456,7 +456,7 @@ function withCase(schema: JsonSchema, tool: { outward: boolean; spends: boolean 
         type: "string",
         description: "Why this, for this company, now. Point at the evidence in front of you rather than restating your job.",
       },
-      gain: { type: "string", description: "What Dakyworld gets if it works." },
+      gain: { type: "string", description: "What DakyXTech gets if it works." },
       risk: {
         type: "string",
         description: "What could go wrong, or what you are unsure of. 'Nothing' is almost never the honest answer — say what would make this the wrong move.",
@@ -1525,7 +1525,7 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
   const needSkill: AgentTool = {
     name: "needSkill",
     description:
-      "Record that this work needs a craft nobody on the roster has. Use it only after findAgent has come back with nobody — it is not a way to avoid work that is yours. It does not create anything: it tells the Agent Creator that the gap exists, and a person decides whether Dakyworld employs somebody for it.",
+      "Record that this work needs a craft nobody on the roster has. Use it only after findAgent has come back with nobody — it is not a way to avoid work that is yours. It does not create anything: it tells the Agent Creator that the gap exists, and a person decides whether DakyXTech employs somebody for it.",
     inputSchema: zodToJsonSchema(
       z.object({
         skill: z.string().min(3).max(120).describe("The craft, in a client's words rather than a tool key — 'edit a video', 'keep the books'."),
@@ -1555,7 +1555,7 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
         ? outcome.note
         : outcome.joined
           ? `Recorded. ${outcome.timesRequested} agents have now asked for this, which is the argument for hiring somebody.`
-          : "Recorded. The Agent Creator will decide whether Dakyworld employs somebody for it.";
+          : "Recorded. The Agent Creator will decide whether DakyXTech employs somebody for it.";
 
       if (input.blocking !== false) {
         // Stopped, exactly as an escalation stops — and for the same reason. The
@@ -1759,7 +1759,7 @@ function routingSteps(can: WorkflowAvailability): string {
     );
   }
   steps.push(
-    "`needSkill` — only when `findAgent` found nobody. It records that Dakyworld has no such craft; the Agent Creator reads it and a person decides whether to employ somebody. It is not a way to put down work that is actually yours, and a gap raised for something a colleague already does is worse than useless — it argues for hiring a duplicate.",
+    "`needSkill` — only when `findAgent` found nobody. It records that DakyXTech has no such craft; the Agent Creator reads it and a person decides whether to employ somebody. It is not a way to put down work that is actually yours, and a gap raised for something a colleague already does is worse than useless — it argues for hiring a duplicate.",
   );
   return steps.map((step, index) => `${index + 1}. ${step}`).join("\n");
 }
@@ -1868,10 +1868,10 @@ const COMMERCIAL_AGENTS = new Set([
 function buildCommercialBidProtocol(liveCatalogue: string): string {
   return `COMMERCIAL VALUE, TWO-OPTION ANCHOR & BID ESCALATION PROTOCOL:
 When evaluating a lead, proposal, client opportunity, or pitch:
-- Live Dakyworld Catalogue & Tiers:
+- Live DakyXTech Catalogue & Tiers:
 ${liveCatalogue || "Website Builder: GHS 300/mo · Foundation Partner: GHS 3,000/mo Founding (GHS 5,000/mo std) · Growth Partner: GHS 7,000/mo Founding (GHS 12,500/mo std) · Transformation Partner: GHS 15,000/mo Founding (GHS 25,000/mo std) · Workflow Automation: from GHS 8,000 · Foundation Build: from GHS 15,000 · Connected Growth System: from GHS 35,000"}
 - Strictly Respect Retired Boundaries (\`doesNotDo\`): Never pitch standalone cybersecurity pen-testing, cloud infrastructure hosting, email workspace setup, or logo/brand identity design. Frame external TLS/DNS/DMARC observations strictly as conversion and deliverability hygiene inside a Website Build or Care Plan.
-- Two-Option Proposal Architecture: Whenever scoping a build or retainer, present **Option A (Core Diagnostic Fix)** alongside **Option B (Complete Connected Growth System + Managed Care Plan)** so the client compares two high-value Dakyworld outcomes rather than Dakyworld vs. doing nothing.
+- Two-Option Proposal Architecture: Whenever scoping a build or retainer, present **Option A (Core Diagnostic Fix)** alongside **Option B (Complete Connected Growth System + Managed Care Plan)** so the client compares two high-value DakyXTech outcomes rather than DakyXTech vs. doing nothing.
 - Payment & Validity Guardrails: Standard builds follow a **50% mobilisation deposit / 40% staging approval / 10% launch handover** split (engagements under GHS 10,000 are 100% upfront). All proposals carry a 14-day validity window. Never discount price without removing a corresponding scope item.`;
 }
 
@@ -1941,14 +1941,14 @@ export async function composePrompt(
   }
 
   // Every single agent in the workforce — including Board, C-Suite, Operational
-  // Managers, and Technical Specialists — receives `brandBlock()` ("Who Dakyworld is")
+  // Managers, and Technical Specialists — receives `brandBlock()` ("Who DakyXTech is")
   // so no agent ever recommends retired services (`doesNotDo`) or stale prices.
   // Only the customer-facing prose style guide (`VOICE`) is skipped for `NO_BRAND_VOICE`
   // internal/technical agents.
   regions.push({
     key: "brand",
-    label: "Who Dakyworld is",
-    source: "Read from dakyworld.com — Settings → Business context. Synced across all 58 agents.",
+    label: "Who DakyXTech is",
+    source: "Read from dakyx.com — Settings → Business context. Synced across all 58 agents.",
     editable: false,
     text: liveBrandBlock,
   });
@@ -1974,10 +1974,10 @@ export async function composePrompt(
   if (shared.length > 0) {
     regions.push({
       key: "shared",
-      label: "What Dakyworld holds",
+      label: "What DakyXTech holds",
       source: "Shared memory, recalled for this task's subjects. Every agent is shown these.",
       editable: false,
-      text: `What Dakyworld holds — written once and given to every agent, so treat it as standing instruction rather than as your own opinion. Where one of these conflicts with what you would otherwise do, follow it and say that you did:\n${shared
+      text: `What DakyXTech holds — written once and given to every agent, so treat it as standing instruction rather than as your own opinion. Where one of these conflicts with what you would otherwise do, follow it and say that you did:\n${shared
         .map((memory) => `- ${memory.line}`)
         .join("\n")}`,
     });

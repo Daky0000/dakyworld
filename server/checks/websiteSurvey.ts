@@ -190,7 +190,7 @@ check("colours are ordered by how much the site leans on them", survey.palette.c
 /**
  * A site's own stylesheet is rarely the first one it links.
  *
- * Dakyworld's own pages link a cookie banner's stylesheet, then fonts, then a
+ * DakyXTech's own pages link a cookie banner's stylesheet, then fonts, then a
  * 4 KB base, and only then the 80 KB file the design actually lives in. Read
  * three and call the result the site's palette and you have described a cookie
  * banner. The limit belongs to the caller for exactly this reason: the button

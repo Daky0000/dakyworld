@@ -15,7 +15,7 @@ Redeploy the last known-good Railway deployment. If the API/worker split caused 
 
 ## Domain rollback
 
-Keep `os.dakyworld.com` active. If `os.dakyx.com` fails, revert only the new domain DNS and restore prior origin variables. Never remove the only working production hostname.
+Keep `os.dakyx.com` active. If `os.dakyx.com` fails, revert only the new domain DNS and restore prior origin variables. Never remove the only working production hostname.
 
 ## Logs and health
 

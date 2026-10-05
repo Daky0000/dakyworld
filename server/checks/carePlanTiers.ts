@@ -3,7 +3,7 @@
  *
  * The defect was silent and lived in the tier picker. The care plan editor
  * carried three hard-coded fees — 5,000 / 12,500 / 25,000 — under three names
- * dakyworld.com had stopped using, and the picker deliberately did *not*
+ * dakyx.com had stopped using, and the picker deliberately did *not*
  * reprice a plan that already existed. So two things were true at once: a new
  * plan was priced from last year's list, and moving a client from one tier to
  * another renamed their plan while going on invoicing the old fee. Nothing

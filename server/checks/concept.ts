@@ -259,8 +259,8 @@ console.log("\nimported html demos");
 
   const prepared = prepareImportedDemoHtml(decoded, {
     businessName: meta.businessName ?? "Kofi Cocoa",
-    senderName: "Dakyworld",
-    senderSite: "https://dakyworld.com",
+    senderName: "DakyXTech",
+    senderSite: "https://dakyx.com",
     includeBanner: true,
     makeInert: true,
   }).html;

@@ -3,9 +3,9 @@
 Named source fields take precedence over identical unmarked text in other files. The JSX editor also accepts joined strings and template expressions made entirely from string literals. Editing those expressions replaces the expression with the new string; calls, references and runtime calculations remain code-controlled.
 
 **The client-facing half of this document is public**, at
-[dakyworld.com/website-builder](https://dakyworld.com/website-builder) and
-[/website-builder-setup](https://dakyworld.com/website-builder-setup), with
-[/products](https://dakyworld.com/products) as the shelf they sit on. Those pages
+[dakyx.com/website-builder](https://dakyx.com/website-builder) and
+[/website-builder-setup](https://dakyx.com/website-builder-setup), with
+[/products](https://dakyx.com/products) as the shelf they sit on. Those pages
 are a translation of this file and of `website-compatibility.md` into a client's
 words. **A change here that affects how somebody uses the Builder is not finished
 until those pages say the same thing** — particularly the four compatibility
@@ -47,7 +47,7 @@ Both work, per site. A site with a customer's own GitHub App installation borrow
 
 A client on an **active** retainer gets every product at no charge; everyone else pays the product's own price. The rule is decided in one function — `decideAccess()` in `services/products.ts` — so the public page, the onboarding list and whoever is quoting cannot reach different conclusions. A paused retainer covers nothing.
 
-Prices live in the `Product` table and are edited at `Products → Product pricing` (needs `website.manage`). dakyworld.com reads them from `GET /api/public/products`, which is unauthenticated and mounted above the session middleware, so **moving a price in the OS moves it on the website without a deploy**. The number in the site's markup is still real: it is what a crawler sees, what renders with JavaScript off, and what stands when the request fails — `assets/pricing.js` only replaces a number that has since moved, and fails silently.
+Prices live in the `Product` table and are edited at `Products → Product pricing` (needs `website.manage`). dakyx.com reads them from `GET /api/public/products`, which is unauthenticated and mounted above the session middleware, so **moving a price in the OS moves it on the website without a deploy**. The number in the site's markup is still real: it is what a crawler sees, what renders with JavaScript off, and what stands when the request fails — `assets/pricing.js` only replaces a number that has since moved, and fails silently.
 
 That is the opposite direction from care plans, deliberately. A retainer's price is a published offer with a page of conditions around it, so the site owns it and the OS syncs (`carePlanCatalogue.ts`). A product's price is a single number on a card.
 
@@ -55,9 +55,9 @@ That is the opposite direction from care plans, deliberately. A retainer's price
 
 ## Onboarding a website, and what a client sees
 
-`Website → Onboarding` is the list somebody works down before a client is given a website: address, repository, a branch proved readable by actually reading a file from it, pages scanned, the compatibility report gone through, this site's own colours and fonts set so the editor stops offering Dakyworld's, shared elements linked, publishing confirmed, and the client's own access. Every line is **derived from the site rather than ticked**, so nothing can claim to be done after it has stopped being true — a branch that becomes unreadable goes back to blocked on its own. The last line is the handover conversation, which is the only thing on the page nothing can work out for itself, and it is recorded on the site's activity.
+`Website → Onboarding` is the list somebody works down before a client is given a website: address, repository, a branch proved readable by actually reading a file from it, pages scanned, the compatibility report gone through, this site's own colours and fonts set so the editor stops offering DakyXTech's, shared elements linked, publishing confirmed, and the client's own access. Every line is **derived from the site rather than ticked**, so nothing can claim to be done after it has stopped being true — a branch that becomes unreadable goes back to blocked on its own. The last line is the handover conversation, which is the only thing on the page nothing can work out for itself, and it is recorded on the site's activity.
 
-A customer does not get the operations menu with most of it missing. `client/src/lib/clientWorkspace.ts` holds what they are offered — Pages, Assets, Team, Activity — the header says "Dakyworld · Website" rather than "Dakyworld OS · Internal Operations", the builder's own second navigation strip is dropped because those four are already in the header, and they land on their pages. The permission boundary was already right; this is the surface catching up with it, and `checks/websiteClientWorkspace.ts` asserts that nothing a client is offered leaves the website product.
+A customer does not get the operations menu with most of it missing. `client/src/lib/clientWorkspace.ts` holds what they are offered — Pages, Assets, Team, Activity — the header says "DakyXTech · Website" rather than "DakyXTech OS · Internal Operations", the builder's own second navigation strip is dropped because those four are already in the header, and they land on their pages. The permission boundary was already right; this is the surface catching up with it, and `checks/websiteClientWorkspace.ts` asserts that nothing a client is offered leaves the website product.
 
 ## Publishing, and knowing it worked
 

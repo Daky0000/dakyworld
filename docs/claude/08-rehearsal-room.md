@@ -1,6 +1,6 @@
 # The rehearsal room
 
-> Part of the Dakyworld OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
+> Part of the DakyXTech OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
 
 **The rehearsal room** — `src/services/rehearsals/`, `routes/rehearsals.ts`, the
 `/rehearsals` screen. One real website, put through one real workflow, with

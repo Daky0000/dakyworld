@@ -1,6 +1,6 @@
 # Model routing, fallbacks, structured output and what a turn costs
 
-> Part of the Dakyworld OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
+> Part of the DakyXTech OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
 
 **Models are chosen by job, never by vendor** — `src/lib/models/`. A caller
 says `callModel({ job: "text" })` and the routing decides who serves it:

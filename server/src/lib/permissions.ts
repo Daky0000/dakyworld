@@ -33,7 +33,7 @@ export type Permission = {
    */
   spends?: boolean;
   /**
-   * Reaches somebody outside the company under Dakyworld's name — an email
+   * Reaches somebody outside the company under DakyXTech's name — an email
    * that sends, an invoice that goes out, a page a stranger can open.
    */
   external?: boolean;

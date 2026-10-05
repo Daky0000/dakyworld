@@ -3,7 +3,7 @@ import type { ScreenshotInput, ScreenshotRequest } from "./contract.js";
 /**
  * Reading the run's input, with a defence for every field.
  *
- * The caller is Dakyworld OS and it sends the right shape. This exists for the
+ * The caller is DakyXTech OS and it sends the right shape. This exists for the
  * other two callers: a person running the actor from the Apify console, and a
  * future version of the server whose contract has drifted. Neither should be
  * able to produce a run that boots a browser and then does nothing

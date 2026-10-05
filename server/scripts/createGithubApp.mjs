@@ -1,5 +1,5 @@
 /**
- * Creates the Dakyworld GitHub App, in one click.
+ * Creates the DakyXTech GitHub App, in one click.
  *
  *   node scripts/createGithubApp.mjs [--org dakyworld] [--port 8765]
  *
@@ -53,8 +53,8 @@ const state = randomBytes(16).toString("hex");
  * would be noise this system has nothing to do with.
  */
 const manifest = {
-  name: "Dakyworld Website Editor",
-  url: "https://dakyworld.com",
+  name: "DakyXTech Website Editor",
+  url: "https://dakyx.com",
   hook_attributes: { url: webhookUrl, active: true },
   redirect_url: `http://127.0.0.1:${port}/callback`,
   // Installable by anyone, because the customers who install it are not members
@@ -63,11 +63,11 @@ const manifest = {
   public: true,
   default_permissions: { metadata: "read", contents: "write", pull_requests: "write" },
   description:
-    "Lets Dakyworld edit and publish the pages of this website through the Dakyworld Website Builder. It reads and writes the repository files you choose, and nothing else.",
+    "Lets DakyXTech edit and publish the pages of this website through the DakyXTech Website Builder. It reads and writes the repository files you choose, and nothing else.",
 };
 
 const page = `<!doctype html>
-<html><head><meta charset="utf-8"><title>Create the Dakyworld GitHub App</title>
+<html><head><meta charset="utf-8"><title>Create the DakyXTech GitHub App</title>
 <style>
   body { font: 15px/1.6 system-ui, sans-serif; background: #F4F5F0; color: #08101F; display: grid; place-items: center; min-height: 100vh; margin: 0; }
   main { max-width: 34rem; background: #fff; padding: 2rem; border-radius: 1rem; border: 1px solid #DFE4EB; }
@@ -77,7 +77,7 @@ const page = `<!doctype html>
   code { font-size: .8rem; background: #F5F6F8; padding: .1rem .3rem; border-radius: .25rem; }
 </style></head>
 <body><main>
-  <h1>Create the Dakyworld Website Editor app</h1>
+  <h1>Create the DakyXTech Website Editor app</h1>
   <p>This creates a GitHub App owned by the <strong>${org}</strong> organisation, with these permissions and nothing else:</p>
   <p><code>Metadata: read</code> · <code>Contents: read &amp; write</code> · <code>Pull requests: read &amp; write</code></p>
   <p>Webhook: <code>${webhookUrl}</code> — it receives installation changes, which GitHub sends to every app automatically.</p>

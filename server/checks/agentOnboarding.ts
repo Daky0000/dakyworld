@@ -100,7 +100,7 @@ const proposal = await proposeHire(
     toolkit: ["image.generate"],
     escalationPolicy: "Never invents detail that was not in the original.",
     prompt: {
-      role: "You are the Dakyworld Photograph Restorer.",
+      role: "You are the DakyXTech Photograph Restorer.",
       mission: "Restore damaged photographs.",
       scope: "Restoration and nothing else.",
       dataRules: "Use only the original.",

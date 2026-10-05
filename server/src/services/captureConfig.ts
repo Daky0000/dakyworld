@@ -9,7 +9,7 @@ import type { ApifyActorSchema } from "../lib/apify.js";
  * everything that shouldn't have to be repeated per source and shouldn't need
  * a redeploy to change:
  *
- *  - **Where Dakyworld sells.** One location, country and language, injected
+ *  - **Where DakyXTech sells.** One location, country and language, injected
  *    into actor input as `{{location}}` / `{{country}}` / `{{language}}`. Move
  *    the business to Lagos and every template follows.
  *  - **What a run may cost.** Apify bills per run: a monthly ceiling, a

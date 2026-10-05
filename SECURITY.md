@@ -537,7 +537,7 @@ Pages serves files and cannot set a response header. **That is not the same
 thing, and the difference matters in two places:**
 
 - **`frame-ancestors` and `X-Frame-Options` are ignored in a meta tag.** There is
-  no clickjacking protection on dakyworld.com and there cannot be until the site
+  no clickjacking protection on dakyx.com and there cannot be until the site
   sits behind something that sets headers — Cloudflare in front of Pages is the
   cheap version; serving it from the Railway service that already sets them
   properly is the thorough one. Nothing on the site takes input yet, so the
@@ -557,7 +557,7 @@ content can be embedded at all.
 This section used to describe the largest remaining exposure on the website:
 every page loaded `https://cdn.tailwindcss.com` and
 `https://unpkg.com/lucide@latest`, both running with full privileges on
-dakyworld.com, and **a CSP naming a host does not protect against that host**.
+dakyx.com, and **a CSP naming a host does not protect against that host**.
 `lucide@latest` was the worse of the two — an unpinned version, so the file
 served could change at any time without anything in this repo changing, and an
 unpinned URL cannot carry an SRI hash either.
@@ -663,7 +663,7 @@ The **website is live** — GitHub Pages publishes the repo root on every push a
 did so for all of this.
 
 The **OS is not**. As of 19 Aug 2026 the Railway subscription had ended, so
-`os.dakyworld.com` is still serving the build from that morning and nothing in
+`os.dakyx.com` is still serving the build from that morning and nothing in
 this document's server half is in production yet. The code is on `main` and
 needs no special handling when Railway is back: `npm start` already runs
 `prisma migrate deploy`, so the 2FA columns and the row-level-security migration
@@ -674,7 +674,7 @@ Confirm a deploy actually landed by looking at a header rather than at the
 dashboard:
 
 ```bash
-curl -sI https://os.dakyworld.com/api/health | grep -i content-security
+curl -sI https://os.dakyx.com/api/health | grep -i content-security
 # nothing back  -> still the old build
 # a CSP line    -> the new one is live
 ```
@@ -742,7 +742,7 @@ nothing depends on the builder injecting it.
 2. **Verify the site with Google Search Console and Bing Webmaster Tools.** Put
    the two `content` values into `VERIFICATION` at the top of
    [`scripts/build-seo.mjs`](scripts/build-seo.mjs) and run `npm run seo`. Then
-   submit `https://dakyworld.com/sitemap.xml` in both. Verification is what
+   submit `https://dakyx.com/sitemap.xml` in both. Verification is what
    unlocks the part that matters — which queries actually reach the site, and
    being told about a crawl error rather than finding it in the traffic. (Bing
    can import the whole property from Search Console, which is faster.)
@@ -829,7 +829,7 @@ written to follow them is the easiest place in a codebase to lose an SSRF guard.
   (`lib/xlsx/xform/sheet/cf-ext/cf-rule-ext-xform.js`). 4.4.0 is the latest
   release, so there is no fix to take. `npm audit --audit-level=high` is
   therefore what CI enforces; the full report is printed alongside it.
-- **The contact form on dakyworld.com is still not connected to anything.** It
+- **The contact form on dakyx.com is still not connected to anything.** It
   says so to the visitor. The honeypot and timing fields are in the markup and
   the server side is built and tested, so pointing it at
   `POST /api/webhooks/website-form` is the only remaining step — but until

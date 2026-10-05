@@ -127,7 +127,7 @@ function merge(stored: unknown): CompanyProfile {
     phone: text(raw.phone, DEFAULT_PROFILE.phone),
     phoneAlt: optional(raw.phoneAlt),
     // Stored bare, so every caller can decide whether it wants a link or a
-    // label. A pasted "https://dakyworld.com/" would otherwise print in full
+    // label. A pasted "https://dakyx.com/" would otherwise print in full
     // across the bottom of every email.
     web: text(raw.web, DEFAULT_PROFILE.web).replace(/^https?:\/\//, "").replace(/\/$/, ""),
     social: {

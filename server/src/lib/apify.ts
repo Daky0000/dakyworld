@@ -382,7 +382,7 @@ async function fetchBuild(actor: any): Promise<any | null> {
 // --- Creating and building an actor ----------------------------------------
 
 /**
- * Everything needed to put Dakyworld's own actor onto Dakyworld's own account,
+ * Everything needed to put DakyXTech's own actor onto DakyXTech's own account,
  * over the REST API, with the token the app already holds.
  *
  * This exists because of a gap that is obvious in hindsight: the actor's source

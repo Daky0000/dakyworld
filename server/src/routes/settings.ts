@@ -283,7 +283,7 @@ async function describeAll(req: Request) {
  *
  * Sent whole rather than as a diff against the defaults: the form needs to
  * show what is currently printed on a letterhead, and "blank, meaning it falls
- * back to Dakyworld" is a distinction the screen makes with placeholder text
+ * back to DakyXTech" is a distinction the screen makes with placeholder text
  * rather than with an empty field.
  */
 async function describeSystem() {
@@ -705,7 +705,7 @@ async function describeActorChoice(current: string, shipped: string, known: stri
  *
  * One candidate now rather than four. This used to be a comparison of every
  * screenshot actor on the store, because the app spoke all of their input
- * schemas and a cheaper one was a dropdown away; since Dakyworld owns the
+ * schemas and a cheaper one was a dropdown away; since DakyXTech owns the
  * actor, the answer is that actor, and this endpoint exists to report whether
  * the account can actually see it and what it is being billed.
  */

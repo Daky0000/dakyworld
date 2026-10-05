@@ -4,7 +4,7 @@ Date: 2026-09-29. Scope: the existing working tree in `repo`. Existing unrelated
 
 ## Production deployment
 
-Railway deployment `3cf5e4d7-d065-42fb-9120-ad1155c979ee` serves https://os.dakyworld.com. The old deployment was stopped before cutover. All five pending migrations applied successfully, bringing production to 77 applied migrations. The service runs in combined API/worker mode with production authentication and PostgreSQL-backed rate limiting.
+Railway deployment `3cf5e4d7-d065-42fb-9120-ad1155c979ee` serves https://os.dakyx.com. The old deployment was stopped before cutover. All five pending migrations applied successfully, bringing production to 77 applied migrations. The service runs in combined API/worker mode with production authentication and PostgreSQL-backed rate limiting.
 
 Readiness, health, client HTML, owner login, authenticated operations, and rejection of anonymous private API access passed. Hashes of ten critical deployed source modules match this workspace. A readable custom-format PostgreSQL backup was created before migration at `/var/lib/postgresql/data/dakyworld-preaudit-20260929.dump` on the existing Postgres volume (311,867,188 bytes).
 

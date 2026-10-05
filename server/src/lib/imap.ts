@@ -119,7 +119,7 @@ export function suggestFromSmtp(smtpHost: string | null): { host: string; port: 
  *
  * The loop guard, and the thing that tells an inbound message from a copy of
  * one we sent. Returns lowercase entries which are either a whole address
- * (`dan@dakyworld.com`) or a bare domain (`dakyworld.com`) — `isOurs` accepts
+ * (`dan@dakyx.com`) or a bare domain (`dakyx.com`) — `isOurs` accepts
  * either, because a company has one domain and an unknown number of aliases on
  * it.
  */

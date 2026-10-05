@@ -7,7 +7,7 @@ import { processScreenshot } from "./image.js";
 import { capturePage } from "./screenshot.js";
 
 /**
- * The Dakyworld screenshot actor.
+ * The DakyXTech screenshot actor.
  *
  * One actor, owned by us, replacing four strangers' actors and the layer of
  * translation the server needed to speak to any of them. What the server sends

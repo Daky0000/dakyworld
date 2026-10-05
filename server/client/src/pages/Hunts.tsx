@@ -4,7 +4,7 @@ import { api } from "../lib/api";
 import { Badge, Button, Card, EmptyState, Eyebrow, PageHeader, RelativeTime, StatGrid, StatTile, StatusDot } from "../components/ui";
 
 /**
- * The hunts — why Dakyworld goes looking for anybody.
+ * The hunts — why DakyXTech goes looking for anybody.
  *
  * The Capture screen answers *how* a search runs: which actor, which town,
  * what it costs. It has never answered *why that search*, and without a why

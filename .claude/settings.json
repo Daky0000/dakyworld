@@ -15,8 +15,8 @@
       "Bash(git branch:*)",
       "Bash(docker ps:*)",
       "Bash(railway deployment list:*)",
-      "WebFetch(domain:os.dakyworld.com)",
-      "WebFetch(domain:dakyworld.com)"
+      "WebFetch(domain:os.dakyx.com)",
+      "WebFetch(domain:dakyx.com)"
     ]
   }
 }

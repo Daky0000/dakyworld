@@ -48,7 +48,7 @@ import { extractColorsFromHtml } from "../services/website/pageColors.js";
  * **The index is deliberately not public.** `/demos/<slug>` is unlisted rather
  * than secret: whoever has the link can open it, which is what makes it
  * sendable in an email. `/demos` on its own falls through to the app, so the
- * list of every business Dakyworld is pitching stays behind the login where it
+ * list of every business DakyXTech is pitching stays behind the login where it
  * belongs. Publishing that list would tell every prospect who else is being
  * written to.
  */
@@ -239,7 +239,7 @@ async function ensureDefaultDakyworldDemo(): Promise<void> {
   try {
     const existing = await prisma.demo.findFirst({
       where: {
-        OR: [{ slug: "dakyworld" }, { businessName: { equals: "Dakyworld", mode: "insensitive" } }],
+        OR: [{ slug: "dakyworld" }, { businessName: { equals: "DakyXTech", mode: "insensitive" } }],
       },
       select: { id: true, slug: true, title: true, businessName: true, html: true, brief: true },
     });
@@ -996,7 +996,7 @@ demosRouter.patch("/:id", async (req, res, next) => {
         businessName: nextBusinessName,
         title: nextTitle,
         senderName: profile.displayName,
-        senderSite: profile.web ?? "dakyworld.com",
+        senderSite: profile.web ?? "dakyx.com",
         includeBanner: nextIncludeBanner,
         makeInert: nextMakeInert,
       });
@@ -1322,7 +1322,7 @@ const analyticsBeaconInput = z.object({
  * The CSP is the real guard on what a generated page may do. `sanitiseDemoHtml`
  * strips the obvious things at build time so the page does not arrive visibly
  * broken by its own headers, but a page written by a model and served from
- * Dakyworld's own domain does not get to decide what it may load.
+ * DakyXTech's own domain does not get to decide what it may load.
  *
  * When a demo was imported directly from an HTML file by the Owner (`IMPORTED_CSP`),
  * `https:` assets (Tailwind CDN, web fonts, external images, icon libraries) are

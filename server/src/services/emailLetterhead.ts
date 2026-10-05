@@ -3,7 +3,7 @@ import { DEFAULT_PROFILE, type CompanyProfile } from "./systemProfile.js";
 import { ACCENT, INK, LINE, MARK, MUTED } from "./letterhead.js";
 
 /**
- * The Dakyworld letterhead, for screens.
+ * The DakyXTech letterhead, for screens.
  *
  * `letterhead.ts` does this for paper. This is the same identity, rebuilt
  * under the rules email actually enforces: tables rather than flexbox, inline

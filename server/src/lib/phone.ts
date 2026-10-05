@@ -17,7 +17,7 @@ import { SETTING, getSetting } from "./settings.js";
  *
  * **The failure mode is silence, not an error.** A malformed number is accepted
  * by both providers and the message goes to nobody — or, if the digits happen
- * to land on a real handset, to a stranger under Dakyworld's name. That is why
+ * to land on a real handset, to a stranger under DakyXTech's name. That is why
  * this refuses rather than guesses, and why `toE164` returns null instead of
  * its best effort.
  *

@@ -194,7 +194,7 @@ const STANDING_SEEDS: StandingSeed[] = [
     runTimes: ["07:00"],
     brief: `Read the week's record and the company living context: what shipped, what slipped, cash position, Founding Partner slots remaining (0–3), and active blockers.
 
-Pick the top priorities across the 5-Stage Value Loop (Audit -> Visual Proof -> Build -> Automate -> Retain) and state what Dakyworld is deliberately NOT doing today.
+Pick the top priorities across the 5-Stage Value Loop (Audit -> Visual Proof -> Build -> Automate -> Retain) and state what DakyXTech is deliberately NOT doing today.
 
 Call \`update_living_context\` on \`company\` to keep \`weekly_company_priorities\`, \`founding_partner_slots_left\`, and \`deliberate_exclusions\` current for all 57 downstream agents.`,
   },
@@ -202,7 +202,7 @@ Call \`update_living_context\` on \`company\` to keep \`weekly_company_prioritie
     agentKey: "hunt.strategist",
     title: "Is the pipeline being fed, and by what argument?",
     runTimes: ["07:15"],
-    brief: `Read the state of the pipeline and \`priority_vertical\` in company living context before anything else is done today, and answer one question: does Dakyworld have enough businesses worth writing to, and are the reasons we went looking for them still holding?
+    brief: `Read the state of the pipeline and \`priority_vertical\` in company living context before anything else is done today, and answer one question: does DakyXTech have enough businesses worth writing to, and are the reasons we went looking for them still holding?
 
 Work from what the last cycles actually returned rather than from the totals. Which qualifiers fired on the businesses that qualified, and which have never once been true on anybody. Say plainly whether the leads already on the books are enough to work, or whether the shortage is real.
 
@@ -234,7 +234,7 @@ Anything that reads as an opt-out, a complaint or a legal notice goes to a perso
     runTimes: ["08:30"],
     brief: `Take a batch of leads nobody has judged and decide, for each, what happens to it next.
 
-Open the lead and read what has actually been checked on it — the research, the audit, the look at the homepage, anything already sent or said. Score on those findings only (0–100), matching each qualified lead to one of Dakyworld's 6 Outreach Scenarios (1. Slow/Broken 390px Mobile Site, 2. Invisible Local SEO, 3. Manual WhatsApp/Booking Admin Chaos, 4. Disconnected CRM/Billing, 5. Event/Trigger Follow-Up, 6. Past Enquiry Revival).
+Open the lead and read what has actually been checked on it — the research, the audit, the look at the homepage, anything already sent or said. Score on those findings only (0–100), matching each qualified lead to one of DakyXTech's 6 Outreach Scenarios (1. Slow/Broken 390px Mobile Site, 2. Invisible Local SEO, 3. Manual WhatsApp/Booking Admin Chaos, 4. Disconnected CRM/Billing, 5. Event/Trigger Follow-Up, 6. Past Enquiry Revival).
 
 Call \`update_living_context\` on the lead with \`bleeding_neck_fault\`, \`matched_outreach_scenario\`, and \`recommended_entry_offer\`, then route top leads to \`review.look\` / \`dev.web\` for visual proof and \`outreach.writer\` for first touch.`,
   },
@@ -290,7 +290,7 @@ Update \`followup_stage\` via \`update_living_context\`.`,
     agentKey: "cmo",
     title: "Draft daily 5-Pillar LinkedIn & Instagram authority content from live audits",
     runTimes: ["13:00"],
-    brief: `Read the latest anonymized website audit findings, speculative demos, and automation ROI metrics from living context, and draft today's authority post from Dakyworld's 5 Content Pillars (30% Live Website Teardowns, 25% Automation ROI Stories, 20% Founder POV, 15% System Walkthroughs, 10% Founding Partner Offer).
+    brief: `Read the latest anonymized website audit findings, speculative demos, and automation ROI metrics from living context, and draft today's authority post from DakyXTech's 5 Content Pillars (30% Live Website Teardowns, 25% Automation ROI Stories, 20% Founder POV, 15% System Walkthroughs, 10% Founding Partner Offer).
 
 Attach all five required elements — audience, problem, verified proof, call to action, and distribution plan — and update \`active_campaign_hook\` via \`update_living_context\`.`,
   },
@@ -298,7 +298,7 @@ Attach all five required elements — audience, problem, verified proof, call to
     agentKey: "cfo",
     title: "Reconcile 50/40/10 milestone payment gates and overdue receivables",
     runTimes: ["15:00"],
-    brief: `Check active projects and open invoices against Dakyworld's 50/40/10 payment gates (50% mobilisation deposit before kickoff, 40% staging approval before DNS launch, 10% handover; 100% upfront under GHS 10,000).
+    brief: `Check active projects and open invoices against DakyXTech's 50/40/10 payment gates (50% mobilisation deposit before kickoff, 40% staging approval before DNS launch, 10% handover; 100% upfront under GHS 10,000).
 
 Update \`payment_gate_status\` (\`CLEARED_FOR_KICKOFF | CLEARED_FOR_LAUNCH | HOLD_OVERDUE\`) in living context so delivery agents know clearance status, and flag any overdue invoices for \`billing.collector\`.`,
   },

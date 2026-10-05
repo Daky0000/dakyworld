@@ -29,7 +29,7 @@ import { reportScored, type WebsiteAuditReport } from "./audit/types.js";
  * Each stage degrades on its own. No Perplexity key means no research and a
  * note saying so; no Apify token means no screenshot and a note saying so; a
  * lead with no website skips the third stage entirely and gets the strongest
- * argument Dakyworld has instead. What comes out is always usable, and always
+ * argument DakyXTech has instead. What comes out is always usable, and always
  * says what it could not do.
  *
  * The output is stored on `LeadResearch`, one row per lead, so the next draft
@@ -604,7 +604,7 @@ async function applyResearch(
 
     // A website is the one text field with a shape, and it decides which
     // argument the email makes: a value here that is not a URL turns "they
-    // have no website" — the strongest opening Dakyworld has — into a pitch
+    // have no website" — the strongest opening DakyXTech has — into a pitch
     // about a site that does not exist. Anything that does not parse is
     // dropped rather than stored.
     const value = field === "website" ? normaliseSiteUrl(found.value) : found.value;

@@ -48,7 +48,7 @@ const server = http.createServer((req, res) => {
       method: req.method,
       headers: {
         ...req.headers,
-        host: "os.dakyworld.com",
+        host: "os.dakyx.com",
       }
     }, (proxyRes) => {
       res.writeHead(proxyRes.statusCode, proxyRes.headers);
@@ -57,7 +57,7 @@ const server = http.createServer((req, res) => {
 
     proxyReq.on("error", (err) => {
       res.writeHead(502, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Proxy to os.dakyworld.com failed: " + err.message }));
+      res.end(JSON.stringify({ error: "Proxy to os.dakyx.com failed: " + err.message }));
     });
 
     req.pipe(proxyReq);

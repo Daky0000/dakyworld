@@ -1,6 +1,6 @@
 # Site metadata and the brand design system
 
-> Part of the Dakyworld OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
+> Part of the DakyXTech OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
 
 ## The website's metadata is generated
 
@@ -79,7 +79,7 @@ Three rules follow from it:
 1. **§05 allows exactly two text colours on a light surface** — `ink` and
    `muted`. An opacity of ink is not a third one. `text-ink/40` measured 2.61:1
    on cream and was the most-used text colour in the product.
-2. **Status colours are Dakyworld's, not Tailwind's.** The reds lean cool, the
+2. **Status colours are DakyXTech's, not Tailwind's.** The reds lean cool, the
    ambers lean ochre, and `positive` is lime walked down towards ink rather than
    an unrelated emerald — so the accent and the success state are visibly the
    same idea at two brightnesses.

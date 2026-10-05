@@ -18,7 +18,7 @@ Annual purchases are never placed on monthly plans.
 One-time invoices must already be denominated in GHS. Their Paystack checkout
 uses the payment channels enabled on the merchant account. Subscription checkout
 requires a card; mobile money and bank transfers are not treated as reusable card
-authorizations. Dakyworld never receives a card number, CVV or OTP.
+authorizations. DakyXTech never receives a card number, CVV or OTP.
 
 ## Deployment
 
@@ -34,7 +34,7 @@ authorizations. Dakyworld never receives a card number, CVV or OTP.
    website assets. Keep `APP_SECRET` stable and back it up securely; it encrypts
    stored reusable authorizations. Set `APP_URL` to the HTTPS admin app origin.
 4. Set the Paystack webhook URL to
-   `https://os.dakyworld.com/api/webhooks/paystack` in the matching test/live mode.
+   `https://os.dakyx.com/api/webhooks/paystack` in the matching test/live mode.
    The callback URL is a return page, not proof of payment.
 5. Ensure the scheduler runs. It drains accepted webhook events, retries failed
    verification, checks pending checkouts and updates promotional subscription

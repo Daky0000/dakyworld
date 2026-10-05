@@ -12,7 +12,7 @@ This directory defines the infrastructure configuration for Railway services, da
     - `os.dakyx.com` (DakyXTech internal company OS)
     - `editor.dakyx.com` (Website Editor surface)
     - `app.dakyx.com` (Customer Workspace & Product Launcher)
-    - `os.dakyworld.com` (Legacy domain)
+    - `os.dakyx.com` (Legacy domain)
 
 - **`worker` (Background Worker Service)**:
   - Role: `SERVICE_ROLE=worker`

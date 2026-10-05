@@ -161,7 +161,7 @@
   function deleteCookie(name) {
     var host = window.location.hostname;
     var domains = ["", host, "." + host];
-    // `example.co.uk` would need a longer walk; two labels covers dakyworld.com.
+    // `example.co.uk` would need a longer walk; two labels covers dakyx.com.
     var parts = host.split(".");
     if (parts.length > 2) domains.push("." + parts.slice(-2).join("."));
 

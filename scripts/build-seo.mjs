@@ -34,7 +34,7 @@ const SHARE_IMAGE_ALT =
  * its tag is simply not written.
  *
  * Google Search Console: search.google.com/search-console → add the
- *   `https://dakyworld.com` property → HTML tag → copy the `content` value.
+ *   `https://dakyx.com` property → HTML tag → copy the `content` value.
  * Bing Webmaster Tools: bing.com/webmasters → add site → Option 2, meta tag.
  *   (Bing will also import the whole property straight from Search Console,
  *   which is faster and is what to do if Google is already verified.)
@@ -369,7 +369,7 @@ const website = {
  *
  * The price here is the published one, and it is also the fallback: at runtime
  * assets/pricing.js replaces both the visible number and the `price` on this
- * offer from `os.dakyworld.com/api/public/products`, so the office moves a
+ * offer from `os.dakyx.com/api/public/products`, so the office moves a
  * price in one place. What this constant must never become is a *different*
  * number from the one the OS holds — a crawler reads the static value, and a
  * price in a search result that the checkout does not charge is the one kind

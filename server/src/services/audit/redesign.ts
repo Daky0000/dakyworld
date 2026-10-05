@@ -18,7 +18,7 @@ import type { AuditFindingDetail, ScreenshotView } from "./types.js";
  * proposal to have got wrong, and it is expensive in both directions: sell one
  * to a business that needed an afternoon's work and the invoice is
  * indefensible; recommend two fixes to a business whose page is ten years past
- * saving and the fixes fail, and what failed is Dakyworld.
+ * saving and the fixes fail, and what failed is DakyXTech.
  *
  * So it is its own model job — `redesign`, routed to Perplexity, see
  * `lib/models/registry.ts` — and it is given three things:
@@ -499,7 +499,7 @@ export function scoreBand(score: number): string {
  * basically working; below it the scorecard is describing a page with several
  * real problems in it, and "sharpen it" is then a sentence that costs a
  * business money — they buy the smaller job, the smaller job does not fix what
- * was wrong, and what failed is Dakyworld.
+ * was wrong, and what failed is DakyXTech.
  */
 export const REDESIGN_FLOOR = 70;
 
@@ -840,7 +840,7 @@ function systemPrompt(
 ): string {
   const preamble = `You are making the redesign call on one homepage — ${business.name}${business.trade ? `, ${business.trade}` : ""}${
     business.town ? ` in ${business.town}` : ""
-  } — for Dakyworld, who would be the ones doing the work. Assess it as a senior designer, a conversion specialist and a brand strategist would between them, and answer one question: does this page need rebuilding.
+  } — for DakyXTech, who would be the ones doing the work. Assess it as a senior designer, a conversion specialist and a brand strategist would between them, and answer one question: does this page need rebuilding.
 
 You are looking at ${
     views.length === 2
@@ -850,7 +850,7 @@ You are looking at ${
 
 **The pictures are the whole of your evidence.** You may say nothing about a page you were not shown, about what happens when a button is pressed, about their prices or their booking system, and nothing at all about how fast the site loads, how findable it is, or whether it is secure: those were measured separately by somebody else, and you have no evidence for any of them.
 
-**The business is the one being served here, not Dakyworld.** A recommendation to rebuild a page that did not need rebuilding is the kind of thing that ends a firm's reputation in a town this size.`;
+**The business is the one being served here, not DakyXTech.** A recommendation to rebuild a page that did not need rebuilding is the kind of thing that ends a firm's reputation in a town this size.`;
 
   return composeWriterSystem(brief, { preamble: [preamble], contract: [CONTRACT, scorecardBlock()].join("\n\n") });
 }

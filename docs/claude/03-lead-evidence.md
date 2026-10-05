@@ -1,6 +1,6 @@
 # What is known about a lead, and how it is proved
 
-> Part of the Dakyworld OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
+> Part of the DakyXTech OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
 
 **Nothing writes to a lead until somebody has looked at it** —
 `src/services/leadPrep.ts`. A scraped row is a name, an email and three
@@ -14,7 +14,7 @@ drafted:
 2. `companyAudit.ts` — their site and mail domain, fetched and resolved. The
    checkable half.
 3. `siteShot.ts` + `homepageLook.ts` — a screenshot of the homepage through
-   Dakyworld's own Apify actor, read by a vision model (`job: "vision"`).
+   DakyXTech's own Apify actor, read by a vision model (`job: "vision"`).
    The half markup cannot answer: what a first-time visitor actually sees.
 
 **The scan writes back to the record.** It is not only evidence for a letter:
@@ -105,7 +105,7 @@ Four rules hold it honest, and each has a failure mode behind it:
   being wrong costs a sentence in a draft somebody reads. An email address
   being wrong sends a letter about a stranger's business to a stranger.
 - **A `website` value is validated as a URL before it is stored.** It decides
-  which argument the email makes, so garbage there turns Dakyworld's strongest
+  which argument the email makes, so garbage there turns DakyXTech's strongest
   opening into a pitch about a site that does not exist.
 - **Every stage degrades to a note, never an error.** No Perplexity key, no
   Apify token, a site that blocks headless browsers — each is a sentence in

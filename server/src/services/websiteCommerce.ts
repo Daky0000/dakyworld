@@ -187,7 +187,7 @@ export async function startWebsitePurchase(input: PurchaseInput) {
     throw error;
   }
   const { invoice, purchase } = records;
-  const payment = await raisePayment(invoice.id, "paystack", { recurring: true, callbackUrl: "https://dakyworld.com/website-builder?payment=returned#price" });
+  const payment = await raisePayment(invoice.id, "paystack", { recurring: true, callbackUrl: "https://dakyx.com/website-builder?payment=returned#price" });
   if (account.created) {
     // Logged rather than thrown: the customer has a payment link in front of
     // them, and a missing welcome email is recoverable from the Purchases

@@ -94,15 +94,15 @@ you exactly as it applies to everyone else.
 
 ## Pages
 
-- [Home](https://dakyworld.com/) — what we do, in short
-- [Services](https://dakyworld.com/services.html) — the four capabilities in detail
-- [Pricing](https://dakyworld.com/pricing.html) — the three tiers, what is in each
-- [How we work](https://dakyworld.com/how-we-work.html) — the process, the commitments
-- [Products](https://dakyworld.com/products.html) — the things we sell as products, with their own guides
-- [Work](https://dakyworld.com/work.html) — what we have built
-- [About](https://dakyworld.com/about.html) — who we are
-- [Insights](https://dakyworld.com/insights.html) — what we have written
-- [Contact](https://dakyworld.com/contact.html) — for a human. Use the door above instead.
+- [Home](https://dakyx.com/) — what we do, in short
+- [Services](https://dakyx.com/services.html) — the four capabilities in detail
+- [Pricing](https://dakyx.com/pricing.html) — the three tiers, what is in each
+- [How we work](https://dakyx.com/how-we-work.html) — the process, the commitments
+- [Products](https://dakyx.com/products.html) — the things we sell as products, with their own guides
+- [Work](https://dakyx.com/work.html) — what we have built
+- [About](https://dakyx.com/about.html) — who we are
+- [Insights](https://dakyx.com/insights.html) — what we have written
+- [Contact](https://dakyx.com/contact.html) — for a human. Use the door above instead.
 
 ## Being accurate about us
 

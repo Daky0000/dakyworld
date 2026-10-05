@@ -35,17 +35,17 @@ const CLIENT = {
   phone: "+233 302 998 114",
 };
 
-const payLink = (invoiceNumber: string) => `pay.dakyworld.com/${invoiceNumber}`;
+const payLink = (invoiceNumber: string) => `pay.dakyx.com/${invoiceNumber}`;
 
 const PAYMENT = {
   bankName: "Absa Bank Ghana",
-  accountName: "Dakyworld Limited",
+  accountName: "DakyXTech Limited",
   accountNumber: "003 512 004 9871",
   branch: "Adum, Kumasi",
   swift: "BARBGHAC",
   momoNetwork: "MTN MoMo",
   momoNumber: "+233 545 950 611",
-  momoName: "Dakyworld",
+  momoName: "DakyXTech",
 };
 
 // --- Invoice one: a build, part-paid and now overdue ------------------------

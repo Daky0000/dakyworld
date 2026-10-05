@@ -6,7 +6,7 @@ import { SETTING, getSetting, setSetting } from "./settings.js";
  *
  * Stripe keeps its own route: its signature scheme is its own, it needs the
  * raw request body, and getting either wrong means accepting forged payment
- * confirmations. Everything else — the contact form on dakyworld.com, a
+ * confirmations. Everything else — the contact form on dakyx.com, a
  * partner system, a Zap — arrives here.
  *
  * **Signing is optional but on by default.** A shared secret is generated the

@@ -7,7 +7,7 @@ import { appUrl } from "./emailSender.js";
 import { WebsiteError } from "./website/site.js";
 
 /**
- * Getting into an account without somebody at Dakyworld doing it for you.
+ * Getting into an account without somebody at DakyXTech doing it for you.
  *
  * Until now the only way an account existed was an Owner creating one and
  * telling the person their password, and the only way to change a forgotten

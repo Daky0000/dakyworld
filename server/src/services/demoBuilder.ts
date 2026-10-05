@@ -218,7 +218,7 @@ function buildPrompt(subject: DemoSubject): string {
 // --- Making the page safe to serve ------------------------------------------
 
 /**
- * The page comes from a model and is served from Dakyworld's own domain, so
+ * The page comes from a model and is served from DakyXTech's own domain, so
  * what it is allowed to load is not left to the prompt.
  *
  * The CSP on the response is the real enforcement; this strips the obvious
@@ -479,7 +479,7 @@ export async function buildDemo(subject: DemoSubject, options: { rebuild?: boole
   // 3. Make it safe to serve, and make it say what it is.
   const cleaned = sanitiseDemoHtml(result.data.html);
   if (cleaned.stripped.length) notes.push(`Removed from the page before serving: ${cleaned.stripped.join("; ")}.`);
-  const html = withNoIndex(withBanner(cleaned.html, subject.businessName, profile.displayName, profile.web ?? "dakyworld.com"));
+  const html = withNoIndex(withBanner(cleaned.html, subject.businessName, profile.displayName, profile.web ?? "dakyx.com"));
 
   const existing = options.rebuild ? await prisma.demo.findFirst({ where: { leadId: subject.leadId }, orderBy: { createdAt: "desc" } }) : null;
   const slug = existing?.slug ?? (await uniqueSlug(subject.businessName, null));
@@ -834,7 +834,7 @@ export async function importDemo(input: ImportDemoInput) {
     businessName,
     title,
     senderName: profile.displayName,
-    senderSite: profile.web ?? "dakyworld.com",
+    senderSite: profile.web ?? "dakyx.com",
     includeBanner,
     makeInert: input.makeInert ?? true,
   });

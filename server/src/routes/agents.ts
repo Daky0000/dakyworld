@@ -1097,7 +1097,7 @@ agentsRouter.post("/:key/prompt/reset", async (req, res, next) => {
  *
  * The Agents screen used to draw ten boxes, one per layer, which is what the
  * database holds and not what the agent is told. The gap between those two was
- * most of the prompt: who Dakyworld is, the company's contact details, how to
+ * most of the prompt: who DakyXTech is, the company's contact details, how to
  * write, what the agent recalled, and the whole passage about tools, dry run
  * and asking colleagues — none of it authored on that screen, all of it in
  * front of the model.
@@ -1248,7 +1248,7 @@ const briefBody = z.object({ text: z.string().max(40_000) });
  * Rewrite what writes a deliverable.
  *
  * Saved against the job rather than the agent because one agent may own
- * several — `content.writer` judges a prospect's copy, writes Dakyworld's own
+ * several — `content.writer` judges a prospect's copy, writes DakyXTech's own
  * and rewrites prose into plain English, and those are three different
  * instructions that must not overwrite each other.
  *
@@ -1268,7 +1268,7 @@ agentsRouter.put("/:key/writes/:job", async (req, res, next) => {
     const text = parsed.data.text.trim();
     const key = briefSettingKey(job.key);
 
-    // Empty means "go back to what Dakyworld ships" rather than "write with no
+    // Empty means "go back to what DakyXTech ships" rather than "write with no
     // instruction at all", which is the only sane reading of an emptied box and
     // the one that cannot leave a model working from nothing.
     if (!text) {
@@ -1322,7 +1322,7 @@ agentsRouter.get("/:key/prompt/shipped", async (req, res, next) => {
 /**
  * A specialist the Owner hires.
  *
- * The nine shipped specialists are the crafts Dakyworld already sells. They
+ * The nine shipped specialists are the crafts DakyXTech already sells. They
  * will not be the last — the next one is a 3D artist, a bookkeeper, a
  * translator — and every one of those needing a deploy would make the roster a
  * developer's list rather than the Owner's. So a custom agent is a real row

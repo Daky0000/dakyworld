@@ -18,7 +18,7 @@ import { ImagePositionControl } from "./ImagePositionControl";
  * both edited the same string.
  *
  * The question this answers is "what can reasonably be changed about the thing
- * that is selected", not "which CSS properties does Dakyworld know how to
+ * that is selected", not "which CSS properties does DakyXTech know how to
  * edit". So an image is never offered a line height, a heading is never offered
  * grid columns, flex-child controls appear only when the parent is actually a
  * flex container, and the offsets under Position appear only once the element

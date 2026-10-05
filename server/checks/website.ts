@@ -83,7 +83,7 @@ for (const file of pages) {
   //    that would catch an off-by-one on any single element.
   const editable = page.fields.filter((field) => field.kind === "text" && field.content);
   for (const field of editable) {
-    const marker = "Dakyworld editor probe";
+    const marker = "DakyXTech editor probe";
     const result = applyValues(source, { [field.id]: { value: marker, original: field.value } });
     check(`${file}: ${field.id} reports itself changed`, result.changed.includes(field.id));
     check(`${file}: ${field.id} raises no conflict`, result.conflicts.length === 0);
@@ -189,7 +189,7 @@ const LINKS: Array<[string, boolean]> = [
   ["#coverage", true],
   ["about.html", true],
   ["https://example.com/x", true],
-  ["mailto:hello@dakyworld.com", true],
+  ["mailto:hello@dakyx.com", true],
   ["tel:+233200000000", true],
   ["javascript:alert(1)", false],
   ["data:text/html,<script>alert(1)</script>", false],

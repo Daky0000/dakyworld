@@ -35,7 +35,7 @@ export async function fetchWebsiteText(address: string): Promise<string> {
     if (signal.aborted) throw new Error("The website took too long to respond.");
     const result = await new Promise<{ location?: string; text: string }>((resolve, reject) => {
       const request = (url.protocol === "https:" ? https : http).request(url, {
-        signal, method: "GET", headers: { "User-Agent": "Dakyworld-OS-Editor", "Accept-Encoding": "identity" },
+        signal, method: "GET", headers: { "User-Agent": "DakyXTech-OS-Editor", "Accept-Encoding": "identity" },
         // Keep the original hostname for Host/TLS, but connect only to the vetted IP.
         lookup: (_hostname, options, done) => {
           if ((options as { all?: boolean }).all) (done as any)(null, [pinned]);
@@ -76,7 +76,7 @@ export async function probeWebsiteUrl(address: string): Promise<{ statusCode: nu
       const request = (url.protocol === "https:" ? https : http).request(url, {
         signal,
         method: "GET",
-        headers: { "User-Agent": "Dakyworld-OS-UptimeMonitor/1.0", "Accept-Encoding": "identity" },
+        headers: { "User-Agent": "DakyXTech-OS-UptimeMonitor/1.0", "Accept-Encoding": "identity" },
         lookup: (_hostname, options, done) => {
           if ((options as { all?: boolean }).all) (done as any)(null, [pinned]);
           else done(null, pinned.address, pinned.family);
@@ -107,7 +107,7 @@ export async function fetchWebsiteBytes(address: string, maxBytes: number): Prom
     const pinned = await resolveWebsiteAddress(url);
     const result = await new Promise<{ location?: string; bytes?: Buffer }>((resolve, reject) => {
       const request = (url.protocol === "https:" ? https : http).request(url, {
-        signal, method: "GET", headers: { "User-Agent": "Dakyworld-OS-Editor", "Accept-Encoding": "identity" },
+        signal, method: "GET", headers: { "User-Agent": "DakyXTech-OS-Editor", "Accept-Encoding": "identity" },
         lookup: (_hostname, options, done) => {
           if ((options as { all?: boolean }).all) (done as any)(null, [pinned]);
           else done(null, pinned.address, pinned.family);

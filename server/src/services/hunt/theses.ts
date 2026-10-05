@@ -2,7 +2,7 @@ import type { LeadThesis, Prisma, ScraperPreset, LeadSource } from "@prisma/clie
 import { prisma } from "../../lib/prisma.js";
 
 /**
- * The reasons Dakyworld goes looking for anybody.
+ * The reasons DakyXTech goes looking for anybody.
  *
  * A `ScraperSource` says how to search. A thesis says **why that search is
  * worth paying for**, and what would make a business it finds worth keeping.
@@ -208,7 +208,7 @@ export const THESIS_SEEDS: ThesisSeed[] = [
     target:
       "Businesses whose bookings, orders, quotes or records still move by phone call, WhatsApp message and paper — where the volume is high enough that somebody is spending hours a week retyping things.",
     rationale:
-      "This is the highest-margin work Dakyworld does and the least contested: nobody in the market is selling it to a Ghanaian mid-sized business, because it needs somebody to sit down and understand how they actually work. The tell is visible from outside — a business taking appointments or orders with no way to make one online is a business doing it by hand, and the hours behind that are a number they can check themselves. It is also the offer that survives a bad month, because it removes a cost rather than adding one.",
+      "This is the highest-margin work DakyXTech does and the least contested: nobody in the market is selling it to a Ghanaian mid-sized business, because it needs somebody to sit down and understand how they actually work. The tell is visible from outside — a business taking appointments or orders with no way to make one online is a business doing it by hand, and the hours behind that are a number they can check themselves. It is also the offer that survives a bad month, because it removes a cost rather than adding one.",
     offer:
       "An automation build — the booking, quoting or order flow they run by hand, connected up, with their existing tools rather than a replacement for them.",
     qualifiers: [

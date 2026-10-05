@@ -45,7 +45,7 @@ import {
  *      numbered and drawn onto the screenshot.
  *   4. **Compile.** Claude weighs the four against each other and answers the
  *      two questions a business owner has — what is this costing me, what do I
- *      do first — plus the one Dakyworld has, which is what to say in a letter.
+ *      do first — plus the one DakyXTech has, which is what to say in a letter.
  *   5. **Render both.** A branded PDF for a person to read, and Markdown for
  *      the cold lead writer to argue from.
  *

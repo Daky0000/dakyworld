@@ -1,15 +1,15 @@
-# Dakyworld Website Screenshot
+# DakyXTech Website Screenshot
 
 The Apify actor that photographs a prospect's homepage. Playwright and Chromium
 inside; one stable input and output contract outside.
 
-It exists because the alternative was worse in a specific way. Dakyworld OS used
+It exists because the alternative was worse in a specific way. DakyXTech OS used
 four different screenshot actors from the Apify store, and no two of them agreed
 on their input: one took `urls`, another `link_urls`; the viewport was
 `viewportWidth`, `window_Width` or `width` depending on who wrote it; the proxy
 arrived under `proxy`, `proxyConfig` or `proxyConfiguration`. So the server read
 each actor's published schema at run time, cached it for six hours, and
-translated Dakyworld's settings into whichever names that actor happened to use
+translated DakyXTech's settings into whichever names that actor happened to use
 — because **Apify ignores an unknown input key in silence**, and the failure
 mode of guessing is a perfectly successful run at the wrong size with nothing
 anywhere saying so.
@@ -19,7 +19,7 @@ and this reads a viewport.
 
 ## Deploying it
 
-**The app does this on its own.** Dakyworld OS holds the Apify token, and
+**The app does this on its own.** DakyXTech OS holds the Apify token, and
 `services/screenshotActorDeploy.ts` uses it to create this actor and build it
 straight from the public repository — on boot when the actor is missing, or on
 demand from `POST /api/settings/capture/screenshot-actor/deploy`. Nothing below
@@ -37,7 +37,7 @@ cd apify/dakyworld-screenshot
 apify login
 apify push
 
-# …or use the token Dakyworld OS already holds, with no browser at all.
+# …or use the token DakyXTech OS already holds, with no browser at all.
 # Copy it from the app: Settings → Lead Sources → Connection.
 APIFY_TOKEN=apify_api_xxx apify push
 ```
@@ -49,7 +49,7 @@ thing most likely to go wrong about this.
 `apify push` builds the Docker image on Apify and creates or updates the actor.
 It lands as `<your-username>/website-screenshot`.
 
-**The username half matters.** Dakyworld OS ships pointing at
+**The username half matters.** DakyXTech OS ships pointing at
 `daky_world/website-screenshot` — with the underscore, which is the account
 this company's token belongs to. If the Apify account is not `daky_world`, do not
 edit the constant — set the actor id under **Settings → Lead Sources →
@@ -268,7 +268,7 @@ side effect of owning the actor.
   it on is one line in `src/screenshot.ts` and a re-read of the UX section.
 - **WebP is not offered, and the blocker is concrete rather than untested.** It
   would roughly halve the bytes, and every vision vendor accepts `image/webp`.
-  What does not is Dakyworld's own report: `audit/annotate.ts` draws the
+  What does not is DakyXTech's own report: `audit/annotate.ts` draws the
   numbered boxes onto this picture with the small PNG decoder in
   `services/png.ts`, and it refuses anything that is not a PNG — gracefully, by
   returning the plain picture and a note. So a WebP screenshot would silently

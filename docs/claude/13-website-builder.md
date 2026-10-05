@@ -1,6 +1,6 @@
 # The Website Builder
 
-> Part of the Dakyworld OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
+> Part of the DakyXTech OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
 
 ## The Website Builder
 
@@ -10,7 +10,7 @@ started, and where it lives. Read it before adding to this module; the seven
 screens that are skeletons already say what they will hold, and the decisions
 behind them are written down so they are not re-litigated.
 
-It is a **product** now, sold as hosted seats on os.dakyworld.com rather than
+It is a **product** now, sold as hosted seats on os.dakyx.com rather than
 used only in-house. Three decisions shape everything: hosted seats (so no
 installed module, no license server, no update endpoint), billing through
 `CarePlan` + `Invoice` + Paystack rather than a parallel `License` model, and
@@ -65,10 +65,10 @@ whole application.
 `checks/websiteBuilder.ts` covers all of it — 55 assertions, database only, the
 page's HTML served from a local express so the real read path runs with no
 network and no credential. Lets a non-technical person change
-the words, links and pictures on a page of dakyworld.com and publish it, without
+the words, links and pictures on a page of dakyx.com and publish it, without
 touching HTML and without waiting for a developer. The same module is what would
 carry a client's site: `Site` has a `clientId` and nothing in it is shaped around
-Dakyworld being the only row.
+DakyXTech being the only row.
 
 **The editable-region model, not the block model.** Pages become a list of
 fields — headings, paragraphs, list items, link labels and destinations, button
@@ -193,8 +193,8 @@ GitHub (or the live site)  →  parse.ts     offsets for every element
   exists, from `sitemap.xml` otherwise — and **a file the sitemap does not list
   arrives hidden**, which is how the plan document and the 404 stay out of a
   client's page list without anybody naming them in code.
-- `dakyworld.com/admin` is a static page that hands you to
-  `os.dakyworld.com/website`. It does **not** ask for a password: Pages has no
+- `dakyx.com/admin` is a static page that hands you to
+  `os.dakyx.com/website`. It does **not** ask for a password: Pages has no
   server to check one against, so a form there would post credentials to another
   origin, which is the shape of a phishing page. It does not redirect on its own
   either — a page that bounces you onward bounces you onward when you press back.

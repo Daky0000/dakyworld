@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "private": true,
-  "description": "Dakyworld's own website screenshot actor: Playwright and Chromium behind one stable input and output contract.",
+  "description": "DakyXTech's own website screenshot actor: Playwright and Chromium behind one stable input and output contract.",
   "engines": {
     "node": ">=20"
   },

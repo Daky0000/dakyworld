@@ -1,5 +1,5 @@
 /**
- * The contract between Dakyworld OS and this actor.
+ * The contract between DakyXTech OS and this actor.
  *
  * This file is the single definition of what goes in and what comes out. It is
  * duplicated — deliberately, and only in shape — by

@@ -42,7 +42,7 @@ export const siteInput = z.object({
   repoBranch: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_./-]+$/).default("main"),
   repoPath: folder.default(""),
   /**
-   * Whose website this is. Null for Dakyworld's own.
+   * Whose website this is. Null for DakyXTech's own.
    *
    * It is what makes "does a retainer cover this" answerable at all — without
    * it the onboarding list can only say that nothing decides, which is true and

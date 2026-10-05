@@ -71,7 +71,7 @@ export function encodePng(width: number, height: number, pixels: Uint8Array): Bu
  * Enough of a PNG decoder to draw on a screenshot, and no more.
  *
  * It was written for the crop — a full-page screenshot arrives taller than any
- * vision model will accept — and that job has since moved into Dakyworld's own
+ * vision model will accept — and that job has since moved into DakyXTech's own
  * Apify actor, which does it with Sharp before the picture is ever downloaded.
  * What kept the decoder here is `audit/annotate.ts`: the report draws numbered
  * boxes onto the picture, and pixel writes need the pixels. Sixty lines of

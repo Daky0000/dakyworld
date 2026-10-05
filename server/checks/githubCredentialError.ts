@@ -19,7 +19,7 @@ await new Promise<void>(resolve => server.once("listening", resolve));
 const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 try {
   const response = await fetch(`${origin}/credential`);
-  assert.equal(response.status, 503, "GitHub credentials must not become a Dakyworld login failure");
+  assert.equal(response.status, 503, "GitHub credentials must not become a DakyXTech login failure");
   const body = await response.json();
   assert.match(body.error, /reconnect GitHub/);
   assert.match(body.error, /Settings > Developer/);

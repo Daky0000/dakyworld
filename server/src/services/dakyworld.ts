@@ -1,5 +1,5 @@
 /**
- * Who Dakyworld is and what it sells, in one place.
+ * Who DakyXTech is and what it sells, in one place.
  *
  * The email drafter and the proposal writer both have to describe the company,
  * and two descriptions of the same company is how a brand voice dies — so this
@@ -13,7 +13,7 @@
  * Sep 2026 none of that reached the workforce: every agent went on describing
  * eight services at last year's prices because a constant here said so. So
  * `SHIPPED_OFFER` is the default and `services/context/business.ts` is the
- * value, read from dakyworld.com and refreshed whenever the site changes.
+ * value, read from dakyx.com and refreshed whenever the site changes.
  * Exactly the arrangement `systemProfile.ts` already has for the address and
  * the phone number, and for the same reason: changing what the company sells
  * must never need a redeploy.
@@ -43,7 +43,7 @@ export const COMPANY = {
   location: "Kumasi, Ghana",
   email: "info@dakyx.com",
   phone: "+233 545 950 611",
-  web: "dakyworld.com",
+  web: "dakyx.com",
   /** What the company is, in the one sentence the website leads its footer with. */
   positioning: "Your outsourced digital systems and automation team for growing businesses in Ghana and West Africa.",
 } as const;
@@ -59,7 +59,7 @@ export const VOICE = `How DakyXTech writes:
 // --- What can actually be sold ---------------------------------------------
 
 /**
- * One sellable line. `anchorPrice` is a price Dakyworld genuinely publishes;
+ * One sellable line. `anchorPrice` is a price DakyXTech genuinely publishes;
  * where there isn't one, it stays null and the writer must say the number
  * comes after the discovery call rather than make one up.
  */
@@ -114,12 +114,12 @@ export interface BusinessOffer {
   /** The lines under it — who it is for, how it works, what it is not. */
   summary: string[];
   /**
-   * What Dakyworld does **not** do, in the site's own words.
+   * What DakyXTech does **not** do, in the site's own words.
    *
    * Load-bearing, and the reason this whole sync exists. The previous version
    * of this file had every agent offering "email/workspace and cloud" and "a
    * four-hour response on priority-one security incidents" months after the
-   * website said plainly that Dakyworld does not administer business email or
+   * website said plainly that DakyXTech does not administer business email or
    * run managed cybersecurity. A pitch for work the company will not do is
    * worse than no pitch: it is discovered on the call.
    */
@@ -135,7 +135,7 @@ export interface BusinessOffer {
 
 /**
  * The offer as it stood when this was last written by hand — 1 Sep 2026,
- * read off dakyworld.com.
+ * read off dakyx.com.
  */
 export const SHIPPED_OFFER: BusinessOffer = {
   positioning: COMPANY.positioning,
@@ -355,9 +355,9 @@ export function catalogueFrom(offer: BusinessOffer): string {
  *
  * `companyAudit.ts` tags every finding with the service line that addresses it,
  * and those tags were written when this company sold eight. Four of them are
- * now work Dakyworld does not do — a finding about a business running on a free
+ * now work DakyXTech does not do — a finding about a business running on a free
  * Gmail address used to say "addressed by: email-workspace", and the site now
- * says plainly that Dakyworld does not administer business email. A stale tag
+ * says plainly that DakyXTech does not administer business email. A stale tag
  * is not a cosmetic problem: it is the one line in the prompt that tells a
  * writer this fault is *sellable*.
  *

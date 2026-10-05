@@ -1,5 +1,5 @@
 {
-  "name": "Dakyworld approved public pages",
+  "name": "DakyXTech approved public pages",
   "kind": "zone",
   "phase": "http_request_cache_settings",
   "rules": [

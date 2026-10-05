@@ -268,7 +268,7 @@ export const SECTION_TEMPLATES: Record<SectionKind, SectionTemplate> = {
     generateHtml: (ctx) => {
       const id = `sec-contact-${randomUUID().slice(0, 6)}`;
       const phone = ctx?.phone || "+233 20 000 0000";
-      const email = ctx?.email || "hello@dakyworld.com";
+      const email = ctx?.email || "hello@dakyx.com";
       return `
 <section id="${id}" class="py-16 md:py-24 bg-white border-t border-slate-200">
   <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">

@@ -395,7 +395,7 @@ function SystemPanel({ settings }: { settings: AppSettings }) {
  * Deliberately not a form. The website is the source — every agent describing
  * the offer should be describing the same thing the prospect is reading — and a
  * field somebody could type into here would be a second answer to a question
- * dakyworld.com already answers. That is exactly how the catalogue came to be a
+ * dakyx.com already answers. That is exactly how the catalogue came to be a
  * year out of date: eight services and last year's prices lived in a constant
  * while the site had moved to four and published a discount.
  *
@@ -417,7 +417,7 @@ function BusinessContextPanel() {
   return (
     <Panel
       title="Business context"
-      what="What every agent is told this company sells, read from dakyworld.com. Change a price, a plan or a service on the website and the workforce says the new thing — there is nothing to retype here."
+      what="What every agent is told this company sells, read from dakyx.com. Change a price, a plan or a service on the website and the workforce says the new thing — there is nothing to retype here."
       state={
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-muted">
           {!data ? (
@@ -686,7 +686,7 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
     onError: (err: Error) => setTestResult(err.message),
   });
 
-  /** The mailboxes Dakyworld realistically sends from. Hostinger is not an SMTP preset — it has its own form. */
+  /** The mailboxes DakyXTech realistically sends from. Hostinger is not an SMTP preset — it has its own form. */
   const presets = [
     { label: "Google Workspace", host: "smtp.gmail.com", port: 587, note: "Use an App Password, not the account password." },
     { label: "Zoho Mail", host: "smtp.zoho.com", port: 465, note: "An app-specific password if 2FA is on." },
@@ -802,7 +802,7 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
               <input type="number" value={port} onChange={(event) => setPort(Number(event.target.value))} className="input" />
             </Field>
             <Field label="Username">
-              <input value={user} onChange={(event) => setUser(event.target.value)} placeholder="dan@dakyworld.com" className="input" />
+              <input value={user} onChange={(event) => setUser(event.target.value)} placeholder="dan@dakyx.com" className="input" />
             </Field>
             <Field label="Password" hint="Stored encrypted. Never shown again.">
               <input
@@ -817,7 +817,7 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
               <input value={fromName} onChange={(event) => setFromName(event.target.value)} className="input" />
             </Field>
             <Field label="From address">
-              <input value={fromEmail} onChange={(event) => setFromEmail(event.target.value)} placeholder="dan@dakyworld.com" className="input" />
+              <input value={fromEmail} onChange={(event) => setFromEmail(event.target.value)} placeholder="dan@dakyx.com" className="input" />
             </Field>
             <Field label="Reply-to" hint="Optional — where replies should land, if not the from address." full>
               <input value={replyTo} onChange={(event) => setReplyTo(event.target.value)} className="input" />
@@ -993,7 +993,7 @@ function InboxPanel({ settings }: { settings: AppSettings }) {
               <input value={port} onChange={(event) => setPort(event.target.value)} className="input" />
             </Field>
             <Field label="Username">
-              <input value={user} onChange={(event) => setUser(event.target.value)} placeholder="dan@dakyworld.com" className="input" />
+              <input value={user} onChange={(event) => setUser(event.target.value)} placeholder="dan@dakyx.com" className="input" />
             </Field>
             <Field
               label="Password"
@@ -3112,7 +3112,7 @@ function CaptureBehaviour({ settings }: { settings: AppSettings }) {
                 type="email"
                 value={form.notifyEmail ?? ""}
                 onChange={(event) => set("notifyEmail", event.target.value || null)}
-                placeholder={settings.email.fromEmail ?? "you@dakyworld.com"}
+                placeholder={settings.email.fromEmail ?? "you@dakyx.com"}
                 className="input"
               />
             </Field>
@@ -4015,7 +4015,7 @@ function DeveloperPanel({ settings }: { settings: AppSettings }) {
  * The URL to give the website's contact form, and the secret anything else
  * signs with.
  *
- * The form is deliberately allowed to post unsigned: dakyworld.com is a static
+ * The form is deliberately allowed to post unsigned: dakyx.com is a static
  * site on GitHub Pages with nowhere to keep a secret, and losing a real enquiry
  * to a configuration mismatch is worse than accepting an unsigned post that can
  * only ever create a lead. Everything else must sign, and an unsigned event
@@ -4042,7 +4042,7 @@ function WebhooksPanel({ settings }: { settings: AppSettings }) {
       title="Webhooks"
       what={
         <>
-          Events in from other systems. The contact form on dakyworld.com posting here creates a scored, de-duplicated lead in the
+          Events in from other systems. The contact form on dakyx.com posting here creates a scored, de-duplicated lead in the
           pipeline instead of an email somebody retypes on Monday.
         </>
       }

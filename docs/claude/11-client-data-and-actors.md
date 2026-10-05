@@ -1,6 +1,6 @@
 # The client, the database, company data, tags and actors
 
-> Part of the Dakyworld OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
+> Part of the DakyXTech OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
 
 **Client** — Vite + React + React Router + TanStack Query, in `server/client/`.
 The server serves the built client from `client/dist` when it exists, and falls
@@ -16,18 +16,18 @@ exist. **Rotating `APP_SECRET` makes every stored key unreadable.**
 **What the company *sells* is data too, and it is read from the website** —
 `services/context/business.ts`, `SHIPPED_OFFER` in `dakyworld.ts`, Settings →
 System → Business context. Every agent is handed a paragraph saying who
-Dakyworld is and a catalogue saying what it may offer, and until Sep 2026 both
-came from a constant nothing kept in step with dakyworld.com. By then the site
+DakyXTech is and a catalogue saying what it may offer, and until Sep 2026 both
+came from a constant nothing kept in step with dakyx.com. By then the site
 sold **four** services where the constant listed eight, charged GHS 3,000 a
 month where the constant said 5,000, ran a Founding Partner discount the
-constant had never heard of, and said plainly that Dakyworld does not
+constant had never heard of, and said plainly that DakyXTech does not
 administer business email or run managed cybersecurity — two things the
 constant was still offering. Nothing failed. Every letter was grammatical. The
 only symptom was a prospect being quoted a price they could see was wrong on
 the page they were reading.
 
 ```
-dakyworld.com ──→ pageSource() ──→ visibleText() ──→ one model call ──→ AppSetting
+dakyx.com ──→ pageSource() ──→ visibleText() ──→ one model call ──→ AppSetting
  seven pages      the editor's      markup out       job: "organise"    business.offer
                   own reader                         strict schema
 ```
@@ -60,7 +60,7 @@ dakyworld.com ──→ pageSource() ──→ visibleText() ──→ one model
 - **A finding's service tag is resolved, not printed.** `companyAudit.ts` tags
   every finding with the service line that addresses it and those tags were
   written when the company sold eight. `serviceForFinding()` maps the retired
-  ones to **null** — "nothing Dakyworld sells, this one is context, never an
+  ones to **null** — "nothing DakyXTech sells, this one is context, never an
   offer" — because that tag is the one line in a prompt that tells a writer a
   fault is sellable.
 - **The proposal writer's `service` enum is built per call** from what is sold

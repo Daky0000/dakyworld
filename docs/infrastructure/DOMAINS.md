@@ -9,7 +9,7 @@
 | `os.dakyx.com` | DakyXTech Company OS (Railway) | Active over HTTPS (200 OK) | CNAME `m490k52o.up.railway.app` (Port 8080) |
 | `app.dakyx.com` | Customer Workspace & Product Launcher | Attached in Railway | CNAME `0kg4s78c.up.railway.app` (Port 8080) |
 | `editor.dakyx.com` | Standalone Website Editor Product | Attached in Railway | CNAME `pf5fc5xw.up.railway.app` (Port 8080) |
-| `os.dakyworld.com` | Legacy Railway OS domain | Maintained for staff continuity | Port 8080 |
+| `os.dakyx.com` | Legacy Railway OS domain | Maintained for staff continuity | Port 8080 |
 
 ## Architecture policy
 

@@ -10,7 +10,7 @@ import { Button, Drawer, Field, RelativeTime, Toggle } from "./ui";
  * means, what happens when included hours run out, when the next review lands.
  *
  * **The tiers and their prices are not in this file.** They arrive from
- * `GET /care-plans/catalogue`, which reads them off dakyworld.com — see
+ * `GET /care-plans/catalogue`, which reads them off dakyx.com — see
  * `services/carePlanCatalogue.ts`. They used to be three constants here, under
  * three names the website had stopped using, at prices it had stopped
  * charging; the client and the invoice disagreed and only the client noticed.
@@ -239,7 +239,7 @@ export function CarePlanEditor({ plan, open, onClose }: { plan: CarePlan | null;
           </select>
         </Field>
 
-        <Field label="Tier" hint={tier?.for || "Priced from the monthly partnerships on dakyworld.com."} full>
+        <Field label="Tier" hint={tier?.for || "Priced from the monthly partnerships on dakyx.com."} full>
           <div className="grid gap-2 sm:grid-cols-3">
             {tiers.map((option) => {
               const fee = feeAt(option, form.rate);
@@ -465,7 +465,7 @@ export function CarePlanEditor({ plan, open, onClose }: { plan: CarePlan | null;
           <p className="sm:col-span-2 text-xs text-muted">
             {catalogue.source === "website" && catalogue.syncedAt ? (
               <>
-                Tier prices read from dakyworld.com <RelativeTime value={catalogue.syncedAt} />. Change a price on the site and re-sync in
+                Tier prices read from dakyx.com <RelativeTime value={catalogue.syncedAt} />. Change a price on the site and re-sync in
                 Settings › Business context.
               </>
             ) : (

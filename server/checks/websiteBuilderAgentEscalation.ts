@@ -79,7 +79,7 @@ async function run() {
   for (const key of sectionKeys) {
     const template = SECTION_TEMPLATES[key];
     assert.ok(template, `Template for ${key} must exist`);
-    const html = template.generateHtml({ siteName: "Dakyworld Test Site" });
+    const html = template.generateHtml({ siteName: "DakyXTech Test Site" });
     assert.ok(html.includes("<section"), `Generated HTML for ${key} must have <section>`);
     assert.ok(html.length > 100, `Generated HTML for ${key} must be substantive`);
   }

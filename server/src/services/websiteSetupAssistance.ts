@@ -55,8 +55,8 @@ export function registerWebsiteSetupAssistance(router: Router) {
         amount: price.amount,
         display: price.display,
         guides: {
-          hosted: "https://dakyworld.com/website-builder-setup#hosted",
-          github: "https://dakyworld.com/website-builder-setup#github",
+          hosted: "https://dakyx.com/website-builder-setup#hosted",
+          github: "https://dakyx.com/website-builder-setup#github",
         },
         appUrl: base,
       });

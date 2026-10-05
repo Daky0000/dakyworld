@@ -3,7 +3,7 @@
  *
  * Art 5(1)(e) GDPR and s.24 of Act 843 both say personal data may be kept no
  * longer than necessary, and neither is satisfied by intending to delete
- * something. On 4 Sep 2026 dakyworld.com/privacy started publishing a period
+ * something. On 4 Sep 2026 dakyx.com/privacy started publishing a period
  * per category, which made the obligation concrete and created a sharper
  * problem alongside it: **a published period that nothing enforces is a false
  * statement in a privacy policy.** Vague and true beats specific and untrue.

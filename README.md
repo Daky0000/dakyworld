@@ -132,7 +132,7 @@ that they have no website, the 4.6 stars from 212 reviews, the proposal sent
 three weeks ago that nobody answered, the invoice eleven days overdue.
 
 Press *Write a draft* and Claude writes the email from exactly those facts,
-under Dakyworld's own voice and positioning, for one of fourteen purposes — a
+under DakyXTech's own voice and positioning, for one of fourteen purposes — a
 cold approach reads nothing like an invoice reminder. Two rules do most of the
 work: it may use only the facts supplied, and it produces a draft rather than
 an outbox. A tailored email that invents a branch office is worse than a
@@ -376,7 +376,7 @@ and must not be shared.
 The name, the address, both phone numbers, the website, the social links, the
 registered company number and the logo used to be constants in the code:
 correct, single-sourced, and changeable only by a developer with a deploy. They
-are now a record, and everything that describes Dakyworld reads it — the email
+are now a record, and everything that describes DakyXTech reads it — the email
 letterhead and its dark footer band, the plain-text half of every email, the
 PDF letterhead on every invoice and proposal, the Word cut of a proposal, the
 unsubscribe page, and the brief the AI drafter and the proposal writer are
@@ -648,7 +648,7 @@ migrations, and reserving them costs nothing.
 `GENERIC_CONTACT`, automatic detection, or a custom field map), scored 0–100
 on how reachable and how sellable-to it is, and filed into a named batch.
 Scoring rewards a missing website and page-builder domains — the clearest
-signal that a business needs what Dakyworld sells.
+signal that a business needs what DakyXTech sells.
 
 **Nothing duplicates and nothing is overwritten.** Every lead gets a
 `dedupeKey` — place id, else website domain, else email, else phone, else
@@ -753,7 +753,7 @@ their backups. A DNS query that fails is recorded as *not checked*, never as
 *no record*: those look identical in code and only one of them is safe to put
 in front of a prospect.
 
-**It cannot invent a price.** Only prices Dakyworld publishes — the website
+**It cannot invent a price.** Only prices DakyXTech publishes — the website
 build from-price and the three care plan tiers, in `services/dakyworld.ts` —
 may be quoted as firm. Everything else is priced after the discovery call and
 marked as such. The Owner sets the final number on the review screen before
@@ -1056,7 +1056,7 @@ and Settings → Google says so with a Reconnect button instead of failing at th
 moment somebody tries to book a consultation.
 
 **Webhooks** take events in from other systems. The contact form on
-dakyworld.com posting to `/api/webhooks/website-form` creates a scored,
+dakyx.com posting to `/api/webhooks/website-form` creates a scored,
 de-duplicated lead in the pipeline — an enquiry from somebody already found by
 a scrape merges into that lead instead of duplicating it. Senders other than
 the form must sign: HMAC-SHA256 over `` `${timestamp}.${body}` `` in an
@@ -1241,7 +1241,7 @@ This is where a house rule goes. *We do not take on unregistered businesses.*
 Each of those used to have to be typed into every agent separately — and the
 one you hire next month would never have heard any of them.
 
-An agent can add to it too, when it concludes something about how Dakyworld
+An agent can add to it too, when it concludes something about how DakyXTech
 works rather than about its own way of working. Those are marked with the
 agent that wrote them, so *why does it think that* stays answerable.
 
@@ -1393,7 +1393,7 @@ a task at a time rather than all at once.
 ## Deploying
 
 Client and server deploy as **one Railway service** on one domain
-(`os.dakyworld.com`): the Express process serves `client/dist` as static
+(`os.dakyx.com`): the Express process serves `client/dist` as static
 files and the API under `/api`, so there's no second service, no CORS setup,
 and `VITE_API_BASE=/api` just works.
 
@@ -1452,7 +1452,7 @@ an email provider or a third-party identity service.
 ## Project structure
 
 ```
-Dakyworld OS/
+DakyXTech OS/
   server/            Express + TypeScript API
     prisma/
       schema.prisma  Full data model — 11 entities from the original spec

@@ -8,21 +8,21 @@ rules actually live, and `checks/websiteCompatibility.ts` holds them to it.
 The target this is written against, deliberately narrow:
 
 > **A Dakyworld-hosted editor for compatible GitHub-backed websites, onboarded
-> and managed by Dakyworld.**
+> and managed by DakyXTech.**
 
 Anything outside that is not a gap to apologise for. It is out of scope until
 the flow above works for five to ten genuinely different websites and the people
 who own them.
 
 The four grades below are also published, in a client's words, at
-[dakyworld.com/website-builder](https://dakyworld.com/website-builder). Change
+[dakyx.com/website-builder](https://dakyx.com/website-builder). Change
 one here and change it there in the same piece of work: this file is what sales
 promises are made from, and that page is where a client reads them.
 
 ## Best supported
 
 - Static HTML and CSS, multi-page.
-- Websites Dakyworld built.
+- Websites DakyXTech built.
 - A GitHub repository the OS can read and write, on a named branch.
 - Pages whose editable regions are annotated with `data-dw-field`, which is the
   strongest identity an edit can have — it survives the page being rearranged.

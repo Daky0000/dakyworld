@@ -228,7 +228,7 @@ async function documentData(id: string) {
   };
 }
 
-/** `Dakyworld-Proposal-Adjei-Dental-Centre` — what it should be called on disk. */
+/** `DakyXTech-Proposal-Adjei-Dental-Centre` — what it should be called on disk. */
 function fileStem(clientName: string): string {
   const slug = clientName
     .normalize("NFKD")

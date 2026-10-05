@@ -100,7 +100,7 @@ const NOT_PUBLISHED_HTML = `<!doctype html><html lang="en"><head><meta charset="
  * Serves published pages for a hosted site, by hostname.
  *
  * Mounted ahead of the OS's own client and API. It only ever answers for a
- * hostname that belongs to a hosted site, so `os.dakyworld.com` falls straight
+ * hostname that belongs to a hosted site, so `os.dakyx.com` falls straight
  * through to the app.
  */
 export function publicSiteHosting() {

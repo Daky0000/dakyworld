@@ -15,7 +15,7 @@ import { WebsiteError } from "./website/site.js";
  * for a secret that reaches everything they own, and leaves them no way to see
  * or narrow what it is used for.
  *
- * Here they install the Dakyworld app on the repositories they choose, GitHub
+ * Here they install the DakyXTech app on the repositories they choose, GitHub
  * hands back an installation id, and that id is all this system stores. What it
  * can reach is theirs to decide and theirs to withdraw.
  *

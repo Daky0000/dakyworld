@@ -68,8 +68,8 @@ console.log("\nWhat the preview's own policy allows");
 {
   const home = readFileSync(join(siteRoot, "index.html"), "utf8");
   const fields = discoverFields(home).fields;
-  const picking = buildPreview(home, "https://dakyworld.com", fields).csp;
-  const plain = buildPreview(home, "https://dakyworld.com").csp;
+  const picking = buildPreview(home, "https://dakyx.com", fields).csp;
+  const plain = buildPreview(home, "https://dakyx.com").csp;
 
   const styleSrc = picking.split(";").map((d) => d.trim()).find((d) => /^style-src\b/i.test(d)) ?? "";
   const styleAttr = picking.split(";").map((d) => d.trim()).find((d) => /^style-src-attr\b/i.test(d)) ?? "";
@@ -90,7 +90,7 @@ console.log("\nMarking every editable element");
 for (const name of pages) {
   const html = readFileSync(join(siteRoot, name), "utf8");
   const content = discoverFields(html);
-  const marked = buildPreview(html, "https://dakyworld.com", content.fields);
+  const marked = buildPreview(html, "https://dakyx.com", content.fields);
 
   // Whitespace-prefixed: that is how a mark is inserted into a tag. The
   // picker's own script mentions the attribute too, as `[data-dw-field="`.
@@ -111,7 +111,7 @@ for (const name of pages) {
   const sameValues = content.fields.every((field) => unmark(after.fields.find((f) => f.id === field.id)?.value) === unmark(field.value));
   check(`${name}: and the same values`, sameValues);
 
-  check(`${name}: the picker is only added when asked for`, !buildPreview(html, "https://dakyworld.com").html.includes("data-dw-field"));
+  check(`${name}: the picker is only added when asked for`, !buildPreview(html, "https://dakyx.com").html.includes("data-dw-field"));
   check(`${name}: the picker's script carries a nonce the policy names`, /nonce="([^"]+)"/.test(marked.html) && marked.csp.includes("'nonce-"));
 }
 

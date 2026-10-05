@@ -199,7 +199,7 @@ function page(existing, meta, body, minutes, parts) {
     '<meta name="theme-color" content="#08101f">',
     `<meta name="description" content="${escape(meta.description)}">`,
     /* The brand suffix only if it fits. Every other page on the site ends
-       "| Dakyworld®", but a post's headline is already 50-odd characters and
+       "| DakyXTech®", but a post's headline is already 50-odd characters and
        a search result truncates around 60 — at which point the suffix costs
        the end of the actual title and buys nothing. */
     `<title>${inline(meta.title)}${meta.title.length <= 48 ? " | DakyXTech&reg;" : ""}</title>`,

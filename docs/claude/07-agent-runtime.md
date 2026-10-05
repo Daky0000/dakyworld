@@ -1,6 +1,6 @@
 # The agent runtime: tasks, hiring, Slack, memory and state
 
-> Part of the Dakyworld OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
+> Part of the DakyXTech OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
 
 **The agent runtime** — `src/services/agents/`. `runner.ts` is what turns a
 task into work: it claims an `AgentTask`, builds the prompt from the agent's

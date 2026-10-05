@@ -1,7 +1,7 @@
 /**
  * What must be true about a concept page before anybody is told it exists.
  *
- * The page is served from Dakyworld's own domain, carries somebody else's
+ * The page is served from DakyXTech's own domain, carries somebody else's
  * business name, and the whole pitch is "look what we made you". A page with
  * their phone number wrong on it, or with lorem ipsum two screens down, is
  * worse than no page: it is evidence against us, produced by us, at a link we

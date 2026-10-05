@@ -2740,7 +2740,7 @@ export function registerWebsiteBuilderAgent(
     } catch (error) { next(error); }
   });
 
-  // 6. Escalate a code-managed or structural request to a Dakyworld developer & site owner
+  // 6. Escalate a code-managed or structural request to a DakyXTech developer & site owner
   router.post("/sites/:siteId/agent/escalate", async (req: Request, res: Response, next) => {
     try {
       const body = escalateDeveloperSchema.parse(req.body ?? {});

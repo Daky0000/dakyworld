@@ -131,7 +131,7 @@ publicProductsRouter.post("/website-payment-status", paymentStatusRateLimit, asy
 
 function publicCors(req: { headers: { origin?: string } }, res: { set: (field: string, value: string) => unknown }) {
   const origin = req.headers.origin;
-  if (origin && ["https://dakyxtech.com", "https://www.dakyxtech.com", "https://dakyworld.com", "https://www.dakyworld.com", "http://localhost:5173", "http://localhost:3000"].includes(origin)) res.set("Access-Control-Allow-Origin", origin);
+  if (origin && ["https://dakyx.com", "https://www.dakyx.com", "https://dakyxtech.com", "https://www.dakyxtech.com", "https://dakyworld.com", "https://www.dakyworld.com", "http://localhost:5173", "http://localhost:3000"].includes(origin)) res.set("Access-Control-Allow-Origin", origin);
   else res.set("Access-Control-Allow-Origin", "*");
   res.set("Vary", "Origin");
 }

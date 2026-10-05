@@ -12,7 +12,7 @@
  *  - **Every finding carries its own evidence.** `evidence` is the header, the
  *    URL, the tag or the part of the screenshot the claim came from. A finding
  *    with nothing in it is a finding somebody made up, and this report goes out
- *    under Dakyworld's name about a stranger's business.
+ *    under DakyXTech's name about a stranger's business.
  *  - **Every finding says it twice.** `observed` is what is true, in the
  *    reviewer's own terms; `plainly` is the same point with no technical word
  *    in it at all. The PDF prints the first, the email uses the second. The

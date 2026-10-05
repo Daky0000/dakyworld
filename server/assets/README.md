@@ -1,6 +1,6 @@
 # Brand assets
 
-The real Dakyworld artwork, supplied 13 Aug 2026. `logo.png` and `mark.png`
+The real DakyXTech artwork, supplied 13 Aug 2026. `logo.png` and `mark.png`
 are picked up automatically by `services/letterhead.ts`, so every PDF the app
 produces — proposals, invoices — carries them with no code change. The two
 `logo-email*.png` cuts are the same identity for email.
@@ -59,5 +59,5 @@ so a running server needs a restart to see a new file. Keep the same names —
 the lookup is by filename, not by content.
 
 The masters these were cut from live in
-`Dakyworld Website/assets/brand/`, alongside the on-dark cuts and the tagline
+`DakyXTech Website/assets/brand/`, alongside the on-dark cuts and the tagline
 lock-up, which the website uses.

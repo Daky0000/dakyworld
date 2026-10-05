@@ -105,7 +105,7 @@ app.get("/v2/acts/:actor", (req, res) => {
       id: "stub-actor",
       name: "website-screenshot",
       username: "daky_world",
-      title: "Dakyworld Website Screenshot",
+      title: "DakyXTech Website Screenshot",
       defaultRunOptions: { memoryMbytes: 1024, timeoutSecs: 300 },
       pricingInfos: [],
       // A tagged build, because an actor that exists and has never built is not
@@ -255,7 +255,7 @@ await reset();
 // --- 1. Addresses ------------------------------------------------------------
 console.log("\nWhat counts as a web address");
 {
-  check("a bare host gains https", normaliseSiteUrl("dakyworld.com") === "https://dakyworld.com/");
+  check("a bare host gains https", normaliseSiteUrl("dakyx.com") === "https://dakyx.com/");
   check("http is left alone", normaliseSiteUrl("http://x.com/a") === "http://x.com/a");
   check("a scheme that is not the web is refused", normaliseSiteUrl("javascript:alert(1)") === null);
   check("something with no dot in it is refused", normaliseSiteUrl("localhost") === null);
@@ -276,7 +276,7 @@ console.log("\nThe run body");
   await captureHomepage("example.com");
 
   const body = startedRuns[0]?.body;
-  check("it runs the Dakyworld actor", startedRuns[0]?.actor === "daky_world~website-screenshot", startedRuns[0]?.actor);
+  check("it runs the DakyXTech actor", startedRuns[0]?.actor === "daky_world~website-screenshot", startedRuns[0]?.actor);
   check("the address is normalised before it is sent", body?.urls?.[0]?.url === "https://example.com/", body?.urls?.[0]?.url);
   check("every request carries an id", typeof body?.urls?.[0]?.id === "string" && body.urls[0].id.length > 0);
   check("the viewport is a laptop", body?.viewport?.width === 1280 && body?.viewport?.height === 800, JSON.stringify(body?.viewport));
@@ -508,7 +508,7 @@ console.log("\nAn actor that does not speak this contract");
   // The failure worth having. Without it every page in the batch reads "the run
   // finished without producing a result for it" — true, useless, and pointing
   // at the website rather than at the setting that caused it.
-  check("it says the actor is the wrong one", note.includes("is not the Dakyworld"), note);
+  check("it says the actor is the wrong one", note.includes("is not the DakyXTech"), note);
   check("and names the actor that was asked for", note.includes("i-scraper/website-screenshot"), note);
   check("and says a store actor cannot stand in", note.includes("cannot be substituted"), note);
   // No adapter behind the message, on purpose: one actor and one contract is

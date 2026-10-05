@@ -45,7 +45,7 @@ export const subjectOf = {
   /** Anything about the agent's own way of working, rather than about a record. */
   self: () => "self",
   /**
-   * How Dakyworld works, rather than how one agent does. Shared memories filed
+   * How DakyXTech works, rather than how one agent does. Shared memories filed
    * here are recalled on every task by every agent — the standing instruction,
    * the house rule, the thing the Owner should only have to say once.
    */
@@ -565,13 +565,13 @@ const BASELINE_COMPANY_STATE: Array<{ key: string; value: string; reason: string
   {
     key: "priority_vertical",
     value: "Private Clinics & Diagnostics, B2B Logistics & Clearing, Real Estate Developers, Legal/Accounting Consultancies, and Multi-Branch Retail/Hospitality",
-    reason: "Highest-yield verticals for Dakyworld's 4 active pillars",
+    reason: "Highest-yield verticals for DakyXTech's 4 active pillars",
     agentKey: "board.growth",
   },
   {
     key: "current_quarterly_bet",
     value: "Audit-First Outbound Motion: Verified Technical Fault -> 48-Hour Speculative 390px Mobile Preview -> 20-Minute Diagnostic Call -> Two-Option Anchor Proposal",
-    reason: "5-Stage Value Creation Loop from Dakyworld Startup Growth & Sales Kit",
+    reason: "5-Stage Value Creation Loop from DakyXTech Startup Growth & Sales Kit",
     agentKey: "board.growth",
   },
   {
@@ -595,7 +595,7 @@ const BASELINE_COMPANY_STATE: Array<{ key: string; value: string; reason: string
   {
     key: "brand_voice_guardrail",
     value: "Plain British English, Ghanaian commercial register, zero AI slop, zero unverified claims; standalone security, cloud, email-workspace and branding are retired",
-    reason: "Dakyworld Brand Voice & Scope Containment Bible",
+    reason: "DakyXTech Brand Voice & Scope Containment Bible",
     agentKey: "board.risk",
   },
 ];

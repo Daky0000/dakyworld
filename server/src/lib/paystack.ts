@@ -109,7 +109,7 @@ export interface PaystackLink {
   accessCode: string;
 }
 
-/** Opens hosted checkout for a reference already durably claimed by Dakyworld.
+/** Opens hosted checkout for a reference already durably claimed by DakyXTech.
  * Paystack rejects a reused reference; callers must never issue a new reference
  * merely because initialization timed out. */
 export async function createPaymentLink(input: {

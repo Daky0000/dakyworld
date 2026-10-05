@@ -16,7 +16,7 @@ import { writerSystem } from "../writers/brief.js";
  *
  * So one reader goes over the whole thing and answers the two questions the
  * owner actually has — what is this costing me, and what do I do first — plus
- * the one Dakyworld has, which is what to say in the letter.
+ * the one DakyXTech has, which is what to say in the letter.
  *
  * **This one is Claude, named rather than routed.** Every other model call in
  * this app asks for a job and lets the routing decide. This step is different

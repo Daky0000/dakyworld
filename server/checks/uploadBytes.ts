@@ -218,7 +218,7 @@ async function main() {
   svgAccepted("a plain mark", '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>');
   svgAccepted(
     "a wordmark with a gradient and a style block",
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 60"><defs><linearGradient id="g"><stop stop-color="#3157FF"/><stop offset="1" stop-color="#B8FF3D"/></linearGradient><style>.w{fill:url(#g)}</style></defs><text class="w" y="40">Dakyworld</text></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 60"><defs><linearGradient id="g"><stop stop-color="#3157FF"/><stop offset="1" stop-color="#B8FF3D"/></linearGradient><style>.w{fill:url(#g)}</style></defs><text class="w" y="40">DakyXTech</text></svg>',
   );
   svgAccepted("an animation of a real property", '<svg xmlns="http://www.w3.org/2000/svg"><circle r="10"><animate attributeName="opacity" values="0;1" dur="1s"/></circle></svg>');
   svgAccepted("a set of a real property", '<svg xmlns="http://www.w3.org/2000/svg"><rect><set attributeName="fill" to="#B8FF3D"/></rect></svg>');

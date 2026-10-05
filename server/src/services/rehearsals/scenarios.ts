@@ -70,7 +70,7 @@ export const SCENARIOS: Scenario[] = [
 
 Decide whether they are worth approaching, and if they are, get the first letter ready to go out.
 
-That means finding out what is actually true about them and their site rather than what their trade suggests, deciding what Dakyworld could genuinely do for them, and having somebody write the approach off what was found. A lead record for them already exists — work from it, and put what you learn back on it.
+That means finding out what is actually true about them and their site rather than what their trade suggests, deciding what DakyXTech could genuinely do for them, and having somebody write the approach off what was found. A lead record for them already exists — work from it, and put what you learn back on it.
 
 ${FINISH}`,
   },
@@ -125,7 +125,7 @@ ${FINISH}`,
     ],
     brief: ({ site, name }) => `Assume ${name} (${site}) has come back interested and we now have to put a proposal together.
 
-Establish what is actually wrong with their setup, decide what Dakyworld would do about it, and get that scoped and priced. Every line has to trace to something found on their site or something they asked for — not to what is easiest to sell.
+Establish what is actually wrong with their setup, decide what DakyXTech would do about it, and get that scoped and priced. Every line has to trace to something found on their site or something they asked for — not to what is easiest to sell.
 
 Where you have to assume something, say so and mark it for me to confirm before it goes out. If the catalogue has no price for part of it, stop there and say so rather than inventing a number.
 
@@ -145,7 +145,7 @@ ${FINISH}`,
     ],
     brief: ({ site, name }) => `${name}, at ${site}, is a business nobody here has looked at.
 
-I want to know what Dakyworld would do with them if we decided to go after them properly — what is wrong with their site, what we would offer, what it would cost them, what we would say to them first, and whether they are worth our time at all.
+I want to know what DakyXTech would do with them if we decided to go after them properly — what is wrong with their site, what we would offer, what it would cost them, what we would say to them first, and whether they are worth our time at all.
 
 Split it up as you see fit. I would rather have four directors' honest answers than one summary that agrees with itself.
 

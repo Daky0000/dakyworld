@@ -4,7 +4,7 @@ import type { LeadSource, ScraperPreset } from "@prisma/client";
  * One-click starting points for the Lead Sources screen.
  *
  * Any Apify actor can be added by searching the store; these are pre-filled for
- * the way Dakyworld actually sells — an outsourced IT department for
+ * the way DakyXTech actually sells — an outsourced IT department for
  * established businesses in Ghana and West Africa, bought first as a one-off
  * project (usually a website build) and then grown into a retainer.
  *
@@ -14,7 +14,7 @@ import type { LeadSource, ScraperPreset } from "@prisma/client";
  *    services/leadMapping.ts already rewards no-website and page-builder
  *    domains, so the searches lean the same way. `website: "withoutWebsite"`
  *    on the Maps actor makes that a hard filter rather than a preference.
- * 2. **Ghana first, Kumasi and Accra first of all** — Dakyworld is Kumasi-based
+ * 2. **Ghana first, Kumasi and Accra first of all** — DakyXTech is Kumasi-based
  *    and delivers 100% remotely, so location is about who's reachable and
  *    referenceable, not who's nearby.
  *
@@ -93,7 +93,7 @@ export const SCRAPER_TEMPLATES: ScraperTemplate[] = [
     actorId: "compass/crawler-google-places",
     headline: "Home ground — easiest meetings to get",
     description:
-      "The same search on Dakyworld's own doorstep. Being local is worth a lot on a first call even when the work itself is delivered remotely, and Ashanti is under-served compared with Accra.",
+      "The same search on DakyXTech's own doorstep. Being local is worth a lot on a first call even when the work itself is delivered remotely, and Ashanti is under-served compared with Accra.",
     preset: "GOOGLE_MAPS",
     leadSource: "GOOGLE_MAPS",
     groupName: "No website · Kumasi",

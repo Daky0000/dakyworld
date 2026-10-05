@@ -63,7 +63,7 @@ async function runChecks() {
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Dakyworld Studio</title>
+  <title>DakyXTech Studio</title>
   <meta name="description" content="Design and development studio">
   <meta property="og:title" content="Studio OG Title">
   <meta property="og:description" content="Studio OG Description">
@@ -74,7 +74,7 @@ async function runChecks() {
 </head>
 <body>
   <header>
-    <h1>Welcome to Dakyworld</h1>
+    <h1>Welcome to DakyXTech</h1>
     <a href="about.html">About Us</a>
   </header>
   <section style="background-image: url('images/hero.png'); background-size: cover;">
@@ -104,11 +104,11 @@ async function runChecks() {
   const aboutHtml = `<!doctype html>
 <html lang="en">
 <head>
-  <title>About Us - Dakyworld</title>
+  <title>About Us - DakyXTech</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <h1>About Dakyworld</h1>
+  <h1>About DakyXTech</h1>
   <p>Our company story and mission.</p>
   <a href="index.html">Home</a>
 </body>
@@ -196,7 +196,7 @@ async function runChecks() {
   // Metadata fields
   const metaTitle = fields.find((f) => f.tag === "title");
   assert.ok(metaTitle, "Discovered <title> field");
-  assert.equal(metaTitle.value, "Dakyworld Studio");
+  assert.equal(metaTitle.value, "DakyXTech Studio");
 
   const metaDesc = fields.find((f) => f.tag === "meta" && f.label.toLowerCase().includes("description"));
   assert.ok(metaDesc, "Discovered <meta name='description'> field");
@@ -252,13 +252,13 @@ async function runChecks() {
   assert.ok(h1Field, "Discovered h1 field");
 
   const edits = {
-    [h1Field.id]: { value: "Creative Engineering at Dakyworld" },
+    [h1Field.id]: { value: "Creative Engineering at DakyXTech" },
     [bgField.id]: { value: "images/new-hero.png" },
   };
 
   const applied = applyValues(indexHtml, edits);
   assert.deepEqual(applied.conflicts, []);
-  assert.ok(applied.html.includes("Creative Engineering at Dakyworld"), "Heading edit applied");
+  assert.ok(applied.html.includes("Creative Engineering at DakyXTech"), "Heading edit applied");
   assert.ok(applied.html.includes("images/new-hero.png"), "Background image edit applied");
 
   // Untouched parts must be strictly byte-identical
@@ -285,7 +285,7 @@ async function runChecks() {
   // ────────────────────────────────────────────────────────────────────────────
   console.log("6. Preview inertness: safe forms, inert navigation, and script audit");
 
-  const preview = buildPreview(indexHtml, "https://dakyworld.com/", fields);
+  const preview = buildPreview(indexHtml, "https://dakyx.com/", fields);
   assert.ok(preview.html.includes("inert_action") && preview.html.includes("form_submission"), "Form submission intercepted in editor preview");
   assert.ok(preview.html.includes("auditScriptDriven"), "Script-driven parts auditing script injected");
   assert.ok(preview.html.includes('data-dw-readonly="true"'), "Unsupported elements marked data-dw-readonly");

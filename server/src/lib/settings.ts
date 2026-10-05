@@ -295,7 +295,7 @@ export const SETTING = {
   /** The app's own public URL — what Google's redirect URI is built from. */
   APP_URL: "app.url",
 
-  // Outbound email. SMTP works with every mailbox Dakyworld might send from —
+  // Outbound email. SMTP works with every mailbox DakyXTech might send from —
   // Google Workspace, Hostinger, Zoho — and none of them need a new account
   // opening to start. Hostinger's own mailbox has a second, shorter route: an
   // MCP server that takes one API token instead of five SMTP fields.
@@ -435,7 +435,7 @@ export const SETTING = {
   GITHUB_ALLOWED_REPOS: "github.allowedRepos",
 
   /**
-   * The Dakyworld GitHub App — the per-customer alternative to the shared token
+   * The DakyXTech GitHub App — the per-customer alternative to the shared token
    * above. See services/githubApp.ts for why it is the better shape.
    *
    * The private key is the one secret here that must never move: it

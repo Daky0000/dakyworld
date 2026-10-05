@@ -60,7 +60,7 @@ export const SAVED_PROMPT_PRESETS: SavedPromptPreset[] = [
  *
  * This screen used to draw the ten stored layers — ROLE, MISSION, SCOPE and the
  * rest — which is what the database holds and *not* what the agent is told. The
- * gap between those two was most of the prompt: who Dakyworld is, the company's
+ * gap between those two was most of the prompt: who DakyXTech is, the company's
  * contact details, how to write, what the agent recalled about this client, and
  * the whole passage about tools, dry run and asking colleagues. None of it
  * authored here, all of it in front of the model.

@@ -14,17 +14,17 @@ Hosted sites are served at `<hostedSlug>.<WEBSITE_HOST_DOMAIN>`. Until that
 variable is set, a site with no repository still publishes — the HTML is stored
 and the editor works — but there is no address to give the customer.
 
-1. Pick the domain, e.g. `sites.dakyworld.com`.
-2. In Cloudflare (or whoever runs DNS for dakyworld.com), add a **wildcard**
+1. Pick the domain, e.g. `sites.dakyx.com`.
+2. In Cloudflare (or whoever runs DNS for dakyx.com), add a **wildcard**
    record: `*.sites` → the Railway service. Railway needs the wildcard added as
    a custom domain on the service so it will answer for it, and it issues the
    certificate.
-3. Set `WEBSITE_HOST_DOMAIN=sites.dakyworld.com` in the Railway service
+3. Set `WEBSITE_HOST_DOMAIN=sites.dakyx.com` in the Railway service
    variables.
 
 A customer's own domain then needs, on their side: a `TXT` at
 `_dakyworld.<their domain>` carrying the token the panel shows, and a `CNAME`
-pointing their domain at `<hostedSlug>.sites.dakyworld.com`. The editor's
+pointing their domain at `<hostedSlug>.sites.dakyx.com`. The editor's
 Hosting panel prints both, and the Verify button reads the TXT record.
 
 **Certificates for customer domains.** Railway issues a certificate for each

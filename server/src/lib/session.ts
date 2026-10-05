@@ -7,7 +7,7 @@ import { Prisma, type Session } from "@prisma/client";
 /**
  * `__Host-` is not decoration. The prefix is a promise the browser enforces:
  * it will only accept the cookie if it is Secure, has `Path=/` and carries no
- * `Domain` — which means no other host under dakyworld.com can set or overwrite
+ * `Domain` — which means no other host under dakyx.com can set or overwrite
  * it. Without that, anything that ever gets to run on a sibling subdomain can
  * plant a session cookie of its own choosing.
  *

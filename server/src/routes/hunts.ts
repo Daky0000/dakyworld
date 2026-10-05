@@ -9,7 +9,7 @@ import { parseQualifier, signalCatalogue } from "../services/hunt/signals.js";
 import { CaptureBudgetError, CaptureBusyError, ScrapeInProgressError } from "../services/scraperRunner.js";
 
 /**
- * The hunts — why Dakyworld goes looking for anybody.
+ * The hunts — why DakyXTech goes looking for anybody.
  *
  * Same gate as the lead sources, and for the same reason: turning a hunt on
  * starts spending money twice a day without anybody pressing anything.

@@ -1,8 +1,8 @@
-# Screenshots, the Dakyworld actor, and fetching a site
+# Screenshots, the DakyXTech actor, and fetching a site
 
-> Part of the Dakyworld OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
+> Part of the DakyXTech OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
 
-**The screenshot actor is Dakyworld's own** — `apify/dakyworld-screenshot/`
+**The screenshot actor is DakyXTech's own** — `apify/dakyworld-screenshot/`
 in this repository, pushed to Apify with `apify push`, called through
 `services/apifyScreenshot.ts`. Read that folder's README before changing
 anything about a picture; what follows is why the server half looks the way it
@@ -196,7 +196,7 @@ lives beside it.
 
 **There is no half-measure while it is undeployed**, and that is the deliberate
 cost of having one actor instead of four: pointing `capture.screenshotActor` at
-a store actor no longer works, because the server sends the Dakyworld contract
+a store actor no longer works, because the server sends the DakyXTech contract
 and nothing on the store reads it — and a run that comes back with rows carrying
 no `id` is reported as exactly that rather than as twenty pages that each
 "finished without producing a result".
@@ -325,7 +325,7 @@ that relaxation is written down** — one call, no credential sent, never
 hop. **The screenshot half follows it now**, which it could not while the actor
 belonged to somebody else: none of the external ones declared an
 ignore-certificate input, and inventing a key Apify silently drops is not an
-implementation. Dakyworld's own actor retries a TLS failure once with
+implementation. DakyXTech's own actor retries a TLS failure once with
 `ignoreHTTPSErrors` on that one context and marks the row `insecure`, so the
 report shows the page *and* says the connection was not verified. `ux.ts` lost
 its third branch with it — the sentence explaining why a site behind a

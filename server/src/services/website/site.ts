@@ -225,7 +225,7 @@ export function linkedStylesheetHrefs(html: string, limit = 3): string[] {
  *
  * Three is right for the button style menu: it wants class names, and the first
  * few files have them. It is wrong for reading a site's design. Sites link their
- * cookie banner and their fonts before their own stylesheet — on Dakyworld's own
+ * cookie banner and their fonts before their own stylesheet — on DakyXTech's own
  * site the first three are consent.css, fonts.css and a 4 KB base, while the
  * design system is the 80 KB site.css that comes fourth. Asking for three files
  * and reporting the result as the site's palette is reporting a cookie banner's

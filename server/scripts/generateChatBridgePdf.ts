@@ -15,8 +15,8 @@ function generatePdf(targetPath: string): Promise<void> {
       size: "A4",
       margin: 36,
       info: {
-        Title: "Dakyworld Website Builder — WhatsApp ChatBridge CRM Add-on Guide",
-        Author: "Dakyworld OS",
+        Title: "DakyXTech Website Builder — WhatsApp ChatBridge CRM Add-on Guide",
+        Author: "DakyXTech OS",
         Subject: "$5/mo (GHS 75/mo) WhatsApp Lead Generation & Real-time Inquiries Engine",
       },
     });
@@ -37,7 +37,7 @@ function generatePdf(targetPath: string): Promise<void> {
       .fillColor("#25D366")
       .font("Helvetica-Bold")
       .fontSize(9)
-      .text("DAKYWORLD OS • MODULAR WEBSITE BUILDER ADD-ON SPECIFICATION", 36, 24, {
+      .text("DAKYXTECH OS • MODULAR WEBSITE BUILDER ADD-ON SPECIFICATION", 36, 24, {
         characterSpacing: 1.1,
       });
 
@@ -77,7 +77,7 @@ function generatePdf(targetPath: string): Promise<void> {
       .font("Helvetica")
       .fontSize(8.5)
       .text(
-        "In emerging & mobile-first economies, over 85% of purchases and bookings close on WhatsApp. Traditional email forms are ignored. ChatBridge turns any Dakyworld site into an active conversational funnel: daytime visitors connect with pre-filled intent, while nighttime visitors are captured into a dedicated CRM inbox.",
+        "In emerging & mobile-first economies, over 85% of purchases and bookings close on WhatsApp. Traditional email forms are ignored. ChatBridge turns any DakyXTech site into an active conversational funnel: daytime visitors connect with pre-filled intent, while nighttime visitors are captured into a dedicated CRM inbox.",
         48,
         y + 24,
         { width: contentWidth - 24, lineGap: 1.8 },
@@ -114,7 +114,7 @@ function generatePdf(targetPath: string): Promise<void> {
       {
         num: "03",
         title: "Instant Zero-Friction Owner Alert & 1-Tap Reply Loop",
-        desc: "The moment an offline inquiry lands, Dakyworld sends an SMS/WhatsApp alert to the owner's phone with a 1-tap waLink. The business owner taps the link and is instantly chatting with the lead on WhatsApp—no dashboard login required.",
+        desc: "The moment an offline inquiry lands, DakyXTech sends an SMS/WhatsApp alert to the owner's phone with a 1-tap waLink. The business owner taps the link and is instantly chatting with the lead on WhatsApp—no dashboard login required.",
         accent: "#D97706",
         bg: "#FFFBEB",
         border: "#FDE68A",
@@ -122,7 +122,7 @@ function generatePdf(targetPath: string): Promise<void> {
       {
         num: "04",
         title: "Inquiries CRM Dashboard & PDF Billing Action",
-        desc: "Inside Dakyworld, owners access a live pipeline of all inquiries with lead status (New, Contacted, Won), page origin, and a 1-click 'Send PDF Invoice' button that links directly to Dakyworld's automated invoice generator.",
+        desc: "Inside DakyXTech, owners access a live pipeline of all inquiries with lead status (New, Contacted, Won), page origin, and a 1-click 'Send PDF Invoice' button that links directly to DakyXTech's automated invoice generator.",
         accent: "#7C3AED",
         bg: "#F5F3FF",
         border: "#DDD6FE",
@@ -154,7 +154,7 @@ function generatePdf(targetPath: string): Promise<void> {
     
     const techPoints = [
       "• Lightweight Embed Script: Pure 3.8 KB vanilla JS (<0.05s load), 0 external dependencies, preserves 100/100 PageSpeed.",
-      "• Reuses Dakyworld Core: E.164 phone parser & waLink in lib/phone.ts, honeypot botCheck.ts, and messageSender.ts.",
+      "• Reuses DakyXTech Core: E.164 phone parser & waLink in lib/phone.ts, honeypot botCheck.ts, and messageSender.ts.",
       "• Data Privacy & Deliverability: Click-to-chat requires no Meta Business verification or per-conversation messaging fees.",
     ];
     let ty = y + 24;
@@ -165,7 +165,7 @@ function generatePdf(targetPath: string): Promise<void> {
 
     // Footer Page 1
     doc.fillColor("#94A3B8").font("Helvetica").fontSize(7.5).text(
-      "Dakyworld OS • Website Builder Add-on Documentation • WhatsApp ChatBridge CRM ($5/mo / GHS 75/mo)",
+      "DakyXTech OS • Website Builder Add-on Documentation • WhatsApp ChatBridge CRM ($5/mo / GHS 75/mo)",
       36,
       pageHeight - 26,
     );
@@ -221,7 +221,7 @@ function generatePdf(targetPath: string): Promise<void> {
     y2 += 16;
 
     // Workflow Comparison Box
-    doc.fillColor("#0F172A").font("Helvetica-Bold").fontSize(11).text("2. Traditional Static Website vs. Dakyworld ChatBridge Flow", 36, y2);
+    doc.fillColor("#0F172A").font("Helvetica-Bold").fontSize(11).text("2. Traditional Static Website vs. DakyXTech ChatBridge Flow", 36, y2);
     y2 += 16;
 
     const compareHeight = 92;
@@ -240,15 +240,15 @@ function generatePdf(targetPath: string): Promise<void> {
       sy += 15;
     }
 
-    // Right: Dakyworld ChatBridge Way
+    // Right: DakyXTech ChatBridge Way
     const rx = 36 + (contentWidth - 12) / 2 + 12;
     doc.roundedRect(rx, y2, (contentWidth - 12) / 2, compareHeight, 6).fillAndStroke("#F0FDF4", "#BBF7D0");
-    doc.fillColor("#166534").font("Helvetica-Bold").fontSize(9).text("The Dakyworld ChatBridge Way", rx + 10, y2 + 10);
+    doc.fillColor("#166534").font("Helvetica-Bold").fontSize(9).text("The DakyXTech ChatBridge Way", rx + 10, y2 + 10);
     const newSteps = [
       "• One-tap contextual prompt matches exact page viewed",
       "• Nighttime visitors captured via automated offline form",
       "• Owner receives instant SMS alert with 1-tap waLink",
-      "• Real-time Dakyworld CRM tracks leads & one-click PDF invoices",
+      "• Real-time DakyXTech CRM tracks leads & one-click PDF invoices",
     ];
     let sy2 = y2 + 26;
     for (const s of newSteps) {
@@ -280,7 +280,7 @@ function generatePdf(targetPath: string): Promise<void> {
 
     // Footer Page 2
     doc.fillColor("#94A3B8").font("Helvetica").fontSize(7.5).text(
-      "Dakyworld OS • Website Builder Add-on Documentation • Generated September 2026",
+      "DakyXTech OS • Website Builder Add-on Documentation • Generated September 2026",
       36,
       pageHeight - 26,
     );

@@ -135,7 +135,7 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     name: "Cold outreach",
     phrase: "writing to a stranger",
     blurb:
-      "The first approach to a business that has never heard of Dakyworld — the cold email, the follow-ups, and the WhatsApp and SMS messages. Split out of Writing because it is the shortest and most-read thing the company produces and it is worth routing on its own.",
+      "The first approach to a business that has never heard of DakyXTech — the cold email, the follow-ups, and the WhatsApp and SMS messages. Split out of Writing because it is the shortest and most-read thing the company produces and it is worth routing on its own.",
     // **Perplexity, and it is the second job routed there for something other
     // than searching.** The Owner's call, for the same reason `redesign` went
     // there: the live half is what the job actually needs. A cold message is

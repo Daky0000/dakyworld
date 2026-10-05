@@ -197,7 +197,7 @@ app.use("/api/messaging", webhookRateLimit, express.raw({ type: "*/*", limit: "1
 //
 // `/demos` on its own has no route here and falls through to the app, which is
 // deliberate: the individual pages are unlisted-but-public, and the list of
-// every business Dakyworld is pitching to stays behind the login.
+// every business DakyXTech is pitching to stays behind the login.
 app.use("/demos", demoPagesRouter);
 
 const publicReviewRouter = express.Router();
@@ -262,7 +262,7 @@ app.get("/api/ready", async (_req, res) => {
 // not an unsubscribe link. Every cold email this app sends carries one.
 app.use("/api/emails", unsubscribeRouter);
 
-// Public, and it has to be: dakyworld.com reads its own prices from here on
+// Public, and it has to be: dakyx.com reads its own prices from here on
 // every page load of a pricing block, and a price behind a login is a price
 // somebody has to retype into the website by hand. Nothing here is secret —
 // it is the number printed on a public page. Above `attachUser`, so it cannot
@@ -331,13 +331,13 @@ if (!hasBuiltClient) {
   // No client build present (local API-only run) — show what's running.
   app.get("/", (_req, res) => {
     res.type("html").send(`<!doctype html>
-<html><head><meta charset="utf-8"><title>Dakyworld OS API</title>
+<html><head><meta charset="utf-8"><title>DakyXTech OS API</title>
 <style>body{font-family:"DM Sans",system-ui,sans-serif;background:#08101F;color:#F4F5F0;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
 .card{border:1px solid rgba(255,255,255,.10);padding:2.5rem 3rem;text-align:center}
 h1{font-size:1.1rem;letter-spacing:.08em;text-transform:uppercase;margin:0 0 .5rem}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#B8FF3D;margin-right:8px}
 a{color:#B8FF3D;text-decoration:none}</style></head>
-<body><div class="card"><h1><span class="dot"></span>Dakyworld OS API — Running</h1>
+<body><div class="card"><h1><span class="dot"></span>DakyXTech OS API — Running</h1>
 <p><a href="/api/health">/api/health</a></p></div></body></html>`);
   });
 }
@@ -380,7 +380,7 @@ ensureSystemRoles()
       // The company's own website, so the editor opens onto something. Pages are
       // discovered rather than seeded — see services/website/ensureSite.ts.
       void ensureDakyworldSite()
-        .then((created) => created && console.log("  → Added dakyworld.com to the website editor"))
+        .then((created) => created && console.log("  → Added dakyx.com to the website editor"))
         .then(() => ensureWebsiteTierUsersAndPlans())
         .then((seeded) => console.log(`  → Website tiers ready (${seeded.users.map((u) => `${u.email} [${u.priceDisplay}]`).join(", ")})`))
         .catch((err) => console.error("Website seed failed:", err));
@@ -703,7 +703,7 @@ ensureSystemRoles()
           }
         })
         .catch((err) => console.error("Agent seed failed:", err));
-      // The reasons Dakyworld goes looking for anybody, and the searches they
+      // The reasons DakyXTech goes looking for anybody, and the searches they
       // hunt with. Additive, and every one of them arrives **switched off** —
       // enabling a hunt starts spending money twice a day, which is the
       // Owner's decision and not a deploy's.

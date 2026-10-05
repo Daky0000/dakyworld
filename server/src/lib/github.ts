@@ -21,7 +21,7 @@ import { SETTING, getSetting } from "./settings.js";
  * Which credential the calls inside this scope should use.
  *
  * A single shared personal access token was fine while every repository this
- * system wrote to was Dakyworld's own. It stops being fine the moment a client's
+ * system wrote to was DakyXTech's own. It stops being fine the moment a client's
  * website is one of them: one token reaching a hundred customers' repositories
  * is the wrong shape of secret, and the customer has no way to take it back
  * without asking us to.
@@ -328,7 +328,7 @@ export async function allowedRepos(): Promise<string[]> {
  *
  * **Deny by default.** An empty list means an agent can read but write nowhere,
  * which is the right starting position for a capability that can change the
- * software running the company. Pointing agents at Dakyworld OS itself is then
+ * software running the company. Pointing agents at DakyXTech OS itself is then
  * a deliberate act — somebody typing the repository's name into a settings
  * field — rather than something that arrived switched on.
  *
@@ -618,7 +618,7 @@ export async function createRepo(input: { name: string; description?: string; pr
   const body = {
     name: input.name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-"),
     description: input.description?.slice(0, 350),
-    // Private by default. A client's half-built site, under Dakyworld's
+    // Private by default. A client's half-built site, under DakyXTech's
     // account, is not something to make public by omission.
     private: input.private ?? true,
     auto_init: true,

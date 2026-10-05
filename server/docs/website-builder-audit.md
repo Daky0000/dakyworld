@@ -1,6 +1,6 @@
 # Website Builder — Audit & Improvement Plan
 
-**Scope:** `C:\Users\ASUS\Pictures\Dakyworld\Dakyworld OS\server`
+**Scope:** `C:\Users\ASUS\Pictures\DakyXTech\DakyXTech OS\server`
 **Date:** 2026-09-13
 **Status:** Completed audit; improvement plan ready for triage.
 
@@ -8,7 +8,7 @@
 
 ## 1. What This Product Is
 
-The Dakyworld OS website builder is an **in-place editor** for existing HTML pages. It is not a from-scratch page constructor. A staff member selects an editable region on a live page, changes its text, image, or link, and the change is saved as a draft that can be reviewed and published — optionally committed to a GitHub repository. Clients (not staff) get a read-only filtered view of the same tool.
+The DakyXTech OS website builder is an **in-place editor** for existing HTML pages. It is not a from-scratch page constructor. A staff member selects an editable region on a live page, changes its text, image, or link, and the change is saved as a draft that can be reviewed and published — optionally committed to a GitHub repository. Clients (not staff) get a read-only filtered view of the same tool.
 
 ### Architecture
 

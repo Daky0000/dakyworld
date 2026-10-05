@@ -14,7 +14,7 @@ import { SETTING, getSetting, setSetting } from "../lib/settings.js";
 import { ACTOR_SOURCE_VERSION, screenshotActorId } from "./apifyScreenshot.js";
 
 /**
- * Putting Dakyworld's own screenshot actor onto Dakyworld's own Apify account,
+ * Putting DakyXTech's own screenshot actor onto DakyXTech's own Apify account,
  * from inside the app, with the token the app already holds.
  *
  * The gap this closes is small and was completely blocking. The actor's source

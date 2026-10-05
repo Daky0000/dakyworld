@@ -85,7 +85,7 @@ function fakePerplexity(): Promise<{ server: Server; url: string }> {
               {
                 message: {
                   content: JSON.stringify({
-                    body: "Hi Kwame — Daky here from Dakyworld, we look after IT for businesses around Kumasi. Your number is not tappable on a phone. Want the screenshot?",
+                    body: "Hi Kwame — Daky here from DakyXTech, we look after IT for businesses around Kumasi. Your number is not tappable on a phone. Want the screenshot?",
                     rationale: "Opened on the strongest confirmed observation.",
                     confidence: 0.7,
                   }),
@@ -129,7 +129,7 @@ const GUARD =
   "WHAT YOU MAY NOT CLAIM, because the evidence does not support it: that the site is slow; that anybody has stopped buying";
 const OFFER = "WHAT TO OFFER: the fix itself. The one thing found is small and specific.";
 const DEMO =
-  "A demo page has been built for them at https://os.dakyworld.com/demos/accra-dental — Accra Dental Centre, headlined \"Book a dentist in Adum\". Status: ready, not opened yet.";
+  "A demo page has been built for them at https://os.dakyx.com/demos/accra-dental — Accra Dental Centre, headlined \"Book a dentist in Adum\". Status: ready, not opened yet.";
 const LETTER_MECHANICS =
   "THE FULL REVIEW WAS RUN AND THIS LETTER ARGUES FROM IT, NOT FROM THE QUICK CHECKS. Four reviewers went over their site. It came out at 61 out of 100 — \"needs work\". Never put that number in the letter.";
 const REVIEW_PARAGRAPH =

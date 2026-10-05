@@ -407,7 +407,7 @@
       if (form.elements.billingCycle) {
         form.elements.billingCycle.value = activeBillingCycle;
       }
-      if (form.elements.websiteUrl && (lastScannedWebsiteUrl || (scanInput && scanInput.value && scanInput.value !== 'https://dakyworld.com'))) {
+      if (form.elements.websiteUrl && (lastScannedWebsiteUrl || (scanInput && scanInput.value && scanInput.value !== 'https://dakyx.com'))) {
         form.elements.websiteUrl.value = lastScannedWebsiteUrl || scanInput.value.trim();
       }
       // `reset()` puts the radios back to the markup's default, so the plan

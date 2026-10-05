@@ -1,7 +1,7 @@
 /**
  * websiteApprovalAndReview.ts — Public Approval Links & Visual Comments.
  *
- * Enables freelancers to generate zero-friction review links (e.g. review.dakyworld.com/3jA9kx)
+ * Enables freelancers to generate zero-friction review links (e.g. review.dakyx.com/3jA9kx)
  * where clients can view Before / After changes, approve or request changes with one click,
  * and attach point-and-click visual comment pins directly to elements on the page without logging in.
  */

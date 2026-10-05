@@ -13,7 +13,7 @@
 >
 > | This playbook said | The doctrine says |
 > |---|---|
-> | Identify the sender *before* the observation | Open on the reader's own situation; name Dakyworld immediately after, inside the first three lines |
+> | Identify the sender *before* the observation | Open on the reader's own situation; name DakyXTech immediately after, inside the first three lines |
 > | Eighteen numbered scenarios, chosen from findings | No scenarios — the writer picks a shape from the evidence |
 > | Subject: six words or fewer, specific | Subject: two to four lowercase words, deliberately boring |
 > | No proof in a first email | One of the three true results, where it fits |
@@ -62,7 +62,7 @@ first emails it can be left out completely. *Warned on by
 `coldEmailChecks.preSendCheck()`.*
 
 **Say who you are and why you are writing, in the first two lines.**
-"Daky here from Dakyworld. I was looking at {{domain}} before writing and
+"Daky here from DakyXTech. I was looking at {{domain}} before writing and
 noticed one thing worth your attention." No long company introduction.
 *Blocked on if missing.*
 
@@ -215,7 +215,7 @@ Ghanaian businesses · whether follow-ups should stop at no engagement.
 
 The original benchmark figures came from vendor studies of US and European B2B
 outreach and have not been proven for Ghanaian businesses. Replace them with
-Dakyworld's own numbers as soon as there are enough.
+DakyXTech's own numbers as soon as there are enough.
 
 ---
 

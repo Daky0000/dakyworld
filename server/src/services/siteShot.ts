@@ -23,7 +23,7 @@ import {
  *  - **Apify takes the screenshot, not this server.** A headless Chrome in the
  *    deployment is three hundred megabytes, a browser to keep patched, and a
  *    new way for a deploy to fail. Since 2 Sep 2026 the actor doing it is
- *    Dakyworld's own — `apify/dakyworld-screenshot` in this repository — which
+ *    DakyXTech's own — `apify/dakyworld-screenshot` in this repository — which
  *    is what let the four external actors, their incompatible input schemas
  *    and the layer that translated between them all leave this file.
  *  - **The model gets the top of the page; a person gets the whole of it.** A
@@ -205,7 +205,7 @@ export interface ShotResult {
 
 const none = (note: string): ShotResult => ({ shot: null, base64: null, fullBase64: null, note });
 
-/** `dakyworld.com` becomes `https://dakyworld.com`. Null for anything that is not a web address. */
+/** `dakyx.com` becomes `https://dakyx.com`. Null for anything that is not a web address. */
 export function normaliseSiteUrl(website: string): string | null {
   const trimmed = website.trim();
   if (!trimmed) return null;

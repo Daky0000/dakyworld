@@ -252,8 +252,8 @@ def main() -> None:
 
     volume.set_toc(toc)
     volume.set_metadata({
-        "title": "The Dakyworld OS Agent System",
-        "author": "Dakyworld",
+        "title": "The DakyXTech OS Agent System",
+        "author": "DakyXTech",
         "subject": "Every agent, every tool, every instruction and every workflow, in one volume.",
         "keywords": "agents, workflow, operations, reference",
     })

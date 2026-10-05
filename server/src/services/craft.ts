@@ -7,7 +7,7 @@
  * In Aug 2026 a set of third-party skill libraries was installed into Claude
  * Code (marketing, social, UI/UX, motion, finance, legal, anti-slop prose).
  * Those are *Claude Code* skills: markdown a coding agent loads on demand.
- * Nothing in this system can read them. Dakyworld's own agents run server-side
+ * Nothing in this system can read them. DakyXTech's own agents run server-side
  * against a composed prompt, so a skill only reaches them if somebody carries
  * the judgement across by hand — which is what this file is.
  *
@@ -51,7 +51,7 @@
  * a machine wrote it.
  *
  * The em-dash line is the one house-style judgement call in this file.
- * Dakyworld's own internal prose uses em dashes heavily and this does not ask
+ * DakyXTech's own internal prose uses em dashes heavily and this does not ask
  * anybody to stop. It applies to client-facing copy only, where a stacked
  * em dash is the single strongest tell that nobody wrote the sentence.
  */
@@ -193,7 +193,7 @@ The feed is a competition for the first line, and nothing else gets read until i
  *
  * Source: `offers` (the value equation and the anatomy of a complete offer)
  * and `pricing`. Deliberately silent on discounting and on any specific
- * number: what Dakyworld charges lives in the service catalogue and a craft
+ * number: what DakyXTech charges lives in the service catalogue and a craft
  * block must not be able to move it.
  */
 export const OFFER_CRAFT = `**The offer underneath.**
@@ -271,7 +271,7 @@ Quote the clause, say plainly what it would mean in practice for DakyXTech, and 
  * Finding businesses worth writing to, and knowing them before we do.
  *
  * Source: `prospecting` — specifically its **Local SMB** branch, which is the
- * one Dakyworld actually runs: shops, clinics, schools, garages and
+ * one DakyXTech actually runs: shops, clinics, schools, garages and
  * manufacturers found on Maps and in directories, not funded SaaS companies
  * with a tech stack to fingerprint. Plus `customer-research` for reading a
  * business in its own words and `competitor-profiling` for the ones beside it.
@@ -345,7 +345,7 @@ export const BUILD_CRAFT = `**Building it, and checking it.**
  *
  * Source: `brand`, `banner-design` and `theme-factory`. Written to defer to
  * `DAKYWORLD-BRAND-DESIGN-SYSTEM.md`, which is the authority for anything
- * carrying Dakyworld's own name.
+ * carrying DakyXTech's own name.
  */
 export const BRAND_CRAFT = `**Marks, colour and type.**
 

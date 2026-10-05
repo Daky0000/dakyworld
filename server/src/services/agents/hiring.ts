@@ -417,7 +417,7 @@ async function ensureReviewTask(gapId: string): Promise<{ taskId: string | null;
   const task = await prisma.agentTask.create({
     data: {
       agentKey: CREATOR_KEY,
-      title: `Does Dakyworld need somebody who can ${gap.skillNeeded}?`,
+      title: `Does DakyXTech need somebody who can ${gap.skillNeeded}?`,
       brief: [
         `${gap.timesRequested} agent(s) have hit work needing this and found nobody on the roster to hand it to.`,
         "",

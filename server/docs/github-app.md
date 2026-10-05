@@ -1,9 +1,9 @@
-# The Dakyworld GitHub App
+# The DakyXTech GitHub App
 
 The per-customer replacement for the one shared personal access token.
 
-**Created and configured on 10 Sep 2026**: *Dakyworld Website Editor*, app id
-`4895561`, slug `dakyworld-website-editor`, owned by the **Dakyworld**
+**Created and configured on 10 Sep 2026**: *DakyXTech Website Editor*, app id
+`4895561`, slug `dakyworld-website-editor`, owned by the **DakyXTech**
 organisation — <https://github.com/apps/dakyworld-website-editor>. Its id, slug,
 private key and webhook secret are Railway variables on the `dakyworld` service;
 the key is in no repository and no screen.
@@ -48,9 +48,9 @@ GitHub Apps → **New GitHub App**, with exactly what follows.
 
 | Field | Value |
 |---|---|
-| Name | Dakyworld Website Editor |
-| Homepage URL | https://dakyworld.com |
-| Webhook URL | https://os.dakyworld.com/api/github/webhook |
+| Name | DakyXTech Website Editor |
+| Homepage URL | https://dakyx.com |
+| Webhook URL | https://os.dakyx.com/api/github/webhook |
 | Webhook secret | GitHub generates one through the manifest flow |
 | Where can it be installed | Any account |
 
@@ -132,9 +132,9 @@ Publishing needs *a* credential. As of 10 Sep 2026 production has no
 `GITHUB_TOKEN` variable at all, so unless one was pasted into Settings →
 Developer, an installation is the only way any site can publish.
 
-## Dakyworld's own website
+## DakyXTech's own website
 
-`dakyworld.com` and Dakyworld OS are the **same repository** — `Daky0000/dakyworld`
+`dakyx.com` and DakyXTech OS are the **same repository** — `Daky0000/dakyworld`
 holds `index.html`, `about.html` and the rest at its root, and the whole OS under
 `server/`.
 

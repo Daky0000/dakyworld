@@ -31,9 +31,9 @@ const source = [
 ].join("\r\n");
 const discovery = discoverTemplateFields(source, filePath);
 assert.equal(discovery.adapter, "template-literal-v1"); passed++;
-const change = { fieldId: discovery.fields.find((field) => field.value === "Welcome")!.id, value: "Welcome to Dakyworld" };
+const change = { fieldId: discovery.fields.find((field) => field.value === "Welcome")!.id, value: "Welcome to DakyXTech" };
 const input = { filePath, sourceHash: discovery.sourceHash, changes: [change] };
-const expected = source.replace("<h1>Welcome</h1>", "<h1>Welcome to Dakyworld</h1>");
+const expected = source.replace("<h1>Welcome</h1>", "<h1>Welcome to DakyXTech</h1>");
 
 // Every framework extension is accepted by the path guard, and everything else
 // is refused exactly as before.
@@ -100,7 +100,7 @@ try {
   const reviewed = await post("review", input);
   assert.equal(reviewed.status, 200);
   const review = await reviewed.json() as { reviewHash: string; changes: { before: string; after: string }[] };
-  assert.deepEqual(review.changes, [{ fieldId: change.fieldId, label: "h1 text", kind: "text", before: "Welcome", after: "Welcome to Dakyworld" }].map((entry) => ({ ...entry })));
+  assert.deepEqual(review.changes, [{ fieldId: change.fieldId, label: "h1 text", kind: "text", before: "Welcome", after: "Welcome to DakyXTech" }].map((entry) => ({ ...entry })));
   assert.equal(writes, 0); passed++;
 
   // A publish whose values differ from the reviewed ones is refused, and the

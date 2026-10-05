@@ -43,7 +43,7 @@ function linkify(value: string): string {
 }
 
 /**
- * Plain text to HTML, on the Dakyworld letterhead.
+ * Plain text to HTML, on the DakyXTech letterhead.
  *
  * The letter itself stays deliberately plain — paragraphs, one accent colour
  * for links, no images in the body, no tracking pixel — because a business

@@ -1035,7 +1035,7 @@ export interface Invoice {
 
 // --- Care plans ------------------------------------------------------------
 
-/** Named as dakyworld.com names the monthly partnerships. */
+/** Named as dakyx.com names the monthly partnerships. */
 export type CarePlanTier = "FOUNDATION" | "GROWTH" | "TRANSFORMATION";
 export type CarePlanStatus = "ACTIVE" | "PAUSED" | "CHURNED";
 /** Which of the two rates the website publishes a plan is sold at. */
@@ -1899,7 +1899,7 @@ export interface EmailDraft {
 }
 
 /**
- * What the workforce is told this company sells, read from dakyworld.com.
+ * What the workforce is told this company sells, read from dakyx.com.
  *
  * There is no editable copy of this in the app on purpose — the website is the
  * source. See `server/src/services/context/business.ts`.

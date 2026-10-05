@@ -1,6 +1,6 @@
 # Lead sheets, plans, worksheets and imports
 
-> Part of the Dakyworld OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
+> Part of the DakyXTech OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
 
 **Reading a lead sheet is a routed job, so its plan is checked rather than
 trusted** — `services/sheetPlan.ts` → `repairPlan()`. `normalizePlan` clamps a

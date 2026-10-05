@@ -1,6 +1,6 @@
 # Outreach doctrine, the writers, prompt surfaces and phone channels
 
-> Part of the Dakyworld OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
+> Part of the DakyXTech OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
 
 **The outreach doctrine is the authority** —
 [`server/src/services/outreachDoctrine.ts`](../../server/src/services/outreachDoctrine.ts).
@@ -16,8 +16,8 @@ had already dropped. Four things in it **reverse** the playbook, so do not
 "restore" any of them:
 
 - **The letter opens on the reader, not on us.** The playbook opened every
-  email with "Daky here from Dakyworld" *before* the observation. Leading with
-  yourself is the commonest reason a stranger stops reading. Dakyworld is still
+  email with "Daky here from DakyXTech" *before* the observation. Leading with
+  yourself is the commonest reason a stranger stops reading. DakyXTech is still
   named inside the first three lines — `coldEmailChecks` blocks a send
   otherwise — but it comes *after* the thing that was seen.
 - **There are no scenarios.** Eighteen numbered letters produced eighteen
@@ -74,7 +74,7 @@ demo behind somebody's back.
 What survived is the honesty floor, and it survived because it was never
 playbook: only what was confirmed, **what it makes harder rather than what it
 has cost**, no price in a first email, no private individual named, and never
-implying anything physical (Dakyworld is entirely remote).
+implying anything physical (DakyXTech is entirely remote).
 
 `tmp/outreachSwap.ts` is the harness. For every rule it asserts the new wording
 is present **and that its opposite is absent**, across the drafter, the phone
@@ -94,7 +94,7 @@ checking before writing another word of prompt:
    that governed only that agent's own task runs. `DISCIPLINE_AGENTS` made it
    literal: it supplied the name printed on the audit PDF — "Reviewed by the
    Page Reviewer" — while an anonymous constant did the reviewing, and the UX
-   prompt actually opened "You are the Dakyworld UI/UX Designer", an agent the
+   prompt actually opened "You are the DakyXTech UI/UX Designer", an agent the
    one-job split had moved off that work. So the doctrine existed twice:
    `outreach.writer`'s seed carried the whole playbook in its `process` layer,
    and so did `draftSystem()`. One was editable; the other was the one that
@@ -127,7 +127,7 @@ owner, because two agents editing one deliverable is the contradiction that
 makes a model fall back to the generic output it already knew.
 
 - **Doctrine and contract are different things and only one is editable.** The
-  doctrine is how Dakyworld writes this — voice, judgement, what may be
+  doctrine is how DakyXTech writes this — voice, judgement, what may be
   claimed. The contract is the shape of the answer: the fields, the plain-text
   rule, the severity words that get scored, the opt-out the app appends, the
   fabrication rules on a demo page carrying somebody's real business name.
@@ -246,7 +246,7 @@ click is an outbox nobody can trust about anything.
   and what an opt-out is recorded against, so two spellings means two threads
   and an opt-out on one that does not stop the other. The failure mode is
   silence, not an error: both providers accept a malformed number and the
-  message goes to nobody, or to a stranger under Dakyworld's name.
+  message goes to nobody, or to a stranger under DakyXTech's name.
 - **A landline is not "no phone".** A WhatsApp to one is a conversation fee for
   nothing and an SMS to one is money burnt, so `reachabilityOf` reports it
   unreachable *with the reason* rather than quietly trying.

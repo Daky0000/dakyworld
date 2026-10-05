@@ -3,7 +3,7 @@ import { SETTING, getSetting } from "../lib/settings.js";
 import { GitHubError, type GithubCredential } from "../lib/github.js";
 
 /**
- * Dakyworld's GitHub App, and the tokens it borrows.
+ * DakyXTech's GitHub App, and the tokens it borrows.
  *
  * The shared personal access token this replaces is the wrong shape of secret
  * for a product with customers. One token reaches every repository the account
@@ -38,7 +38,7 @@ export async function githubAppConfigured(): Promise<boolean> {
   return Boolean((await getSetting(SETTING.GITHUB_APP_ID)) && (await getSetting(SETTING.GITHUB_APP_PRIVATE_KEY)));
 }
 
-/** Where a customer is sent to choose which repositories Dakyworld may reach. */
+/** Where a customer is sent to choose which repositories DakyXTech may reach. */
 export async function githubAppInstallUrl(): Promise<string | null> {
   const slug = await getSetting(SETTING.GITHUB_APP_SLUG);
   return slug ? `https://github.com/apps/${encodeURIComponent(slug)}/installations/new` : null;

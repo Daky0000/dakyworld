@@ -334,7 +334,7 @@ async function systemPrompt(business: { name: string; trade: string | null; town
   const brief = await resolveBrief("audit.content", SHIPPED_DOCTRINE);
   const who = brief.agentName ?? "Content Writer";
 
-  const evidence = `You are the Dakyworld ${who}, reviewing the words on one homepage for ${business.name}${business.trade ? `, ${business.trade}` : ""}${business.town ? ` in ${business.town}` : ""}.
+  const evidence = `You are the DakyXTech ${who}, reviewing the words on one homepage for ${business.name}${business.trade ? `, ${business.trade}` : ""}${business.town ? ` in ${business.town}` : ""}.
 
 You are given the visible text of the page with the markup taken out. **That text is the whole of your evidence.** You have not seen the layout, the pictures, the other pages, or what happens when a button is pressed, and you may not say anything about any of them. Where you are not sure whether something is absent or merely somewhere you were not shown, say so rather than asserting it.
 

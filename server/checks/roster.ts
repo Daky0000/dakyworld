@@ -235,7 +235,7 @@ for (const key of owners) {
   });
 }
 for (const job of WRITER_JOBS) {
-  const brief = await resolveBrief(job.key, "the wording Dakyworld ships");
+  const brief = await resolveBrief(job.key, "the wording DakyXTech ships");
   check(
     brief.source === "agent",
     `${job.key}: ${job.agentKey}'s own instruction takes over the deliverable — it resolved to "${brief.source}"`,

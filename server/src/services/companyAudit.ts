@@ -30,7 +30,7 @@ import { serviceForFinding } from "./dakyworld.js";
  *  - **Nothing here throws.** A site that is down, a domain that does not
  *    resolve, a timeout — these are findings or notes, never failures. A
  *    proposal must still be draftable for a company with no web presence at
- *    all, which is the most promising case Dakyworld has.
+ *    all, which is the most promising case DakyXTech has.
  */
 
 export type AuditArea = "WEBSITE" | "EMAIL" | "SECURITY" | "PRESENCE" | "BRAND" | "OPERATIONS";
@@ -199,7 +199,7 @@ interface FetchAttempt {
 /** A browser's own UA, for the second attempt at a host that refused ours. */
 const BROWSER_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
-const CRAWLER_UA = "DakyXTechOS-SiteCheck/1.0 (+https://dakyworld.com)";
+const CRAWLER_UA = "DakyXTechOS-SiteCheck/1.0 (+https://dakyx.com)";
 
 /** Node's error codes, grouped by what they actually tell us. */
 function classify(err: unknown): { failure: FetchFailure; detail: string } {
@@ -1414,7 +1414,7 @@ export function auditForPrompt(audit: CompanyAudit): string {
   const findings = sortFindings(audit.findings).map(
     (finding) =>
       `- [${finding.severity}] [${finding.area}] ${finding.observed}\n  Evidence: ${finding.evidence}\n  Addressed by: ${
-        serviceForFinding(finding.service) ?? "nothing Dakyworld sells — this one is context, never an offer"
+        serviceForFinding(finding.service) ?? "nothing DakyXTech sells — this one is context, never an offer"
       }`,
   );
 

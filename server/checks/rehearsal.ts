@@ -935,7 +935,7 @@ async function theTopIsAskedAgainOnceEverybodyHasReported() {
  * "does not create anything" in the tool's own description, but recording it
  * puts a real task on the Agent Creator's real queue, and that agent really
  * can call `agent.hire`. A rehearsal against a website nobody chose to
- * approach must not be the reason Dakyworld employs somebody.
+ * approach must not be the reason DakyXTech employs somebody.
  */
 async function needSkillDoesNotLeakFromARehearsal() {
   console.log("\nGaps");

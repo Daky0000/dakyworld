@@ -8,7 +8,7 @@ Ship the finished change.
 3. **A push to `main` is not a deploy.** Verify it landed:
    compare the local bundle hash against the live one —
    `ls server/client/dist/assets/index-*.js` versus
-   `curl -s https://os.dakyworld.com/ | grep -oE 'assets/index-[^"]+'`.
+   `curl -s https://os.dakyx.com/ | grep -oE 'assets/index-[^"]+'`.
    Do not probe `/api/*` to check: every `/api/*` path answers 401 whether or
    not the route exists, because `requireAuth` is mounted at `/api` ahead of
    the routers.

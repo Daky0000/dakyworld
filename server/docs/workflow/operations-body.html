@@ -2,7 +2,7 @@
      Cover
      ========================================================================= -->
 <div class="cover">
-  <img class="lockup" src="__LOGO_DARK__" alt="Dakyworld">
+  <img class="lockup" src="__LOGO_DARK__" alt="DakyXTech">
   <div class="rule"><i></i><i></i></div>
   <h1>How the workforce runs</h1>
   <p class="sub">Every agent, every tool, every workflow, and the exact sequence each one follows when the whole system is switched on.</p>
@@ -48,7 +48,7 @@
   <div class="stage-head">
     <div class="no">Before anything else</div>
     <h2>What this document is</h2>
-    <p class="lede">Dakyworld OS is not a chatbot with a job list. It is a workforce: __AGENTCOUNT__ agents, each with one craft, each with an employee record, a written instruction, a granted toolkit, and a level of autonomy a person set deliberately. This describes the machine that runs them.</p>
+    <p class="lede">DakyXTech OS is not a chatbot with a job list. It is a workforce: __AGENTCOUNT__ agents, each with one craft, each with an employee record, a written instruction, a granted toolkit, and a level of autonomy a person set deliberately. This describes the machine that runs them.</p>
   </div>
 
   <div class="stats">
@@ -58,7 +58,7 @@
     <div class="s"><b>60s</b><span>The tick</span><i>Nine independent jobs, settled separately.</i></div>
   </div>
 
-  <p>There are three documents about this system and they answer three different questions. <b>The Agent Master Workflow</b> answers <i>how does a stranger become a paying client</i> &mdash; the business flow, in nine stages. <b>The Dakyworld OS Reference</b> answers <i>what exactly is each agent told</i> &mdash; every roster row and every instruction printed in full. <b>This one</b> answers the question underneath both: <i>what actually happens</i>. What runs, in what order, gated by what, recorded where, and stopping for whom.</p>
+  <p>There are three documents about this system and they answer three different questions. <b>The Agent Master Workflow</b> answers <i>how does a stranger become a paying client</i> &mdash; the business flow, in nine stages. <b>The DakyXTech OS Reference</b> answers <i>what exactly is each agent told</i> &mdash; every roster row and every instruction printed in full. <b>This one</b> answers the question underneath both: <i>what actually happens</i>. What runs, in what order, gated by what, recorded where, and stopping for whom.</p>
 
   <p>Everything numbered in it is read out of the code it describes at build time &mdash; the roster from <code>services/agentRegistry.ts</code>, the catalogue from <code>services/tools/catalogue.ts</code>, the writing jobs from <code>services/writers/registry.ts</code>, the model routing from <code>lib/models/registry.ts</code>. A reference table that has drifted from the system is worse than no table at all: somebody grants a tool that no longer exists, or looks for one added last month and concludes it cannot be done.</p>
 
@@ -163,10 +163,10 @@
   <div class="seq">
     <div class="r"><div class="n">1</div><div><div class="t">Its instructions</div><div class="d">The __LAYERCOUNT__ layers run together in order &mdash; or the founder&rsquo;s own replacement text, if the prompt has been rewritten. <b>The only editable region.</b></div></div></div>
     <div class="r"><div class="n">2</div><div><div class="t">What it is relied on for</div><div class="d">Its <code>skills</code>, as a list. Edited on the Agents screen.</div></div></div>
-    <div class="r"><div class="n">3</div><div><div class="t">Who Dakyworld is</div><div class="d">The brand block from <code>services/dakyworld.ts</code>. The same for every agent.</div></div></div>
+    <div class="r"><div class="n">3</div><div><div class="t">Who DakyXTech is</div><div class="d">The brand block from <code>services/dakyworld.ts</code>. The same for every agent.</div></div></div>
     <div class="r"><div class="n">4</div><div><div class="t">The company&rsquo;s details</div><div class="d">From Settings &rarr; System &mdash; one record. Change it there and every agent and every document follows.</div></div></div>
     <div class="r"><div class="n">5</div><div><div class="t">How it writes</div><div class="d">The voice block. Also the same for every agent.</div></div></div>
-    <div class="r"><div class="n">6</div><div><div class="t">What Dakyworld holds</div><div class="d">Shared memory recalled for this task&rsquo;s subjects. Presented as <b>standing instruction</b>: where one conflicts with what the agent would otherwise do, it follows it and says so.</div></div></div>
+    <div class="r"><div class="n">6</div><div><div class="t">What DakyXTech holds</div><div class="d">Shared memory recalled for this task&rsquo;s subjects. Presented as <b>standing instruction</b>: where one conflicts with what the agent would otherwise do, it follows it and says so.</div></div></div>
     <div class="r"><div class="n">7</div><div><div class="t">What it already knows</div><div class="d">Its own memory for the same subjects. Presented as <b>its own conclusions</b>: if the record in front of it contradicts one, the record wins and it must say so.</div></div></div>
     <div class="r"><div class="n">8</div><div><div class="t">How it works here</div><div class="d">Tool etiquette, what a preview means, what to do when refused, and the escalation order. Added only when the agent is holding a task &mdash; a colleague being <i>asked a question</i> gets regions 1&ndash;7 and not this one, because telling somebody with no tools how to use them is noise.</div></div></div>
   </div>
@@ -308,7 +308,7 @@
     <div class="r"><div class="n">&nbsp;</div><div><div class="t"><code>consult</code></div><div class="d">Keep the work, ask a colleague one question inside their craft. They answer from their own instructions and their own memory of this client. <b>Their answer is an opinion, not a checked fact</b> &mdash; where it contradicts the record, the record wins and the agent must say so.</div></div></div>
     <div class="r"><div class="n">&nbsp;</div><div><div class="t"><code>delegate</code></div><div class="d">Hand work <i>down</i> to a direct report. Constrained by <code>managerKey</code>.</div></div></div>
     <div class="r"><div class="n">&nbsp;</div><div><div class="t"><code>handOff</code></div><div class="d">Hand the remaining work <i>sideways</i> to whoever&rsquo;s craft it is. The brief is written as if to somebody who was not here, because they were not.</div></div></div>
-    <div class="r"><div class="n">&nbsp;</div><div><div class="t"><code>needSkill</code></div><div class="d">Record that Dakyworld has no such craft &mdash; only after <code>findAgent</code> found nobody. Feeds the hiring loop in 05.8. <b>Not</b> a way to put down work that is actually its own; a gap raised for something a colleague already does argues for hiring a duplicate.</div></div></div>
+    <div class="r"><div class="n">&nbsp;</div><div><div class="t"><code>needSkill</code></div><div class="d">Record that DakyXTech has no such craft &mdash; only after <code>findAgent</code> found nobody. Feeds the hiring loop in 05.8. <b>Not</b> a way to put down work that is actually its own; a gap raised for something a colleague already does argues for hiring a duplicate.</div></div></div>
   </div>
 </div>
 
@@ -461,7 +461,7 @@
   <div class="stage-head">
     <div class="no">04.1</div>
     <h2>Every minute</h2>
-    <p class="lede">Deliberately one <code>setInterval</code> inside the web process rather than a cron container: Dakyworld OS runs as a single service, and one interval has no moving parts to keep in sync with a deploy.</p>
+    <p class="lede">Deliberately one <code>setInterval</code> inside the web process rather than a cron container: DakyXTech OS runs as a single service, and one interval has no moving parts to keep in sync with a deploy.</p>
   </div>
 
   <div class="tick">

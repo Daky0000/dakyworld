@@ -1,4 +1,4 @@
-# Contributing to Dakyworld OS
+# Contributing to DakyXTech OS
 
 Run commands from `server/`. The client is in `client/`; the API is in `src/`. Use the Node version supported by the deployment configuration.
 

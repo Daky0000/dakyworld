@@ -12,7 +12,7 @@ import type { LeadSource } from "@prisma/client";
  * fewer words. Neither is satisfied by intending to delete something.
  *
  * On 4 Sep 2026 the privacy policy started publishing a period for every
- * category of data on dakyworld.com. That made the obligation concrete and it
+ * category of data on dakyx.com. That made the obligation concrete and it
  * also created a second, sharper problem: **a published retention period that
  * nothing enforces is a false statement in a privacy policy**, which is worse
  * than the vague "as long as necessary" it replaced. Vague and true beats
@@ -87,7 +87,7 @@ import type { LeadSource } from "@prisma/client";
 const WE_FOUND_THEM: LeadSource[] = ["GOOGLE_MAPS", "WEB_SCRAPE", "DIRECTORY", "SOCIAL", "LINKEDIN"];
 
 /**
- * Twelve months, as published at dakyworld.com/privacy §03.
+ * Twelve months, as published at dakyx.com/privacy §03.
  *
  * **Change this and the page, together.** A period that differs between the
  * code and the notice is the same defect as not enforcing one at all: whichever

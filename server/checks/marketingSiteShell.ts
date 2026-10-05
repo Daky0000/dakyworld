@@ -1,7 +1,7 @@
 /**
  * Does the header in the markup still say what the header in the script says?
  *
- * **The defect this exists for.** Every page of dakyworld.com ships a full
+ * **The defect this exists for.** Every page of dakyx.com ships a full
  * `<header class="site-header">` and a full `<footer>` in its markup, and then
  * `assets/site.js` throws both away on load and replaces them with a copy of
  * the same markup held as a string inside that file:

@@ -1,4 +1,4 @@
-// Dakyworld OS — core data model
+// DakyXTech OS — core data model
 // Covers all entities from the "Nine Systems" spec: Lead & Pipeline, Proposal &
 // Negotiation, Project & Delivery, Invoicing & Payments, Care Plans & Recurring
 // Revenue, Time & Capacity, Financials & Reporting (derived from below), Team &
@@ -687,7 +687,7 @@ model DemoVisit {
 /// if a file is later deleted.
 ///
 /// Audits accumulate rather than replace: a site reviewed again in three
-/// months is a second row, and the pair is the evidence that the work Dakyworld
+/// months is a second row, and the pair is the evidence that the work DakyXTech
 /// did actually changed something.
 model WebsiteAudit {
   id     String  @id @default(cuid())
@@ -1070,7 +1070,7 @@ model LeadThesis {
   /// **Why this target.** The sentence that has to exist before a run spends
   /// money, and the one shown against every lead it brings in.
   rationale String
-  /// What Dakyworld would sell them if the thesis holds. A target with no offer
+  /// What DakyXTech would sell them if the thesis holds. A target with no offer
   /// behind it is a list, not a pipeline.
   offer     String
 
@@ -1512,7 +1512,7 @@ model TimeEntry {
 // Care Plans & Recurring Revenue
 // ---------------------------------------------------------------------------
 
-/// The monthly partnership tiers, named exactly as dakyworld.com names them.
+/// The monthly partnership tiers, named exactly as dakyx.com names them.
 ///
 /// They were `SME_ESSENTIALS` / `GROWTH` / `ENTERPRISE_CONCIERGE` until Sep
 /// 2026, months after the website had renamed them and repriced them. What a
@@ -1533,7 +1533,7 @@ enum CarePlanStatus {
   CHURNED
 }
 
-/// Something Dakyworld built once and sells to more than one customer.
+/// Something DakyXTech built once and sells to more than one customer.
 ///
 /// The company's ordinary work is a retainer: capacity sold by the month. A
 /// product is the other shape — the Website Builder is the first — and it needs
@@ -1545,7 +1545,7 @@ enum CarePlanStatus {
 /// services/products.ts is the one place that decides it, so the OS screens and
 /// the public website cannot come to different conclusions.
 ///
-/// The prices here are the ones dakyworld.com shows. The website reads them
+/// The prices here are the ones dakyx.com shows. The website reads them
 /// live from `/api/public/products`, so changing one here changes the public
 /// page without a deploy — see `assets/pricing.js` on the site.
 model Product {
@@ -3564,7 +3564,7 @@ enum AgentGapStatus {
   /// An agent now exists for it. `filledByKey` is who.
   FILLED
   /// Looked at and refused — the work belongs to somebody who already exists,
-  /// or it is not work Dakyworld does.
+  /// or it is not work DakyXTech does.
   DECLINED
 }
 
@@ -4307,7 +4307,7 @@ model Rehearsal {
 
 /// One website this system can edit.
 ///
-/// Dakyworld's own is the first, and the model is deliberately not shaped around
+/// DakyXTech's own is the first, and the model is deliberately not shaped around
 /// it being the only one: a client's site is another row, with its own repository
 /// and its own pages, and nothing here knows the difference.
 ///
@@ -4360,7 +4360,7 @@ model Site {
   /// never handed to the editor that can only read rendered HTML.
   sourceKind String?
 
-  /// A client's site rather than Dakyworld's own, when set.
+  /// A client's site rather than DakyXTech's own, when set.
   client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
   clientId String?
 

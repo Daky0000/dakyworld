@@ -428,7 +428,7 @@ async function main() {
   const pingCommand = new URLSearchParams({ text: "ping", user_id: SLACK_USER, user_name: "harness" }).toString();
   const ping = await postTo("commands", pingCommand, signed(pingCommand));
   const pingBody = (await ping.json()) as { text?: string };
-  check("ping proves the inbound half end to end", (pingBody.text ?? "").includes("can reach Dakyworld OS"), pingBody.text?.slice(0, 80));
+  check("ping proves the inbound half end to end", (pingBody.text ?? "").includes("can reach DakyXTech OS"), pingBody.text?.slice(0, 80));
   check(
     "and reports the outbound half as well",
     (pingBody.text ?? "").includes("incoming webhook"),

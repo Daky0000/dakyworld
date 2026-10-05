@@ -40,7 +40,7 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     return res.status(err.status).json({ error: err.message, reference });
   }
 
-  // An upstream credential failure is not an expired Dakyworld session.
+  // An upstream credential failure is not an expired DakyXTech session.
   // Use a fixed message rather than exposing GitHub's arbitrary response body.
   if (err instanceof GitHubError && err.status === 401) {
     return res.status(503).json({

@@ -15,11 +15,11 @@ import { pageSource } from "../website/site.js";
 /**
  * What this company sells, read from the company's own website.
  *
- * Every agent is told who Dakyworld is and what it may offer. Until Sep 2026
+ * Every agent is told who DakyXTech is and what it may offer. Until Sep 2026
  * that description was a constant in `services/dakyworld.ts` and nothing kept
- * it in step with dakyworld.com — so when the site dropped from eight service
+ * it in step with dakyx.com — so when the site dropped from eight service
  * lines to four, renamed its plans, published a Founding Partner discount and
- * stated plainly that Dakyworld does not administer business email or run
+ * stated plainly that DakyXTech does not administer business email or run
  * managed cybersecurity, none of it reached the workforce. Agents went on
  * offering work the company had stopped doing, at prices nobody could still
  * buy, while the page the prospect was reading said something else. A prospect
@@ -29,7 +29,7 @@ import { pageSource } from "../website/site.js";
  * So the website is the source and this is the reader:
  *
  * ```
- * dakyworld.com pages ──→ visibleText() ──→ one model call ──→ AppSetting
+ * dakyx.com pages ──→ visibleText() ──→ one model call ──→ AppSetting
  *   (services, pricing,     markup out,      job: "organise"    business.offer
  *    plans, projects,       ~40k of prose    strict schema
  *    about, home)

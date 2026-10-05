@@ -7,7 +7,7 @@ import { AGENT_SOURCE, handleEvent } from "../services/webhookIntake.js";
  * Events in, from everything that isn't Stripe.
  *
  * **This router is public and must stay public** — a contact form on
- * dakyworld.com cannot log in, and neither can a partner's system. What
+ * dakyx.com cannot log in, and neither can a partner's system. What
  * protects it instead:
  *
  * - **The raw body is read before anything is parsed**, because the signature
@@ -41,8 +41,8 @@ const MAX_BODY = 128 * 1024;
  * The origins the public website is served from, and the only ones granted a
  * cross-origin write.
  *
- * The contact form lives on dakyworld.com and this API lives on
- * os.dakyworld.com, so the browser needs to be told the write is welcome. It is
+ * The contact form lives on dakyx.com and this API lives on
+ * os.dakyx.com, so the browser needs to be told the write is welcome. It is
  * told for these origins and no others, and only for the sources in
  * `UNSIGNED_OK` — a signed sender is a server and has no origin to match.
  *
@@ -53,6 +53,8 @@ const MAX_BODY = 128 * 1024;
  * origin to buy one form a response it can read.
  */
 const SITE_ORIGINS = new Set([
+  "https://dakyx.com",
+  "https://www.dakyx.com",
   "https://dakyxtech.com",
   "https://www.dakyxtech.com",
   "https://dakyworld.com",

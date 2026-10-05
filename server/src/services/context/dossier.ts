@@ -111,7 +111,7 @@ async function resolveSubject(subject: Subject): Promise<{ header: DossierHeader
   if (subject.kind === "company") {
     return {
       header: {
-        name: "Dakyworld (Company-Wide Living Context)",
+        name: "DakyXTech (Company-Wide Living Context)",
         found: true,
         alsoKnownAs,
         facts: [

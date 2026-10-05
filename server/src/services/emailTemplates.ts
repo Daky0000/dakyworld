@@ -2,7 +2,7 @@ import type { EmailPurpose } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 
 /**
- * The letters Dakyworld sends often enough to be worth having written down.
+ * The letters DakyXTech sends often enough to be worth having written down.
  *
  * These ship with the app and are copied into the database the first time the
  * templates are read, so they can be edited like any other. Once copied they

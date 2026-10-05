@@ -2,13 +2,13 @@
  * Do the agents describe the company the prospect is actually reading about?
  *
  * The defect this exists for was invisible and shipped for months. Every agent
- * in this system is handed a paragraph saying who Dakyworld is and a catalogue
+ * in this system is handed a paragraph saying who DakyXTech is and a catalogue
  * saying what it sells, and both came from a constant in
- * `services/dakyworld.ts` that nothing kept in step with dakyworld.com. By
+ * `services/dakyworld.ts` that nothing kept in step with dakyx.com. By
  * Sep 2026 the website sold **four** services where the constant listed eight,
  * charged GHS 3,000 a month where the constant said 5,000, ran a Founding
  * Partner discount the constant had never heard of, and stated plainly that
- * Dakyworld does not administer business email or run managed cybersecurity —
+ * DakyXTech does not administer business email or run managed cybersecurity —
  * two things the constant was still offering. Nothing failed. Every letter was
  * grammatical. The only symptom was a prospect being quoted a price they could
  * see was wrong on the page they were reading.
@@ -95,7 +95,7 @@ async function main() {
   check("and it says so rather than pretending it was read", floor.syncedAt === null && floor.readBy === null);
 
   const shippedBrand = await brandBlock();
-  check("the brand block names the company", shippedBrand.includes("Dakyworld"));
+  check("the brand block names the company", shippedBrand.includes("DakyXTech"));
   check("the brand block carries the boundary as a rule", shippedBrand.includes("does not do") && shippedBrand.includes("printer"));
   check(
     "and never offers what the website says is not sold",

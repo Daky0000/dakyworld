@@ -130,7 +130,7 @@ function ProductRow({ product, mayEdit, onSaved }: { product: Product; mayEdit: 
             )}
           </div>
           <p className="mt-0.5 font-mono text-[11px] text-muted">
-            {product.key} · <a href={`https://dakyworld.com${product.publicPath}`} target="_blank" rel="noreferrer" className="underline-offset-2 hover:text-ink hover:underline">dakyworld.com{product.publicPath}</a>
+            {product.key} · <a href={`https://dakyx.com${product.publicPath}`} target="_blank" rel="noreferrer" className="underline-offset-2 hover:text-ink hover:underline">dakyx.com{product.publicPath}</a>
             {product.standardMonthlyPrice && (
               <span> · Reverts to ${product.standardMonthlyPrice}/mo standard after {product.promoMonths ?? 3} months</span>
             )}

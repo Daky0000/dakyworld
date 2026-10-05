@@ -6,7 +6,7 @@ import { SHIPPED_OFFER, type CarePlanTier as OfferPlan } from "./dakyworld.js";
  *
  * **The defect this exists for.** The tier picker in the care plan editor
  * carried three hard-coded numbers — 5,000 / 12,500 / 25,000 — under three
- * names the website had stopped using. dakyworld.com by then sold Foundation,
+ * names the website had stopped using. dakyx.com by then sold Foundation,
  * Growth and Transformation, led with a Founding Partner rate of 3,000 / 7,000
  * / from 15,000 for the first three months, and said so on the page the client
  * was reading while agreeing the plan. Nothing failed. The OS simply priced a

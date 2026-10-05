@@ -56,7 +56,7 @@ References: [Express proxy trust](https://expressjs.com/en/guide/behind-proxies/
 
 ## Production proxy verification ? September 29, 2026
 
-The only configured public domain is `os.dakyworld.com`, pointing directly to Railway. The Railway DNS alias returns 404 when requested as a separate host. Synthetic readiness requests showed a private Railway socket peer, followed by a public CDN proxy in `X-Forwarded-For`. Both normal requests and requests with forged forwarding/CDN headers produced two forwarded addresses. The first address matched the probe host's independently measured public egress IP; the second was the CDN proxy. HTTPS detection remained true. Temporary observers and the local-only debugger were removed after the probes.
+The only configured public domain is `os.dakyx.com`, pointing directly to Railway. The Railway DNS alias returns 404 when requested as a separate host. Synthetic readiness requests showed a private Railway socket peer, followed by a public CDN proxy in `X-Forwarded-For`. Both normal requests and requests with forged forwarding/CDN headers produced two forwarded addresses. The first address matched the probe host's independently measured public egress IP; the second was the CDN proxy. HTTPS detection remained true. Temporary observers and the local-only debugger were removed after the probes.
 
 This production topology requires `TRUSTED_PROXY_HOPS=2`, rather than the previous value of 1. Revalidate before adding a CDN, public service domain, or alternate route. The pre-migration read-only audit found 10 visits, 10 country values, and 0 cities. MaxMind credentials are absent; deploy with `GEOIP_CITY_ENABLED=false` until they are provisioned.
 

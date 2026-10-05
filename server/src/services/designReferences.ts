@@ -23,7 +23,7 @@ import { PROVIDERS } from "../lib/models/registry.js";
  *  - **A reference is a direction, never a copy.** The brief that reaches the
  *    builder describes layout, type, colour and motion in words. It never
  *    carries markup from somebody else's site, because that is somebody else's
- *    work and shipping it to a prospect under Dakyworld's name would be theft
+ *    work and shipping it to a prospect under DakyXTech's name would be theft
  *    dressed as inspiration.
  */
 

@@ -148,7 +148,7 @@ function StartScreen({ onOpen }: { onOpen: (id: string) => void }) {
 
       <Card className="mb-8">
         <div className="grid gap-5 sm:grid-cols-2">
-          <Field label="Their website" hint="Anything this can open — dakyworld.com or the full address.">
+          <Field label="Their website" hint="Anything this can open — dakyx.com or the full address.">
             <input
               className="input"
               autoFocus
