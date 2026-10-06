@@ -482,6 +482,24 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
   const access = useWebsiteAccess(page.data?.site.id);
   const canEdit = access.data?.capabilities.edit === true;
+  /**
+   * The demo this page was opened from, read for its current slug. The site's
+   * stored publicUrl was written with whatever APP_URL said at the time and is
+   * never refreshed on a slug rename or a domain move, so trusting it sent
+   * "Live Demo" to an unrelated page.
+   */
+  const demoRecord = useQuery({
+    queryKey: ["demos", demoIdFromUrl],
+    enabled: !!demoIdFromUrl,
+    queryFn: ({ signal }) => api.get<{ slug: string }>(`/demos/${demoIdFromUrl}`, signal),
+  });
+  /** Same-origin, so the link always lands on this app's public demo route. */
+  const liveDemoHref = (() => {
+    if (demoRecord.data?.slug) return `/demos/${encodeURIComponent(demoRecord.data.slug)}`;
+    const stored = page.data?.site.publicUrl.match(/\/demos\/([^/?#]+)/i);
+    if (stored) return `/demos/${stored[1]}`;
+    return page.data?.site.publicUrl ?? "";
+  })();
   const design = useQuery({ queryKey: ["website", "design", page.data?.site.id], enabled: !!page.data?.site.id, queryFn: ({ signal }) => api.get<{ options: { colours: string[]; fonts: string[]; aiEnabled: boolean; presets: BrandPreset[] } }>(`/website/sites/${page.data!.site.id}/design`, signal) });
 
   /* ------------------------------------------------------------- history */
@@ -2564,7 +2582,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           {(demoIdFromUrl || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl)) && (
             <>
               <a
-                href={site.publicUrl}
+                href={liveDemoHref}
                 target="_blank"
                 rel="noreferrer"
                 title="Open the live public demo URL in a new tab"
