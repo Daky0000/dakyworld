@@ -25,29 +25,40 @@ export async function loadPage(req: WebsiteActor, pageId: string): Promise<{
     await assertWebsiteSiteAccess(req, site.id);
     return { page: rest as SitePage, site };
 }
+/**
+ * The demo an editor page belongs to, if any. Matched on the /demos/<slug> in
+ * the site's address first, then on the ids the demo's brief recorded — an
+ * imported page keeps the business's own address as its publicUrl, so the
+ * second route is the only one that finds it.
+ */
+export async function findLinkedDemo(site: {
+    id: string;
+    publicUrl: string;
+}, pageId: string): Promise<{ id: string; slug: string } | null> {
+    const slugMatch = site.publicUrl.match(/\/demos\/([^/?#]+)/i);
+    const slugFromUrl = slugMatch?.[1] ? decodeURIComponent(slugMatch[1]) : null;
+    const bySlug = slugFromUrl
+        ? await prisma.demo.findUnique({ where: { slug: slugFromUrl }, select: { id: true, slug: true } })
+        : null;
+    if (bySlug) return bySlug;
+    const candidates = await prisma.demo.findMany({
+        where: {
+            OR: [
+                { brief: { path: ["sitePageId"], equals: pageId } },
+                { brief: { path: ["siteId"], equals: site.id } },
+            ],
+        },
+        select: { id: true, slug: true },
+        take: 1,
+    });
+    return candidates[0] ?? null;
+}
 export async function syncDemoFromSitePage(site: {
     id: string;
     publicUrl: string;
 }, pageId: string, html: string, incrementVersion: boolean): Promise<void> {
     try {
-        const slugMatch = site.publicUrl.match(/\/demos\/([^/?#]+)/i);
-        const slugFromUrl = slugMatch?.[1] ? decodeURIComponent(slugMatch[1]) : null;
-        let demo = slugFromUrl
-            ? await prisma.demo.findUnique({ where: { slug: slugFromUrl }, select: { id: true } })
-            : null;
-        if (!demo) {
-            const candidates = await prisma.demo.findMany({
-                where: {
-                    OR: [
-                        { brief: { path: ["sitePageId"], equals: pageId } },
-                        { brief: { path: ["siteId"], equals: site.id } },
-                    ],
-                },
-                select: { id: true },
-                take: 1,
-            });
-            demo = candidates[0] ?? null;
-        }
+        const demo = await findLinkedDemo(site, pageId);
         if (demo) {
             await prisma.demo.update({
                 where: { id: demo.id },

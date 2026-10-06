@@ -1,4 +1,4 @@
-import { draftValues, loadSite, loadPage, syncDemoFromSitePage } from "../services/websitePageContext.js";
+import { draftValues, findLinkedDemo, loadSite, loadPage, syncDemoFromSitePage } from "../services/websitePageContext.js";
 import { executePagePublish, executeVersionPublish } from "../services/websitePagePublication.js";
 export { executePagePublish, executeVersionPublish } from "../services/websitePagePublication.js";
 
@@ -28,7 +28,7 @@ import { registerWebsiteOnboarding } from "../services/websiteOnboarding.js";
 import { registerGithubAppRoutes } from "../services/githubAppRoutes.js";
 import { assertEditAllowance, assertTierFeatureAccess, recordAiPromptUsed, recordEditUsed, registerWebsiteTierRoutes } from "../services/websiteTierPlans.js";
 import { registerWebsitePublishJobs } from "../services/websitePublishJobs.js";
-import { registerWebsiteHosting } from "../services/websiteHosting.js";
+import { hostedUrlFor, registerWebsiteHosting } from "../services/websiteHosting.js";
 import { registerSubscriberSelfService } from "../services/websiteSubscriberSelfService.js";
 import { registerWebsiteSetupAssistance } from "../services/websiteSetupAssistance.js";
 import { registerWebsiteClientPortal } from "../services/websiteClientPortal.js";
@@ -403,8 +403,17 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
       }),
     ]);
 
+    // Where "Live Demo" goes. Never the site's publicUrl: an imported page keeps
+    // the business's real address there, so the button opened their live site
+    // rather than the copy being edited. A demo is served by this app, so its
+    // link is a path; otherwise the hosted address, or no link at all.
+    const linkedDemo = await findLinkedDemo(site, page.id);
+    const hosted = page.publishedHtml ? hostedUrlFor(site) : null;
+    const liveUrl = linkedDemo ? `/demos/${encodeURIComponent(linkedDemo.slug)}` : hosted ? `${hosted}${page.path === "/" ? "/" : page.path}` : null;
+
     res.json({
       site: { id: site.id, name: site.name, publicUrl: site.publicUrl, repo: siteRepo(site) },
+      liveUrl,
       links: siblings,
       page: {
         id: page.id,

@@ -3365,6 +3365,8 @@ export type SharedReview = {
 export type SitePageDetail = {
   structure?: { changed: boolean; canUndo: boolean; canRedo: boolean; changes: string[]; stale: boolean };
   site: { id: string; name: string; publicUrl: string; repo: string | null };
+  /** Where this page's published copy can be seen — a demo path or the hosted address. Null when it is served nowhere. */
+  liveUrl?: string | null;
   /** Where a link on this page can go without leaving the site. */
   links: Array<{ path: string; title: string }>;
   page: {

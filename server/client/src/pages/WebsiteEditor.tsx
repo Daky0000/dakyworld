@@ -483,23 +483,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const access = useWebsiteAccess(page.data?.site.id);
   const canEdit = access.data?.capabilities.edit === true;
   /**
-   * The demo this page was opened from, read for its current slug. The site's
-   * stored publicUrl was written with whatever APP_URL said at the time and is
-   * never refreshed on a slug rename or a domain move, so trusting it sent
-   * "Live Demo" to an unrelated page.
+   * Where "Live Demo" goes, decided by the server. Not site.publicUrl: an
+   * imported page keeps the business's own address there, so the button
+   * opened their real website instead of the copy being edited.
    */
-  const demoRecord = useQuery({
-    queryKey: ["demos", demoIdFromUrl],
-    enabled: !!demoIdFromUrl,
-    queryFn: ({ signal }) => api.get<{ slug: string }>(`/demos/${demoIdFromUrl}`, signal),
-  });
-  /** Same-origin, so the link always lands on this app's public demo route. */
-  const liveDemoHref = (() => {
-    if (demoRecord.data?.slug) return `/demos/${encodeURIComponent(demoRecord.data.slug)}`;
-    const stored = page.data?.site.publicUrl.match(/\/demos\/([^/?#]+)/i);
-    if (stored) return `/demos/${stored[1]}`;
-    return page.data?.site.publicUrl ?? "";
-  })();
+  const liveDemoHref = page.data?.liveUrl ?? null;
   const design = useQuery({ queryKey: ["website", "design", page.data?.site.id], enabled: !!page.data?.site.id, queryFn: ({ signal }) => api.get<{ options: { colours: string[]; fonts: string[]; aiEnabled: boolean; presets: BrandPreset[] } }>(`/website/sites/${page.data!.site.id}/design`, signal) });
 
   /* ------------------------------------------------------------- history */
@@ -2581,7 +2569,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
           {(demoIdFromUrl || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl)) && (
             <>
-              <a
+              {liveDemoHref && <a
                 href={liveDemoHref}
                 target="_blank"
                 rel="noreferrer"
@@ -2590,7 +2578,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               >
                 <IconEye size={13} className="text-blue" />
                 <span className="hidden sm:inline">Live Demo</span>
-              </a>
+              </a>}
               {demoIdFromUrl && (
                 <a
                   href={`/api/demos/${demoIdFromUrl}/download`}
@@ -2626,7 +2614,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     publish.mutate({
                       revision: revision.current,
                       sourceHash: "",
-                      mode: "direct",
                       prTitle: "",
                     } as unknown as WebsiteReview);
                     return;
@@ -2685,15 +2672,15 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 </p>
                 {(Boolean(demoIdFromUrl) || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl)) && (
                   <div className="flex flex-wrap items-center gap-2">
-                    <a
-                      href={site.publicUrl}
+                    {liveDemoHref && <a
+                      href={liveDemoHref}
                       target="_blank"
                       rel="noreferrer"
                       className="inline-flex items-center gap-1 rounded-lg border border-blue/30 bg-blue/10 px-2.5 py-1 text-xs font-semibold text-blue hover:bg-blue/15"
                     >
                       <IconEye size={12} />
                       <span>Open Live Demo</span>
-                    </a>
+                    </a>}
                     {demoIdFromUrl && (
                       <a
                         href={`/api/demos/${demoIdFromUrl}/download`}
