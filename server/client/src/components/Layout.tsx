@@ -126,7 +126,7 @@ export function Layout() {
     ? Boolean(client || can("website.view") || websites.data?.length)
     : !client && (!item.needs || can(item.needs));
   const groups: NavGroup[] = client
-    ? [{ title: "Your workspace", items: CLIENT_NAV.map(item => ({ to: item.to, label: item.label })) }]
+    ? [{ title: "Your workspace", items: [...CLIENT_NAV.map(item => ({ to: item.to, label: item.label })), ...(editorSurface && can("demos.view") ? [{ to: "/demos", label: "Demos" }] : [])] }]
     : navGroups.map(group => ({ ...group, items: group.items.filter(allowed) })).filter(group => group.items.length);
   const visibleGroups = groups.map(group => ({ ...group, items: group.items.filter(item => `${group.title} ${item.label}`.toLowerCase().includes(filter.toLowerCase())) })).filter(group => group.items.length);
   const current = groups.flatMap(group => group.items).filter(item => item.to === "/" ? location.pathname === "/" : location.pathname.startsWith(item.to)).sort((a, b) => b.to.length - a.to.length)[0];

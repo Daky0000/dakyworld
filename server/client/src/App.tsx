@@ -109,6 +109,7 @@ export default function App() {
           <Route path="billing" element={<Guard needs="website.manage"><WebsiteBilling /></Guard>} />
         </Route>
         <Route path="/products/pricing" element={<Guard needs="website.view"><ProductPricing /></Guard>} />
+        <Route path="/demos" element={<Guard needs="demos.view"><Demos /></Guard>} />
         <Route path="/website/pages/:pageId" element={<WebsiteGuard><ErrorBoundary label="website editor"><WebsiteEditor /></ErrorBoundary></WebsiteGuard>} />
         <Route path="/website/pages/:pageId/source" element={<WebsiteGuard needs="source"><ErrorBoundary label="source editor"><WebsiteFrameworkEditor /></ErrorBoundary></WebsiteGuard>} />
         <Route path="*" element={<Navigate to="/website/sites" replace />} />

@@ -25,6 +25,7 @@ function statusFor(path: string): number {
 check("editor permits its product API", statusFor("/api/website/sites") === 200);
 check("editor permits authentication", statusFor("/api/auth/session") === 200);
 check("editor permits readiness", statusFor("/api/ready") === 200);
+check("editor permits demos", statusFor("/api/demos") === 200);
 check("editor conceals leads", statusFor("/api/leads") === 404);
 check("editor conceals invoices", statusFor("/api/invoices") === 404);
 check("editor conceals agents", statusFor("/api/agents") === 404);
