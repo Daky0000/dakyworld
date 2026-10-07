@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, Suspense } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { useWebsiteSites } from "./WebsiteGuard";
 import { CLIENT_NAV, useWorkspaceMode } from "../lib/clientWorkspace";
@@ -161,7 +161,7 @@ export function Layout() {
   const fullBleed = /^\/website\/pages\//.test(location.pathname);
   // The editor names its own tab after the page being edited.
   useEffect(() => { if (!fullBleed) setPageTitle(screenName); }, [screenName, fullBleed]);
-  if (fullBleed) return <div className="os-app flex h-screen flex-col overflow-hidden bg-cream text-ink"><Suspense fallback={<Loading />}><Outlet /></Suspense></div>;
+  if (fullBleed) return <main className="os-app flex h-screen flex-col overflow-hidden bg-cream text-ink"><Suspense fallback={<Loading />}><Outlet /></Suspense></main>;
 
   const navigation = (mobile = false) => <>
     <div className="os-brand">
@@ -224,7 +224,7 @@ export function Layout() {
         </div>
       )}
     </nav>
-    {user && <div className="os-account"><div className="os-initials">{user.name.slice(0, 2).toUpperCase()}</div><div className="min-w-0 flex-1"><strong>{user.name}</strong><span>{user.roleName || user.role || user.email}</span></div><button type="button" onClick={() => void logout()}>Sign out</button></div>}
+    {user && <div className="os-account"><div className="os-initials">{user.name.slice(0, 2).toUpperCase()}</div><div className="min-w-0 flex-1"><strong>{user.name}</strong><span>{user.roleName || user.role || user.email}</span></div><div className="flex flex-col items-end gap-1"><Link to="/website/account">Account</Link><button type="button" onClick={() => void logout()}>Sign out</button></div></div>}
   </>;
   return <div className="os-app os-shell">
     <a href="#workspace" className="os-skip">Skip to content</a>

@@ -34,4 +34,5 @@ export const SESSION_USER = {
   emailVerifiedAt: true, createdAt: true, updatedAt: true,
   // Which guided tours and welcome steps this person has already seen.
   uiState: true,
+  deletionScheduledFor: true,
 } satisfies Prisma.UserSelect;

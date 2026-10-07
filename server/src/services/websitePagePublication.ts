@@ -19,6 +19,7 @@ import { assertWebsiteSiteAccess, getWebsiteCapabilities } from "./websiteAccess
 import { editingSource, sourceHash, versionValues, categoriseChanges, describeChanges, buildPublishPlan, discoverFields } from "./website/index.js";
 import { pageSource, pageUrl, publishPage, publishSourcePage, siteRepo, underSiteCredential, WebsiteError } from "./website/site.js";
 import { offerPagePublished } from "./context/business.js";
+import { assertSiteNotPendingDeletion } from "./websiteDeletion.js";
 import { draftValues, loadPage, syncDemoFromSitePage } from "./websitePageContext.js";
 export function executePagePublish(req: Request) {
     return publishPageCommand(req, { pageId: req.params.pageId, body: req.body });
@@ -31,6 +32,7 @@ export async function publishPageCommand(actor: WebsiteActor, input: {
     await assertWebsiteSiteAccess(actor, (await loadPage(actor, input.pageId)).site.id, "publish");
     const result = await withWebsitePublishLock(input.pageId, async () => {
         const { page, site } = await loadPage(actor, input.pageId);
+        assertSiteNotPendingDeletion(site);
         if (body?.ifRevision !== undefined && body.ifRevision !== page.draftRevision)
             throw new WebsiteError(409, "The draft changed after your review. Review it again before publishing.");
         const values = draftValues(page);
@@ -282,6 +284,7 @@ export async function publishVersionCommand(actor: WebsiteActor, input: {
     await assertWebsiteSiteAccess(actor, (await loadPage(actor, input.pageId)).site.id, "publish");
     const result = await withWebsitePublishLock(input.pageId, async (db) => {
         const { page, site } = await loadPage(actor, input.pageId);
+        assertSiteNotPendingDeletion(site);
         const version = await db.sitePageVersion.findFirst({ where: { id: input.versionId, pageId: page.id } });
         if (!version)
             throw new WebsiteError(404, "That version is not on this page.");

@@ -79,10 +79,18 @@ try {
   await page.screenshot({path:'checks/artifacts/editor-redesign-light.png',fullPage:true});
   await page.setViewportSize({width:390,height:844});
   await page.reload();
-  await page.getByRole('button',{name:'Phone',exact:true}).waitFor();
+  // A phone opens in List mode — the page's words as a form a thumb can edit —
+  // with Visual one tap away.
+  await page.getByRole('button',{name:'List',exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'List',exact:true}).getAttribute('aria-pressed'),'true','Phones open in List mode');
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  await page.getByRole('button',{name:'Visual',exact:true}).click();
+  await page.getByTitle('Page',{exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   assert.equal(await page.getByRole('complementary',{name:'Element inspector'}).count(),0, 'Phone view hides inspector and uses the canvas');
-  assert.equal(await page.getByRole('button',{name:'Phone',exact:true}).getAttribute('class').then(value => value?.includes('bg-ink')), true);
+  // On a phone the canvas is the phone's own width, so there is no device switch.
+  assert.equal(await page.getByRole('button',{name:'Phone',exact:true}).isVisible(), false);
+  assert.ok(await page.getByTitle('Page',{exact:true}).evaluate(frame => frame.getBoundingClientRect().width <= 400), 'The page is drawn at phone width');
   await page.screenshot({path:'checks/artifacts/editor-redesign-phone.png',fullPage:true});
   await page.getByRole('button',{name:'Inspector',exact:true}).click();
   assert.equal(await page.getByRole('complementary',{name:'Element inspector'}).count(),1, 'Inspector stays available as a phone overlay');

@@ -37,6 +37,7 @@ import { ConflictDialog } from "../components/WebsiteConflictDialog";
 
 import {
   IconArrowLeft,
+  IconBot,
   IconBookOpen,
   IconBrush,
   IconCheck,
@@ -279,7 +280,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const [mode, setMode] = useState<Mode>(() => {
     if (typeof window === "undefined") return "visual";
     const m = new URLSearchParams(window.location.search).get("mode");
-    return m === "edit" || m === "preview" || m === "visual" ? m : "visual";
+    if (m === "edit" || m === "preview" || m === "visual") return m;
+    // A phone opens in List mode: the page's words as a form a thumb can edit.
+    // Tapping a heading inside a page scaled to fit 390px picks its neighbour
+    // as often as it picks the heading. Visual is one tap away in the bar.
+    return window.matchMedia?.("(max-width: 640px)").matches ? "edit" : "visual";
   });
   /** The field the person clicked in the preview. */
   const [pickedId, setPickedId] = useState<string | null>(null);
@@ -352,6 +357,19 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const [showFindReplace, setShowFindReplace] = useState(false);
   /** Optional assistant proposals join the same local draft and undo history. */
   const [showAI, setShowAI] = useState(false);
+  /** The Builder Agent's chat, opened from the toolbar rather than a button floating over the page. */
+  const [agentOpen, setAgentOpen] = useState(false);
+  /**
+   * The site's own pop-ups (cookie banner, chat bubble…) are hidden in the
+   * editing frame unless somebody chose to see them. The frame reports how many
+   * it hid; the choice is remembered in this browser.
+   */
+  const [showSitePopups, setShowSitePopups] = useState(() => {
+    try { return localStorage.getItem("website-editor-site-popups") === "show"; } catch { return false; }
+  });
+  const showSitePopupsRef = useRef(showSitePopups);
+  showSitePopupsRef.current = showSitePopups;
+  const [sitePopups, setSitePopups] = useState<{ hidden: number; hiding: boolean } | null>(null);
   const [assetModalOpen, setAssetModalOpen] = useState(false);
   type PeerEditor = { userId: string; name: string; email?: string; color: string };
   const [peers, setPeers] = useState<PeerEditor[]>([]);
@@ -841,8 +859,20 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         tag?: string | null;
         kind?: string | null;
         text?: string;
+        hidden?: number;
+        hiding?: boolean;
       };
       if (event.source !== frame.current?.contentWindow || event.origin !== window.location.origin || data?.source !== "dakyworld-preview") return;
+      if (data.type === "overlays") {
+        // The frame hides them by default; somebody who chose to see them gets
+        // them back on every reload.
+        if (data.hiding && showSitePopupsRef.current) {
+          frame.current?.contentWindow?.postMessage({ source: "dakyworld-editor", type: "overlays", hide: false }, "*");
+          return;
+        }
+        setSitePopups({ hidden: data.hidden ?? 0, hiding: Boolean(data.hiding) });
+        return;
+      }
       if (data.type === "shortcut" && data.key && ["s", "z", "Z", "y", "Y", "Enter"].includes(data.key)) {
         window.dispatchEvent(new KeyboardEvent("keydown", { key: data.key, ctrlKey: true, shiftKey: !!data.shiftKey, cancelable: true }));
       } else if (data.type === "select") {
@@ -1826,6 +1856,33 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         openEditorContextMenuFromEvent(event.clientX, event.clientY, null, null, false);
       }}
     >
+      {page.data?.site.deletionScheduledFor && (
+        <p role="status" className="mx-auto mb-3 max-w-3xl rounded-xl border border-danger-line bg-danger-surface px-3.5 py-2.5 text-xs leading-relaxed text-danger-text">
+          This website is offline and will be erased on {new Date(page.data.site.deletionScheduledFor).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })}.
+          Nothing can be published until it is restored — <a className="font-semibold underline underline-offset-2" href="/website/account">restore it from your account</a>.
+        </p>
+      )}
+      {mode === "visual" && sitePopups && (sitePopups.hidden > 0 || !sitePopups.hiding) && (
+        <p role="status" className="mx-auto mb-3 flex max-w-3xl flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-white px-3.5 py-2 text-xs text-muted">
+          <span>
+            {sitePopups.hiding
+              ? `${sitePopups.hidden} of this site's pop-ups ${sitePopups.hidden === 1 ? "is" : "are"} hidden while you edit — a cookie notice, a chat button or a bar pinned to the screen. Visitors still see ${sitePopups.hidden === 1 ? "it" : "them"}.`
+              : "Showing this site's pop-ups, as visitors see them."}
+          </span>
+          <button
+            type="button"
+            className="font-semibold text-ink underline underline-offset-2"
+            onClick={() => {
+              const show = sitePopups.hiding;
+              setShowSitePopups(show);
+              try { localStorage.setItem("website-editor-site-popups", show ? "show" : "hide"); } catch { /* Optional preference. */ }
+              tell({ type: "overlays", hide: !show });
+            }}
+          >
+            {sitePopups.hiding ? "Show them" : "Hide them again"}
+          </button>
+        </p>
+      )}
       {mode === "visual" && page.data?.drawnByScript && (
         <p role="note" className="mx-auto mb-3 max-w-3xl rounded-xl border border-line bg-white px-3.5 py-2.5 text-xs leading-relaxed text-muted">
           This page is drawn by its own scripts, so the canvas shows it exactly as a visitor sees it and it can't be clicked into.
@@ -1845,6 +1902,57 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       </div>
     </div>
   );
+
+  // One Publish button, drawn in two places: beside the page title on a phone,
+  // at the end of the bar everywhere else.
+  const publishButton = canPublish ? (
+    <Button
+      variant="accent"
+      size="sm"
+      onClick={async () => {
+        try {
+          if (dirty.current) await save.mutateAsync(latestEdits.current);
+          if (dirty.current) {
+            setFailure("Your latest edit is still saving. Review once it has saved.");
+            return;
+          }
+          // A demo is DakyXTech's own sales page and goes out in one
+          // click. Everything a customer owns goes through the review.
+          if (isDemo) {
+            publish.mutate({
+              revision: revision.current,
+              sourceHash: "",
+              prTitle: "",
+            } as unknown as WebsiteReview);
+            return;
+          }
+          setReviewOpen(true);
+        } catch {
+          /* The save error is displayed by its mutation. */
+        }
+      }}
+      disabled={
+        publish.isPending ||
+        save.isPending ||
+        (!isDemo && (changedCount === 0 || !(site.repo || hostedHere)))
+      }
+    >
+      <span className="inline-flex items-center gap-1.5">
+        <IconUploadCloud size={14} />
+        <span>
+          {publish.isPending
+            ? "Publishing…"
+            : isDemo
+              ? changedCount > 0
+                ? `Publish & Update Demo (${changedCount})`
+                : "Publish & Update Demo"
+              : changedCount > 0
+                ? `Publish (${changedCount})`
+                : "Publish"}
+        </span>
+      </span>
+    </Button>
+  ) : null;
 
   return (
     <div className={`website-editor editor-${editorTheme} flex h-full min-h-0 flex-col`}>
@@ -2064,7 +2172,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       {/* ------------------------------------------------------------ bar */}
       <div className="editor-toolbar flex flex-none flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-line bg-white px-3.5 py-2">
         {/* Left zone: Back button + Page identity + Status pill */}
-        <div className="flex min-w-0 items-center gap-2.5">
+        <div className="flex w-full min-w-0 items-center gap-2.5 sm:w-auto">
           <Link
             to={isDemo ? "/demos" : "/website/sites"}
             title={isDemo ? "Back to Demos list" : "Back to all pages"}
@@ -2072,17 +2180,18 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-medium text-muted transition hover:border-line-strong hover:bg-sunken hover:text-ink"
           >
             <IconArrowLeft size={14} />
-            <span>{isDemo ? "Demos" : "Pages"}</span>
+            <span className="hidden sm:inline">{isDemo ? "Demos" : "Pages"}</span>
           </Link>
 
           <div className="h-5 w-px shrink-0 bg-line" aria-hidden="true" />
 
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <div className="truncate font-display text-sm font-semibold tracking-[-.02em] text-ink">
-                {page.data.page.title}
-              </div>
-              <span className="shrink-0 rounded-md border border-line bg-sunken/60 px-1.5 py-0.5 font-mono text-[11px] text-muted">
+              {/* The screen's heading: which page is being edited. */}
+              <h1 className="truncate font-display text-sm font-semibold tracking-[-.02em] text-ink">
+                <span className="sr-only">Editing </span>{page.data.page.title}
+              </h1>
+              <span className="hidden shrink-0 rounded-md border border-line bg-sunken/60 px-1.5 py-0.5 font-mono text-[11px] text-muted sm:inline">
                 {page.data.page.path}
               </span>
               <span
@@ -2147,6 +2256,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               </div>
             )}
           </div>
+          {publishButton && <div className="ml-auto shrink-0 sm:hidden">{publishButton}</div>}
         </div>
 
         {/* Right / Center Controls: Icon groups + Dropdowns + Publish CTA */}
@@ -2157,7 +2267,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             title="Search page elements & commands (Ctrl+K / Cmd+K)"
             aria-label="Command palette"
             onClick={() => setCommandPaletteOpen(true)}
-            className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-medium text-muted transition hover:border-line-strong hover:bg-sunken hover:text-ink"
+            className="hidden h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-medium text-muted transition hover:border-line-strong hover:bg-sunken hover:text-ink sm:inline-flex"
           >
             <IconSearch size={13} />
             <span className="hidden md:inline">Search</span>
@@ -2172,34 +2282,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               title="Insert a pre-built section (Hero, Features, Pricing, FAQ, CTA…)"
               aria-label="Insert section"
               onClick={() => setSectionLibraryOpen(true)}
-              className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-semibold text-ink transition hover:border-blue hover:bg-sunken"
+              className="hidden h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-semibold text-ink transition hover:border-blue hover:bg-sunken sm:inline-flex"
             >
               <IconPlusSquare size={14} className="text-blue" />
-              <span className="hidden sm:inline">Section</span>
+              <span className="hidden lg:inline">Section</span>
             </button>
           )}
-
-          <button
-            type="button"
-            title="Client Pin-Comments & Revision Checklist"
-            aria-label="Revision comments"
-            onClick={() => setCommentsModalOpen(true)}
-            className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-semibold text-ink transition hover:border-blue hover:bg-sunken"
-          >
-            <IconMessageSquare size={14} className="text-blue" />
-            <span className="hidden lg:inline">Notes</span>
-          </button>
-
-          <button
-            type="button"
-            title="Generate Printable Client SEO & Website Optimization Report"
-            aria-label="Client SEO report"
-            onClick={() => setClientReportOpen(true)}
-            className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-semibold text-ink transition hover:border-blue hover:bg-sunken"
-          >
-            <IconFileText size={14} className="text-blue" />
-            <span className="hidden xl:inline">Report</span>
-          </button>
 
           {/* History & Refresh Icon Group */}
           <div className="inline-flex items-center rounded-xl border border-line bg-sunken/30 p-0.5">
@@ -2223,7 +2311,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             >
               <IconRedo size={14} />
             </button>
-            <div className="mx-0.5 h-4 w-px bg-line" aria-hidden="true" />
+            <div className="mx-0.5 hidden h-4 w-px bg-line sm:block" aria-hidden="true" />
             <button
               type="button"
               title="Reload page from site"
@@ -2233,15 +2321,16 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
                 setPreviewToken((token) => token + 1);
               }}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted transition hover:bg-white hover:text-ink"
+              className="hidden h-7 w-7 items-center justify-center rounded-lg text-muted transition hover:bg-white hover:text-ink sm:inline-flex"
             >
               <IconRefresh size={14} />
             </button>
           </div>
 
-          {/* Viewport Device Switcher (Icons) + Zoom Dropdown */}
+          {/* Viewport Device Switcher (Icons) + Zoom Dropdown. Not on a phone:
+              the canvas there is already a phone's width. */}
           {mode !== "edit" && (
-            <div data-walkthrough="viewports" className="inline-flex items-center gap-1 rounded-xl border border-line bg-sunken/30 p-0.5">
+            <div data-walkthrough="viewports" className="hidden items-center gap-1 rounded-xl border border-line bg-sunken/30 p-0.5 sm:inline-flex">
               {DEVICES.map((option) => {
                 const active = device === option.key;
                 const DeviceIcon =
@@ -2274,7 +2363,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 title="Canvas zoom level"
                 value={zoom}
                 onChange={(e) => setZoom(Number(e.target.value))}
-                className="h-7 cursor-pointer rounded-lg border-0 bg-transparent px-1.5 font-mono text-[11px] font-medium text-ink outline-none hover:bg-white"
+                className="hidden h-7 cursor-pointer rounded-lg border-0 bg-transparent px-1.5 font-mono text-[11px] font-medium text-ink outline-none hover:bg-white md:block"
               >
                 {[0.5, 0.75, 1, 1.25, 1.5].map((value) => (
                   <option key={value} value={value}>
@@ -2292,6 +2381,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 key={option.key}
                 type="button"
                 aria-label={option.label}
+                aria-pressed={mode === option.key}
                 onClick={() => {
                   if (option.key !== "edit" && dirty.current) saveNow(edits);
                   setPreviewToken((token) => token + 1);
@@ -2307,39 +2397,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               </button>
             ))}
           </div>
-
-          {/* Mode details helper for accessibility and harness compatibility */}
-          <details className="relative" data-editor-menu>
-            <summary
-              title="Switch editor view mode"
-              aria-label="Switch editor view mode"
-              className="inline-flex h-8 cursor-pointer list-none items-center justify-center rounded-xl border border-line bg-sunken/40 px-2 text-xs font-medium text-muted transition hover:border-line-strong hover:bg-sunken hover:text-ink"
-            >
-              <IconChevronDown size={13} />
-            </summary>
-            <div className="absolute right-0 top-full z-50 mt-1.5 flex w-48 flex-col gap-0.5 rounded-xl border border-line bg-white p-1.5 shadow-xl">
-              {MODES.map((option) => (
-                <button
-                  key={option.key}
-                  type="button"
-                  aria-label={`Mode: ${option.label}`}
-                  onClick={(event) => {
-                    if (option.key !== "edit" && dirty.current) saveNow(edits);
-                    setPreviewToken((token) => token + 1);
-                    setMode(option.key);
-                    const details = event.currentTarget.closest("details");
-                    if (details) details.open = false;
-                  }}
-                  className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition ${
-                    mode === option.key ? "bg-sunken font-semibold text-ink" : "text-muted hover:bg-sunken/60 hover:text-ink"
-                  }`}
-                >
-                  <span>{option.label}</span>
-                  {mode === option.key && <IconCheck size={13} className="text-blue" />}
-                </button>
-              ))}
-            </div>
-          </details>
 
           {/* Workspace Panels & Quick Actions Icon Group */}
           <div className="inline-flex items-center rounded-xl border border-line bg-sunken/30 p-0.5">
@@ -2368,7 +2425,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 setShowPanel(true);
                 setMode("visual");
               }}
-              className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition ${
+              className={`hidden h-7 w-7 items-center justify-center rounded-lg transition sm:inline-flex ${
                 showLayers
                   ? "bg-ink text-cream shadow-xs"
                   : "text-muted hover:bg-white hover:text-ink"
@@ -2382,21 +2439,39 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 title="Open AI Assistant"
                 aria-label="Assistant"
                 onClick={() => setShowAI(true)}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted transition hover:bg-white hover:text-ink"
+                className="hidden h-7 w-7 items-center justify-center rounded-lg text-muted transition hover:bg-white hover:text-ink sm:inline-flex"
               >
                 <IconSparkles size={14} />
               </button>
             )}
+            {/* Shown only on a plan that includes the agent. Its launcher used to
+                float over the bottom-right of the page for everybody, including
+                plans where opening it ended in an upgrade message. */}
+            {canEdit && (!tierStatus?.features || tierStatus.features.aiBuilderAgent) && (
+              <button
+                type="button"
+                title="Builder agent — describe a change and it makes it"
+                aria-label="Builder agent"
+                aria-pressed={agentOpen}
+                onClick={() => setAgentOpen((value) => !value)}
+                className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition ${
+                  agentOpen ? "bg-ink text-cream shadow-xs" : "text-muted hover:bg-white hover:text-ink"
+                }`}
+              >
+                <IconBot size={14} />
+              </button>
+            )}
+            {/* Drafts save themselves; the button is for a keyboard's Ctrl+S habit. */}
             {canEdit && (
               <>
-                <div className="mx-0.5 h-4 w-px bg-line" aria-hidden="true" />
+                <div className="mx-0.5 hidden h-4 w-px bg-line sm:block" aria-hidden="true" />
                 <button
                   type="button"
                   title="Save draft (Ctrl/Cmd+S)"
                   aria-label="Save"
                   disabled={save.isPending || readOnly}
                   onClick={() => saveNow(latestEdits.current)}
-                  className={`inline-flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium transition disabled:opacity-40 ${
+                  className={`hidden h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium transition disabled:opacity-40 sm:inline-flex ${
                     dirty.current || changedCount > 0
                       ? "bg-white text-ink shadow-2xs hover:text-blue"
                       : "text-muted hover:bg-white hover:text-ink"
@@ -2408,17 +2483,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               </>
             )}
           </div>
-
-          {/* Interactive Walkthrough Tour Launch Button */}
-          <button
-            type="button"
-            onClick={() => setSpotlightWalkthroughOpen(true)}
-            className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-blue/40 bg-blue/10 px-2.5 text-xs font-semibold text-blue-600 transition hover:bg-blue hover:text-white"
-            title="Start interactive editor walkthrough"
-          >
-            <IconSparkles size={13} />
-            <span className="hidden sm:inline">Tour</span>
-          </button>
 
           {/* More Tools & Settings Dropdown */}
           <details
@@ -2438,9 +2502,65 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               className="inline-flex h-8 cursor-pointer list-none items-center justify-center gap-1 rounded-xl border border-line bg-sunken/40 px-2 text-xs font-medium text-muted transition hover:border-line-strong hover:bg-sunken hover:text-ink"
             >
               <IconMoreHorizontal size={15} />
-              <span>More</span>
+              <span className="hidden sm:inline">More</span>
             </summary>
-            <div className="absolute right-0 top-full z-50 mt-1.5 flex w-60 flex-col gap-1 rounded-xl border border-line bg-white p-2 shadow-xl">
+            {/* Above the floating Layers window (z-9980), which opens in this
+                same corner: under it, nothing in this menu could be clicked. */}
+            <div className="absolute right-0 top-full z-[9990] mt-1.5 flex max-h-[calc(100dvh-80px)] w-60 flex-col gap-1 overflow-y-auto rounded-xl border border-line bg-white p-2 shadow-xl">
+              {/* On a phone these two leave the bar to make room for the page. */}
+              <button
+                type="button"
+                onClick={(event) => {
+                  setCommandPaletteOpen(true);
+                  const details = event.currentTarget.closest("details");
+                  if (details) details.open = false;
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken sm:hidden"
+              >
+                <IconSearch size={14} className="text-muted" />
+                <span>Search the page</span>
+              </button>
+              {canEdit && !readOnly && (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    setSectionLibraryOpen(true);
+                    const details = event.currentTarget.closest("details");
+                    if (details) details.open = false;
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken sm:hidden"
+                >
+                  <IconPlusSquare size={14} className="text-muted" />
+                  <span>Insert a section</span>
+                </button>
+              )}
+              <button
+                type="button"
+                aria-label="Revision comments"
+                onClick={(event) => {
+                  setCommentsModalOpen(true);
+                  const details = event.currentTarget.closest("details");
+                  if (details) details.open = false;
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
+              >
+                <IconMessageSquare size={14} className="text-muted" />
+                <span>Notes &amp; revision checklist</span>
+              </button>
+              <button
+                type="button"
+                aria-label="Client SEO report"
+                onClick={(event) => {
+                  setClientReportOpen(true);
+                  const details = event.currentTarget.closest("details");
+                  if (details) details.open = false;
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
+              >
+                <IconFileText size={14} className="text-muted" />
+                <span>Client report</span>
+              </button>
+              <div className="my-1 h-px bg-line" />
               <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted">
                 Tools & Documentation
               </div>
@@ -2592,7 +2712,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                         discard.mutate();
                       }
                     }}
-                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-red-600 transition hover:bg-red-50 disabled:opacity-40"
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-danger-text transition hover:bg-danger-surface disabled:opacity-40"
                   >
                     <IconTrash size={14} />
                     <span>Discard</span>
@@ -2632,57 +2752,14 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             </>
           )}
 
-          <WebsitePlanChip siteId={site.id} />
+          <div className="hidden md:block">
+            <WebsitePlanChip siteId={site.id} />
+          </div>
 
-          {/* Primary Publish CTA */}
-          {canPublish && (
-            <div data-walkthrough="publish">
-              <Button
-                variant="accent"
-                size="sm"
-              onClick={async () => {
-                try {
-                  if (dirty.current) await save.mutateAsync(latestEdits.current);
-                  if (dirty.current) {
-                    setFailure("Your latest edit is still saving. Review once it has saved.");
-                    return;
-                  }
-                  // A demo is DakyXTech's own sales page and goes out in one
-                  // click. Everything a customer owns goes through the review.
-                  if (isDemo) {
-                    publish.mutate({
-                      revision: revision.current,
-                      sourceHash: "",
-                      prTitle: "",
-                    } as unknown as WebsiteReview);
-                    return;
-                  }
-                  setReviewOpen(true);
-                } catch {
-                  /* The save error is displayed by its mutation. */
-                }
-              }}
-              disabled={
-                publish.isPending ||
-                save.isPending ||
-                (!isDemo && (changedCount === 0 || !(site.repo || hostedHere)))
-              }
-            >
-              <span className="inline-flex items-center gap-1.5">
-                <IconUploadCloud size={14} />
-                <span>
-                  {publish.isPending
-                    ? "Publishing…"
-                    : isDemo
-                      ? changedCount > 0
-                        ? `Publish & Update Demo (${changedCount})`
-                        : "Publish & Update Demo"
-                      : changedCount > 0
-                        ? `Publish (${changedCount})`
-                        : "Publish"}
-                </span>
-              </span>
-            </Button>
+          {/* Primary Publish CTA — on a phone it sits beside the title instead. */}
+          {publishButton && (
+            <div data-walkthrough="publish" className="hidden sm:block">
+              {publishButton}
             </div>
           )}
         </div>
@@ -4285,6 +4362,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
             setPreviewToken((token) => token + 1);
           }}
+          open={agentOpen}
+          onOpenChange={setAgentOpen}
           onApplyLocalEdits={(values) => {
             const merged = { ...latestEdits.current };
             for (const [id, value] of Object.entries(values)) {

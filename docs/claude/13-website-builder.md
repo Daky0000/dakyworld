@@ -345,6 +345,48 @@ reach the page title, a picture's description, or a heading three screens down.
 - `checks/websiteVisual.ts` (190) runs against every real page here: marking 203
   elements changes no field's value and lands no mark outside a tag, and a style
   edit is still a one-line diff in a 474-line file.
+- **The site's own pop-ups are hidden in the editing frame** (picker script,
+  `looksLikeOverlay`): fixed-position elements that name themselves cookie,
+  consent, chat, popup, modal… or are `role=dialog`, pinned to the bottom edge, or
+  a small corner button. Never a `header`, a `nav` or anything holding one — a
+  fixed site header is something people edit. The frame posts
+  `{type:"overlays", hidden, hiding}`; the editor shows a note with Show/Hide and
+  remembers the choice per browser. Selecting a field inside a hidden pop-up
+  un-hides that one. The published page is untouched.
+
+### Customers, accounts and plans (7 Oct 2026)
+
+- **Plan features are one table, `websiteTierFeature(path)`, and the gate that
+  reads it is registered before every route** in `routes/website.ts`. It used to
+  sit below ten register calls and saw none of their routes, so coverage depended
+  on file order. `checks/websiteTierFeatures.ts` walks the real router: the gate
+  precedes the first route, and every route with an SEO/assistant/agent/source
+  segment maps to its feature, nothing else does.
+- **Client sign-off is `ReviewLink`**, a hashed 192-bit token over a frozen draft
+  snapshot with one atomic decision (`services/websiteReviewLinks.ts`); the
+  reviewer's page is public at `/review/:token`. **Scheduling is
+  `ScheduledPublish`**, claimed by conditional update and run through
+  `publishPageCommand` as its creator, refused if the draft moved.
+- **`Site.settings` is written only under a row lock** — `updateSiteSettings` /
+  `setSiteSetting` in `services/websiteSiteSettings.ts`. A whole-document write
+  drops whatever another feature saved a moment earlier; there are none left.
+- **Inviting by email creates the account** (`findOrInvite` in
+  `websiteAccess.ts`): an external customer account with no password plus a
+  set-password link, and the inviter is told the same thing whether or not the
+  address already had an account. A customer cannot add people by internal user
+  ID; a closed account is not reopened by an invitation; 20 new accounts per
+  inviter per day.
+- **Deleting is a 30-day hold, never immediate** (`services/websiteDeletion.ts`).
+  A site goes offline at once (hosted serving, publishing, review links and
+  scheduled publishes all check `deletionScheduledFor`) and can be restored from
+  `/website/account`; the daily housekeeping tick erases it. A customer closing
+  their account is switched off and signed out at once and **anonymised**, not
+  deleted, after the hold, so invoices and the audit trail still resolve.
+  Refused while paying or while they are the only manager of a site others use.
+- **A phone opens the editor in List mode**, and the toolbar's secondary actions
+  live in More. Menus in the bar sit at `z-[9990]`, above the floating Layers
+  window (`z-[9980]`), which opens in the same top-right corner — under it,
+  nothing in More could be clicked, which is what `builderRedesign` caught.
 
 Built from `reusable_website_editor_system_plan.pdf` (23 Aug 2026), whose block
 model was deliberately not followed for this site; the plan lists converting an

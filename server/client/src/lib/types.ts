@@ -3244,6 +3244,8 @@ export type SiteSummary = {
   lastPublishedAt?: string | null;
   /** The page an "Edit" button should open — the home page where there is one. */
   firstPageId?: string | null;
+  /** Set while the site waits out its deletion hold: offline, and restorable until then. */
+  deletionScheduledFor?: string | null;
   capabilities?: Record<"view" | "edit" | "review" | "publish" | "manage" | "members" | "source", boolean>;
 };
 
@@ -3374,7 +3376,7 @@ export type SharedReview = {
 
 export type SitePageDetail = {
   structure?: { changed: boolean; canUndo: boolean; canRedo: boolean; changes: string[]; stale: boolean };
-  site: { id: string; name: string; publicUrl: string; repo: string | null };
+  site: { id: string; name: string; publicUrl: string; repo: string | null; deletionScheduledFor?: string | null };
   /** Where this page's published copy can be seen — a demo path or the hosted address. Null when it is served nowhere. */
   liveUrl?: string | null;
   /** Where a link on this page can go without leaving the site. */

@@ -51,6 +51,7 @@ const WebsiteBilling = lazy(() => import("./pages/WebsiteBilling").then((module)
 const WebsiteBalance = lazy(() => import("./pages/WebsiteBalance").then((module) => ({ default: module.WebsiteBalance })));
 const FreelancerWorkspace = lazy(() => import("./pages/FreelancerWorkspace").then((module) => ({ default: module.FreelancerWorkspace })));
 const CustomerWorkspace = lazy(() => import("./pages/CustomerWorkspace").then((module) => ({ default: module.CustomerWorkspace })));
+const WebsiteAccount = lazy(() => import("./pages/WebsiteAccount").then((module) => ({ default: module.WebsiteAccount })));
 
 /**
  * Screens are loaded when somebody goes to them, not all at once.
@@ -109,6 +110,8 @@ export default function App() {
         </Route>
         <Route path="/products/pricing" element={<Guard needs="website.view"><ProductPricing /></Guard>} />
         <Route path="/demos" element={<Guard needs="demos.view"><Demos /></Guard>} />
+        {/* Outside WebsiteGuard: an account with no website left must still reach this page. */}
+        <Route path="/website/account" element={<WebsiteAccount />} />
         <Route path="/website/pages/:pageId" element={<WebsiteGuard><ErrorBoundary label="website editor"><WebsiteEditor /></ErrorBoundary></WebsiteGuard>} />
         <Route path="/website/pages/:pageId/source" element={<WebsiteGuard needs="source"><ErrorBoundary label="source editor"><WebsiteFrameworkEditor /></ErrorBoundary></WebsiteGuard>} />
         <Route path="*" element={<Navigate to="/website/sites" replace />} />
@@ -162,6 +165,8 @@ export default function App() {
           <Route path="billing" element={<Guard needs="website.manage"><WebsiteBilling /></Guard>} />
         </Route>
         <Route path="/products/pricing" element={<Guard needs="website.view"><ProductPricing /></Guard>} />
+        {/* Outside WebsiteGuard: an account with no website left must still reach this page. */}
+        <Route path="/website/account" element={<WebsiteAccount />} />
         <Route path="/website/pages/:pageId" element={<WebsiteGuard><ErrorBoundary label="website editor"><WebsiteEditor /></ErrorBoundary></WebsiteGuard>} />
         <Route path="/website/pages/:pageId/source" element={<WebsiteGuard needs="source"><ErrorBoundary label="source editor"><WebsiteFrameworkEditor /></ErrorBoundary></WebsiteGuard>} />
         <Route path="/team" element={<Guard needs="team.view"><Team /></Guard>} />

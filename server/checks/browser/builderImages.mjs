@@ -135,13 +135,9 @@ try {
   assert.deepEqual(await frameImage().evaluate(img => [Math.round(img.getBoundingClientRect().width), Math.round(img.getBoundingClientRect().height)]), [240, 120], "Replacement keeps the original image dimensions");
   await assertImageLoaded("Autosave must leave the replacement visible");
 
+  // The bar's own mode buttons; the dropdown that duplicated them is gone.
   async function switchMode(name) {
-    const summary = page.locator("summary[title='Switch editor view mode']");
-    const details = summary.locator("xpath=..");
-    if (!await details.evaluate(el => el.open)) {
-      await summary.click();
-    }
-    await page.getByRole("button", { name: new RegExp(`^${name}\\b`) }).click();
+    await page.getByRole("button", { name, exact: true }).click();
   }
 
   await switchMode("Preview");
@@ -175,11 +171,15 @@ try {
   await library.getByTitle("Use replacement.png", { exact: true }).click();
   await assertImageLoaded("Selecting an existing uploaded asset must display immediately");
   await page.getByRole("tab", { name: "Style", exact: true }).click();
-  const focalPoint = page.getByRole("textbox", { name: "Focal point" });
-  await focalPoint.fill("50% 50%");
-  await focalPoint.press("End");
-  await focalPoint.type(" ");
-  assert.ok(await focalPoint.evaluate(input => document.activeElement === input), "Style input keeps focus after typing");
+  // The focal point used to be one free-text box; it is a preset list with a
+  // Custom choice whose two axes take numbers. What this guards is the same:
+  // typing into a style control must not lose focus between keystrokes.
+  await page.getByRole("combobox", { name: "Focal point" }).selectOption("custom");
+  const across = page.getByRole("spinbutton", { name: "Horizontal focal point value" });
+  await across.fill("4");
+  await across.type("0");
+  assert.equal(await across.inputValue(), "40", "The focal point accepts continuous typing");
+  assert.ok(await across.evaluate(input => document.activeElement === input), "Style input keeps focus after typing");
   const width = page.getByRole("spinbutton", { name: "Width" }).first();
   await width.fill("2");
   await width.type("40");

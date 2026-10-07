@@ -1036,6 +1036,7 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
   [data-dw-editing], [data-dw-editing] * {
     animation-play-state: paused !important;
   }
+  [data-dw-overlay-hidden] { display: none !important; }
 </style>
 <script nonce="${nonce}">
 (function () {
@@ -1231,14 +1232,58 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
   if (document.readyState === "complete") window.setTimeout(sweep, 120);
   else window.addEventListener("load", function () { window.setTimeout(sweep, 120); });
 
+  // The site's own pop-ups — a cookie banner, a chat bubble, a newsletter box,
+  // a bar pinned to the bottom — are drawn over the page, and in the editor they
+  // sit on top of the words being edited. Hidden in this frame only (the
+  // published page is untouched), and the editor can show them again. A header
+  // or a navigation bar is never one, however it is positioned.
+  var overlays = [];
+  var overlayHint = /cookie|consent|gdpr|popup|pop-up|modal|newsletter|subscribe|chat|whatsapp|intercom|crisp|tawk|drift|messenger|announcement|promo/;
+  function looksLikeOverlay(el) {
+    var style = window.getComputedStyle(el);
+    if (style.position !== "fixed" || style.display === "none" || style.visibility === "hidden") return false;
+    var tag = el.tagName.toLowerCase();
+    var role = el.getAttribute("role") || "";
+    if (tag === "header" || tag === "nav" || role === "navigation" || role === "banner" || el.querySelector("nav,header")) return false;
+    var hint = ((el.id || "") + " " + (typeof el.className === "string" ? el.className : "") + " " + (el.getAttribute("aria-label") || "")).toLowerCase();
+    if (overlayHint.test(hint) || role === "dialog" || role === "alertdialog" || el.getAttribute("aria-modal") === "true") return true;
+    var box = el.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0) return false;
+    // Pinned along the bottom edge, or a small button floating in a corner.
+    if (box.bottom >= window.innerHeight - 4 && box.top > window.innerHeight * 0.4) return true;
+    return box.width < 140 && box.height < 140 && box.bottom >= window.innerHeight - 48 && (box.right >= window.innerWidth - 48 || box.left <= 48);
+  }
+  function setOverlaysHidden(hide) {
+    for (var o = 0; o < overlays.length; o++) overlays[o].removeAttribute("data-dw-overlay-hidden");
+    overlays = [];
+    if (hide && document.body) {
+      var all = document.body.querySelectorAll("*");
+      for (var a = 0; a < all.length; a++) {
+        var candidate = all[a];
+        if (candidate.closest("[data-dw-overlay-hidden]") || candidate.querySelector("[data-dw-selected],[data-dw-editing]")) continue;
+        if (looksLikeOverlay(candidate)) { candidate.setAttribute("data-dw-overlay-hidden", ""); overlays.push(candidate); }
+      }
+    }
+    post({ type: "overlays", hidden: overlays.length, hiding: Boolean(hide) });
+  }
+  var hideOverlays = true;
+  function overlaysOnLoad() { window.setTimeout(function () { setOverlaysHidden(hideOverlays); }, 60); }
+  if (document.readyState === "complete") overlaysOnLoad();
+  else window.addEventListener("load", overlaysOnLoad);
+
   window.addEventListener("message", function (event) {
     var data = event.data || {};
     if (event.source !== parent || event.origin !== location.origin || data.source !== "dakyworld-editor") return;
     if (data.type === "reveal") { sweep(); return; }
+    if (data.type === "overlays") { hideOverlays = Boolean(data.hide); setOverlaysHidden(hideOverlays); return; }
     if (data.type === "select") {
       stopEdit();
       var el = find(data.id);
       if (!el && data.id) post({ type: "absent", id: data.id, want: "select" });
+      // Something chosen from the list that lives inside a hidden pop-up is
+      // shown, or it would be selected and invisible.
+      var hiddenAround = el && el.closest ? el.closest("[data-dw-overlay-hidden]") : null;
+      if (hiddenAround) hiddenAround.removeAttribute("data-dw-overlay-hidden");
       mark(el);
       if (el && el.scrollIntoView) {
         var pos = window.getComputedStyle ? window.getComputedStyle(el).position : "static";

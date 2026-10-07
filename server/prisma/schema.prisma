@@ -141,6 +141,10 @@ model User {
   /// browser, so a tour does not start again on a phone after it was finished
   /// on a laptop. Shape: { tours: { [id]: { status, step, at } }, welcome? }.
   uiState              Json              @default("{}")
+  /// A customer who deleted their account: signed out and switched off at
+  /// once, and their personal details erased when this passes. Writing to
+  /// DakyXTech before then undoes it. See services/websiteDeletion.ts.
+  deletionScheduledFor DateTime?
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
 
@@ -4388,6 +4392,11 @@ model Site {
   customDomainToken      String?
   customDomainVerifiedAt DateTime?
 
+  /// Set when a manager asks for the website to be deleted. Until then it is
+  /// offline and can be restored; the scheduler deletes it, and everything
+  /// under it, once this passes. See services/websiteDeletion.ts.
+  deletionScheduledFor DateTime?
+
   pages          SitePage[]
   sharedElements SharedElement[]
   publishJobs    PublishJob[]
@@ -4397,6 +4406,8 @@ model Site {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([deletionScheduledFor])
 }
 
 enum ReviewLinkStatus {

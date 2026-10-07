@@ -138,7 +138,7 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
   if (!/^(GET|HEAD|POST|PUT|PATCH|DELETE)$/.test(method)) return null;
   if (/^\/sites\/[^/]+\/agent\/publish-batch\/?$/.test(path)) return "publish";
   if (/^\/sites\/[^/]+\/hosting\/(?:domain|verify)\/?$/.test(path)) return "manage";
-  if (/^\/sites\/[^/]+\/erase\/?$/.test(path)) return "manage";
+  if (/^\/sites\/[^/]+\/erase(?:\/cancel)?\/?$/.test(path)) return "manage";
   if (/^\/sites\/[^/]+\/members(?:\/[^/]+)?\/?$/.test(path)) return "members";
   if (/\/(?:source|source-project)(?:\/|$)/.test(path)) return "source";
   if (/^\/sites\/[^/]+\/config\/?$/.test(path)) return "manage";

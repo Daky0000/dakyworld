@@ -26,7 +26,7 @@ import { registerWebsiteReadiness } from "../services/websiteReadiness.js";
 import { registerWebsiteSurvey } from "../services/websiteSiteSurvey.js";
 import { registerWebsiteOnboarding } from "../services/websiteOnboarding.js";
 import { registerGithubAppRoutes } from "../services/githubAppRoutes.js";
-import { assertEditAllowance, assertTierFeatureAccess, recordAiPromptUsed, recordEditUsed, registerWebsiteTierRoutes } from "../services/websiteTierPlans.js";
+import { assertEditAllowance, assertTierFeatureAccess, recordAiPromptUsed, recordEditUsed, registerWebsiteTierRoutes, websiteTierFeature } from "../services/websiteTierPlans.js";
 import { registerWebsitePublishJobs } from "../services/websitePublishJobs.js";
 import { hostedUrlFor, registerWebsiteHosting } from "../services/websiteHosting.js";
 import { registerSubscriberSelfService } from "../services/websiteSubscriberSelfService.js";
@@ -85,6 +85,27 @@ websiteRouter.use((req, res, next) => {
 
 // Business allows 10 MB binary assets; base64 in JSON needs about 13.4 MB.
 websiteRouter.use(json({ limit: "16mb" }));
+
+// Plan features, ahead of every route. The table is `websiteTierFeature`;
+// registering this before any route means no route's position in this file
+// decides whether its plan is checked — it used to sit below ten register
+// calls and saw none of their routes.
+websiteRouter.use((req, _res, next) => {
+  void (async () => {
+    const feature = websiteTierFeature(req.path);
+    if (!feature) return;
+    if (feature === "aiBuilderAgent") {
+      await assertTierFeatureAccess(req, "aiBuilderAgent");
+      if (!capacity.admission && req.method === "POST" && /\/agent\/(?:plan|apply)\/?$/.test(req.path)) await recordAiPromptUsed(req);
+    } else if (feature === "aiAssistant") {
+      await assertTierFeatureAccess(req, "aiAssistant", undefined, { skipUsageLimit: capacity.admission && /\/pages\/[^/]+\/assistant\/?$/.test(req.path) });
+      if (!capacity.admission && req.method === "POST") await recordAiPromptUsed(req);
+    } else {
+      await assertTierFeatureAccess(req, feature);
+    }
+  })().then(() => next(), next);
+});
+
 registerWebsiteTierRoutes(websiteRouter);
 registerWebsiteHosting(websiteRouter);
 registerSubscriberSelfService(websiteRouter);
@@ -95,23 +116,6 @@ registerWebsiteReviewLinkRoutes(websiteRouter);
 registerWebsiteSchedulerRoutes(websiteRouter);
 registerWebsiteBatchEditingRoutes(websiteRouter);
 registerWebsiteEditingPolicyRoutes(websiteRouter);
-
-// Tier feature enforcement across SEO, AI Assistant, AI Builder Agent, and Source Editor routes
-websiteRouter.use((req, _res, next) => {
-  void (async () => {
-    if (/\/(?:source|source-project)(?:\/|$)/.test(req.path)) {
-      await assertTierFeatureAccess(req, "sourceCodeEditor");
-    } else if (/\/agent(?:\/|$)/.test(req.path)) {
-      await assertTierFeatureAccess(req, "aiBuilderAgent");
-      if (!capacity.admission && req.method === "POST" && /\/agent\/(?:plan|apply)\/?$/.test(req.path)) await recordAiPromptUsed(req);
-    } else if (/\/(?:assistant|suggest|ai)(?:\/|$)/.test(req.path)) {
-      await assertTierFeatureAccess(req, "aiAssistant", undefined, { skipUsageLimit: capacity.admission && /\/pages\/[^/]+\/assistant\/?$/.test(req.path) });
-      if (!capacity.admission && req.method === "POST") await recordAiPromptUsed(req);
-    } else if (/\/seo(?:\/|$)/.test(req.path)) {
-      await assertTierFeatureAccess(req, "seoInspector");
-    }
-  })().then(() => next(), next);
-});
 
 registerWebsiteMembership(websiteRouter);
 registerWebsiteWorkQueue(websiteRouter);
@@ -203,7 +207,7 @@ websiteRouter.get("/sites", async (req, res, next) => {
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       select: { id: true, name: true, slug: true, publicUrl: true, repoOwner: true, repoName: true,
         sourceKind: true, repoBranch: true, _count: { select: { pages: true } },
-        hostedSlug: true, hostedEnabled: true, customDomain: true, customDomainVerifiedAt: true,
+        hostedSlug: true, hostedEnabled: true, customDomain: true, customDomainVerifiedAt: true, deletionScheduledFor: true,
         client: { select: { id: true, name: true } }, members: { where: { userId: principal.id }, select: { role: true } } },
     });
     const sites = rows.slice(0, limit);
@@ -235,6 +239,8 @@ websiteRouter.get("/sites", async (req, res, next) => {
         customDomain: site.customDomainVerifiedAt ? site.customDomain : null,
         lastPublishedAt: lastPublished.get(site.id) ?? null,
         firstPageId: firstPage.get(site.id) ?? null,
+        // A site waiting out its deletion hold is offline and can be restored.
+        deletionScheduledFor: site.deletionScheduledFor,
         capabilities: websiteCapabilities(principal, site.members[0]?.role ?? null),
       };
     }));
@@ -435,7 +441,7 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
     const liveUrl = linkedDemo ? `/demos/${encodeURIComponent(linkedDemo.slug)}` : hosted ? `${hosted}${page.path === "/" ? "/" : page.path}` : null;
 
     res.json({
-      site: { id: site.id, name: site.name, publicUrl: site.publicUrl, repo: siteRepo(site) },
+      site: { id: site.id, name: site.name, publicUrl: site.publicUrl, repo: siteRepo(site), deletionScheduledFor: site.deletionScheduledFor },
       liveUrl,
       links: siblings,
       page: {

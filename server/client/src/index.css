@@ -266,6 +266,8 @@ button:disabled { cursor:not-allowed; }
 .os-account span { display:block; font-size:10px; color:#A9B3C5; }
 .os-account button { font-size:10px; color:#C0C9D8; }
 .os-account button:hover { color:#fff; text-decoration:underline; }
+.os-account a { font-size:10px; color:#C0C9D8; }
+.os-account a:hover { color:#fff; text-decoration:underline; }
 .os-viewport { display:flex; flex:1; min-width:0; flex-direction:column; overflow:auto; }
 .os-topbar { display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:72px; padding:16px 40px; border-bottom:1px solid var(--os-line); background:var(--os-paper); font-size:12px; }
 .os-workspace-label,.os-breadcrumb-divider,.os-topbar-date { color:var(--os-muted); }

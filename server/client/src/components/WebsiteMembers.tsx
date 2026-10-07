@@ -2,6 +2,7 @@ import { useSiteDirectory, SiteDirectoryMore } from "../lib/siteDirectory";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import type { SiteSummary } from "../lib/types";
 import { Button, PageHeader } from "./ui";
 
@@ -33,13 +34,24 @@ export function WebsiteMembers({ siteId }: { siteId: string }) {
   const qc = useQueryClient();
   const access = useWebsiteAccess(siteId);
   const members = useQuery({ queryKey: ["website", "members", siteId], enabled: access.data?.capabilities.members === true, queryFn: ({ signal }) => api.get<MembershipResponse>(`/website/sites/${encodeURIComponent(siteId)}/members`, signal) });
+  const { user } = useAuth();
   const [identity, setIdentity] = useState("");
+  const [inviteeName, setInviteeName] = useState("");
+  // Finding an account by its internal ID is a staff tool; customers invite by address.
   const [identityType, setIdentityType] = useState<"email" | "userId">("email");
+  const staff = Boolean(user && !user.external);
   const [role, setRole] = useState<MemberRole>("VIEWER");
   const [notice, setNotice] = useState("");
   const [removing, setRemoving] = useState<Member | null>(null);
   const refresh = async () => { await qc.invalidateQueries({ queryKey: ["website"] }); };
-  const add = useMutation({ mutationFn: () => api.post(`/website/sites/${encodeURIComponent(siteId)}/members`, { [identityType]: identity.trim(), role }), onSuccess: async () => { setIdentity(""); setNotice("Website access added."); await refresh(); } });
+  const add = useMutation({
+    mutationFn: () => api.post<{ notice?: string }>(`/website/sites/${encodeURIComponent(siteId)}/members`, {
+      [identityType]: identity.trim(),
+      ...(identityType === "email" && inviteeName.trim() ? { name: inviteeName.trim() } : {}),
+      role,
+    }),
+    onSuccess: async (result) => { setIdentity(""); setInviteeName(""); setNotice(result.notice ?? "Website access added."); await refresh(); },
+  });
   const update = useMutation({ mutationFn: ({ id, nextRole }: { id: string; nextRole: MemberRole }) => api.patch(`/website/sites/${encodeURIComponent(siteId)}/members/${encodeURIComponent(id)}`, { role: nextRole }), onSuccess: async () => { setNotice("Website role updated."); await refresh(); } });
   const remove = useMutation({ mutationFn: (id: string) => api.delete(`/website/sites/${encodeURIComponent(siteId)}/members/${encodeURIComponent(id)}`), onSuccess: async () => { setRemoving(null); setNotice("Website access removed."); await refresh(); } });
   const busy = add.isPending || update.isPending || remove.isPending;
@@ -55,19 +67,20 @@ export function WebsiteMembers({ siteId }: { siteId: string }) {
     {access.data && !canManage && <div className="rounded-2xl border border-line bg-white p-5"><h2 className="font-display text-lg">Your website access</h2><p className="mt-2 text-sm text-muted">{access.data.role ? `${ROLES[access.data.role].name}: ${ROLES[access.data.role].description}` : "Your account's staff permissions provide access to this site."}</p><p className="mt-3 text-sm text-muted">A website manager can change who has access.</p></div>}
     {canManage && members.data && <>
       <form className="rounded-2xl border border-line bg-white p-5" onSubmit={event => { event.preventDefault(); resetFeedback(); add.mutate(); }}>
-        <h2 className="font-display text-lg">Add an account to this website</h2>
-        <p className="mt-1 text-sm text-muted">Use an existing account. This changes access immediately and sends no invitation email.</p>
-        <div className="mt-5 grid items-end gap-3 sm:grid-cols-[130px_1fr_170px]">
-          <label className="text-xs text-muted">Find by<select className={`${inputClass} mt-1`} disabled={busy} value={identityType} onChange={event => { setIdentityType(event.target.value as "email" | "userId"); setIdentity(""); resetFeedback(); }}><option value="email">Email</option><option value="userId">User ID</option></select></label>
-          <label className="text-xs text-muted">{identityType === "email" ? "Account email" : "Account user ID"}<input className={`${inputClass} mt-1`} required maxLength={identityType === "email" ? 254 : 100} type={identityType === "email" ? "email" : "text"} autoComplete="off" disabled={busy} value={identity} onChange={event => { setIdentity(event.target.value); resetFeedback(); }} placeholder={identityType === "email" ? "person@example.com" : "User ID"} /></label>
+        <h2 className="font-display text-lg">Invite someone to this website</h2>
+        <p className="mt-1 text-sm text-muted">They get access straight away and an email with a link to sign in. Someone new to DakyX chooses a password from that link.</p>
+        <div className={`mt-5 grid items-end gap-3 ${staff ? "sm:grid-cols-[130px_1fr_1fr_170px]" : "sm:grid-cols-[1fr_1fr_170px]"}`}>
+          {staff && <label className="text-xs text-muted">Find by<select className={`${inputClass} mt-1`} disabled={busy} value={identityType} onChange={event => { setIdentityType(event.target.value as "email" | "userId"); setIdentity(""); resetFeedback(); }}><option value="email">Email</option><option value="userId">User ID</option></select></label>}
+          <label className="text-xs text-muted">{identityType === "email" ? "Their email address" : "Account user ID"}<input className={`${inputClass} mt-1`} required maxLength={identityType === "email" ? 254 : 100} type={identityType === "email" ? "email" : "text"} autoComplete="off" disabled={busy} value={identity} onChange={event => { setIdentity(event.target.value); resetFeedback(); }} placeholder={identityType === "email" ? "person@example.com" : "User ID"} /></label>
+          {identityType === "email" && <label className="text-xs text-muted">Their name <span className="font-normal">(optional)</span><input className={`${inputClass} mt-1`} maxLength={120} autoComplete="off" disabled={busy} value={inviteeName} onChange={event => setInviteeName(event.target.value)} placeholder="Used if they are new to DakyX" /></label>}
           <label className="text-xs text-muted">Website role<select className={`${inputClass} mt-1`} disabled={busy} value={role} onChange={event => setRole(event.target.value as MemberRole)}>{members.data.assignableRoles.map(option => <option key={option} value={option}>{ROLES[option].name}</option>)}</select></label>
         </div>
         <p className="my-3 text-xs text-muted">{ROLES[role].description}</p>
-        <Button type="submit" disabled={busy || !identity.trim() || !members.data.assignableRoles.includes(role)}>{add.isPending ? "Adding…" : "Add website access"}</Button>
+        <Button type="submit" disabled={busy || !identity.trim() || !members.data.assignableRoles.includes(role)}>{add.isPending ? "Inviting…" : "Send invitation"}</Button>
       </form>
       <section className="overflow-hidden rounded-2xl border border-line bg-white">
         <div className="border-b border-line p-5"><h2 className="font-display text-lg">Website members</h2><p className="mt-1 text-xs text-muted">Website roles apply only here. Staff may also have access through their internal account permissions.</p></div>
-        {members.data.members.length === 0 && <p className="p-5 text-sm text-muted">No site members yet. Add a manager to let them administer this website.</p>}
+        {members.data.members.length === 0 && <p className="p-5 text-sm text-muted">No one has been invited yet. Invite a manager to let them look after this website.</p>}
         <ul className="divide-y divide-line">{members.data.members.map(member => {
           const lastManager = member.role === "MANAGER" && member.user.active && managerCount <= 1;
           const editable = members.data!.assignableRoles.includes(member.role);

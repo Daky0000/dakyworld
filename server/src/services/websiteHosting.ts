@@ -60,7 +60,7 @@ function hostOf(req: Request): string {
 async function uncachedSiteForHost(host: string) {
   if (!host) return null;
   const byDomain = await prisma.site.findFirst({
-    where: { customDomain: host, customDomainVerifiedAt: { not: null }, hostedEnabled: true },
+    where: { customDomain: host, customDomainVerifiedAt: { not: null }, hostedEnabled: true, deletionScheduledFor: null },
     select: { id: true, name: true, publicUrl: true },
   });
   if (byDomain) return byDomain;
@@ -68,7 +68,7 @@ async function uncachedSiteForHost(host: string) {
   if (HOST_DOMAIN && host.endsWith(`.${HOST_DOMAIN}`)) {
     const label = host.slice(0, -(HOST_DOMAIN.length + 1));
     if (!label || label.includes(".")) return null;
-    return prisma.site.findFirst({ where: { hostedSlug: label, hostedEnabled: true }, select: { id: true, name: true, publicUrl: true } });
+    return prisma.site.findFirst({ where: { hostedSlug: label, hostedEnabled: true, deletionScheduledFor: null }, select: { id: true, name: true, publicUrl: true } });
   }
   return null;
 }

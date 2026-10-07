@@ -185,6 +185,8 @@ export function WebsiteAgentChat({
   onStructureAction,
   onDiscardDraft,
   onReloadPreview,
+  open,
+  onOpenChange,
 }: {
   pageId: string;
   pageTitle: string;
@@ -206,8 +208,23 @@ export function WebsiteAgentChat({
   ) => void;
   onDiscardDraft?: () => void;
   onReloadPreview?: () => void;
+  /**
+   * When the host passes these, it owns the open state and the button that
+   * opens the chat — the editor docks it in its toolbar — and the floating
+   * launcher is not drawn. The launcher sat over the bottom-right corner of the
+   * page being edited, on top of whatever that page had there.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const docked = open !== undefined;
+  const isOpen = docked ? open : ownOpen;
+  const setIsOpen = (next: boolean | ((previous: boolean) => boolean)) => {
+    const value = typeof next === "function" ? next(isOpen) : next;
+    if (docked) onOpenChange?.(value);
+    else setOwnOpen(value);
+  };
   const [input, setInput] = useState("");
   const [isPending, setIsPending] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -683,7 +700,7 @@ export function WebsiteAgentChat({
       {/* -------------------------------------------------------------
           1. Floating Action Icon (Stacked with rounded shapes around it)
           ------------------------------------------------------------- */}
-      <div className="fixed bottom-6 right-6 z-[9999] print:hidden select-none">
+      {!docked && <div className="fixed bottom-6 right-6 z-[9999] print:hidden select-none">
         <div className="relative flex items-center justify-center group">
           {/* Outermost stacked rounded shape (soft blue halo ring) */}
           <div
@@ -744,7 +761,7 @@ export function WebsiteAgentChat({
             )}
           </button>
         </div>
-      </div>
+      </div>}
 
       {/* -------------------------------------------------------------
           2. Chat Window Interface (With Autonomy Icon, Undo/Redo, & Attachments)
@@ -764,7 +781,7 @@ export function WebsiteAgentChat({
               void handleFilesSelected(e.dataTransfer.files);
             }
           }}
-          className="fixed bottom-24 right-6 z-[9999] flex h-[620px] max-h-[calc(100vh-7.5rem)] w-[calc(100vw-2.5rem)] max-w-[440px] flex-col overflow-hidden rounded-3xl border border-line bg-white shadow-2xl transition-all animate-in fade-in slide-in-from-bottom-4 duration-200"
+          className={`fixed ${docked ? "right-3 top-[60px] max-h-[calc(100dvh-72px)]" : "bottom-24 right-6 max-h-[calc(100vh-7.5rem)]"} z-[9999] flex h-[620px] w-[calc(100vw-1.5rem)] max-w-[440px] flex-col overflow-hidden rounded-3xl border border-line bg-white shadow-2xl transition-all animate-in fade-in slide-in-from-bottom-4 duration-200`}
         >
           {/* Header */}
           <div className="relative flex flex-none items-center justify-between border-b border-line bg-cream px-3.5 py-3">

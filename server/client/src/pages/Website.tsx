@@ -186,7 +186,7 @@ export function Website() {
                 <th className="px-4 py-3 font-normal">Address</th>
                 <th className="px-4 py-3 font-normal">State</th>
                 <th className="px-4 py-3 font-normal">Last published</th>
-                <th className="px-4 py-3" />
+                <th className="px-4 py-3"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>

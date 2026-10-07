@@ -195,7 +195,10 @@ check("each route links to its own half of the guide", /#hosted/.test(connect) &
 check("a repository is only asked for on the repository route", /route === "github" && repository\.trim\(\)/.test(connect));
 
 const setup = source("../src/services/websiteSetupAssistance.ts");
-check("setup help is priced from one place", /setupAssistancePrice\(\)/.test(setup));
+check("setup help is priced from one place", /setupAssistancePrice\(/.test(setup) && !/amount:\s*\d/.test(setup));
+// …in the currency the customer pays in, like every other price they see —
+// it was quoted in cedis to everybody, dollar customers included.
+check("setup help is quoted in the customer's own currency", (setup.match(/setupAssistancePrice\(resolveCurrency\(/g) ?? []).length === 2);
 check(
   "a request stands even when no payment link could be raised",
   /could not raise a payment link/.test(setup),

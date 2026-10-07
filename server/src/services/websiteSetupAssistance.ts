@@ -4,7 +4,7 @@ import { prisma } from "../lib/prisma.js";
 import { createNumberedInvoice } from "./invoiceNumber.js";
 import { raisePayment } from "./payments.js";
 import { customerAppUrl } from "./emailSender.js";
-import { setupAssistancePrice, type PlanCurrency } from "./websitePricing.js";
+import { resolveCurrency, setupAssistancePrice, type PlanCurrency } from "./websitePricing.js";
 import { resolveEntitlement } from "./websiteEntitlement.js";
 import { WebsiteError } from "./website/site.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
@@ -48,7 +48,9 @@ export function registerWebsiteSetupAssistance(router: Router) {
   router.get(
     "/setup-assistance",
     handler(async (req, res) => {
-      const price = setupAssistancePrice();
+      // Quoted in the currency this customer pays in — dollars outside Ghana
+      // once dollars are switched on — like every other price they are shown.
+      const price = setupAssistancePrice(resolveCurrency({ currency: (await resolveEntitlement(req)).currency }));
       const base = customerAppUrl();
       res.json({
         currency: price.currency,
@@ -84,7 +86,7 @@ export function registerWebsiteSetupAssistance(router: Router) {
       });
       if (!user) throw new WebsiteError(401, "Sign in to ask for setup help.");
 
-      const price = setupAssistancePrice();
+      const price = setupAssistancePrice(resolveCurrency({ currency: entitlement.currency ?? input.currency }));
       const currency: PlanCurrency = price.currency;
 
       const client =

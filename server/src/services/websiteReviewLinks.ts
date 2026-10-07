@@ -96,7 +96,7 @@ async function loadPage(req: Request, pageId: string, action: "view" | "edit") {
 async function linkForToken(token: string) {
   if (!/^[A-Za-z0-9_-]{20,100}$/.test(token)) throw new WebsiteError(404, "This review link has expired or been withdrawn.");
   const link = await prisma.reviewLink.findUnique({ where: { tokenHash: hashToken(token) }, include: { page: true, site: true } });
-  if (!link || link.status === "WITHDRAWN" || link.expiresAt.getTime() < Date.now()) {
+  if (!link || link.status === "WITHDRAWN" || link.expiresAt.getTime() < Date.now() || link.site.deletionScheduledFor) {
     throw new WebsiteError(404, "This review link has expired or been withdrawn.");
   }
   return link;

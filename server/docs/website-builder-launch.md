@@ -34,20 +34,27 @@ needs the Railway API and is not built.
 
 ### 2. Set the merchant exchange rate
 
-Everything is charged in cedis. The catalogue holds dollar prices and
-`PAYSTACK_USD_GHS_RATE` converts them at checkout — it defaults to 12, and it
-is the number the customer is billed on, so set it deliberately on the Railway
-service rather than leaving it to a default.
+Prices are dollars in `websitePricing.ts` (`USD_PRICES`): $3 / $10 / $25 a
+month promotional, $5 / $16 / $45 standard. A customer in Ghana is charged in
+cedis at `PAYSTACK_USD_GHS_RATE` — it defaults to 12, so GHS 36 / 120 / 300,
+then 60 / 192 / 540 — and everyone else in dollars. Set the rate deliberately on the Railway service
+rather than leaving it to a default: it is the number the customer is billed on.
 
-One settlement currency is not a limitation here, it is what makes the billing
-safe: `paystackEvents.ts` compares the amount Paystack reports against the
-amount it expects before it accepts a subscription state, and that comparison
-is impossible across two currencies. A customer's accepted GHS prices are
-fixed on their purchase, so a later rate change never re-prices somebody who
-has already bought.
+**Dollars are switched off until `WEBSITE_USD_ENABLED=true` is set.** Until
+then a customer outside Ghana is quoted and charged the cedi amount, because a
+currency the processor cannot settle is never offered (`resolveCurrency`).
+Turn it on only once the Paystack account settles USD.
 
-An earlier pass billed Ghana in cedis and everyone else in dollars. That was
-reversed on 24 September 2026 in favour of the above.
+Each purchase keeps the currency and the amounts it was accepted in, and
+`paystackEvents.ts` compares what Paystack reports against those before it
+accepts a subscription state — so a rate change never re-prices somebody who
+has already bought, and a payment in the wrong currency is refused rather than
+mistaken for the right one. Every screen shows a customer's prices in the
+currency on their purchase (`priceFor(tier, currency)`), never a cedi number
+behind a dollar sign.
+
+History: cedis-only from 24 September 2026; dollars for buyers outside Ghana
+came back with `c7a90d6`, behind the switch above.
 ### 3. Email must be configured
 
 Every self-serve flow — the first password after a purchase, a forgotten
@@ -83,11 +90,10 @@ error boundary shows a failure to the user but does not notify the team.
 
 ## Decisions taken that you may want to change
 
-**The prices are $25 / $75 / $195 promotional, $40 / $120 / $320 standard**,
-held in dollars in the catalogue and charged in cedis at the merchant rate —
-GHS 300, 900 and 2,340 at a rate of 12, which keeps the GHS 300 the site has
-always advertised. They were briefly $3 / $10 / $25, which at the same rate
-would have been GHS 36 for a product advertised at GHS 300.
+**The prices are $3 / $10 / $25 promotional, $5 / $16 / $45 standard**
+(`USD_PRICES` in `websitePricing.ts`) — GHS 36 / 120 / 300 and 60 / 192 / 540
+at a rate of 12, which are the numbers dakyx.com advertises. Older notes
+quoting $25 / $75 / $195, or GHS 300 for the entry plan, are out of date.
 
 **Watch the pair.** The promotional price comes from the catalogue and the
 standard price from the tier table. When those two moved currency separately,

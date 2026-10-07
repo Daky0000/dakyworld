@@ -283,7 +283,7 @@ export function WebsitePlanChip({ siteId }: { siteId?: string }) {
         <span>{status.tierName}</span>
         {limited && <span className="font-normal text-muted">· {status.usage.editsRemaining} edits left</span>}
       </summary>
-      <div className="absolute right-0 top-10 z-40 w-72 rounded-2xl border border-line bg-white p-4 text-ink shadow-menu">
+      <div className="absolute right-0 top-10 z-[9990] w-72 rounded-2xl border border-line bg-white p-4 text-ink shadow-menu">
         <p className="font-display text-sm font-semibold">{status.tierName} plan</p>
         <p className="mt-0.5 text-xs text-muted">{planPriceSentence(status.pricing)}</p>
         <div className="mt-3">

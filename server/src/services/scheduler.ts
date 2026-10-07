@@ -35,6 +35,7 @@ import { purgeExpiredSessions } from "../lib/session.js";
 import { reconcileInterruptedPublishJobs, verifyDuePublishJobs } from "./websitePublishJobs.js";
 import { processPaystackEvents, reconcilePaystackPayments, updateDuePaystackPrices } from "./paystackEvents.js";
 import { tickScheduledPublishes } from "./websitePublishScheduler.js";
+import { purgeDueDeletions } from "./websiteDeletion.js";
 
 /**
  * The app's clock. Three things run on it:
@@ -243,6 +244,10 @@ async function housekeepingTick(now: Date) {
 
   const dropped = await purgeExpiredSessions();
   if (dropped) console.log(`[scheduler] cleared ${dropped} expired session(s)`);
+
+  // Websites and customer accounts whose thirty-day deletion hold has run out.
+  const erased = await purgeDueDeletions(now);
+  if (erased.websites || erased.accounts) console.log(`[scheduler] erased ${erased.websites} website(s) and ${erased.accounts} closed account(s) at the end of their hold`);
 
   // Lists with nothing in them.
   //

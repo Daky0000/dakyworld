@@ -170,8 +170,10 @@ async function databaseChecks() {
     check("the site still belongs to nobody", () => assert.equal(owner, null));
     await prisma.client.delete({ where: { id: retainerClient.id } });
     response = await request(viewer, `/website/sites/${own.id}/design`); check("a viewer can load the design palette without management settings", () => assert.equal(response.status, 200)); await response.text();
-    response = await request(manager, `/website/sites/${own.id}/members`, "POST", { email: newcomer.email.toUpperCase(), role: "EDITOR" }); check("manager can add existing account by case-insensitive email", () => assert.equal(response.status, 201)); const added = await response.json() as { id: string };
-    response = await request(manager, `/website/sites/${own.id}/members`, "POST", { userId: newcomer.id, role: "MANAGER" }); check("duplicate membership does not silently elevate role", () => assert.equal(response.status, 409)); await response.text();
+    response = await request(manager, `/website/sites/${own.id}/members`, "POST", { email: newcomer.email.toUpperCase(), role: "EDITOR" }); check("manager can add existing account by case-insensitive email", () => assert.equal(response.status, 201)); const added = await response.json() as { id: string; notice: string };
+    response = await request(manager, `/website/sites/${own.id}/members`, "POST", { email: newcomer.email, role: "MANAGER" }); check("duplicate membership does not silently elevate role", () => assert.equal(response.status, 409)); await response.text();
+    // An internal user ID is a staff tool: a customer could otherwise walk IDs.
+    response = await request(manager, `/website/sites/${own.id}/members`, "POST", { userId: newcomer.id, role: "VIEWER" }); check("a customer cannot add people by internal user ID", () => assert.equal(response.status, 400)); await response.text();
     response = await request(manager, `/website/sites/${own.id}/members/${foreignMember.id}`, "PATCH", { role: "VIEWER" }); check("foreign member ID cannot be used in own site", () => assert.equal(response.status, 404)); await response.text();
     const [a, b] = await Promise.all([manager, second].map(async person => { const member = await prisma.siteMember.findUniqueOrThrow({ where: { siteId_userId: { siteId: own.id, userId: person.id } } }); const result = await request(person, `/website/sites/${own.id}/members/${member.id}`, "PATCH", { role: "EDITOR" }); await result.text(); return result.status; }));
     check("simultaneous manager demotions leave one active manager", () => assert.deepEqual([a, b].sort(), [200, 409]));
@@ -181,6 +183,29 @@ async function databaseChecks() {
     response = await request(acting, `/website/sites/${own.id}/members/${added.id}`, "DELETE"); check("manager can remove a member", () => assert.equal(response.status, 204)); await response.text();
     response = await request(newcomer, `/website/sites/${own.id}/pages`); check("removed member's existing session loses access immediately", () => assert.equal(response.status, 404)); await response.text();
     const events = await prisma.siteAuditEvent.findMany({ where: { siteId: own.id } }); check("successful membership changes are audited atomically", () => assert.equal(events.length, 3));
+
+    // Inviting somebody who has no account yet creates one — a customer account
+    // with no password, which they set from the emailed link — and the inviter is
+    // told exactly what they would be told about an existing account.
+    const invitee = `${mark}-invitee@example.test`;
+    response = await request(acting, `/website/sites/${own.id}/members`, "POST", { email: invitee, name: "Akosua", role: "EDITOR" });
+    const invited = await response.json() as { id: string; notice: string; user: { id: string; name: string } };
+    check("a new address is invited rather than refused", () => assert.equal(response.status, 201));
+    const account = await prisma.user.findUnique({ where: { email: invitee }, select: { id: true, passwordHash: true, accessRole: { select: { external: true } } } });
+    if (account) userIds.push(account.id);
+    check("the invitation made a customer account with no password", () => { assert.ok(account); assert.equal(account!.passwordHash, null); assert.equal(account!.accessRole?.external, true); });
+    const firstPasswordLinks = await prisma.authToken.count({ where: { userId: account!.id, kind: "SET_PASSWORD", usedAt: null } });
+    check("and a first-password link to go with it", () => assert.equal(firstPasswordLinks, 1));
+    check("the answer reads the same as for an existing account", () => assert.equal(invited.notice.replace(invitee, "X"), added.notice.replace(newcomer.email, "X")));
+    const invitations = await prisma.siteAuditEvent.count({ where: { siteId: own.id, kind: "MEMBER_INVITED" } });
+    check("it is audited as an invitation", () => assert.equal(invitations, 1));
+    const switchedOff = await prisma.user.create({ data: { email: `${mark}-inactive@example.test`, name: "inactive", active: false, accessRoleId: external.id } }); userIds.push(switchedOff.id);
+    response = await request(acting, `/website/sites/${own.id}/members`, "POST", { email: switchedOff.email, role: "VIEWER" });
+    const refusal = await response.json() as { error: string };
+    check("an invitation does not switch a closed account back on", () => assert.equal(response.status, 409));
+    check("and the refusal never says whether an account exists", () => assert.doesNotMatch(refusal.error, /account|exist/i));
+    const stillClosed = !(await prisma.user.findUniqueOrThrow({ where: { id: switchedOff.id } })).active;
+    check("the closed account is still closed", () => assert.equal(stillClosed, true));
   } finally {
     if (server) await new Promise<void>((resolve, reject) => server!.close(error => error ? reject(error) : resolve()));
     await prisma.site.deleteMany({ where: { id: { in: siteIds } } });
@@ -223,5 +248,16 @@ async function routeClassificationChecks() {
 
 await routeClassificationChecks();
 await httpGateChecks();
-if (process.argv.includes("--database")) await databaseChecks();
+// The membership section creates real accounts, so it only runs against an
+// isolated local database — but it runs whenever it is pointed at one. It used
+// to need a `--database` flag that `npm run checks` never passes, so the suite
+// reported this file green without ever exercising a real session.
+const isolatedDatabase = (() => {
+  try {
+    const url = new URL(process.env.DATABASE_URL ?? "");
+    return ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) && /(test|check|editor)/i.test(url.pathname);
+  } catch { return false; }
+})();
+if (process.argv.includes("--database") || isolatedDatabase) await databaseChecks();
+else console.log("  (membership section skipped: DATABASE_URL is not an isolated local test database)");
 console.log(`\n${passed} website access checks passed.`);

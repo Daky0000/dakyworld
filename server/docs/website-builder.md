@@ -48,14 +48,14 @@ reverse any of them.
 | 4.2 | Stage 2 — image management | **Skeleton** | `WebsiteAssets.tsx`, below |
 | 4.3 | Stage 3 — controlled visual styles | **Built** (tokens outstanding) | `ElementInspector.tsx`, `lib/elementInspector.ts`, `safeStyle` |
 | 4.4 | Stage 4 — repeatable content | **Not started** | below |
-| 5 | Stable field identity (`data-dw-field`) | **Not started** | below — the highest-value item left |
+| 5 | Stable field identity (`data-dw-field`) | **Built** | explicit markers survive moves (`website/jsx.ts`); the editor writes its own |
 | 6 | AI as a validated change plan | **Skeleton** | `WebsiteAI.tsx`, below |
 | 7A | Product module updates | **Dropped** — hosted delivery | `WebsiteUpdates.tsx` records why |
 | 7B | Website code updates by pull request | **Not started** | below |
 | 8 | Licensing and subscription | **Skeleton** | `WebsiteBilling.tsx`, below |
 | 9 | Security requirements | **Partly built** | `SECURITY.md`, below |
-| 10 | Data model additions | **Not started** | below |
-| 11 | Publishing workflow | **Partly built** | below |
+| 10 | Data model additions | **Built** | `SiteMember`, `SiteAuditEvent`, `PublishJob`, `ReviewLink`, `ScheduledPublish` |
+| 11 | Publishing workflow | **Built** | review before publish, client sign-off links, scheduled and temporary publishes, durable publish jobs |
 | 12 | Testing strategy | **Partly built** | below |
 | 13 | Admin configuration | **Skeleton** | `WebsiteSettings.tsx`, below |
 | 14 | Module menu and navigation | **Built** | `Layout.tsx`, `WebsiteLayout.tsx` |
@@ -499,11 +499,11 @@ publish** on the existing minute tick.
 | Prefer GitHub App auth over personal tokens | Not started |
 | Never expose tokens to the browser | Built |
 | Keep AI provider keys server-side | Built |
-| Verify site ownership before activation | Not started — needs `SiteMember` |
+| Verify site ownership before activation | Built — a custom domain is served only after its TXT record verifies; access is `SiteMember` |
 | Restrict repository and branch access | Built — the writable-repository list |
 | Require confirmation before publishing | Built (`window.confirm`; §11 wants a diff) |
-| Log every publish, rollback, upload, permission change | **Not started** — `SiteAuditEvent` |
-| Rate-limit autosave, AI, uploads, publishing | **Not started** — `rateLimit()` exists in `middleware/security.ts` |
+| Log every publish, rollback, upload, permission change | Built — `SiteAuditEvent` (publishes, rollbacks, uploads, deletions, membership, settings, deletion holds) |
+| Rate-limit autosave, AI, uploads, publishing | Built for publishing, structure changes, the assistant, the agent and imports (`routes/website.ts`); autosave and uploads share the global API limit |
 | Sanitise text, rich text, links, images, CSS, SVG separately | Built — `sanitize.ts`, `safeStyle` |
 | Enforce CSP, sandbox previews in iframes | Built — `previewDocument` |
 | Scan uploads | Not started |
@@ -528,9 +528,9 @@ was dead.
 | Draft conflict, cache, rollback, scoping, readable summaries | **Built** — `checks/websiteBuilder.ts` |
 | Security — XSS, `javascript:` URLs, CSS injection, SVG scripts, event handlers | Partly — `checks/website.ts` covers the sanitiser |
 | Security — prompt injection | Not started, with §6 |
-| Security — cross-site access, expired-license access, token leakage, role escalation | **Not started** — needs `SiteMember` and entitlement |
+| Security — cross-site access, expired-license access, token leakage, role escalation | **Built** — `checks/websiteAccess.ts` over real sessions with `DEV_NO_AUTH=false`; plan features in `checks/websiteTierFeatures.ts` |
 | Integration — GitHub read, commit, build failure, rate limits, token expiry | Not started |
-| Browser (Playwright) | Not started. The house pattern is `tmp/shot.mjs` over the DevTools protocol; there is no Playwright here |
+| Browser (Playwright) | **Built** — `npm run checks:browser` runs the eight files in `checks/browser/` against the Vite harness on port 5199 |
 | Backup and recovery — failed commit, rollback after a bad publish | Partly — rollback is built and checked |
 
 **The one that cannot be faked:** the client portal must be exercised over real

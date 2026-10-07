@@ -665,6 +665,7 @@ export function PublishReview({
                       </label>
                       <input
                         type="datetime-local"
+                        aria-label="Go live at"
                         value={scheduledAt}
                         onChange={(e) => setScheduledAt(e.target.value)}
                         className="mt-1 w-full rounded-lg border border-line px-2 py-1.5 text-xs outline-none focus:border-blue"
@@ -676,6 +677,7 @@ export function PublishReview({
                       </label>
                       <input
                         type="datetime-local"
+                        aria-label="Go back to the current page at"
                         value={revertAt}
                         onChange={(e) => setRevertAt(e.target.value)}
                         className="mt-1 w-full rounded-lg border border-line px-2 py-1.5 text-xs outline-none focus:border-blue"

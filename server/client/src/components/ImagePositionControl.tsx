@@ -144,6 +144,7 @@ export function ImagePositionControl({
           </span>
         </div>
         <select
+          aria-label="Focal point"
           disabled={disabled}
           value={selectedMode}
           onChange={(e) => handleModeChange(e.target.value)}
@@ -170,6 +171,7 @@ export function ImagePositionControl({
                 </span>
               </div>
               <select
+                aria-label="Horizontal focal point unit"
                 disabled={disabled}
                 value={xUnit}
                 onChange={(e) => {
@@ -186,6 +188,7 @@ export function ImagePositionControl({
             <div className="flex items-center gap-2">
               <input
                 type="range"
+                aria-label="Horizontal focal point"
                 disabled={disabled}
                 min={xUnit === "%" ? 0 : -500}
                 max={xUnit === "%" ? 100 : 500}
@@ -198,6 +201,7 @@ export function ImagePositionControl({
               />
               <input
                 type="number"
+                aria-label="Horizontal focal point value"
                 disabled={disabled}
                 min={xUnit === "%" ? 0 : -2000}
                 max={xUnit === "%" ? 100 : 2000}
@@ -219,6 +223,7 @@ export function ImagePositionControl({
                 </span>
               </div>
               <select
+                aria-label="Vertical focal point unit"
                 disabled={disabled}
                 value={yUnit}
                 onChange={(e) => {
@@ -235,6 +240,7 @@ export function ImagePositionControl({
             <div className="flex items-center gap-2">
               <input
                 type="range"
+                aria-label="Vertical focal point"
                 disabled={disabled}
                 min={yUnit === "%" ? 0 : -500}
                 max={yUnit === "%" ? 100 : 500}
@@ -247,6 +253,7 @@ export function ImagePositionControl({
               />
               <input
                 type="number"
+                aria-label="Vertical focal point value"
                 disabled={disabled}
                 min={yUnit === "%" ? 0 : -2000}
                 max={yUnit === "%" ? 100 : 2000}

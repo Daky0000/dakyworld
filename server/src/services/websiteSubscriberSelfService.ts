@@ -6,6 +6,7 @@ import { cancelWebsiteSubscription } from "./websiteCommerce.js";
 import { resolveEntitlement } from "./websiteEntitlement.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
 import { subscriptionManagementLink } from "../lib/paystack.js";
+import { cancelSiteDeletion, scheduleSiteDeletion } from "./websiteDeletion.js";
 
 /**
  * What a customer can do about their own subscription and their own data,
@@ -151,11 +152,12 @@ export function registerSubscriberSelfService(router: Router) {
   );
 
   /**
-   * Deletes a website and everything under it.
+   * Deletes a website — after a thirty-day hold (services/websiteDeletion.ts).
    *
-   * Typing the site's name is the confirmation, because this cannot be undone
-   * and a dialog with a button is not a decision. It refuses while a
-   * subscription is still live: somebody who is paying and clicks delete has
+   * Typing the site's name is the confirmation, because a dialog with a button
+   * is not a decision. The site goes offline at once and can be restored until
+   * the hold runs out. While a subscription is live, the last website on it
+   * cannot be deleted here: somebody paying who deletes their only website has
    * almost always meant cancel, and the two are one keystroke apart.
    */
   router.post(
@@ -174,17 +176,32 @@ export function registerSubscriberSelfService(router: Router) {
           where: { id: entitlement.purchaseId, status: { in: ["ACTIVE", "READY"] } },
           select: { id: true },
         });
-        if (live) {
+        const others = await prisma.site.count({
+          where: { id: { not: site.id }, deletionScheduledFor: null, members: { some: { userId: req.dbUser!.id } } },
+        });
+        if (live && others === 0) {
           throw new WebsiteError(
             409,
-            "Cancel the subscription first. Deleting a website while it is being paid for is almost always a cancellation that was clicked in the wrong place — cancel, and the website stays up until the paid period ends.",
+            "This is the only website on your subscription. Cancel the subscription first — the website stays up until the paid period ends — and then delete it if you still want to.",
           );
         }
       }
-      // Pages, versions, assets, members and audit events all cascade from the
-      // site row; see the relations in schema.prisma.
-      await prisma.site.delete({ where: { id: site.id } });
-      res.json({ ok: true, deleted: site.name });
+      const deletesOn = await scheduleSiteDeletion(site.id, { id: req.dbUser?.id, name: req.dbUser?.name });
+      res.json({
+        ok: true,
+        deletesOn,
+        message: `${site.name} is offline now and will be erased on ${deletesOn.toISOString().slice(0, 10)}. Until then you can restore it from your account page.`,
+      });
+    }),
+  );
+
+  /** Changing one's mind inside the hold puts the website back exactly as it was. */
+  router.post(
+    "/sites/:id/erase/cancel",
+    handler(async (req, res) => {
+      await assertWebsiteSiteAccess(req, req.params.id!, "manage");
+      await cancelSiteDeletion(req.params.id!, { id: req.dbUser?.id, name: req.dbUser?.name });
+      res.json({ ok: true, message: "Restored. The website is back online." });
     }),
   );
 }

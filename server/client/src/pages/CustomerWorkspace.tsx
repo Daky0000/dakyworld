@@ -122,7 +122,10 @@ export function CustomerWorkspace() {
             <ul className="mt-3 grid gap-1 text-sm text-muted sm:grid-cols-2">
               {plan.featureSummary.slice(0, 6).map((feature) => <li key={feature}>· {feature}</li>)}
             </ul>
-            <a href={`${editor}/website/balance`} className="mt-4 inline-block text-sm font-semibold text-blue hover:underline">Invoices, payments and upgrades</a>
+            <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2">
+              <a href={`${editor}/website/balance`} className="text-sm font-semibold text-blue hover:underline">Invoices, payments and upgrades</a>
+              <a href={`${editor}/website/account`} className="text-sm font-semibold text-blue hover:underline">Password, sign-in and your data</a>
+            </div>
           </section>
         )}
 

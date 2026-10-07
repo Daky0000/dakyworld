@@ -123,6 +123,27 @@ export function tierLabels(tier: WebsitePlanTier, currency: PlanCurrency = "GHS"
   };
 }
 
+/**
+ * Which plan feature a website API route needs, from its path alone.
+ *
+ * One table for every route, whichever file registers it. It used to live in a
+ * middleware that only saw the routes registered after it, so whether a new
+ * route was covered depended on which line of routes/website.ts its register
+ * call happened to land on. The gate now runs ahead of every route and asks
+ * this; `checks/websiteTierFeatures.ts` walks the real router and holds the
+ * matrix, so a new SEO, assistant, agent or source route cannot ship ungated.
+ *
+ * Features decided by what a request changes rather than where it goes — theme
+ * settings on a design save, pull-request publishing — stay in their handlers.
+ */
+export function websiteTierFeature(path: string): keyof TierFeatureFlags | null {
+  if (/\/(?:source|source-project)(?:\/|$)/.test(path)) return "sourceCodeEditor";
+  if (/\/agent(?:\/|$)/.test(path)) return "aiBuilderAgent";
+  if (/\/(?:assistant|suggest|ai)(?:\/|$)/.test(path)) return "aiAssistant";
+  if (/\/seo(?:\/|$)/.test(path)) return "seoInspector";
+  return null;
+}
+
 /** The tier above this one, or null at the top. What "upgrade" means, once. */
 export function nextTierUp(tier: WebsitePlanTier): WebsitePlanTier | null {
   return tier === "EDITOR" ? "CARE" : tier === "CARE" ? "MANAGED" : null;
@@ -138,12 +159,22 @@ export function nextTierUp(tier: WebsitePlanTier): WebsitePlanTier | null {
  */
 function upgradeSentence(
   tier: WebsitePlanTier,
+  currency: PlanCurrency,
   describe: (plan: TierPlanDefinition) => string,
-  currency: PlanCurrency = "GHS",
 ): string {
   const next = nextTierUp(tier);
   if (!next) return "";
   return ` Upgrade to ${tierLabels(next, currency).upgrade} for ${describe(WEBSITE_TIER_PLANS[next])}.`;
+}
+
+/**
+ * "Pro (GHS 300/mo)" — the plan a limit message names, at the price this
+ * customer pays now and in their own currency. The messages used to quote the
+ * cedi promotional price to everybody, so a customer paying in dollars was told
+ * their plan cost GHS 300, and one past the promotion was quoted the old price.
+ */
+function yourPlan(status: { plan: TierPlanDefinition; pricing: { currentDisplay: string } }): string {
+  return `${status.plan.name} (${status.pricing.currentDisplay}/mo)`;
 }
 
 export const MB = 1024 * 1024;
@@ -511,7 +542,7 @@ export async function computeUserStorageAndUsage(req: WebsiteActor, siteId?: str
     userName: identity.name,
     planCode: plan.tier,
     tierName: plan.name,
-    tierBadge: tierLabels(plan.tier).badge,
+    tierBadge: tierLabels(plan.tier, identity.currency === "USD" ? "USD" : "GHS").badge,
     tagline: plan.tagline,
     plan,
     pricing: {
@@ -566,14 +597,14 @@ export async function assertMediaStorageAllowance(req: WebsiteActor, incomingByt
   if (incomingBytes > plan.maxUploadBytes) {
     throw new WebsiteError(
       413,
-      `This file (${formatBytes(incomingBytes)}) exceeds the maximum single-file upload size of ${plan.maxUploadLabel} on your ${plan.name} (${tierLabels(plan.tier).promoDisplay}/mo) plan.${upgradeSentence(plan.tier, (next) => `uploads up to ${next.maxUploadLabel}`) || " This is the largest plan."}`,
+      `This file (${formatBytes(incomingBytes)}) exceeds the maximum single-file upload size of ${plan.maxUploadLabel} on your ${yourPlan(status)} plan.${upgradeSentence(plan.tier, status.pricing.currency, (next) => `uploads up to ${next.maxUploadLabel}`) || " This is the largest plan."}`,
     );
   }
 
   if (storage.usedBytes + incomingBytes > storage.quotaBytes) {
     throw new WebsiteError(
       403,
-      `Media Library storage quota reached on your ${plan.name} (${tierLabels(plan.tier).promoDisplay}/mo) plan (${storage.usedFormatted} / ${storage.quotaFormatted} used). Delete unused images.${upgradeSentence(plan.tier, (next) => `${next.storageQuotaLabel} of storage`)}`,
+      `Media Library storage quota reached on your ${yourPlan(status)} plan (${storage.usedFormatted} / ${storage.quotaFormatted} used). Delete unused images.${upgradeSentence(plan.tier, status.pricing.currency, (next) => `${next.storageQuotaLabel} of storage`)}`,
     );
   }
 }
@@ -596,7 +627,7 @@ export async function assertImportAllowance(req: WebsiteActor, siteId?: string):
   if (usage.importsUsed >= plan.importsLimit) {
     throw new WebsiteError(
       403,
-      `Monthly HTML import limit reached (${usage.importsUsed}/${plan.importsLimit}) on your ${plan.name} (${tierLabels(plan.tier).promoDisplay}/mo) plan.${upgradeSentence(plan.tier, (next) => next.importsLimitLabel)}`,
+      `Monthly HTML import limit reached (${usage.importsUsed}/${plan.importsLimit}) on your ${yourPlan(status)} plan.${upgradeSentence(plan.tier, status.pricing.currency, (next) => next.importsLimitLabel)}`,
     );
   }
 }
@@ -626,7 +657,7 @@ export async function assertEditAllowance(req: WebsiteActor, siteId?: string): P
   if (usage.editsUsed >= plan.editsLimit) {
     throw new WebsiteError(
       403,
-      `Monthly page edit limit reached (${usage.editsUsed}/${plan.editsLimit}) on your ${plan.name} (${tierLabels(plan.tier).promoDisplay}/mo) plan.${upgradeSentence(plan.tier, (next) => next.editsLimitLabel)}`,
+      `Monthly page edit limit reached (${usage.editsUsed}/${plan.editsLimit}) on your ${yourPlan(status)} plan.${upgradeSentence(plan.tier, status.pricing.currency, (next) => next.editsLimitLabel)}`,
     );
   }
 }
@@ -649,29 +680,29 @@ export async function assertTierFeatureAccess(
   const { plan, features, usage } = status;
 
   const featureLabels: Record<keyof TierFeatureFlags, { name: string; minPlan: string }> = {
-    visualEditor: { name: "Visual Editor", minPlan: tierLabels("EDITOR").upgrade },
-    mediaLibrary: { name: "Media Library", minPlan: tierLabels("EDITOR").upgrade },
-    themeSettings: { name: "Global Theme Settings", minPlan: tierLabels("CARE").upgrade },
-    seoInspector: { name: "SEO Inspector & Auditor", minPlan: tierLabels("CARE").upgrade },
-    aiAssistant: { name: "AI Copy & Layout Assistant", minPlan: tierLabels("CARE").upgrade },
-    aiBuilderAgent: { name: "Autonomous AI Builder Agent", minPlan: tierLabels("MANAGED").upgrade },
-    sourceCodeEditor: { name: "Raw Source Code Editor", minPlan: tierLabels("MANAGED").upgrade },
-    pullRequestPublish: { name: "GitHub Pull Request Workflow", minPlan: tierLabels("MANAGED").upgrade },
-    brandPresets: { name: "Brand Style Presets", minPlan: tierLabels("CARE").upgrade },
+    visualEditor: { name: "Visual Editor", minPlan: tierLabels("EDITOR", status.pricing.currency).upgrade },
+    mediaLibrary: { name: "Media Library", minPlan: tierLabels("EDITOR", status.pricing.currency).upgrade },
+    themeSettings: { name: "Global Theme Settings", minPlan: tierLabels("CARE", status.pricing.currency).upgrade },
+    seoInspector: { name: "SEO Inspector & Auditor", minPlan: tierLabels("CARE", status.pricing.currency).upgrade },
+    aiAssistant: { name: "AI Copy & Layout Assistant", minPlan: tierLabels("CARE", status.pricing.currency).upgrade },
+    aiBuilderAgent: { name: "Autonomous AI Builder Agent", minPlan: tierLabels("MANAGED", status.pricing.currency).upgrade },
+    sourceCodeEditor: { name: "Raw Source Code Editor", minPlan: tierLabels("MANAGED", status.pricing.currency).upgrade },
+    pullRequestPublish: { name: "GitHub Pull Request Workflow", minPlan: tierLabels("MANAGED", status.pricing.currency).upgrade },
+    brandPresets: { name: "Brand Style Presets", minPlan: tierLabels("CARE", status.pricing.currency).upgrade },
   };
 
   if (!features[feature]) {
     const info = featureLabels[feature];
     throw new WebsiteError(
       403,
-      `${info.name} is not available on the ${plan.name} (${tierLabels(plan.tier).promoDisplay}/mo) plan. Upgrade to ${info.minPlan} to unlock this feature.`,
+      `${info.name} is not available on the ${yourPlan(status)} plan. Upgrade to ${info.minPlan} to unlock this feature.`,
     );
   }
 
   if (!options.skipUsageLimit && feature === "aiAssistant" && usage.aiPromptsUsed >= plan.aiPromptsLimit) {
     throw new WebsiteError(
       403,
-      `Monthly AI Assistant prompt limit reached (${usage.aiPromptsUsed}/${plan.aiPromptsLimit}) on your ${plan.name} (${tierLabels(plan.tier).promoDisplay}/mo) plan.${upgradeSentence(plan.tier, (next) => next.aiPromptsLimitLabel)}`,
+      `Monthly AI Assistant prompt limit reached (${usage.aiPromptsUsed}/${plan.aiPromptsLimit}) on your ${yourPlan(status)} plan.${upgradeSentence(plan.tier, status.pricing.currency, (next) => next.aiPromptsLimitLabel)}`,
     );
   }
 }

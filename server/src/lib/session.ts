@@ -66,7 +66,7 @@ export async function resolveSession(token: string) {
   if (!session) return null;
   if (session.user.hourlyRate !== null) session.user.hourlyRate = new Prisma.Decimal(String(session.user.hourlyRate));
   // PostgreSQL JSON timestamps omit the zone for timestamp-without-time-zone columns.
-  for (const key of ["createdAt", "updatedAt", "emailVerifiedAt", "totpConfirmedAt"] as const) {
+  for (const key of ["createdAt", "updatedAt", "emailVerifiedAt", "totpConfirmedAt", "deletionScheduledFor"] as const) {
     const value = session.user[key] as unknown;
     if (typeof value === "string") session.user[key] = new Date(/[Zz]|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`);
   }
@@ -106,6 +106,28 @@ export async function revokeSession(token: string) {
 /** Used after a password change, a role change or a 2FA reset, so other devices don't keep a live session. */
 export async function revokeAllSessionsFor(userId: string) {
   await prisma.session.deleteMany({ where: { userId } });
+}
+
+/**
+ * Where an account is signed in: every live session, most recently used first,
+ * with the one making this request marked. Nothing about the device is stored,
+ * so this is when each began and when it was last used — enough to notice a
+ * session you do not recognise, and to end it.
+ */
+export async function listSessionsFor(userId: string, currentToken?: string) {
+  const current = currentToken ? digest(currentToken) : null;
+  const rows = await prisma.session.findMany({
+    where: { userId, expiresAt: { gt: new Date() } },
+    orderBy: { lastRefreshedAt: "desc" },
+    select: { id: true, tokenHash: true, createdAt: true, lastRefreshedAt: true, expiresAt: true },
+  });
+  return rows.map(({ tokenHash, lastRefreshedAt, ...row }) => ({ ...row, lastActiveAt: lastRefreshedAt, current: tokenHash === current }));
+}
+
+/** Signs every other device out, keeping the session this request came from. */
+export async function revokeOtherSessions(userId: string, currentToken: string): Promise<number> {
+  const { count } = await prisma.session.deleteMany({ where: { userId, NOT: { tokenHash: digest(currentToken) } } });
+  return count;
 }
 
 /** Housekeeping for rows nobody will ever present again. Called from the scheduler. */

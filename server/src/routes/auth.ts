@@ -8,7 +8,9 @@ import { decryptSecret, encryptSecret } from "../lib/secrets.js";
 import {
   clearSessionCookie,
   createSession,
+  listSessionsFor,
   revokeAllSessionsFor,
+  revokeOtherSessions,
   revokeSession,
   setSessionCookie,
 } from "../lib/session.js";
@@ -23,6 +25,8 @@ import {
   sendEmailVerification,
   verifyEmailFromToken,
 } from "../services/accountAccess.js";
+import { requestAccountDeletion } from "../services/websiteDeletion.js";
+import { WebsiteError } from "../services/website/site.js";
 
 export const authRouter = Router();
 // Credential-management routes explicitly reload secrets; ordinary session reads do not.
@@ -350,6 +354,60 @@ authRouter.post("/2fa/recovery-codes", requireAuth, async (req, res, next) => {
     await prisma.user.update({ where: { id: user.id }, data: { totpRecoveryHashes: hashes } });
     res.json({ recoveryCodes: codes });
   } catch (err) {
+    next(err);
+  }
+});
+
+/* ------------------------------------------------ where you are signed in -- */
+
+authRouter.get("/sessions", requireAuth, async (req, res, next) => {
+  try {
+    res.set("Cache-Control", "no-store").json({ sessions: await listSessionsFor(req.dbUser!.id, req.sessionToken) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** "Sign out everywhere else" — the answer to a session you do not recognise. */
+authRouter.post("/sessions/revoke-others", requireAuth, async (req, res, next) => {
+  try {
+    if (!req.sessionToken) return res.status(409).json({ error: "This request did not come from a signed-in browser." });
+    res.json({ revoked: await revokeOtherSessions(req.dbUser!.id, req.sessionToken) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ------------------------------------------------------ closing an account -- */
+
+const accountDeletionLimit = rateLimit({
+  windowMs: 15 * 60_000,
+  max: 5,
+  message: "Too many attempts. Try again in {minutes}.",
+  key: (req) => req.dbUser?.id ?? req.ip ?? "anonymous",
+});
+
+/**
+ * A customer closing their own account (services/websiteDeletion.ts). Needs the
+ * password, so a session left open on a shared computer cannot do it, and the
+ * word DELETE, so it is not one stray click. Signs them out on the way.
+ */
+authRouter.post("/account/delete", requireAuth, accountDeletionLimit, async (req, res, next) => {
+  try {
+    const parsed = z.object({ password: z.string().min(1).max(200), confirm: z.string() }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Your password is required." });
+    if (parsed.data.confirm.trim() !== "DELETE") return res.status(400).json({ error: "Type DELETE in capitals to confirm. Nothing has been deleted." });
+    const user = req.dbUser!;
+    const result = await requestAccountDeletion({ ...user, external: Boolean(user.accessRole?.external) }, parsed.data.password);
+    clearSessionCookie(res);
+    res.json({
+      ok: true,
+      deletesOn: result.deletesOn,
+      websites: result.websites,
+      message: `Your account is closed and you have been signed out. Your details will be erased on ${result.deletesOn.toISOString().slice(0, 10)}; write to info@dakyx.com before then if you change your mind.`,
+    });
+  } catch (err) {
+    if (err instanceof WebsiteError) return res.status(err.status).json({ error: err.message });
     next(err);
   }
 });
