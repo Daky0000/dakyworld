@@ -14,11 +14,15 @@ import { useAuth } from "./auth";
  * happen is a tour somebody closed reappearing.
  */
 
+/** The answers the onboarding offers; the server refuses anything else. */
+export type HeardFrom = "search" | "ai" | "friend" | "whatsapp" | "instagram" | "facebook" | "youtube" | "linkedin" | "tiktok" | "event" | "other";
+export type WebsitePurpose = "business" | "store" | "portfolio" | "organisation";
+
 export type TourStatus = "done" | "dismissed" | "started";
 export type TourRecord = { status: TourStatus; step?: number; at: string };
 export type UiState = {
   tours?: Record<string, TourRecord>;
-  welcome?: { status: "done" | "skipped"; at: string };
+  welcome?: { status: "done" | "skipped"; at: string; heardFrom?: HeardFrom; purpose?: WebsitePurpose };
   checklist?: { hidden: boolean };
 };
 

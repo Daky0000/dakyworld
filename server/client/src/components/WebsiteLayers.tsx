@@ -237,13 +237,13 @@ export function WebsiteLayers({
   const visibleSlice = rows.slice(startIndex, endIndex);
   const offsetY = startIndex * ROW_HEIGHT;
 
-  // Floating & Draggable Structure Window State (Elementor style — floats by default)
+  // Docked in the editor's Layers drawer by default; it can still be popped
+  // out into a window you drag around, and that choice is remembered.
   const [isFloating, setIsFloating] = useState<boolean>(() => {
     try {
-      const saved = localStorage.getItem("dw-structure-floating");
-      return saved ? saved !== "docked" : true;
+      return localStorage.getItem("dw-structure-floating") === "floating";
     } catch {
-      return true;
+      return false;
     }
   });
 

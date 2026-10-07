@@ -427,6 +427,33 @@ reach the page title, a picture's description, or a heading three screens down.
   window (`z-[9980]`), which opens in the same top-right corner — under it,
   nothing in More could be clicked, which is what `builderRedesign` caught.
 
+### The editor shell and the welcome flow (7 Oct 2026)
+
+- **The editor is four columns now**: a top bar (page switcher, save status,
+  a mode *menu*, devices, zoom, search, undo/redo, Save, Publish with an arrow
+  menu for save/download/versions/discard, and an account menu for plan,
+  designer controls and light/dark), a **tool rail** that opens one drawer at a
+  time (Layers, Theme, Media, SEO, Grow, Help; Add, Notes and History open
+  their dialogs), the page, and the **inspector on the right**, which exists
+  only while something is selected. The rail carries `data-tour="more"`.
+- **SEO, Grow and the Theme drawer's font switcher are one component** —
+  `WebsitePageSeoInspector` with `section="seo" | "grow" | "theme"`. Splitting
+  it into three would be three copies of the same queries that drift.
+- The first-edit checklist on the canvas is derived from state (selected,
+  changed, looked at a phone, published); only "put it away" is stored.
+- **Layers docks by default** inside its drawer; popping it out is still
+  remembered (`dw-structure-floating`).
+- **`/website/welcome` is `WebsiteWelcomeFlow`**: name, purpose (chooses the
+  starter template), address-or-not, how to start, how they heard, then a build
+  log whose every line is a request that actually resolved. GitHub is *not* a
+  way to create a customer's site — the server refuses a repo on create for
+  external accounts — so that route creates the hosted site and sends them to
+  Settings to install the app. The team route is the paid setup assistance and
+  shows its real price. Answers go on `User.uiState.welcome` (`heardFrom`,
+  `purpose`, enums only). With no address, `POST /website/sites` now defaults
+  `publicUrl` to `<slug>.<WEBSITE_HOST_DOMAIN || sites.dakyx.com>` instead of
+  the client inventing `name.com`. `checks/browser/welcomeFlow.mjs` walks it.
+
 Built from `reusable_website_editor_system_plan.pdf` (23 Aug 2026), whose block
 model was deliberately not followed for this site; the plan lists converting an
 existing hard-coded website as a non-goal for version one, and this is why.

@@ -30,6 +30,7 @@ import { prepareImportedHtml } from "./htmlCompiler.js";
 import { analyzeImportPackage, commitPackageToSite } from "./websitePackageImport.js";
 import { generatePagePrepublishReport, generateSitePrepublishReport } from "./websitePrepublishReport.js";
 import { updateSiteSettings } from "./websiteSiteSettings.js";
+import { HOST_DOMAIN } from "./websiteHosting.js";
 
 const publicUrl = z.string().url().max(2000).refine(value => {
   const url = new URL(value);
@@ -256,13 +257,23 @@ export function registerWebsiteManagement(router: Router, access: Access) {
 
   router.post("/sites", handler(async (req, res) => {
     const input = siteInput.extend({
+      // Optional here only: somebody starting their first website often has no
+      // address yet, and inventing one ("acme.com") would point every "view
+      // live" link at a stranger's domain. See `fallbackPublicUrl` below.
+      publicUrl: publicUrl.optional(),
       html: z.string().min(1).max(15_000_000).optional(),
       templateKey: z.string().max(60).optional(),
       packageData: z.string().min(1).max(35_000_000).optional(),
       packageFilename: z.string().max(200).optional(),
     }).parse(req.body);
     if (!!input.repoOwner !== !!input.repoName) throw new WebsiteError(400, "Enter both the repository owner and name.");
-    let { html, templateKey, packageData, packageFilename, ...data } = input;
+    if (!input.publicUrl && input.repoOwner) throw new WebsiteError(400, "Enter the address the repository's website is published at.");
+    const slug = `${input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0,60) || "site"}-${randomUUID().slice(0,8)}`;
+    // A hosted site with no address of its own is given the one it will be
+    // served at: <slug>.<WEBSITE_HOST_DOMAIN>, the same rule hostedUrlFor uses.
+    const fallbackPublicUrl = `https://${slug}.${HOST_DOMAIN || "sites.dakyx.com"}`;
+    let { html, templateKey, packageData, packageFilename, publicUrl: givenPublicUrl, ...rest } = input;
+    const data = { ...rest, publicUrl: givenPublicUrl ?? fallbackPublicUrl };
     if (html) {
       html = prepareImportedHtml(html);
     }
@@ -307,7 +318,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
         ...data,
         ...(owner ? { clientId: owner.clientId, members: { create: { userId: owner.userId, role: "MANAGER" as const } } } : {}),
         ...(extractedColours.length ? { settings: { colours: extractedColours } } : {}),
-        slug: `${data.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0,60) || "site"}-${randomUUID().slice(0,8)}`,
+        slug,
         ...(finalHtml ? { pages: { create: { title: data.name, path: "/", filePath: "index.html", sourceHtml: finalHtml } } } : {}),
         auditEvents: { create: { kind: "SITE_CONNECTED", summary: `Connected ${data.name}${packageAnalysis ? " with an imported package" : html ? " with an imported page" : finalHtml ? " with a starter template" : ""}`, ...actor(req), detail: { importedPage: Boolean(html), importedPackage: Boolean(packageAnalysis), starterTemplate: templateKey || (!html && !packageAnalysis && !data.repoOwner ? "business" : null) } } },
       }, include: { pages: { select: { id: true } } } });

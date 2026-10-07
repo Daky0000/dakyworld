@@ -2,7 +2,7 @@ import { DemoAnalyticsModal } from "./components/DemoAnalyticsModal";
 import type { Demo } from "./lib/types";
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, MemoryRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider } from "./lib/auth";
 import { WebsiteEditor } from "./pages/WebsiteEditor";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -13,6 +13,7 @@ import { ElementInspector } from "./components/ElementInspector";
 import type { BrandPreset } from "./lib/websiteBrandPresets";
 import "./index.css";
 import { InteractionHarness } from "./interaction-harness";
+import { WebsiteWelcomeFlow } from "./components/WebsiteWelcomeFlow";
 
 function Harness() {
   const [style, setStyle] = useState("");
@@ -29,4 +30,10 @@ function Harness() {
     <WebsitePresetRollout siteId="demo" presets={presets} disabled={false} />
   </main>;
 }
-createRoot(document.getElementById("root")!).render(<React.StrictMode><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{new URLSearchParams(location.search).has("analytics") ? <DemoAnalyticsModal demo={{ id: "geo-demo", title: "Geo fixture", businessName: "Fixture" } as Demo} open onClose={() => {}} /> : new URLSearchParams(location.search).has("editor") ? <MemoryRouter initialEntries={["/website/pages/one"]}><AuthProvider><Routes><Route path="/website/pages/:pageId" element={<div style={{ height: "100dvh" }}><WebsiteEditor /></div>} /></Routes></AuthProvider></MemoryRouter> : <BrowserRouter>{new URLSearchParams(location.search).has("interaction") ? <InteractionHarness /> : <Harness />}</BrowserRouter>}</QueryClientProvider></React.StrictMode>);
+/** Where the welcome flow sent somebody, for checks/browser/welcomeFlow.mjs. */
+function Landed() {
+  const location = useLocation();
+  return <p data-testid="landed">{location.pathname + location.search}</p>;
+}
+
+createRoot(document.getElementById("root")!).render(<React.StrictMode><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{new URLSearchParams(location.search).has("analytics") ? <DemoAnalyticsModal demo={{ id: "geo-demo", title: "Geo fixture", businessName: "Fixture" } as Demo} open onClose={() => {}} /> : new URLSearchParams(location.search).has("welcome") ? <MemoryRouter initialEntries={["/website/welcome"]}><AuthProvider><Routes><Route path="/website/welcome" element={<WebsiteWelcomeFlow />} /><Route path="*" element={<Landed />} /></Routes></AuthProvider></MemoryRouter> : new URLSearchParams(location.search).has("editor") ? <MemoryRouter initialEntries={["/website/pages/one"]}><AuthProvider><Routes><Route path="/website/pages/:pageId" element={<div style={{ height: "100dvh" }}><WebsiteEditor /></div>} /></Routes></AuthProvider></MemoryRouter> : <BrowserRouter>{new URLSearchParams(location.search).has("interaction") ? <InteractionHarness /> : <Harness />}</BrowserRouter>}</QueryClientProvider></React.StrictMode>);

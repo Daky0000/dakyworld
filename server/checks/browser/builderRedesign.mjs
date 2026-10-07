@@ -36,7 +36,7 @@ try {
   await page.getByRole('treeitem',{name:'Welcome home'}).click();
   const heading=page.getByRole('textbox',{name:'Main heading',exact:true});await heading.waitFor();
   console.log(`Editor ready in ${Date.now()-started}ms (local mocked API; not a production benchmark).`);
-  assert.equal(await page.locator('.editor-sidebar').evaluate(e=>getComputedStyle(e).width),'340px');
+  assert.equal(await page.locator('.editor-sidebar').evaluate(e=>getComputedStyle(e).width),'316px');
   await page.getByRole('tab',{name:'Style',exact:true}).click();
   await page.getByRole('button',{name:'Typography',exact:true}).waitFor();
   assert.equal(await heading.isVisible(),false);
@@ -56,10 +56,9 @@ try {
   await page.keyboard.press('Control+Enter');await page.getByRole('heading',{name:'Review your changes'}).waitFor();
   assert.equal(writes.some(x=>x.endsWith('/publish')),false,'Shortcut opens review, never publishes');
   await page.getByRole('button',{name:'Keep editing'}).click();
-  await page.getByText('More',{exact:true}).click();
-  page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('button',{name:'Discard',exact:true}).click();
+  await page.getByRole('button',{name:'More publish options',exact:true}).click();
+  page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('menuitem',{name:'Discard',exact:true}).click();
   assert.equal(document.draft.values['hero.title'].value,'Changed heading');
-  await page.keyboard.press('Escape');
   await page.getByRole('button',{name:'Assistant',exact:true}).click();
   await page.getByLabel('What would you like to change?').fill('Make this heading clearer');
   const before=writes.length;await page.getByRole('button',{name:'Suggest changes',exact:true}).click();
@@ -75,16 +74,15 @@ try {
   await page.getByRole('button',{name:'Layers',exact:true}).click();
   await page.getByRole('tab',{name:'Style',exact:true}).click();
   await page.screenshot({path:'checks/artifacts/editor-redesign-dark.png',fullPage:true});
-  await page.getByText('More',{exact:true}).click();await page.getByRole('button',{name:'Use light editor'}).click();await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'Account and editor settings',exact:true}).click();await page.getByRole('menuitem',{name:'Use light editor'}).click();await page.keyboard.press('Escape');
   await page.screenshot({path:'checks/artifacts/editor-redesign-light.png',fullPage:true});
   await page.setViewportSize({width:390,height:844});
   await page.reload();
   // A phone opens in List mode — the page's words as a form a thumb can edit —
   // with Visual one tap away.
-  await page.getByRole('button',{name:'List',exact:true}).waitFor();
-  assert.equal(await page.getByRole('button',{name:'List',exact:true}).getAttribute('aria-pressed'),'true','Phones open in List mode');
+  await page.getByRole('button',{name:'Editor mode: List',exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-  await page.getByRole('button',{name:'Visual',exact:true}).click();
+  await page.getByRole('button',{name:/^Editor mode/}).click();await page.getByRole('menuitemradio',{name:'Visual',exact:true}).click();
   await page.getByTitle('Page',{exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   assert.equal(await page.getByRole('complementary',{name:'Element inspector'}).count(),0, 'Phone view hides inspector and uses the canvas');
@@ -92,8 +90,9 @@ try {
   assert.equal(await page.getByRole('button',{name:'Phone',exact:true}).isVisible(), false);
   assert.ok(await page.getByTitle('Page',{exact:true}).evaluate(frame => frame.getBoundingClientRect().width <= 400), 'The page is drawn at phone width');
   await page.screenshot({path:'checks/artifacts/editor-redesign-phone.png',fullPage:true});
-  await page.getByRole('button',{name:'Inspector',exact:true}).click();
-  assert.equal(await page.getByRole('complementary',{name:'Element inspector'}).count(),1, 'Inspector stays available as a phone overlay');
+  await page.frameLocator('iframe[title="Page"]').locator('h1').evaluate(()=>parent.postMessage({source:'dakyworld-preview',type:'select',id:'hero.title'},location.origin));
+  await page.getByRole('complementary',{name:'Element inspector'}).waitFor();
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'The inspector opens as a sheet on a phone, inside the screen');
   assert.deepEqual(errors,[]);
   console.log('Redesign: tabs, themes, mobile, save/undo/redo, publish review shortcut, discard cancellation, AI proposal/preview/approval passed.');
 } finally {await browser.close();}

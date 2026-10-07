@@ -8,7 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError, apiUrl } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import type { DraftConflict, DraftSaveResult, FieldEdit, PublishResult, SiteFieldRow, SiteSectionRow, SitePageDetail } from "../lib/types";
+import type { DraftConflict, DraftSaveResult, FieldEdit, PublishResult, SiteFieldRow, SiteSectionRow, SitePageDetail, SitePageRow } from "../lib/types";
 import { Badge, Button, RelativeTime } from "../components/ui";
 import { TourHost } from "../components/TourHost";
 import { HelpDialog } from "../components/HelpDialog";
@@ -40,6 +40,10 @@ import { ConflictDialog } from "../components/WebsiteConflictDialog";
 
 import {
   IconArrowLeft,
+  IconExternalLink,
+  IconMessageCircle,
+  IconRocket,
+  IconUsers,
   IconBot,
   IconBookOpen,
   IconBrush,
@@ -145,6 +149,26 @@ const MODES: { key: Mode; label: string }[] = [
   { key: "edit", label: "List" },
   { key: "preview", label: "Preview" },
 ];
+
+/** The drawers the tool rail opens. One at a time: the page is what matters. */
+type EditorPanel = "layers" | "theme" | "media" | "seo" | "grow" | "help";
+
+const RAIL: { key: Exclude<EditorPanel, "help">; label: string; title: string; icon: typeof IconLayers }[] = [
+  { key: "layers", label: "Layers", title: "Everything on this page, in order", icon: IconLayers },
+  { key: "theme", label: "Theme", title: "Colours and fonts for the whole page", icon: IconPalette },
+  { key: "media", label: "Media", title: "Pictures and files", icon: IconImage },
+  { key: "seo", label: "SEO", title: "How this page shows up in Google and when shared", icon: IconTarget },
+  { key: "grow", label: "Grow", title: "Speed, uptime and ways for visitors to reach you", icon: IconRocket },
+];
+
+const RAIL_TITLES: Record<EditorPanel, { title: string; sub: string }> = {
+  layers: { title: "Layers", sub: "Everything on this page, in order. Click one to select it." },
+  theme: { title: "Theme", sub: "Colours and fonts that apply across the whole page" },
+  media: { title: "Media", sub: "Pictures on this page and in your library" },
+  seo: { title: "SEO", sub: "How this page appears in Google and when shared" },
+  grow: { title: "Grow", sub: "Speed, uptime, and ways for visitors to reach you" },
+  help: { title: "Help", sub: "Tours, the guide, and a person to ask" },
+};
 
 const INPUT =
   "w-full rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-blue focus:ring-2 focus:ring-blue/20";
@@ -1328,7 +1352,37 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
   structuralHistory.current = step => { if (step < 0 ? page.data?.structure?.canUndo : page.data?.structure?.canRedo) void runStructure(step < 0 ? "undo" : "redo"); };
 
-  const { status: tierStatus, switchTestUser } = useWebsiteTierStatus(page.data?.site?.id);
+  const { status: tierStatus } = useWebsiteTierStatus(page.data?.site?.id);
+
+  /** Which rail drawer is open, and which bar menu. */
+  const [panel, setPanel] = useState<EditorPanel | null>(null);
+  const [menu, setMenu] = useState<null | "mode" | "page" | "publish" | "account">(null);
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setMenu(null); };
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [menu]);
+  const sitePages = useQuery({
+    queryKey: ["website", "editor-pages", page.data?.site.id],
+    enabled: menu === "page" && Boolean(page.data?.site.id),
+    queryFn: ({ signal }) => api.get<{ pages: SitePageRow[] }>(`/website/sites/${page.data!.site.id}/pages?limit=100`, signal),
+  });
+  /** What the first-edit checklist reads. Remembered for this visit only, except putting it away. */
+  const [guideHidden, setGuideHidden] = useState(false);
+  useEffect(() => {
+    if (!user?.id) return;
+    try { setGuideHidden(localStorage.getItem(`website-editor-guide:${user.id}`) === "hidden"); } catch { /* Optional preference. */ }
+  }, [user?.id]);
+  const [everPicked, setEverPicked] = useState(false);
+  useEffect(() => { if (pickedId) setEverPicked(true); }, [pickedId]);
+  const [phoneChecked, setPhoneChecked] = useState(false);
+  useEffect(() => { if (device === "mobile" && mode !== "edit") setPhoneChecked(true); }, [device, mode]);
 
   // What a guided tour may be waiting for (lib/tours.ts). Announced from
   // state, so every way of doing the thing counts — clicking the page, the
@@ -1933,12 +1987,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     </div>
   );
 
-  // One Publish button, drawn in two places: beside the page title on a phone,
-  // at the end of the bar everywhere else.
+  // The one Publish button. Its arrow beside it holds the rest of what
+  // happens to the page as a whole: save, download, versions, discard.
   const publishButton = canPublish ? (
-    <Button
-      variant="accent"
-      size="sm"
+    <button
+      type="button"
+      className="dx-btn dx-go"
       onClick={async () => {
         try {
           if (dirty.current) await save.mutateAsync(latestEdits.current);
@@ -1981,11 +2035,241 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 : "Publish"}
         </span>
       </span>
-    </Button>
+    </button>
   ) : null;
 
+  /** Put a chosen file where the selection needs it — a picture, an icon, or a background. */
+  const applyAsset = (asset: { url: string; alt?: string; preview?: string }, targetMode: "image" | "background") => {
+    if (!picked) return;
+    if (asset.preview) selectedMedia.current.set(asset.url, { url: asset.url, preview: asset.preview });
+    const previewBackground = `url('${resolveImagePreview(asset.url).replace(/['"\\]/g, "")}')`;
+    if (targetMode === "background") {
+      const map = parseStyle(pickedStyle ?? "");
+      map["background-image"] = `url('${asset.url.replace(/['"\\]/g, "")}')`;
+      changePickedStyle(writeStyle(map), true);
+      // Also sync any child background layer or cover <img> inside the container in the live iframe
+      try {
+        const doc = frame.current?.contentDocument;
+        const el = doc?.querySelector<HTMLElement>(`[data-dw-field="${CSS.escape(picked.id)}"]`);
+        if (el && doc?.defaultView) {
+          el.style.backgroundImage = previewBackground;
+          if (map["background-size"]) el.style.backgroundSize = map["background-size"];
+          if (map["background-position"]) el.style.backgroundPosition = map["background-position"];
+          el.querySelectorAll<HTMLElement>("*").forEach((desc) => {
+            const bg = doc.defaultView!.getComputedStyle(desc).backgroundImage;
+            if (bg && bg !== "none" && /url\(/i.test(bg)) {
+              desc.style.backgroundImage = previewBackground;
+            }
+          });
+        }
+      } catch {}
+    } else if (picked.kind === "icon") {
+      change(picked.id, { ...edits[picked.id], icon: { src: asset.url }, value: asset.url }, { commit: true });
+    } else {
+      const previous = edits[picked.id] ?? {};
+      const next: FieldEdit = { ...previous, value: asset.url, alt: asset.alt || previous.alt || picked.alt };
+      // An unsized <img> otherwise adopts the new file's natural size.
+      // Keep the old box and its crop when replacing the source.
+      const image = frame.current?.contentDocument?.querySelector(`[data-dw-field="${CSS.escape(picked.id)}"] img, img[data-dw-field="${CSS.escape(picked.id)}"]`) as HTMLImageElement | null;
+      if (picked.kind === "image" && device === "desktop" && image && !image.hasAttribute("width") && !image.hasAttribute("height") && !image.style.width && !image.style.height) {
+        const sizing = parseStyle(pickedStyle ?? "");
+        if (!sizing.width && !sizing.height) {
+          const bounds = image.getBoundingClientRect();
+          if (bounds.width > 0 && bounds.height > 0) {
+            sizing.width = `${Math.round(bounds.width)}px`;
+            sizing.height = `${Math.round(bounds.height)}px`;
+            sizing["max-width"] = sizing["max-width"] ?? "100%";
+            sizing["object-fit"] = sizing["object-fit"] ?? computed["object-fit"] ?? "fill";
+            next.style = writeStyle(sizing);
+          }
+        }
+      }
+      change(picked.id, next, { commit: true });
+    }
+  };
+
+  /** Versions are read against the saved draft, so the draft is saved first. */
+  const openVersions = async () => {
+    try {
+      if (dirty.current) await save.mutateAsync(latestEdits.current);
+      if (!dirty.current) setShowVersions(true);
+    } catch {
+      /* Saving reports the failure and preserves local edits. */
+    }
+  };
+
+  const toggleEditorTheme = () => {
+    const next = editorTheme === "dark" ? "light" : "dark";
+    setEditorTheme(next);
+    try { localStorage.setItem("website-editor-theme", next); } catch { /* Optional preference. */ }
+  };
+
+  /** Opening the panel that is already open closes it — the rail is a set of switches. */
+  const openPanel = (next: EditorPanel) => {
+    setPanel((current) => (current === next ? null : next));
+    setMenu(null);
+    // A narrow window cannot hold the drawer and the inspector at once.
+    if (typeof window !== "undefined" && window.innerWidth <= 1080) pick(null);
+  };
+
+  const lockedNotice = (feature: string, status: NonNullable<typeof tierStatus>) => (
+    <div className="dx-card warn">
+      <h3><IconLock size={13} />Not on the {status.tierName} plan</h3>
+      <p className="dx-hint">
+        {feature} {feature.endsWith("s") ? "are" : "is"} included from the <b>Pro</b> plan up{status.pricing?.priceDisplay ? ` — you are on ${status.pricing.priceDisplay}/mo` : ""}.
+      </p>
+      <Link to="/website/balance" className="dx-btn dx-pri" style={{ alignSelf: "flex-start" }}>See plans</Link>
+    </div>
+  );
+
+  const seoPanel = (section: "seo" | "grow" | "theme") => (
+    <WebsitePageSeoInspector
+      section={section}
+      siteId={site.id}
+      pageId={pageId}
+      pageTitle={page.data!.page.title}
+      pagePath={page.data!.page.path}
+      readOnly={readOnly}
+      imageFields={allFields
+        .filter((f) => f.kind === "image")
+        .map((f) => ({
+          id: f.id,
+          label: f.label,
+          src: edits[f.id]?.value ?? f.value ?? "",
+          alt: edits[f.id]?.alt ?? f.alt ?? "",
+        }))}
+      onApplyAltFixes={(fixes) => {
+        setEdits((prev) => {
+          const next = { ...prev };
+          for (const fix of fixes) {
+            const existing = next[fix.id] ?? {};
+            const field = allFields.find((f) => f.id === fix.id);
+            next[fix.id] = { ...existing, value: existing.value ?? field?.value ?? "", alt: fix.alt };
+          }
+          saveNow(next);
+          return next;
+        });
+        showQuickToast(`Applied SEO alt text to ${fixes.length} image${fixes.length === 1 ? "" : "s"}.`);
+      }}
+      onDraftUpdated={() => {
+        dirty.current = false;
+        setPreviewToken((token) => token + 1);
+      }}
+      onOpenClientReport={() => setClientReportOpen(true)}
+    />
+  );
+
+  const themePanel = (
+    <div className="dx-stack">
+                  <div className="rounded-xl border border-line bg-surface-2/60 p-3.5 text-left">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-bold uppercase tracking-[.06em] text-ink">
+                        Page Colors &amp; Theme
+                      </span>
+                      <span className="text-[11px] text-muted">{pageColorTokens.length} colors</span>
+                    </div>
+                    <p className="mt-1 text-[11.5px] leading-relaxed text-muted">
+                      Click any color picker or edit its #HEX code to update that color across the entire page live.
+                    </p>
+                    {pageColorTokens.length === 0 ? (
+                      <p className="mt-3 rounded-lg border border-line bg-white p-3 text-xs text-muted">
+                        No theme tokens or hex colors detected on this page yet.
+                      </p>
+                    ) : (
+                      <div className="mt-3 space-y-2">
+                        {pageColorTokens.map((token) => (
+                          <div
+                            key={token.key}
+                            className="flex items-center justify-between gap-2.5 rounded-xl border border-line bg-white px-3 py-2 shadow-2xs"
+                          >
+                            <span
+                              className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-semibold text-ink"
+                              title={token.label}
+                            >
+                              {token.label}
+                            </span>
+                            <ColorCodeInput
+                              label={token.label}
+                              value={token.value}
+                              disabled={readOnly}
+                              onChange={(nextHex) => updatePageColorToken(token.key, nextHex, token.isVar, token.value)}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Global Page Surface & Typography Overrides */}
+                  {(() => {
+                    const bodyField = allFields.find((f) => f.tag === "body") ?? allFields.find((f) => f.kind === "container");
+                    if (!bodyField) return null;
+                    const bodyStyle = edits[bodyField.id]?.style ?? bodyField.style ?? "";
+                    const bodyMap = parseStyle(bodyStyle);
+                    return (
+                      <div className="rounded-xl border border-line bg-surface-2/60 p-3.5 text-left">
+                        <span className="block text-[11px] font-bold uppercase tracking-[.06em] text-ink">
+                          Global Page Surface &amp; Typography
+                        </span>
+                        <p className="mt-0.5 text-[11px] text-muted">
+                          Default background, text color, and font family inherited across the page.
+                        </p>
+                        <div className="mt-3 space-y-2.5">
+                          <div className="flex items-center justify-between gap-2 rounded-xl border border-line bg-white px-3 py-2">
+                            <span className="text-xs font-medium text-ink">Page Background</span>
+                            <ColorCodeInput
+                              label="Page Background"
+                              value={bodyMap["background-color"] ?? "#F2EADC"}
+                              disabled={readOnly}
+                              onChange={(nextHex) => {
+                                const nextMap = { ...bodyMap, "background-color": nextHex };
+                                change(bodyField.id, { ...edits[bodyField.id], style: writeStyle(nextMap) }, { commit: true });
+                              }}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between gap-2 rounded-xl border border-line bg-white px-3 py-2">
+                            <span className="text-xs font-medium text-ink">Default Text Color</span>
+                            <ColorCodeInput
+                              label="Default Text Color"
+                              value={bodyMap.color ?? "#12110F"}
+                              disabled={readOnly}
+                              onChange={(nextHex) => {
+                                const nextMap = { ...bodyMap, color: nextHex };
+                                change(bodyField.id, { ...edits[bodyField.id], style: writeStyle(nextMap) }, { commit: true });
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+      {seoPanel("theme")}
+    </div>
+  );
+
+  /**
+   * The first-edit checklist, read from state. Selecting, changing, looking at
+   * a phone and publishing are each something the editor can see happen.
+   */
+  const firstEditSteps = [
+    { label: "Select something on the page", done: everPicked || Boolean(pickedId) },
+    { label: "Change its words or style", done: changedCount > 0 || Boolean(published) },
+    { label: "Check it on a phone", done: phoneChecked },
+    { label: "Publish your changes", done: Boolean(published) },
+  ];
+  const firstEditDone = firstEditSteps.filter((step) => step.done).length;
+  const firstEdit =
+    canEdit && !readOnly && !guideHidden && mode === "visual" && !isDemo && firstEditDone < firstEditSteps.length
+      ? { steps: firstEditSteps, done: firstEditDone }
+      : null;
+  const hideGuide = () => {
+    setGuideHidden(true);
+    try { localStorage.setItem(`website-editor-guide:${user?.id}`, "hidden"); } catch { /* Optional preference. */ }
+    showQuickToast("The tours are under Help whenever you want them.");
+  };
+
   return (
-    <div className={`website-editor editor-${editorTheme} flex h-full min-h-0 flex-col`}>
+    <div className={`website-editor dx-editor editor-${editorTheme} flex h-full min-h-0 flex-col`}>
       {reviewOpen && <PublishReview pageId={pageId} siteId={site.id} hasRepository={Boolean(site.repo)} pending={publish.isPending} onClose={() => setReviewOpen(false)} onConfirm={review => publish.mutate(review)} />}
       {showAI && canEdit && <WebsiteAssistant pageId={pageId} selectedFieldId={pickedId} fieldLabel={picked?.label} values={edits} onClose={() => setShowAI(false)} onApply={async (values, structuralActions) => {
         if (structuralActions && structuralActions.length > 0) {
@@ -2109,7 +2393,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           pick(null);
           setShowPanel(true);
           setMode("visual");
-          setInspectorTab("seo");
+          setPanel("seo");
         }}
         onOpenSectionLibrary={() => setSectionLibraryOpen(true)}
         onOpenAiAssistant={() => setShowAI(true)}
@@ -2128,658 +2412,360 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           siteId={site.id}
           capturedImages={capturedHtmlImages}
           onSelect={asset => {
-            if (asset.preview) selectedMedia.current.set(asset.url, { url: asset.url, preview: asset.preview });
-            const previewBackground = `url('${resolveImagePreview(asset.url).replace(/['"\\]/g, "")}')`;
-            if (assetTargetMode === "background") {
-              const map = parseStyle(pickedStyle ?? "");
-              map["background-image"] = `url('${asset.url.replace(/['"\\]/g, "")}')`;
-              changePickedStyle(writeStyle(map), true);
-              // Also sync any child background layer or cover <img> inside the container in the live iframe
-              try {
-                const doc = frame.current?.contentDocument;
-                const el = doc?.querySelector<HTMLElement>(`[data-dw-field="${CSS.escape(picked.id)}"]`);
-                if (el && doc?.defaultView) {
-                  el.style.backgroundImage = previewBackground;
-                  if (map["background-size"]) el.style.backgroundSize = map["background-size"];
-                  if (map["background-position"]) el.style.backgroundPosition = map["background-position"];
-                  el.querySelectorAll<HTMLElement>("*").forEach((desc) => {
-                    const bg = doc.defaultView!.getComputedStyle(desc).backgroundImage;
-                    if (bg && bg !== "none" && /url\(/i.test(bg)) {
-                      desc.style.backgroundImage = previewBackground;
-                    }
-                  });
-                }
-              } catch {}
-            } else if (picked.kind === "icon") {
-              change(picked.id, { ...edits[picked.id], icon: { src: asset.url }, value: asset.url }, { commit: true });
-            } else {
-              const previous = edits[picked.id] ?? {};
-              const next: FieldEdit = { ...previous, value: asset.url, alt: asset.alt || previous.alt || picked.alt };
-              // An unsized <img> otherwise adopts the new file's natural size.
-              // Keep the old box and its crop when replacing the source.
-              const image = frame.current?.contentDocument?.querySelector(`[data-dw-field="${CSS.escape(picked.id)}"] img, img[data-dw-field="${CSS.escape(picked.id)}"]`) as HTMLImageElement | null;
-              if (picked.kind === "image" && device === "desktop" && image && !image.hasAttribute("width") && !image.hasAttribute("height") && !image.style.width && !image.style.height) {
-                const sizing = parseStyle(pickedStyle ?? "");
-                if (!sizing.width && !sizing.height) {
-                  const bounds = image.getBoundingClientRect();
-                  if (bounds.width > 0 && bounds.height > 0) {
-                    sizing.width = `${Math.round(bounds.width)}px`;
-                    sizing.height = `${Math.round(bounds.height)}px`;
-                    sizing["max-width"] = sizing["max-width"] ?? "100%";
-                    sizing["object-fit"] = sizing["object-fit"] ?? computed["object-fit"] ?? "fill";
-                    next.style = writeStyle(sizing);
-                  }
-                }
-              }
-              change(picked.id, next, { commit: true });
-            }
+            applyAsset(asset, assetTargetMode);
             setAssetModalOpen(false);
           }}
           onClose={() => setAssetModalOpen(false)}
         />
       )}
-      {/* ------------------------------------------------------------ bar */}
-      <div className="editor-toolbar flex flex-none flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-line bg-white px-3.5 py-2">
-        {/* Left zone: Back button + Page identity + Status pill */}
-        <div className="flex w-full min-w-0 items-center gap-2.5 sm:w-auto">
+      {/* ------------------------------------------------------------ bar
+          Three groups, and they answer three questions: which page is this
+          and is it saved (left), how am I looking at it (middle), and what can
+          I do with it (right). Everything that used to sit in More now lives
+          on the tool rail, the publish arrow or the account menu. */}
+      <header className="dx-top">
+        <div className="dx-grp dx-grp-left">
           <Link
             to={isDemo ? "/demos" : "/website/sites"}
             title={isDemo ? "Back to Demos list" : "Back to all pages"}
             aria-label={isDemo ? "Back to Demos" : "Back to Pages"}
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-medium text-muted transition hover:border-line-strong hover:bg-sunken hover:text-ink"
+            className="dx-ib"
           >
-            <IconArrowLeft size={14} />
-            <span className="hidden sm:inline">{isDemo ? "Demos" : "Pages"}</span>
+            <IconArrowLeft size={17} />
           </Link>
-
-          <div className="h-5 w-px shrink-0 bg-line" aria-hidden="true" />
-
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              {/* The screen's heading: which page is being edited. */}
-              <h1 className="truncate font-display text-sm font-semibold tracking-[-.02em] text-ink">
-                <span className="sr-only">Editing </span>{page.data.page.title}
-              </h1>
-              <span className="hidden shrink-0 rounded-md border border-line bg-sunken/60 px-1.5 py-0.5 font-mono text-[11px] text-muted sm:inline">
-                {page.data.page.path}
-              </span>
-              <span
-                data-tour="save-status"
-                className={`hidden sm:inline-flex items-center gap-1.5 rounded-full border border-line bg-sunken/40 px-2 py-0.5 text-[11px] font-medium ${
-                  dirty.current || changedCount > 0 ? "text-ink" : "text-muted"
-                }`}
-                title={
-                  page.data.builtFrom
-                    ? `Built from ${page.data.builtFrom.filePath}${page.data.builtFrom.detail ? ` — ${page.data.builtFrom.detail}` : ""}`
-                    : status
-                }
-              >
-                <span
-                  className={`h-1.5 w-1.5 rounded-full ${
-                    dirty.current || changedCount > 0 ? "bg-warn" : "bg-positive"
-                  }`}
-                />
-                <span className="truncate max-w-[180px]">{status}</span>
-                {page.data.draft.savedAt && (
-                  <span className="text-muted">
-                    · <RelativeTime value={page.data.draft.savedAt} />
-                  </span>
-                )}
-              </span>
-              {latestReview && (
-                <button
-                  type="button"
-                  onClick={() => setReviewOpen(true)}
-                  title={latestReview.feedback ? `“${latestReview.feedback}”` : "Open the review to see what was sent and any comments"}
-                  className={`hidden shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold sm:inline-flex ${
-                    latestReviewStatus!.tone === "positive" ? "bg-positive-surface text-positive-text" : latestReviewStatus!.tone === "warn" ? "bg-warn-surface text-warn-text" : "bg-info-surface text-info-text"
-                  }`}
-                >
-                  {latestReview.reviewerName && latestReview.status !== "PENDING" ? `${latestReview.reviewerName}: ` : ""}{latestReviewStatus!.text}
-                </button>
-              )}
-              {peers.length > 0 && (
-                <div
-                  className="flex items-center gap-1.5 border-l border-line pl-2"
-                  title={`${peers.map((p) => p.name).join(", ")} currently viewing this page`}
-                >
-                  <div className="flex -space-x-1.5 overflow-hidden">
-                    {peers.map((peer) => (
-                      <div
-                        key={peer.userId}
-                        style={{ backgroundColor: peer.color }}
-                        className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold text-white shadow-xs ring-1 ring-white"
-                        title={peer.name}
-                      >
-                        {peer.name.slice(0, 2).toUpperCase()}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-            {page.data.builtFrom?.problem && (
-              <div className="truncate text-[11px] text-warn-text">
-                {page.data.builtFrom.writableFields === 0
-                  ? "Nothing on this page is editable here"
-                  : "Some of this page is not editable here"}
+          <div className="relative min-w-0">
+            <button
+              type="button"
+              className="dx-pagename"
+              aria-haspopup="menu"
+              aria-expanded={menu === "page"}
+              title="Switch page"
+              onClick={(event) => { event.stopPropagation(); setMenu(menu === "page" ? null : "page"); }}
+            >
+              <h1 className="dx-pagename-t"><span className="sr-only">Editing </span>{page.data.page.title}</h1>
+              <span className="dx-path">{page.data.page.path}</span>
+              <IconChevronDown size={15} />
+            </button>
+            {menu === "page" && (
+              <div className="dx-pop" role="menu" style={{ left: 0 }} onClick={(event) => event.stopPropagation()}>
+                <div className="dx-pop-pad">Pages in this website</div>
+                {(sitePages.data?.pages ?? []).length === 0 && <div className="dx-pop-pad">Loading pages…</div>}
+                {(sitePages.data?.pages ?? []).map((candidate) => (
+                  <Link
+                    key={candidate.id}
+                    role="menuitem"
+                    to={`/website/pages/${candidate.id}`}
+                    onClick={() => { if (dirty.current) saveNow(latestEdits.current); setMenu(null); }}
+                    className={`dx-row${candidate.id === pageId ? " sel" : ""}`}
+                  >
+                    <IconFileText size={15} />
+                    <span className="truncate">{candidate.title || candidate.path}</span>
+                    <small>{candidate.path}</small>
+                  </Link>
+                ))}
+                <hr />
+                <Link role="menuitem" to="/website/sites" className="dx-row" onClick={() => setMenu(null)}>
+                  <IconLayout size={15} />
+                  <span>All pages and settings</span>
+                </Link>
               </div>
             )}
           </div>
-          {publishButton && <div data-tour="publish" className="ml-auto shrink-0 sm:hidden">{publishButton}</div>}
-        </div>
-
-        {/* Right / Center Controls: Icon groups + Dropdowns + Publish CTA */}
-        <div className="ml-auto flex flex-wrap items-center gap-1.5">
-          {/* Quick Command Palette (Ctrl+K) & Insert Section Buttons */}
-          <button
-            type="button"
-            title="Search page elements & commands (Ctrl+K / Cmd+K)"
-            aria-label="Command palette"
-            onClick={() => setCommandPaletteOpen(true)}
-            className="hidden h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-medium text-muted transition hover:border-line-strong hover:bg-sunken hover:text-ink sm:inline-flex"
+          <span
+            data-tour="save-status"
+            className={`dx-status${dirty.current || changedCount > 0 ? " dirty" : ""}`}
+            title={page.data.builtFrom ? `Built from ${page.data.builtFrom.filePath}${page.data.builtFrom.detail ? ` — ${page.data.builtFrom.detail}` : ""}` : status}
           >
-            <IconSearch size={13} />
-            <span className="hidden 2xl:inline">Search</span>
-            <kbd className="hidden rounded border border-line bg-white px-1 py-0.2 font-mono text-[10px] text-muted 2xl:inline">
-              ⌘K
-            </kbd>
-          </button>
-
-          {canEdit && !readOnly && (
+            <span className="dx-dot" />
+            <span className="dx-hide-md truncate">{status}</span>
+          </span>
+          {latestReview && (
             <button
               type="button"
-              title="Insert a pre-built section (Hero, Features, Pricing, FAQ, CTA…)"
-              aria-label="Insert section"
-              onClick={() => setSectionLibraryOpen(true)}
-              className="hidden h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-semibold text-ink transition hover:border-blue hover:bg-sunken sm:inline-flex"
+              onClick={() => setReviewOpen(true)}
+              title={latestReview.feedback ? `“${latestReview.feedback}”` : "Open the review to see what was sent and any comments"}
+              className={`dx-badge dx-hide-md ${latestReviewStatus!.tone === "positive" ? "ok" : latestReviewStatus!.tone === "warn" ? "warn" : ""}`}
             >
-              <IconPlusSquare size={14} className="text-blue" />
-              <span className="hidden 2xl:inline">Section</span>
+              {latestReview.reviewerName && latestReview.status !== "PENDING" ? `${latestReview.reviewerName}: ` : ""}{latestReviewStatus!.text}
             </button>
           )}
+          {peers.length > 0 && (
+            <div className="dx-peers dx-hide-md" title={`${peers.map((p) => p.name).join(", ")} currently viewing this page`}>
+              {peers.map((peer) => (
+                <span key={peer.userId} style={{ backgroundColor: peer.color }} title={peer.name}>{peer.name.slice(0, 2).toUpperCase()}</span>
+              ))}
+            </div>
+          )}
+        </div>
 
-          {/* History & Refresh Icon Group */}
-          <div className="inline-flex items-center rounded-xl border border-line bg-sunken/30 p-0.5">
+        <div className="dx-grp dx-grp-mid">
+          <div className="relative" data-tour="modes">
             <button
               type="button"
-              title="Undo (Ctrl+Z)"
-              aria-label="Undo"
-              disabled={readOnly || save.isPending || (!historyState.canUndo && !page.data.structure?.canUndo)}
-              onClick={() => restore(-1)}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted transition enabled:hover:bg-white enabled:hover:text-ink disabled:opacity-30"
+              className="dx-modebtn"
+              aria-haspopup="menu"
+              aria-expanded={menu === "mode"}
+              aria-label={`Editor mode: ${MODES.find((option) => option.key === mode)?.label}`}
+              title="Editor mode"
+              onClick={(event) => { event.stopPropagation(); setMenu(menu === "mode" ? null : "mode"); }}
             >
-              <IconUndo size={14} />
+              {mode === "visual" ? <IconEdit size={15} /> : mode === "edit" ? <IconList size={15} /> : <IconEye size={15} />}
+              <span>{MODES.find((option) => option.key === mode)?.label}</span>
+              <IconChevronDown size={14} />
             </button>
-            <button
-              type="button"
-              title="Redo (Ctrl+Shift+Z)"
-              aria-label="Redo"
-              disabled={readOnly || save.isPending || (!historyState.canRedo && !page.data.structure?.canRedo)}
-              onClick={() => restore(1)}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted transition enabled:hover:bg-white enabled:hover:text-ink disabled:opacity-30"
-            >
-              <IconRedo size={14} />
-            </button>
-            <div className="mx-0.5 hidden h-4 w-px bg-line sm:block" aria-hidden="true" />
-            <button
-              type="button"
-              title="Reload page from site"
-              aria-label="Reload"
-              onClick={() => {
-                if (dirty.current) saveNow(edits);
-                void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
-                setPreviewToken((token) => token + 1);
-              }}
-              className="hidden h-7 w-7 items-center justify-center rounded-lg text-muted transition hover:bg-white hover:text-ink sm:inline-flex"
-            >
-              <IconRefresh size={14} />
-            </button>
+            {menu === "mode" && (
+              <div className="dx-pop" role="menu" style={{ left: 0, minWidth: 260 }} onClick={(event) => event.stopPropagation()}>
+                {MODES.map((option) => (
+                  <button
+                    key={option.key}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={mode === option.key}
+                    aria-label={option.label}
+                    className="dx-mrow"
+                    onClick={() => {
+                      if (option.key !== "edit" && dirty.current) saveNow(edits);
+                      setPreviewToken((token) => token + 1);
+                      setMode(option.key);
+                      setMenu(null);
+                    }}
+                  >
+                    {option.key === "visual" ? <IconEdit size={16} /> : option.key === "edit" ? <IconList size={16} /> : <IconEye size={16} />}
+                    <div>
+                      <b>{option.label}</b>
+                      <span>{option.key === "visual" ? "Click and edit on the page" : option.key === "edit" ? "Every word and link on the page as a list" : "See the page as a visitor would"}</span>
+                    </div>
+                    <IconCheck size={14} className="dx-ck" />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-
-          {/* Viewport Device Switcher (Icons) + Zoom Dropdown. Not on a phone:
-              the canvas there is already a phone's width. */}
           {mode !== "edit" && (
-            <div data-walkthrough="viewports" data-tour="devices" className="hidden items-center gap-1 rounded-xl border border-line bg-sunken/30 p-0.5 sm:inline-flex">
+            <div className="dx-seg dx-hide-sm" role="group" aria-label="Screen size" data-walkthrough="viewports" data-tour="devices">
               {DEVICES.map((option) => {
-                const active = device === option.key;
-                const DeviceIcon =
-                  option.key === "desktop"
-                    ? IconDesktop
-                    : option.key === "tablet"
-                      ? IconTablet
-                      : IconPhoneDevice;
+                const DeviceIcon = option.key === "desktop" ? IconDesktop : option.key === "tablet" ? IconTablet : IconPhoneDevice;
                 return (
                   <button
                     key={option.key}
                     type="button"
+                    className="dx-ib"
                     title={`${option.label} viewport`}
                     aria-label={option.label}
-                    aria-pressed={active}
+                    aria-pressed={device === option.key}
                     onClick={() => setDevice(option.key)}
-                    className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition ${
-                      active
-                        ? "bg-ink text-cream shadow-xs"
-                        : "text-muted hover:bg-white hover:text-ink"
-                    }`}
                   >
-                    <DeviceIcon size={14} />
+                    <DeviceIcon size={16} />
                   </button>
                 );
               })}
-              <div className="mx-0.5 h-4 w-px bg-line" aria-hidden="true" />
-              <select
-                aria-label="Canvas zoom"
-                title="Canvas zoom level"
-                value={zoom}
-                onChange={(e) => setZoom(Number(e.target.value))}
-                className="hidden h-7 cursor-pointer rounded-lg border-0 bg-transparent px-1.5 font-mono text-[11px] font-medium text-ink outline-none hover:bg-white 2xl:block"
-              >
-                {[0.5, 0.75, 1, 1.25, 1.5].map((value) => (
-                  <option key={value} value={value}>
-                    {value * 100}%
-                  </option>
-                ))}
-              </select>
             </div>
           )}
-
-          {/* Editor View Mode (Visual / Edit / Preview) */}
-          <div data-tour="modes" className="flex rounded-xl border border-line bg-sunken/40 p-0.5">
-            {MODES.map((option) => (
-              <button
-                key={option.key}
-                type="button"
-                aria-label={option.label}
-                aria-pressed={mode === option.key}
-                onClick={() => {
-                  if (option.key !== "edit" && dirty.current) saveNow(edits);
-                  setPreviewToken((token) => token + 1);
-                  setMode(option.key);
-                }}
-                className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
-                  mode === option.key
-                    ? "bg-white text-ink shadow-2xs font-semibold"
-                    : "text-muted hover:text-ink"
-                }`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Workspace Panels & Quick Actions Icon Group */}
-          <div className="inline-flex items-center rounded-xl border border-line bg-sunken/30 p-0.5">
-            <button
-              type="button"
-              title="Toggle Inspector panel"
-              aria-label="Inspector"
-              aria-pressed={showPanel}
-              onClick={() => setShowPanel((value) => !value)}
-              className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition ${
-                showPanel
-                  ? "bg-ink text-cream shadow-xs"
-                  : "text-muted hover:bg-white hover:text-ink"
-              }`}
+          {mode !== "edit" && (
+            <select
+              aria-label="Canvas zoom"
+              title="Canvas zoom level"
+              value={zoom}
+              onChange={(event) => setZoom(Number(event.target.value))}
+              className="dx-zoom dx-hide-md"
             >
-              <IconSidebar size={14} />
-            </button>
-            <button
-              data-walkthrough="layers"
-              type="button"
-              title="Toggle Layers tree"
-              aria-label="Layers"
-              aria-pressed={showLayers}
-              onClick={() => {
-                setShowLayers((value) => !value);
-                setShowPanel(true);
-                setMode("visual");
-              }}
-              className={`hidden h-7 w-7 items-center justify-center rounded-lg transition sm:inline-flex ${
-                showLayers
-                  ? "bg-ink text-cream shadow-xs"
-                  : "text-muted hover:bg-white hover:text-ink"
-              }`}
-            >
-              <IconLayers size={14} />
-            </button>
-            {canEdit && design.data?.options.aiEnabled && (
-              <button
-                type="button"
-                title="Open AI Assistant"
-                aria-label="Assistant"
-                onClick={() => setShowAI(true)}
-                className="hidden h-7 w-7 items-center justify-center rounded-lg text-muted transition hover:bg-white hover:text-ink sm:inline-flex"
-              >
-                <IconSparkles size={14} />
-              </button>
-            )}
-            {/* Shown only on a plan that includes the agent. Its launcher used to
-                float over the bottom-right of the page for everybody, including
-                plans where opening it ended in an upgrade message. */}
-            {canEdit && (!tierStatus?.features || tierStatus.features.aiBuilderAgent) && (
-              <button
-                type="button"
-                title="Builder agent — describe a change and it makes it"
-                aria-label="Builder agent"
-                aria-pressed={agentOpen}
-                onClick={() => setAgentOpen((value) => !value)}
-                className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition ${
-                  agentOpen ? "bg-ink text-cream shadow-xs" : "text-muted hover:bg-white hover:text-ink"
-                }`}
-              >
-                <IconBot size={14} />
-              </button>
-            )}
-            {/* Drafts save themselves; the button is for a keyboard's Ctrl+S habit. */}
-            {canEdit && (
-              <>
-                <div className="mx-0.5 hidden h-4 w-px bg-line sm:block" aria-hidden="true" />
-                <button
-                  type="button"
-                  title="Save draft (Ctrl/Cmd+S)"
-                  aria-label="Save"
-                  disabled={save.isPending || readOnly}
-                  onClick={() => saveNow(latestEdits.current)}
-                  className={`hidden h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium transition disabled:opacity-40 sm:inline-flex ${
-                    dirty.current || changedCount > 0
-                      ? "bg-white text-ink shadow-2xs hover:text-blue"
-                      : "text-muted hover:bg-white hover:text-ink"
-                  }`}
-                >
-                  <IconSave size={13} />
-                  <span className="hidden 2xl:inline">Save</span>
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* More Tools & Settings Dropdown */}
-          <details
-            data-walkthrough="more"
-            data-tour="more"
-            className="relative"
-            data-editor-menu
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.currentTarget.open = false;
-                event.stopPropagation();
-              }
-            }}
-          >
-            <summary
-              title="More tools, Guide, Version history & settings"
-              aria-label="More"
-              className="inline-flex h-8 cursor-pointer list-none items-center justify-center gap-1 rounded-xl border border-line bg-sunken/40 px-2 text-xs font-medium text-muted transition hover:border-line-strong hover:bg-sunken hover:text-ink"
-            >
-              <IconMoreHorizontal size={15} />
-              <span className="hidden sm:inline">More</span>
-            </summary>
-            {/* Above the floating Layers window (z-9980), which opens in this
-                same corner: under it, nothing in this menu could be clicked. */}
-            <div className="absolute right-0 top-full z-[9990] mt-1.5 flex max-h-[calc(100dvh-80px)] w-60 flex-col gap-1 overflow-y-auto rounded-xl border border-line bg-white p-2 shadow-xl">
-              {/* On a phone these two leave the bar to make room for the page. */}
-              <button
-                type="button"
-                onClick={(event) => {
-                  setCommandPaletteOpen(true);
-                  const details = event.currentTarget.closest("details");
-                  if (details) details.open = false;
-                }}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken sm:hidden"
-              >
-                <IconSearch size={14} className="text-muted" />
-                <span>Search the page</span>
-              </button>
-              {canEdit && !readOnly && (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    setSectionLibraryOpen(true);
-                    const details = event.currentTarget.closest("details");
-                    if (details) details.open = false;
-                  }}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken sm:hidden"
-                >
-                  <IconPlusSquare size={14} className="text-muted" />
-                  <span>Insert a section</span>
-                </button>
-              )}
-              <button
-                type="button"
-                aria-label="Revision comments"
-                onClick={(event) => {
-                  setCommentsModalOpen(true);
-                  const details = event.currentTarget.closest("details");
-                  if (details) details.open = false;
-                }}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
-              >
-                <IconMessageSquare size={14} className="text-muted" />
-                <span>Notes &amp; revision checklist</span>
-              </button>
-              <button
-                type="button"
-                aria-label="Client SEO report"
-                onClick={(event) => {
-                  setClientReportOpen(true);
-                  const details = event.currentTarget.closest("details");
-                  if (details) details.open = false;
-                }}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
-              >
-                <IconFileText size={14} className="text-muted" />
-                <span>Client report</span>
-              </button>
-              <div className="my-1 h-px bg-line" />
-              <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted">
-                Guided tours
-              </div>
-              {(["editor", "publishing", "pictures"] as const).map((id) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={(event) => {
-                    const details = event.currentTarget.closest("details");
-                    if (details) details.open = false;
-                    startTour(id);
-                  }}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
-                >
-                  <IconSparkles size={14} className={tourSeen(uiState, id) ? "text-muted" : "text-blue"} />
-                  <span className="flex-1">{TOURS[id].title}</span>
-                  {uiState.tours?.[id]?.status === "done" && <IconCheck size={12} className="text-positive-text" aria-label="Taken" />}
-                </button>
+              {[0.5, 0.75, 1, 1.25, 1.5].map((value) => (
+                <option key={value} value={value}>{value * 100}%</option>
               ))}
-              <a
-                href="https://dakyx.com/website-builder-setup"
-                target="_blank"
-                rel="noreferrer"
-                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
-              >
-                <IconBookOpen size={14} className="text-muted" />
-                <span>Setup guide</span>
-              </a>
-              <button
-                type="button"
-                onClick={(event) => {
-                  const details = event.currentTarget.closest("details");
-                  if (details) details.open = false;
-                  setHelpOpen(true);
-                }}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
-              >
-                <IconMessageSquare size={14} className="text-muted" />
-                <span>Talk to a person</span>
-              </button>
-              <div className="my-1 h-px bg-line" />
-              <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted">
-                This page
-              </div>
-              <button
-                type="button"
-                aria-label="Versions"
-                disabled={save.isPending || publish.isPending || structureBusy}
-                onClick={async (event) => {
-                  const details = event.currentTarget.closest("details");
-                  if (details) details.open = false;
-                  try {
-                    if (dirty.current) await save.mutateAsync(latestEdits.current);
-                    if (!dirty.current) setShowVersions(true);
-                  } catch {
-                    /* Saving reports the failure and preserves local edits. */
-                  }
-                }}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken disabled:opacity-40"
-              >
-                <IconHistory size={14} className="text-muted" />
-                <span>Versions</span>
-              </button>
-              <button
-                type="button"
-                onClick={(event) => {
-                  setShowFindReplace(true);
-                  const details = event.currentTarget.closest("details");
-                  if (details) details.open = false;
-                }}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
-              >
-                <IconSearch size={14} className="text-muted" />
-                <span>Find & replace / Global tokens</span>
-              </button>
-              <a
-                href={apiUrl(`/website/pages/${pageId}/export`)}
-                download
-                onClick={(event) => {
-                  if (dirty.current || save.isPending) {
-                    event.preventDefault();
-                    setFailure("Wait for the current changes to save before downloading.");
-                  }
-                }}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
-              >
-                <IconDownload size={14} className="text-muted" />
-                <span>Download HTML</span>
-              </a>
-
-              <div className="my-1 h-px bg-line" />
-              <div className="px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted">
-                Preferences
-              </div>
-
-              <label className="flex w-full cursor-pointer items-center justify-between gap-2.5 rounded-lg px-2.5 py-1.5 text-xs text-ink transition hover:bg-sunken">
-                <span className="flex items-center gap-2.5">
-                  <IconSliders size={14} className="text-muted" />
-                  <span>Designer controls</span>
-                </span>
-                <input
-                  type="checkbox"
-                  aria-label="Designer controls"
-                  checked={designerMode}
-                  onChange={(event) => {
-                    setDesignerMode(event.target.checked);
-                    try {
-                      localStorage.setItem(
-                        `website-designer:${user?.id}`,
-                        event.target.checked ? "yes" : "no"
-                      );
-                    } catch {
-                      /* Optional preference. */
-                    }
-                  }}
-                />
-              </label>
-
-              <button
-                type="button"
-                aria-label={`Use ${editorTheme === "dark" ? "light" : "dark"} editor`}
-                onClick={() => {
-                  const next = editorTheme === "dark" ? "light" : "dark";
-                  setEditorTheme(next);
-                  try {
-                    localStorage.setItem("website-editor-theme", next);
-                  } catch {}
-                }}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
-              >
-                {editorTheme === "dark" ? (
-                  <IconSun size={14} className="text-muted" />
-                ) : (
-                  <IconMoon size={14} className="text-muted" />
-                )}
-                <span>Use {editorTheme === "dark" ? "light" : "dark"} editor</span>
-              </button>
-
-              {changedCount > 0 && !readOnly && (
-                <>
-                  <div className="my-1 h-px bg-line" />
-                  <button
-                    type="button"
-                    aria-label="Discard"
-                    disabled={discard.isPending || save.isPending || publish.isPending}
-                    onClick={(event) => {
-                      const details = event.currentTarget.closest("details");
-                      if (details) details.open = false;
-                      if (
-                        window.confirm(
-                          "Discard all unpublished changes on this page? The live website stays unchanged."
-                        )
-                      ) {
-                        discard.mutate();
-                      }
-                    }}
-                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-danger-text transition hover:bg-danger-surface disabled:opacity-40"
-                  >
-                    <IconTrash size={14} />
-                    <span>Discard</span>
-                  </button>
-                </>
-              )}
-
-              <div className="mt-1 rounded-lg bg-sunken/60 px-2.5 py-1.5 text-[10px] leading-relaxed text-muted">
-                Shortcuts: Ctrl/Cmd+S save · Z undo · Shift+Z redo · Enter publish
-              </div>
-            </div>
-          </details>
-
-          {(isDemo || hostedHere) && (
-            <>
-              {liveDemoHref && <a
-                href={liveDemoHref}
-                target="_blank"
-                rel="noreferrer"
-                title={isDemo ? "Open the live public demo URL in a new tab" : "Open the live website in a new tab"}
-                className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-semibold text-ink transition hover:border-blue hover:bg-sunken"
-              >
-                <IconEye size={13} className="text-blue" />
-                <span className="hidden sm:inline">{isDemo ? "Live Demo" : "View live"}</span>
-              </a>}
-              {demoIdFromUrl && (
-                <a
-                  href={`/api/demos/${demoIdFromUrl}/download`}
-                  download={`${page.data.page.filePath || "demo.html"}`}
-                  title="Download updated .html file"
-                  className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-semibold text-ink transition hover:border-blue hover:bg-sunken"
-                >
-                  <IconDownload size={13} className="text-blue" />
-                  <span>Download .html</span>
-                </a>
-              )}
-            </>
-          )}
-
-          <div className="hidden md:block">
-            <WebsitePlanChip siteId={site.id} />
-          </div>
-
-          {/* Primary Publish CTA — on a phone it sits beside the title instead. */}
-          {publishButton && (
-            <div data-walkthrough="publish" data-tour="publish" className="hidden sm:block">
-              {publishButton}
-            </div>
+            </select>
           )}
         </div>
-      </div>
+
+        <div className="dx-grp dx-grp-right">
+          <button
+            type="button"
+            className="dx-search dx-hide-sm"
+            title="Search every tool, and everything on this page (Ctrl+K / Cmd+K)"
+            aria-label="Command palette"
+            onClick={() => setCommandPaletteOpen(true)}
+          >
+            <IconSearch size={15} />
+            <span className="dx-hide-md">Search tools</span>
+            <kbd className="dx-hide-md">⌘K</kbd>
+          </button>
+          <button
+            type="button"
+            className="dx-ib"
+            title="Undo (Ctrl+Z)"
+            aria-label="Undo"
+            disabled={readOnly || save.isPending || (!historyState.canUndo && !page.data.structure?.canUndo)}
+            onClick={() => restore(-1)}
+          >
+            <IconUndo size={16} />
+          </button>
+          <button
+            type="button"
+            className="dx-ib dx-hide-sm"
+            title="Redo (Ctrl+Shift+Z)"
+            aria-label="Redo"
+            disabled={readOnly || save.isPending || (!historyState.canRedo && !page.data.structure?.canRedo)}
+            onClick={() => restore(1)}
+          >
+            <IconRedo size={16} />
+          </button>
+          <button
+            type="button"
+            className="dx-ib dx-hide-sm"
+            title="Reload the page from the site"
+            aria-label="Reload"
+            onClick={() => {
+              if (dirty.current) saveNow(edits);
+              void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
+              setPreviewToken((token) => token + 1);
+            }}
+          >
+            <IconRefresh size={16} />
+          </button>
+          {canEdit && design.data?.options.aiEnabled && (
+            <button type="button" className="dx-ib dx-hide-sm" title="Suggest changes to this page" aria-label="Assistant" onClick={() => setShowAI(true)}>
+              <IconSparkles size={16} />
+            </button>
+          )}
+          {/* Drafts save themselves; the button is for a keyboard's Ctrl+S habit. */}
+          {canEdit && (
+            <button
+              type="button"
+              className="dx-btn dx-ghost dx-hide-sm"
+              title="Save draft (Ctrl/Cmd+S)"
+              aria-label="Save"
+              disabled={save.isPending || readOnly}
+              onClick={() => saveNow(latestEdits.current)}
+            >
+              <IconSave size={15} />
+              <span className="dx-hide-md">Save</span>
+            </button>
+          )}
+          <div className="relative flex" data-walkthrough="publish" data-tour="publish">
+            {publishButton}
+            <button
+              type="button"
+              className={publishButton ? "dx-btn dx-go-more" : "dx-btn dx-ghost"}
+              aria-label="More publish options"
+              aria-haspopup="menu"
+              aria-expanded={menu === "publish"}
+              onClick={(event) => { event.stopPropagation(); setMenu(menu === "publish" ? null : "publish"); }}
+            >
+              {publishButton ? <IconChevronDown size={15} /> : <><IconMoreHorizontal size={15} /><span>More</span></>}
+            </button>
+            {menu === "publish" && (
+              <div className="dx-pop" role="menu" style={{ right: 0 }} onClick={(event) => event.stopPropagation()}>
+                {canEdit && (
+                  <button type="button" role="menuitem" className="dx-row" disabled={save.isPending || readOnly} onClick={() => { saveNow(latestEdits.current); setMenu(null); }}>
+                    <IconSave size={15} /><span>Save draft only</span><small>Ctrl+S</small>
+                  </button>
+                )}
+                {liveDemoHref && (isDemo || hostedHere) && (
+                  <a role="menuitem" className="dx-row" href={liveDemoHref} target="_blank" rel="noreferrer" onClick={() => setMenu(null)}>
+                    <IconExternalLink size={15} /><span>{isDemo ? "Open live demo" : "View live website"}</span>
+                  </a>
+                )}
+                {!isDemo && !hostedHere && page.data.page.url && (
+                  <a role="menuitem" className="dx-row" href={page.data.page.url} target="_blank" rel="noreferrer" onClick={() => setMenu(null)}>
+                    <IconExternalLink size={15} /><span>Open the live page</span>
+                  </a>
+                )}
+                <a
+                  role="menuitem"
+                  className="dx-row"
+                  href={demoIdFromUrl ? `/api/demos/${demoIdFromUrl}/download` : apiUrl(`/website/pages/${pageId}/export`)}
+                  download={demoIdFromUrl ? `${page.data.page.filePath || "demo.html"}` : true}
+                  onClick={(event) => {
+                    if (dirty.current || save.isPending) {
+                      event.preventDefault();
+                      setFailure("Wait for the current changes to save before downloading.");
+                    }
+                    setMenu(null);
+                  }}
+                >
+                  <IconDownload size={15} /><span>Download .html</span>
+                </a>
+                <button type="button" role="menuitem" className="dx-row" aria-label="Versions" disabled={save.isPending || publish.isPending || structureBusy} onClick={() => { setMenu(null); void openVersions(); }}>
+                  <IconHistory size={15} /><span>Version history</span>
+                </button>
+                <button type="button" role="menuitem" className="dx-row" onClick={() => { setMenu(null); setShowFindReplace(true); }}>
+                  <IconSearch size={15} /><span>Find &amp; replace across the site</span>
+                </button>
+                {changedCount > 0 && !readOnly && (
+                  <>
+                    <hr />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      aria-label="Discard"
+                      className="dx-row danger"
+                      disabled={discard.isPending || save.isPending || publish.isPending}
+                      onClick={() => {
+                        setMenu(null);
+                        if (window.confirm("Discard all unpublished changes on this page? The live website stays unchanged.")) discard.mutate();
+                      }}
+                    >
+                      <IconTrash size={15} /><span>Discard</span>
+                    </button>
+                  </>
+                )}
+                <hr />
+                <div className="dx-pop-pad">
+                  {page.data.page.lastPublishedAt ? <>Last published <b><RelativeTime value={page.data.page.lastPublishedAt} /></b></> : "Not published from here yet"}
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="relative">
+            <button
+              type="button"
+              className="dx-avatar"
+              aria-label="Account and editor settings"
+              aria-haspopup="menu"
+              aria-expanded={menu === "account"}
+              title="Account, plan and editor settings"
+              onClick={(event) => { event.stopPropagation(); setMenu(menu === "account" ? null : "account"); }}
+            >
+              {(user?.name || user?.email || "You").split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()}
+            </button>
+            {menu === "account" && (
+              <div className="dx-pop" role="menu" style={{ right: 0, minWidth: 280 }} onClick={(event) => event.stopPropagation()}>
+                <div className="dx-pop-pad"><b>{user?.name || "Your account"}</b>{user?.email && <span>{user.email}</span>}</div>
+                {tierStatus && (
+                  <>
+                    <hr />
+                    <div className="dx-pop-pad">
+                      <div className="dx-kv"><span>Plan</span><b>{tierStatus.tierName}</b></div>
+                      {tierStatus.usage.editsLimit !== null && <div className="dx-kv"><span>Edits left</span><b>{tierStatus.usage.editsRemaining}</b></div>}
+                      <Link to="/website/balance" className="dx-link" onClick={() => setMenu(null)}>Plan, invoices and upgrades</Link>
+                    </div>
+                  </>
+                )}
+                <hr />
+                <label className="dx-row dx-switch">
+                  <span className="inline-flex items-center gap-2"><IconSliders size={15} />Designer controls</span>
+                  <input
+                    type="checkbox"
+                    aria-label="Designer controls"
+                    checked={designerMode}
+                    onChange={(event) => {
+                      setDesignerMode(event.target.checked);
+                      try { localStorage.setItem(`website-designer:${user?.id}`, event.target.checked ? "yes" : "no"); } catch { /* Optional preference. */ }
+                    }}
+                  />
+                </label>
+                <button type="button" role="menuitem" className="dx-row" aria-label={`Use ${editorTheme === "dark" ? "light" : "dark"} editor`} onClick={toggleEditorTheme}>
+                  {editorTheme === "dark" ? <IconSun size={15} /> : <IconMoon size={15} />}
+                  <span>Use {editorTheme === "dark" ? "light" : "dark"} editor</span>
+                </button>
+                <hr />
+                <Link role="menuitem" to="/website/account" className="dx-row" onClick={() => setMenu(null)}>
+                  <IconUsers size={15} /><span>Account</span>
+                </Link>
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
 
 
       {(published || failure) && (
@@ -2873,88 +2859,260 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       )}
 
       {/* ---------------------------------------------------------- body */}
-      <div className="flex min-h-0 flex-1">
-        {mode === "visual" && showPanel && (
-          <aside
-            data-walkthrough="inspector"
-            data-tour="inspector"
-            aria-label="Element inspector"
-            className="editor-sidebar flex flex-none flex-col border-r border-line bg-white"
-          >
-            {/* What is selected, said once, at the top. The tag is a chip rather
-                than a line of its own: it is the one piece of jargon on this
-                panel and it should look like a label on a thing, not like a
-                heading with the same weight as the thing's name. */}
-            <div className="flex flex-none items-center gap-2 border-b border-line px-3 py-2.5">
-              <span className="shrink-0 rounded-[10px] bg-sunken px-1.5 py-0.5 font-sans text-xs uppercase tracking-[.06em] text-muted">
-                {picked ? picked.tag : "—"}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-ink">{picked ? picked.label : "Nothing selected"}</span>
-              {picked && (
-                <button
-                  type="button"
-                  onClick={() => pick(null)}
-                  aria-label="Clear the selection"
-                  title="Clear the selection"
-                  className="flex min-h-8 px-2.5 shrink-0 items-center justify-center rounded-[10px] text-muted transition hover:bg-sunken hover:text-ink"
-                >Clear
-                </button>
+      {/* ---------------------------------------------------------- body
+          Tool rail · one drawer at a time · the page · the thing you picked. */}
+      <div className={`dx-body${mode === "preview" ? " is-preview" : ""}`}>
+        {mode !== "preview" && (
+          <nav className="dx-rail" aria-label="Tools" data-tour="more">
+            {canEdit && !readOnly && (
+              <button type="button" title="Add a ready-made section" aria-label="Add a section" onClick={() => setSectionLibraryOpen(true)}>
+                <IconPlusSquare size={18} />Add
+              </button>
+            )}
+            {RAIL.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                title={item.title}
+                aria-label={item.label}
+                aria-pressed={panel === item.key}
+                onClick={() => openPanel(item.key)}
+              >
+                <item.icon size={18} />
+                {item.label}
+              </button>
+            ))}
+            <button type="button" title="Revision notes for this page" aria-label="Notes" onClick={() => setCommentsModalOpen(true)}>
+              <IconMessageSquare size={18} />Notes
+            </button>
+            <span className="dx-rail-sp" />
+            <button type="button" title="Every earlier version of this page" aria-label="History" disabled={save.isPending || publish.isPending || structureBusy} onClick={() => void openVersions()}>
+              <IconHistory size={18} />History
+            </button>
+            <button type="button" title="Tours, the guide and a person to ask" aria-label="Help" aria-pressed={panel === "help"} onClick={() => openPanel("help")}>
+              <IconBookOpen size={18} />Help
+            </button>
+          </nav>
+        )}
+
+        {panel && mode !== "preview" && (
+          <aside className="dx-drawer" aria-label={`${RAIL_TITLES[panel].title} panel`}>
+            <div className="dx-dh">
+              <div>
+                <h2>{RAIL_TITLES[panel].title}</h2>
+                <p>{RAIL_TITLES[panel].sub}</p>
+              </div>
+              <button type="button" className="dx-ib" aria-label="Close panel" onClick={() => setPanel(null)}>
+                <IconXCircle size={16} />
+              </button>
+            </div>
+            <div className={`dx-dbody${panel === "layers" ? " is-flush" : ""}`}>
+              {panel === "layers" && (
+                <WebsiteLayers
+                  fields={allFields}
+                  edits={edits}
+                  problems={problems}
+                  shared={page.data.shared?.scope}
+                  selectedId={pickedId}
+                  onSelect={(id) => { if (mode !== "visual") setMode("visual"); pick(id); }}
+                  onClose={() => setPanel(null)}
+                  onToggleVisibility={
+                    readOnly
+                      ? undefined
+                      : (targetId) => {
+                          const targetField = allFields.find((f) => f.id === targetId);
+                          if (!targetField) return;
+                          const map = parseStyle(edits[targetId]?.style ?? targetField.style ?? "");
+                          if (map.display === "none") delete map.display;
+                          else map.display = "none";
+                          change(targetId, { ...edits[targetId], style: writeStyle(map) }, { commit: true });
+                        }
+                  }
+                  onMove={!designerMode || readOnly || save.isPending ? undefined : (id, target, position) => void runStructure(position, id, target)}
+                />
+              )}
+              {panel === "theme" && (tierStatus?.features && !tierStatus.features.themeSettings ? lockedNotice("Site colours and page surface", tierStatus) : themePanel)}
+              {panel === "media" && (
+                <>
+                  <p className="dx-hint">
+                    {picked && (picked.kind === "image" || picked.kind === "icon" || picked.kind === "container")
+                      ? `Choosing a file here puts it in “${picked.label}”.`
+                      : "Select a picture on the page, then choose a file here to swap it. Uploads land in the library either way."}
+                  </p>
+                  <WebsiteAssetLibrary
+                    siteId={site.id}
+                    capturedImages={capturedHtmlImages}
+                    onSelect={(asset) => {
+                      if (!picked || readOnly || !(picked.kind === "image" || picked.kind === "icon" || picked.kind === "container")) {
+                        showQuickToast("Select a picture on the page first, then choose it here.");
+                        return;
+                      }
+                      applyAsset(asset, picked.kind === "container" ? "background" : "image");
+                      showQuickToast(`Picture placed in ${picked.label}`);
+                    }}
+                  />
+                </>
+              )}
+              {(panel === "seo" || panel === "grow") && (tierStatus?.features && !tierStatus.features.seoInspector
+                ? lockedNotice(panel === "seo" ? "Page SEO and structured data" : "Speed, uptime and lead tools", tierStatus)
+                : seoPanel(panel))}
+              {panel === "help" && (
+                <div className="dx-stack">
+                  {(["editor", "publishing", "pictures"] as const).map((id) => (
+                    <button key={id} type="button" className="dx-row" onClick={() => { setPanel(null); startTour(id); }}>
+                      <IconSparkles size={15} className={tourSeen(uiState, id) ? "" : "text-blue"} />
+                      <span className="flex-1">{TOURS[id].title}</span>
+                      {uiState.tours?.[id]?.status === "done" ? <IconCheck size={13} aria-label="Taken" /> : <small>{TOURS[id].minutes} min</small>}
+                    </button>
+                  ))}
+                  <a href="https://dakyx.com/website-builder-setup" target="_blank" rel="noreferrer" className="dx-row">
+                    <IconBookOpen size={15} /><span>Setup guide</span><IconExternalLink size={13} />
+                  </a>
+                  <button type="button" className="dx-row" onClick={() => setHelpOpen(true)}>
+                    <IconMessageCircle size={15} /><span>Talk to a person</span>
+                  </button>
+                  <div className="dx-card">
+                    <h3>Keyboard shortcuts</h3>
+                    {[
+                      ["Search tools", "Ctrl+K"],
+                      ["Save draft", "Ctrl+S"],
+                      ["Undo", "Ctrl+Z"],
+                      ["Redo", "Ctrl+Shift+Z"],
+                      ["Publish", "Ctrl+Enter"],
+                      ["Type into text", "Double-click"],
+                      ["Stop typing", "Esc"],
+                    ].map(([action, keys]) => (
+                      <div key={action} className="dx-kv"><span>{action}</span><kbd>{keys}</kbd></div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
+          </aside>
+        )}
 
-            {/* One fact, said once, before the clicking starts. A page whose every
-                field is locked used to explain itself three hundred times over,
-                a field at a time, and only to somebody who had already selected
-                one and found it would not take a word. */}
-            {page.data.builtFrom?.problem && (
-              <p role="alert" className="flex-none border-b border-line bg-warn-surface px-4 py-2 text-xs leading-relaxed text-warn-text">
-                {page.data.builtFrom.problem}
-              </p>
+        {mode === "edit" ? (
+          <div className="dx-listview">
+            <aside className="w-[240px] flex-none overflow-y-auto border-r border-line bg-white p-3">
+              <div className="mb-2 px-1 font-sans text-xs font-bold uppercase tracking-[.06em] text-muted">Sections</div>
+              <ul className="space-y-0.5">
+                {sections.map((candidate) => {
+                  const edited = candidate.fields.some((field) => edits[field.id]);
+                  return (
+                    <li key={candidate.id}>
+                      <button
+                        type="button"
+                        onClick={() => setSectionId(candidate.id)}
+                        title={candidate.label}
+                        className={`flex w-full items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-left text-[12px] ${
+                          candidate.id === section?.id ? "bg-ink text-cream" : "text-ink hover:bg-sunken"
+                        }`}
+                      >
+                        <span className="truncate">{candidate.label}</span>
+                        <span className={`shrink-0 text-xs ${candidate.id === section?.id ? "text-cream/60" : "text-muted"}`}>
+                          {edited ? "●" : candidate.fields.length}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </aside>
+            <div className="min-h-0 flex-1 overflow-y-auto bg-cream px-6 py-6">
+              <div className="mx-auto max-w-3xl space-y-3">
+                {section ? (
+                  <>
+                    <h2 className="font-display text-lg tracking-[-.02em]">{section.label}</h2>
+                    {section.fields.map((field) => (
+                      <FieldRow
+                        key={`${loadToken}:${field.id}`}
+                        field={field}
+                        edit={edits[field.id]}
+                        problem={problems.get(field.id)}
+                        siteId={site.id}
+                        publicUrl={page.data.page.url}
+                        resolveImagePreview={resolveImagePreview}
+                        links={links ?? []}
+                        readOnly={readOnly}
+                        onChange={(next) => change(field.id, next)}
+                        onNameFields={() => void nameFields()}
+                        naming={naming}
+                        onOpenMediaLibrary={() => {
+                          pick(field.id);
+                          setAssetTargetMode(field.kind === "container" ? "background" : "image");
+                          setAssetModalOpen(true);
+                        }}
+                      />
+                    ))}
+                  </>
+                ) : (
+                  <p className="text-sm text-muted">This page has nothing editable on it.</p>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <main className="dx-stage">
+            {canvas}
+            {/* The first-edit checklist. Every tick is read from what has
+                actually happened on this page — nothing here is ticked by
+                hand, so it cannot say "done" about something that was not. */}
+            {firstEdit && (
+              <div className="dx-guide" role="region" aria-label="First edit checklist">
+                <header>
+                  <span>First edit · {firstEdit.done}/{firstEdit.steps.length}</span>
+                  <button type="button" className="dx-ib" aria-label="Put the checklist away" onClick={hideGuide}>
+                    <IconXCircle size={14} />
+                  </button>
+                </header>
+                <div className="dx-guide-bar"><b style={{ width: `${(firstEdit.done / firstEdit.steps.length) * 100}%` }} /></div>
+                <ol>
+                  {firstEdit.steps.map((step, index) => (
+                    <li key={step.label} className={step.done ? "done" : index === firstEdit.done ? "now" : ""}>
+                      <span className="dx-bx">{step.done && <IconCheck size={10} />}</span>
+                      {step.label}
+                    </li>
+                  ))}
+                </ol>
+                <button type="button" className="dx-tourcta" onClick={() => startTour("editor")}>
+                  <IconSparkles size={14} />Take the editor tour
+                </button>
+              </div>
             )}
+            {canEdit && (!tierStatus?.features || tierStatus.features.aiBuilderAgent) && !agentOpen && (
+              <button
+                type="button"
+                className="dx-ai"
+                title="Builder agent — describe a change and it makes it"
+                aria-label="Builder agent"
+                aria-pressed={agentOpen}
+                onClick={() => setAgentOpen(true)}
+              >
+                <IconBot size={21} />
+              </button>
+            )}
+          </main>
+        )}
 
+        {mode === "visual" && picked && (
+          <aside data-walkthrough="inspector" data-tour="inspector" aria-label="Element inspector" className="dx-insp editor-sidebar">
+            <div className="dx-ih">
+              <div className="dx-ih-t">
+                <span className="dx-kind">{picked.tag}</span>
+                <span className="min-w-0 flex-1 truncate">{picked.label}</span>
+                <button type="button" className="dx-ib" onClick={() => pick(null)} aria-label="Clear the selection" title="Clear the selection">
+                  <IconXCircle size={15} />
+                </button>
+              </div>
+              <WebsiteBreadcrumbs fields={allFields} selectedId={pickedId} onSelect={pick} />
+            </div>
+            {page.data.builtFrom?.problem && <p role="alert" className="dx-note warn">{page.data.builtFrom.problem}</p>}
             {liveBlind && (
-              <p className="flex-none border-b border-line bg-warn-surface px-4 py-2 text-xs leading-relaxed text-warn-text">
-                The page beside this is not keeping up as you type. Your changes are being saved — it will catch up a moment
-                after each one.
+              <p className="dx-note warn">
+                The page beside this is not keeping up as you type. Your changes are being saved — it will catch up a moment after each one.
               </p>
             )}
-
-            <WebsiteBreadcrumbs fields={allFields} selectedId={pickedId} onSelect={pick} />
-            {page.data.structure?.stale && <p role="alert" className="bg-warn-surface px-3 py-2 text-xs text-warn-text">The source changed after these layout edits. Your draft is preserved. Discard it to work from the latest source; publishing is blocked.</p>}
-            {showLayers && (
-              <WebsiteLayers
-                fields={allFields}
-                edits={edits}
-                problems={problems}
-                shared={page.data.shared?.scope}
-                selectedId={pickedId}
-                onSelect={pick}
-                onClose={() => setShowLayers(false)}
-                onToggleVisibility={
-                  readOnly
-                    ? undefined
-                    : (targetId) => {
-                        const targetField = allFields.find((f) => f.id === targetId);
-                        if (!targetField) return;
-                        const rawStyle = edits[targetId]?.style ?? targetField.style ?? "";
-                        const map = parseStyle(rawStyle);
-                        if (map.display === "none") {
-                          delete map.display;
-                        } else {
-                          map.display = "none";
-                        }
-                        change(targetId, { ...edits[targetId], style: writeStyle(map) }, { commit: true });
-                      }
-                }
-                onMove={
-                  !designerMode || readOnly || save.isPending
-                    ? undefined
-                    : (id, target, position) => {
-                        void runStructure(position, id, target);
-                      }
-                }
-              />
-            )}
+            {page.data.structure?.stale && <p role="alert" className="dx-note warn">The source changed after these layout edits. Your draft is preserved. Discard it to work from the latest source; publishing is blocked.</p>}
             {designerMode && picked && <div className="border-b border-line px-3 py-2">
               <div className="flex flex-wrap gap-2 text-xs">
                 <button type="button" className="text-blue disabled:text-faint" disabled={readOnly || save.isPending || !picked.structure?.previousId} onClick={() => void runStructure("before", picked.id, picked.structure?.previousId)}>Move up</button>
@@ -2967,232 +3125,14 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               </div>
               <p className="mt-2 text-xs text-muted">{picked.structure?.reason || picked.structure?.duplicateReason || "Drag layers to reorder within their container. Changes stay in the draft; Undo brings them back."}</p>
             </div>}
-
-            <div role="tablist" aria-label="Element settings" className="editor-tabs">
-              {(!picked
-                ? (["content", "theme", "seo"] as const)
-                : picked.kind === "container"
-                  ? (["layout", "style", "interactions"] as const)
-                  : (["content", "style", "interactions"] as const)
-              ).map((tab) => {
-                const locked =
-                  (tab === "theme" && tierStatus?.features && !tierStatus.features.themeSettings) ||
-                  (tab === "seo" && tierStatus?.features && !tierStatus.features.seoInspector);
-                return (
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={inspectorTab === tab}
-                    key={tab}
-                    onClick={() => setInspectorTab(tab)}
-                    title={locked ? "Requires Pro or Business tier plan" : undefined}
-                  >
-                    {tab === "seo" ? (
-                      locked ? (
-                        <span className="inline-flex items-center gap-1">
-                          <IconLock size={11} />
-                          <span>SEO</span>
-                        </span>
-                      ) : (
-                        "SEO"
-                      )
-                    ) : tab === "theme" ? (
-                      locked ? (
-                        <span className="inline-flex items-center gap-1">
-                          <IconLock size={11} />
-                          <span>Theme</span>
-                        </span>
-                      ) : (
-                        "Theme"
-                      )
-                    ) : tab === "layout" ? (
-                      "Layout"
-                    ) : tab === "style" && picked?.kind === "container" ? (
-                      "Style"
-                    ) : (
-                      tab[0].toUpperCase() + tab.slice(1)
-                    )}
-                  </button>
-                );
-              })}
+            <div role="tablist" aria-label="Element settings" className="editor-tabs dx-tabs">
+              {(picked.kind === "container" ? (["layout", "style", "interactions"] as const) : (["content", "style", "interactions"] as const)).map((tab) => (
+                <button type="button" role="tab" key={tab} aria-selected={inspectorTab === tab} onClick={() => setInspectorTab(tab)}>
+                  {tab[0].toUpperCase() + tab.slice(1)}
+                </button>
+              ))}
             </div>
             <div className="editor-controls min-h-0 flex-1 overflow-y-auto">
-              {inspectorTab === "seo" && tierStatus?.features && !tierStatus.features.seoInspector ? (
-                <div className="space-y-3 p-4 text-left">
-                  <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
-                    <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-amber-400">
-                      <IconLock size={13} />
-                      <span>Feature Locked on {tierStatus.tierName}{tierStatus.pricing?.priceDisplay ? ` (${tierStatus.pricing.priceDisplay}/mo)` : ""}</span>
-                    </div>
-                    <p className="mt-1.5 text-xs leading-relaxed text-ink">
-                      The <strong>SEO Inspector &amp; Alt-Text Auto-Fixer</strong> is available starting on the{" "}
-                      <strong>Pro</strong> and <strong>Business</strong> plans.
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Button size="sm" onClick={() => void switchTestUser("pro@dakyworld.test")}>
-                        Test as Pro User
-                      </Button>
-                      <Button size="sm" variant="secondary" onClick={() => void switchTestUser("business@dakyworld.test")}>
-                        Test as Business User
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ) : inspectorTab === "theme" && tierStatus?.features && !tierStatus.features.themeSettings ? (
-                <div className="space-y-3 p-4 text-left">
-                  <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
-                    <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-amber-400">
-                      <IconLock size={13} />
-                      <span>Feature Locked on {tierStatus.tierName}{tierStatus.pricing?.priceDisplay ? ` (${tierStatus.pricing.priceDisplay}/mo)` : ""}</span>
-                    </div>
-                    <p className="mt-1.5 text-xs leading-relaxed text-ink">
-                      The <strong>Global Theme Color Palette &amp; Page Surface Controls</strong> are unlocked on{" "}
-                      <strong>Pro</strong> and <strong>Business</strong> plans.
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Button size="sm" onClick={() => void switchTestUser("pro@dakyworld.test")}>
-                        Test as Pro User
-                      </Button>
-                      <Button size="sm" variant="secondary" onClick={() => void switchTestUser("business@dakyworld.test")}>
-                        Test as Business User
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ) : inspectorTab === "seo" ? (
-                <WebsitePageSeoInspector
-                  siteId={site.id}
-                  pageId={pageId}
-                  pageTitle={page.data.page.title}
-                  pagePath={page.data.page.path}
-                  readOnly={readOnly}
-                  imageFields={allFields
-                    .filter((f) => f.kind === "image")
-                    .map((f) => ({
-                      id: f.id,
-                      label: f.label,
-                      src: edits[f.id]?.value ?? f.value ?? "",
-                      alt: edits[f.id]?.alt ?? f.alt ?? "",
-                    }))}
-                  onApplyAltFixes={(fixes) => {
-                    setEdits((prev) => {
-                      const next = { ...prev };
-                      for (const fix of fixes) {
-                        const existing = next[fix.id] ?? {};
-                        const field = allFields.find((f) => f.id === fix.id);
-                        next[fix.id] = {
-                          ...existing,
-                          value: existing.value ?? field?.value ?? "",
-                          alt: fix.alt,
-                        };
-                      }
-                      saveNow(next);
-                      return next;
-                    });
-                    showQuickToast(`Applied SEO alt text to ${fixes.length} image${fixes.length === 1 ? "" : "s"}.`);
-                  }}
-                  onDraftUpdated={() => {
-                    dirty.current = false;
-                    setPreviewToken((token) => token + 1);
-                  }}
-                  onOpenClientReport={() => setClientReportOpen(true)}
-                />
-              ) : inspectorTab === "theme" ? (
-                <div className="space-y-4 p-3.5">
-                  <div className="rounded-xl border border-line bg-surface-2/60 p-3.5 text-left">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[11px] font-bold uppercase tracking-[.06em] text-ink">
-                        Page Colors &amp; Theme
-                      </span>
-                      <span className="text-[11px] text-muted">{pageColorTokens.length} colors</span>
-                    </div>
-                    <p className="mt-1 text-[11.5px] leading-relaxed text-muted">
-                      Click any color picker or edit its #HEX code to update that color across the entire page live.
-                    </p>
-                    {pageColorTokens.length === 0 ? (
-                      <p className="mt-3 rounded-lg border border-line bg-white p-3 text-xs text-muted">
-                        No theme tokens or hex colors detected on this page yet.
-                      </p>
-                    ) : (
-                      <div className="mt-3 space-y-2">
-                        {pageColorTokens.map((token) => (
-                          <div
-                            key={token.key}
-                            className="flex items-center justify-between gap-2.5 rounded-xl border border-line bg-white px-3 py-2 shadow-2xs"
-                          >
-                            <span
-                              className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-semibold text-ink"
-                              title={token.label}
-                            >
-                              {token.label}
-                            </span>
-                            <ColorCodeInput
-                              label={token.label}
-                              value={token.value}
-                              disabled={readOnly}
-                              onChange={(nextHex) => updatePageColorToken(token.key, nextHex, token.isVar, token.value)}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Global Page Surface & Typography Overrides */}
-                  {(() => {
-                    const bodyField = allFields.find((f) => f.tag === "body") ?? allFields.find((f) => f.kind === "container");
-                    if (!bodyField) return null;
-                    const bodyStyle = edits[bodyField.id]?.style ?? bodyField.style ?? "";
-                    const bodyMap = parseStyle(bodyStyle);
-                    return (
-                      <div className="rounded-xl border border-line bg-surface-2/60 p-3.5 text-left">
-                        <span className="block text-[11px] font-bold uppercase tracking-[.06em] text-ink">
-                          Global Page Surface &amp; Typography
-                        </span>
-                        <p className="mt-0.5 text-[11px] text-muted">
-                          Default background, text color, and font family inherited across the page.
-                        </p>
-                        <div className="mt-3 space-y-2.5">
-                          <div className="flex items-center justify-between gap-2 rounded-xl border border-line bg-white px-3 py-2">
-                            <span className="text-xs font-medium text-ink">Page Background</span>
-                            <ColorCodeInput
-                              label="Page Background"
-                              value={bodyMap["background-color"] ?? "#F2EADC"}
-                              disabled={readOnly}
-                              onChange={(nextHex) => {
-                                const nextMap = { ...bodyMap, "background-color": nextHex };
-                                change(bodyField.id, { ...edits[bodyField.id], style: writeStyle(nextMap) }, { commit: true });
-                              }}
-                            />
-                          </div>
-                          <div className="flex items-center justify-between gap-2 rounded-xl border border-line bg-white px-3 py-2">
-                            <span className="text-xs font-medium text-ink">Default Text Color</span>
-                            <ColorCodeInput
-                              label="Default Text Color"
-                              value={bodyMap.color ?? "#12110F"}
-                              disabled={readOnly}
-                              onChange={(nextHex) => {
-                                const nextMap = { ...bodyMap, color: nextHex };
-                                change(bodyField.id, { ...edits[bodyField.id], style: writeStyle(nextMap) }, { commit: true });
-                              }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              ) : !picked ? (
-                <div className="px-4 py-6 text-center">
-                  <p className="text-[12px] font-semibold text-ink">Click anything on the page</p>
-                  <p className="mt-1 text-xs leading-relaxed text-muted">
-                    Its words, style, and interactions appear here. Double click to type straight into the page.
-                  </p>
-                  <p className="mt-2 text-xs text-muted">
-                    {allFields.length} editable {allFields.length === 1 ? "thing" : "things"} on this page.
-                  </p>
-                </div>
-              ) : (
                 <>
                   {/* Before the controls, not beside them: somebody about to
                       change a heading has to know whether they are changing one
@@ -3901,73 +3841,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     }
                   /></div>
                 </>
-              )}
             </div>
           </aside>
-        )}
-
-        {mode === "edit" ? (
-          <>
-            <aside className="w-[240px] flex-none overflow-y-auto border-r border-line bg-white p-3">
-              <div className="mb-2 px-1 font-sans text-xs font-bold uppercase tracking-[.06em] text-muted">Sections</div>
-              <ul className="space-y-0.5">
-                {sections.map((candidate) => {
-                  const edited = candidate.fields.some((field) => edits[field.id]);
-                  return (
-                    <li key={candidate.id}>
-                      <button
-                        type="button"
-                        onClick={() => setSectionId(candidate.id)}
-                        title={candidate.label}
-                        className={`flex w-full items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-left text-[12px] ${
-                          candidate.id === section?.id ? "bg-ink text-cream" : "text-ink hover:bg-sunken"
-                        }`}
-                      >
-                        <span className="truncate">{candidate.label}</span>
-                        <span className={`shrink-0 text-xs ${candidate.id === section?.id ? "text-cream/60" : "text-muted"}`}>
-                          {edited ? "●" : candidate.fields.length}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </aside>
-            <div className="min-h-0 flex-1 overflow-y-auto bg-cream px-6 py-6">
-              <div className="mx-auto max-w-3xl space-y-3">
-                {section ? (
-                  <>
-                    <h2 className="font-display text-lg tracking-[-.02em]">{section.label}</h2>
-                    {section.fields.map((field) => (
-                      <FieldRow
-                        key={`${loadToken}:${field.id}`}
-                        field={field}
-                        edit={edits[field.id]}
-                        problem={problems.get(field.id)}
-                        siteId={site.id}
-                        publicUrl={page.data.page.url}
-                        resolveImagePreview={resolveImagePreview}
-                        links={links ?? []}
-                        readOnly={readOnly}
-                        onChange={(next) => change(field.id, next)}
-                        onNameFields={() => void nameFields()}
-                        naming={naming}
-                        onOpenMediaLibrary={() => {
-                          pick(field.id);
-                          setAssetTargetMode(field.kind === "container" ? "background" : "image");
-                          setAssetModalOpen(true);
-                        }}
-                      />
-                    ))}
-                  </>
-                ) : (
-                  <p className="text-sm text-muted">This page has nothing editable on it.</p>
-                )}
-              </div>
-            </div>
-          </>
-        ) : (
-          canvas
         )}
       </div>
 
@@ -4048,7 +3923,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
             pick(null);
             setShowPanel(true);
-            setInspectorTab("seo");
+            setPanel("seo");
           } catch {
             showQuickToast("Could not update SEO property.");
           }
@@ -4326,7 +4201,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 onClick={() => {
                   pick(null);
                   setShowPanel(true);
-                  setInspectorTab("seo");
+                  setPanel("seo");
                   setContextMenu(null);
                 }}
                 className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left font-medium text-ink hover:bg-cream"

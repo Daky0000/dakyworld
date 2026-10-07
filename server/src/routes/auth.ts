@@ -372,7 +372,14 @@ const tourRecord = z.object({
 }).strict();
 const uiStatePatch = z.object({
   tours: z.record(z.string().regex(/^[a-z][a-z0-9-]{0,39}$/), tourRecord).optional(),
-  welcome: z.object({ status: z.enum(["done", "skipped"]), at: z.string().max(40) }).strict().optional(),
+  welcome: z.object({
+    status: z.enum(["done", "skipped"]),
+    at: z.string().max(40),
+    /** The onboarding's last question — one of the answers it offers, never free text. */
+    heardFrom: z.enum(["search", "ai", "friend", "whatsapp", "instagram", "facebook", "youtube", "linkedin", "tiktok", "event", "other"]).optional(),
+    /** What the website is for, as chosen in the onboarding. */
+    purpose: z.enum(["business", "store", "portfolio", "organisation"]).optional(),
+  }).strict().optional(),
   checklist: z.object({ hidden: z.boolean() }).strict().optional(),
 }).strict();
 const STATUS_RANK = { started: 0, dismissed: 1, done: 2 } as const;

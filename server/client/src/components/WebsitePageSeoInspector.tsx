@@ -68,6 +68,12 @@ interface WebsitePageSeoInspectorProps {
   onApplyAltFixes?: (fixes: Array<{ id: string; alt: string }>) => void;
   onOpenClientReport?: () => void;
   onDraftUpdated?: () => void;
+  /**
+   * Which part of this panel to draw. The editor shows search details under
+   * SEO, the speed, uptime and lead tools under Grow and the font switcher
+   * under Theme — one component, so the three can never disagree.
+   */
+  section?: "all" | "seo" | "grow" | "theme";
 }
 
 export function WebsitePageSeoInspector({
@@ -80,7 +86,9 @@ export function WebsitePageSeoInspector({
   onApplyAltFixes,
   onOpenClientReport,
   onDraftUpdated,
+  section = "all",
 }: WebsitePageSeoInspectorProps) {
+  const show = (part: "seo" | "grow" | "theme") => section === "all" || section === part;
   const qc = useQueryClient();
   const [seoTitle, setSeoTitle] = useState("");
   const [seoDescription, setSeoDescription] = useState("");
@@ -414,7 +422,7 @@ export function WebsitePageSeoInspector({
   return (
     <div className="space-y-4 p-3.5 text-xs">
       {/* Header & Auto-Fill + Client Report Button */}
-      <div className="flex items-center justify-between gap-2 border-b border-line pb-2.5">
+      <div hidden={section !== "all"} className="flex items-center justify-between gap-2 border-b border-line pb-2.5">
         <div className="min-w-0">
           <div className="truncate font-semibold text-ink">
             Page SEO: {pageTitle} ({pagePath})
@@ -463,7 +471,7 @@ export function WebsitePageSeoInspector({
       )}
 
       {/* Interactive Google SERP & Social Card Preview Switcher */}
-      <div className="rounded-xl border border-line bg-cream/40 p-2.5">
+      <div hidden={!show("seo")} className="rounded-xl border border-line bg-cream/40 p-2.5">
         <div className="mb-2 flex items-center justify-between gap-1">
           <span className="text-[10px] font-bold uppercase tracking-wider text-muted">
             Live Search &amp; Share Preview
@@ -552,7 +560,7 @@ export function WebsitePageSeoInspector({
       </div>
 
       {/* (#3) 1-Click Page Speed (lazy-load) & Link Security Optimizer + Health Score */}
-      {!readOnly && (
+      {!readOnly && show("grow") && (
         <div className="rounded-xl border border-line bg-cream/40 p-2.5 space-y-2">
           <div className="flex items-center justify-between gap-2">
             <div>
@@ -600,7 +608,7 @@ export function WebsitePageSeoInspector({
       )}
 
       {/* (#4) 1-Click Global Font & Brand Theme Switcher (Google Fonts + Palette) */}
-      {!readOnly && (
+      {!readOnly && show("theme") && (
         <div className="rounded-xl border border-line bg-cream/40 p-2.5 space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 font-semibold text-ink">
@@ -671,7 +679,7 @@ export function WebsitePageSeoInspector({
       )}
 
       {/* (#12) Automated Uptime & SSL Certificate Health Monitor */}
-      <div className="rounded-xl border border-line bg-cream/40 p-2.5 space-y-2">
+      <div hidden={!show("grow")} className="rounded-xl border border-line bg-cream/40 p-2.5 space-y-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 font-semibold text-ink">
             <span
@@ -724,7 +732,7 @@ export function WebsitePageSeoInspector({
       </div>
 
       {/* Page <head> SEO Inputs */}
-      <div className="space-y-3">
+      <div hidden={!show("seo")} className="space-y-3">
         <div>
           <div className="mb-1 flex items-center justify-between">
             <label htmlFor="inspector-seo-title" className="font-semibold text-ink">
@@ -848,7 +856,7 @@ export function WebsitePageSeoInspector({
       </div>
 
       {/* 1-Click Technical SEO: JSON-LD Schema + Sitemap.xml + Robots.txt */}
-      {!readOnly && (
+      {!readOnly && show("seo") && (
         <div className="space-y-2.5 border-t border-line pt-3.5">
           <div className="flex items-center gap-1.5 font-semibold text-ink">
             <IconFileText size={14} className="text-blue" />
@@ -918,7 +926,7 @@ export function WebsitePageSeoInspector({
       )}
 
       {/* Built-in Lead Capture & WhatsApp Conversion Bar */}
-      {!readOnly && (
+      {!readOnly && show("grow") && (
         <div className="space-y-2.5 border-t border-line pt-3.5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 font-semibold text-ink">
@@ -990,7 +998,7 @@ export function WebsitePageSeoInspector({
       )}
 
       {/* GitHub Repository Metadata & Topics Section */}
-      {seoQuery.data?.repo && (
+      {seoQuery.data?.repo && show("seo") && (
         <div className="space-y-2.5 border-t border-line pt-3.5">
           <div>
             <div className="font-semibold text-ink">

@@ -137,7 +137,8 @@ try {
 
   // The bar's own mode buttons; the dropdown that duplicated them is gone.
   async function switchMode(name) {
-    await page.getByRole("button", { name, exact: true }).click();
+    await page.getByRole("button", { name: /^Editor mode/ }).click();
+    await page.getByRole("menuitemradio", { name, exact: true }).click();
   }
 
   await switchMode("Preview");
@@ -162,7 +163,7 @@ try {
   assert.ok(savedValues.every(values => !JSON.stringify(values).includes("/api/website/")), "Authenticated preview endpoints must never leak into saved drafts");
 
   await page.reload();
-  await page.getByRole("tab", { name: "Content", exact: true }).waitFor();
+  await page.getByRole("navigation", { name: "Tools", exact: true }).waitFor();
   await assertImageLoaded("Reopening a saved draft must keep its image visible");
   await assertBackgroundLoaded();
   await selectLayer("Hero image");

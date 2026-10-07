@@ -45,7 +45,7 @@ await page.route("**/api/**", (route) => {
 const step = (title) => page.getByRole("dialog", { name: title, exact: true });
 try {
   await page.goto("http://127.0.0.1:5199/builder-harness.html?editor");
-  await page.getByRole("tab", { name: "Content", exact: true }).waitFor();
+  await page.getByRole("navigation", { name: "Tools", exact: true }).waitFor();
 
   // Offered once, to somebody who has never seen it.
   await page.getByRole("region", { name: "Editor basics tour" }).waitFor();
@@ -70,34 +70,34 @@ try {
 
   // 5: Preview.
   await step("See it as a visitor would").waitFor();
-  await page.getByRole("button", { name: "Preview", exact: true }).click();
+  await page.getByRole("button", { name: /^Editor mode/ }).click();
+  await page.getByRole("menuitemradio", { name: "Preview", exact: true }).click();
 
   // 6 puts the editor back in Visual for the publish step.
   await step("Making it live").waitFor();
-  await page.getByRole("button", { name: "Visual", exact: true }).waitFor();
-  assert.equal(await page.getByRole("button", { name: "Visual", exact: true }).getAttribute("aria-pressed"), "true", "A step that needs Visual mode asks for it");
+  await page.getByRole("button", { name: "Editor mode: Visual", exact: true }).waitFor();
   const card = await step("Making it live").boundingBox();
   assert.ok(card && card.x >= 0 && card.y >= 0 && card.x + card.width <= 1440 && card.y + card.height <= 1000, "The step card stays on screen");
   await mkdir("checks/artifacts", { recursive: true });
   await page.screenshot({ path: "checks/artifacts/editor-tour.png" });
   await page.getByRole("button", { name: "Next", exact: true }).click();
 
-  await step("Everything else").waitFor();
+  await step("Your tools live here").waitFor();
   await page.getByRole("button", { name: "Finish", exact: true }).click();
   await page.waitForTimeout(300);
-  assert.equal(await page.getByRole("dialog", { name: "Everything else" }).count(), 0, "Finishing closes the tour");
+  assert.equal(await page.getByRole("dialog", { name: "Your tools live here" }).count(), 0, "Finishing closes the tour");
   assert.ok(saved.some((patch) => patch.tours?.editor?.status === "done"), "Finishing is recorded on the account");
 
-  // Not offered again, and More shows it as taken.
+  // Not offered again, and Help shows it as taken.
   await page.reload();
-  await page.getByRole("tab", { name: "Content", exact: true }).waitFor();
+  await page.getByRole("navigation", { name: "Tools", exact: true }).waitFor();
   await page.waitForTimeout(1500);
   assert.equal(await page.getByRole("region", { name: "Editor basics tour" }).count(), 0, "A finished tour is not offered again");
-  await page.getByText("More", { exact: true }).click();
+  await page.getByRole("button", { name: "Help", exact: true }).click();
   await page.getByRole("button", { name: /Editor basics/ }).waitFor();
-  assert.equal(await page.getByLabel("Taken").count(), 1, "More marks the tour as taken");
+  assert.equal(await page.getByLabel("Taken").count(), 1, "Help marks the tour as taken");
 
-  // Escape on the card ends a tour started from More.
+  // Escape on the card ends a tour started from Help.
   await page.getByRole("button", { name: /Publishing and versions/ }).click();
   await step("Review before it goes live").waitFor();
   await step("Review before it goes live").press("Escape");

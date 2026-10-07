@@ -23,25 +23,29 @@ await page.route("**/api/**", route => {
 });
 try {
   await page.goto("http://127.0.0.1:5199/builder-harness.html?editor");
-  await page.getByRole("tab", { name: "Content", exact: true }).waitFor();
+  await page.getByRole("navigation", { name: "Tools", exact: true }).waitFor();
   // The editor offers its tour once, to somebody who has never seen it.
   await page.getByRole("region", { name: "Editor basics tour" }).waitFor();
   await page.getByRole("button", { name: "Not now", exact: true }).click();
   assert.equal(await page.getByRole("button", { name: "Versions", exact: true }).isVisible(), false);
-  await page.getByText("More", { exact: true }).click();
-  await page.getByRole("button", { name: "Versions", exact: true }).waitFor();
+  await page.getByRole("button", { name: "More publish options", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Versions", exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Account and editor settings", exact: true }).click();
   await page.getByLabel("Designer controls", { exact: true }).check();
   assert.equal(await page.getByLabel("Designer controls", { exact: true }).isChecked(), true);
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Phone", exact: true }).click();
-  await page.getByRole("button", { name: "Preview", exact: true }).click();
+  await page.getByRole("button", { name: /^Editor mode/ }).click();
+  await page.getByRole("menuitemradio", { name: "Preview", exact: true }).click();
   assert.equal(writes.length, 0, "Opening controls and changing preview must not mutate the draft");
-  await page.getByRole("button", { name: "Visual", exact: true }).click();
+  await page.getByRole("button", { name: /^Editor mode/ }).click();
+  await page.getByRole("menuitemradio", { name: "Visual", exact: true }).click();
   await page.getByRole("button", { name: "Desktop", exact: true }).click();
   await mkdir("checks/artifacts", { recursive: true });
   await page.screenshot({ path: "checks/artifacts/builder-editor.png", fullPage: true });
   await page.reload();
-  await page.getByText("More", { exact: true }).click();
+  await page.getByRole("button", { name: "Account and editor settings", exact: true }).click();
   assert.equal(await page.getByLabel("Designer controls", { exact: true }).isChecked(), true);
   await page.waitForTimeout(1500);
   assert.equal(await page.getByRole("region", { name: "Editor basics tour" }).count(), 0, "A tour offer put away stays put away");
