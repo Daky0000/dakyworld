@@ -84,6 +84,7 @@ try {
   if (await step("Or just ask").count()) await next();
 
   await step("Publish when you're ready").waitFor();
+  await page.waitForTimeout(600);
   const card = await step("Publish when you're ready").boundingBox();
   assert.ok(card && card.x >= 0 && card.y >= 0 && card.x + card.width <= 1440 && card.y + card.height <= 1000, "The step card stays on screen");
   await mkdir("checks/artifacts", { recursive: true });

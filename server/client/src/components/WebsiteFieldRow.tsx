@@ -24,6 +24,7 @@ export function FieldRow({
   bare,
   onOpenMediaLibrary,
   computedBackgroundUrl,
+  onTypeOnPage,
 }: {
   field: SiteFieldRow;
   edit: FieldEdit | undefined;
@@ -43,6 +44,8 @@ export function FieldRow({
   bare?: boolean;
   onOpenMediaLibrary?: () => void;
   computedBackgroundUrl?: string;
+  /** Puts the caret in this element on the page itself. */
+  onTypeOnPage?: () => void;
 }) {
   readOnly = readOnly || field.sourceManaged === true;
   const value = edit?.value ?? field.value;
@@ -86,6 +89,41 @@ export function FieldRow({
           </div>
         )}
         <p className="text-xs leading-relaxed text-muted">Select a child to edit its content, or use the controls below to style this container.</p>
+      </div>
+    );
+  }
+
+  if (bare && (field.kind === "richtext" || field.kind === "link" || field.kind === "button" || (field.kind === "text" && field.tag !== "title" && field.tag !== "meta"))) {
+    const words = field.kind === "link" ? "Words on the link" : field.kind === "button" ? "Button text" : "Text";
+    return (
+      <div className="dx-stack">
+        <div className="dx-f">
+          <div className="dx-fl">
+            <label>{words}</label>
+            {onTypeOnPage && !readOnly ? (
+              <button type="button" className="dx-ctr" onClick={onTypeOnPage}>or type on the page</button>
+            ) : (
+              <span className="dx-ctr">{changed ? "Changed" : ""}</span>
+            )}
+          </div>
+          <WebsiteRichText plain label={field.label} html={value} readOnly={readOnly || ((field.kind === "link" || field.kind === "button") && !field.value)} onChange={(next) => onChange({ ...edit, value: next })} />
+        </div>
+        {(field.kind === "link" || field.kind === "button") && field.href !== undefined && (
+          <Destination id={field.id} href={href} links={links} readOnly={readOnly} onChange={(next) => onChange({ ...edit, href: next })} />
+        )}
+        {field.kind === "button" && <ButtonControls field={field} edit={edit} siteId={siteId} publicUrl={publicUrl} onChange={onChange} readOnly={readOnly} compact />}
+        {field.kind === "link" && field.newTab !== undefined && (
+          <label className="dx-toggle">
+            <span>Open in a new tab</span>
+            <input type="checkbox" checked={edit?.newTab ?? field.newTab ?? false} disabled={readOnly} onChange={(event) => onChange({ ...edit, newTab: event.target.checked })} />
+          </label>
+        )}
+        {field.sourceManaged && <p className="dx-hint">{field.sourceNote ?? "This is written by the code that builds this page, so it cannot be changed here."}</p>}
+        {field.sourceManaged && field.sourceNameable && onNameFields && (
+          <button type="button" className="dx-btn dx-soft" style={{ alignSelf: "flex-start" }} disabled={naming} onClick={onNameFields}>{naming ? "Naming…" : "Name these fields"}</button>
+        )}
+        {field.note && <p className="dx-hint">{field.note}</p>}
+        {problem && <p className="dx-note warn" style={{ margin: 0 }}>{problem}</p>}
       </div>
     );
   }
@@ -238,6 +276,58 @@ export function FieldRow({
       )}
       {field.note && <p className="mt-2 text-xs text-muted">{field.note}</p>}
       {problem && <p className="mt-2 text-xs font-semibold text-warn-text">{problem}</p>}
+    </div>
+  );
+}
+
+/**
+ * Where a link goes, with the kinds of place it can go as chips. A chip only
+ * starts the address in the right form — `mailto:`, `tel:`, `#`, `https://` —
+ * the box is still the one place the destination is written, and the site's
+ * own pages are offered as you type.
+ */
+const KINDS: { label: string; prefix: string; test: (href: string) => boolean }[] = [
+  { label: "Page", prefix: "/", test: (href) => href.startsWith("/") },
+  { label: "Section", prefix: "#", test: (href) => href.startsWith("#") },
+  { label: "Email", prefix: "mailto:", test: (href) => /^mailto:/i.test(href) },
+  { label: "Phone", prefix: "tel:", test: (href) => /^tel:/i.test(href) },
+  { label: "URL", prefix: "https://", test: (href) => /^https?:\/\//i.test(href) },
+];
+
+function Destination({ id, href, links, readOnly, onChange }: { id: string; href: string; links: Array<{ path: string; title: string }>; readOnly: boolean; onChange: (href: string) => void }) {
+  const active = KINDS.find((kind) => kind.test(href))?.label;
+  return (
+    <div className="dx-f">
+      <div className="dx-fl"><label htmlFor={`${id}-href`}>Where it goes</label></div>
+      <div className="dx-inp">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1" /></svg>
+        <input id={`${id}-href`} type="text" aria-label="Where it goes" value={href} readOnly={readOnly} list={`${id}-links`} onChange={(event) => onChange(event.target.value)} />
+        <datalist id={`${id}-links`}>
+          {links.map((link) => <option key={link.path} value={link.path}>{link.title}</option>)}
+        </datalist>
+      </div>
+      <div className="dx-chips" role="group" aria-label="Kind of destination">
+        {KINDS.map((kind) => (
+          <button
+            key={kind.label}
+            type="button"
+            className="dx-chip"
+            aria-pressed={active === kind.label}
+            disabled={readOnly}
+            onClick={() => {
+              if (active === kind.label) return;
+              onChange(kind.label === "Page" ? (links[0]?.path ?? "/") : kind.prefix);
+              window.setTimeout(() => {
+                const box = document.getElementById(`${id}-href`) as HTMLInputElement | null;
+                box?.focus();
+                box?.setSelectionRange(box.value.length, box.value.length);
+              }, 0);
+            }}
+          >
+            {kind.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

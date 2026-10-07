@@ -108,7 +108,7 @@ async function assertBackgroundLoaded() {
 try {
   await page.goto(`${origin}/builder-harness.html?editor`);
   await selectLayer("Hero image");
-  await page.getByRole("button", { name: /^Media Library \(/ }).click();
+  await page.getByRole("button", { name: /^Media library \(/i }).click();
   const library = page.getByRole("dialog", { name: "Media Library", exact: true });
   await library.getByRole("button", { name: /^Site Library & Upload/ }).click();
   const png = await page.evaluate(() => {
@@ -167,11 +167,11 @@ try {
   await assertImageLoaded("Reopening a saved draft must keep its image visible");
   await assertBackgroundLoaded();
   await selectLayer("Hero image");
-  await page.getByRole("button", { name: /^Media Library \(/ }).click();
+  await page.getByRole("button", { name: /^Media library \(/i }).click();
   await library.getByRole("button", { name: /^Site Library & Upload/ }).click();
   await library.getByTitle("Use replacement.png", { exact: true }).click();
   await assertImageLoaded("Selecting an existing uploaded asset must display immediately");
-  await page.getByRole("tab", { name: "Style", exact: true }).click();
+  // Fit & crop lives on the Content tab, as the redesign places it.
   // The focal point used to be one free-text box; it is a preset list with a
   // Custom choice whose two axes take numbers. What this guards is the same:
   // typing into a style control must not lose focus between keystrokes.
@@ -181,7 +181,8 @@ try {
   await across.type("0");
   assert.equal(await across.inputValue(), "40", "The focal point accepts continuous typing");
   assert.ok(await across.evaluate(input => document.activeElement === input), "Style input keeps focus after typing");
-  const width = page.getByRole("spinbutton", { name: "Width" }).first();
+  await page.getByRole("tab", { name: "Style", exact: true }).click();
+  const width = page.locator(".dx-style").getByRole("textbox", { name: "Width", exact: true });
   await width.fill("2");
   await width.type("40");
   assert.equal(await width.inputValue(), "240", "Numeric style input accepts continuous typing");

@@ -5,8 +5,19 @@ import type { DraftSaveResult, FieldKind, SitePageDetail, SitePageRow } from "..
 import { matchesPreset, mergePreset, presetPagePlan, PRESET_PROPERTIES, type BrandPreset } from "../lib/websiteBrandPresets";
 import { ColorCodeInput } from "./InspectorControls";
 
-export function WebsitePresetPicker({ presets, kind, tag, style, onApply }: { presets: BrandPreset[]; kind: FieldKind; tag: string; style: string; onApply: (style: string) => void }) {
+export function WebsitePresetPicker({ presets, kind, tag, style, onApply, compact = false }: { presets: BrandPreset[]; kind: FieldKind; tag: string; style: string; onApply: (style: string) => void; /** The redesigned inspector's "Saved style" row. */ compact?: boolean }) {
   const available = presets.filter(preset => matchesPreset(preset, { kind, tag }));
+  if (compact) {
+    return (
+      <div className="dx-f">
+        <div className="dx-fl"><label htmlFor="dx-saved-style">Saved style</label></div>
+        <select id="dx-saved-style" aria-label="Saved style" value="" disabled={!available.length} onChange={e => { const preset = available.find(item => item.id === e.target.value); if (preset) onApply(mergePreset(style, preset)); }}>
+          <option value="">{available.length ? "Choose an approved style" : "No approved styles for this element yet"}</option>
+          {available.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
+        </select>
+      </div>
+    );
+  }
   return <div className="mb-3"><label className="block text-xs font-semibold">Brand style<select aria-label="Brand style" className="mt-1 w-full rounded-[10px] border border-line p-2 text-sm" value="" disabled={!available.length} onChange={e => { const preset = available.find(item => item.id === e.target.value); if (preset) onApply(mergePreset(style, preset)); }}><option value="">{available.length ? "Choose an approved style" : "No approved styles for this element"}</option>{available.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></label></div>;
 }
 

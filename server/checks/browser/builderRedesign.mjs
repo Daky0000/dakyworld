@@ -38,7 +38,7 @@ try {
   console.log(`Editor ready in ${Date.now()-started}ms (local mocked API; not a production benchmark).`);
   assert.equal(await page.locator('.editor-sidebar').evaluate(e=>getComputedStyle(e).width),'316px');
   await page.getByRole('tab',{name:'Style',exact:true}).click();
-  await page.getByRole('button',{name:'Typography',exact:true}).waitFor();
+  await page.locator('.dx-style summary',{hasText:'Typography'}).waitFor();
   assert.equal(await heading.isVisible(),false);
   await page.getByRole('button',{name:'Hover',exact:true}).click();
   await page.getByRole('radiogroup',{name:'Hover movement'}).waitFor();

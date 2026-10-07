@@ -5,6 +5,7 @@ import { WebsiteRichText } from "../components/WebsiteRichText";
 import { WebsiteTextFormatting } from "../components/WebsiteTextFormatting";
 import { WebsiteMotionPanel } from "../components/WebsiteMotionPanel";
 import { WebsiteHoverPanel } from "../components/WebsiteHoverPanel";
+import { WebsiteStylePanel } from "../components/WebsiteStylePanel";
 import { Seg } from "../components/InspectorDesign";
 import { lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -3276,7 +3277,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                       what knows that — its display, its parent's, whether it has
                       words of its own — and when the frame cannot be reached the
                       field row is the only thing left to go on. */}
-                  {!readOnly && inspectorTab === "style" && styleState === "normal" && <div className="px-3 pt-3"><WebsitePresetPicker presets={design.data?.options.presets ?? []} kind={picked.kind} tag={picked.tag} style={pickedStyle ?? ""} onApply={next => changePickedStyle(next, true)} /></div>}
+                  {!readOnly && inspectorTab === "style" && styleState === "normal" && <div className="dx-pad" style={{ paddingBottom: 4 }}><WebsitePresetPicker compact presets={design.data?.options.presets ?? []} kind={picked.kind} tag={picked.tag} style={pickedStyle ?? ""} onApply={next => changePickedStyle(next, true)} /></div>}
                   {inspectorTab === "interactions" && (
                     <WebsiteMotionPanel
                       element={pickedElement}
@@ -3297,7 +3298,24 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                       onChange={(style) => change(picked.id, { ...edits[picked.id], style }, { commit: true })}
                     />
                   )}
-                  <div hidden={inspectorTab === "interactions" || (inspectorTab === "style" && styleState === "hover")}><ElementInspector
+                  {inspectorTab === "style" && styleState === "normal" && (
+                    <WebsiteStylePanel
+                      key={`${picked.id}:${device}`}
+                      style={pickedStyle ?? ""}
+                      computed={computed}
+                      fonts={design.data?.options.fonts}
+                      kind={picked.kind}
+                      tag={picked.tag}
+                      readOnly={readOnly}
+                      onChange={(next, commit) => changePickedStyle(next, commit)}
+                      onCommit={() => commitHistory(latestEdits.current)}
+                      onPickBackgroundImage={() => {
+                        setAssetTargetMode("background");
+                        setAssetModalOpen(true);
+                      }}
+                    />
+                  )}
+                  <div hidden={inspectorTab === "interactions" || inspectorTab === "style"}><ElementInspector
                     tab={inspectorTab === "layout" ? "layout" : inspectorTab === "style" ? "style" : "content"}
                     simple={!designerMode}
                     sitePublicUrl={page.data.page.url}
@@ -3387,199 +3405,133 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                           const currentAlt = edits[picked.id]?.alt ?? picked.alt ?? "";
                           const currentHref = edits[picked.id]?.href ?? picked.href ?? "";
 
-                          return (
-                            <div className="mb-4 space-y-3 rounded-xl border border-line bg-surface-2/60 p-3">
-                              <div className="flex items-center justify-between">
-                                <span className="text-xs font-bold text-ink">
-                                  {isContainer ? "Background Image" : isIcon ? "Logo / Icon Graphic" : "Choose Image"}
-                                </span>
-                                {!readOnly && (
-                                  <button
-                                    type="button"
-                                    data-tour="image-replace"
-                                    onClick={() => {
-                                      setAssetTargetMode(isContainer ? "background" : "image");
-                                      setAssetModalOpen(true);
-                                    }}
-                                    className="text-[11px] font-semibold text-blue hover:underline"
-                                  >
-                                    Media Library ({capturedHtmlImages.length})
-                                  </button>
-                                )}
-                              </div>
+                          const posKey = isContainer ? "background-position" : "object-position";
+                          const currentPos = styleMap[posKey] ?? "";
+                          const focal = /^(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%$/.exec(currentPos);
+                          const writePos = (next: string) => {
+                            const nextMap = { ...styleMap };
+                            if (next) nextMap[posKey] = next;
+                            else delete nextMap[posKey];
+                            changePickedStyle(writeStyle(nextMap), true);
+                            try {
+                              const target = frame.current?.contentDocument?.querySelector<HTMLElement>(`[data-dw-field="${CSS.escape(picked.id)}"]`);
+                              if (target) {
+                                if (isContainer) target.style.backgroundPosition = next;
+                                else { target.style.objectPosition = next; target.querySelector<HTMLElement>("img, video")?.style.setProperty("object-position", next); }
+                              }
+                            } catch { /* The frame may be reloading. */ }
+                          };
+                          const openLibrary = () => {
+                            setAssetTargetMode(isContainer ? "background" : "image");
+                            setAssetModalOpen(true);
+                          };
 
-                              {/* Large visual preview box showing the actual image */}
+                          return (
+                            <div className="dx-stack" style={{ marginBottom: 12 }}>
                               <div
+                                className="dx-imgprev"
                                 role="button"
                                 tabIndex={0}
-                                onClick={() => {
-                                  if (!readOnly) {
-                                    setAssetTargetMode(isContainer ? "background" : "image");
-                                    setAssetModalOpen(true);
-                                  }
+                                aria-label="Set the focal point: click the part of the picture that must stay in view"
+                                title="Click to set the focal point"
+                                onClick={(event) => {
+                                  if (readOnly) return;
+                                  const box = event.currentTarget.getBoundingClientRect();
+                                  const x = Math.round(((event.clientX - box.left) / box.width) * 100);
+                                  const y = Math.round(((event.clientY - box.top) / box.height) * 100);
+                                  writePos(`${x}% ${y}%`);
+                                  showQuickToast(`Focal point ${x}% × ${y}%`);
                                 }}
-                                onKeyDown={(e) => {
-                                  if ((e.key === "Enter" || e.key === " ") && !readOnly) {
-                                    e.preventDefault();
-                                    setAssetTargetMode(isContainer ? "background" : "image");
-                                    setAssetModalOpen(true);
-                                  }
-                                }}
-                                className="group relative h-40 w-full cursor-pointer overflow-hidden rounded-xl border border-line bg-sunken shadow-2xs transition hover:border-blue"
+                                onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !readOnly) { event.preventDefault(); openLibrary(); } }}
                               >
-                                {resolvedImgUrl ? (
-                                  <img
-                                    src={resolvedImgUrl}
-                                    alt={currentAlt || (isIcon ? "Selected icon" : "Selected image")}
-                                    className="h-full w-full object-contain transition duration-200 group-hover:scale-[1.02]"
-                                  />
-                                ) : (
-                                  <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 text-muted">
-                                    <span className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-white text-muted shadow-2xs">
-                                      <IconImage size={20} />
-                                    </span>
-                                    <span className="text-xs font-semibold text-ink-2">
-                                      {isIcon ? "Choose Logo / Icon Image" : "Choose Image"}
-                                    </span>
-                                  </div>
-                                )}
-                                <div className="absolute inset-x-0 bottom-0 bg-ink/80 py-1.5 text-center text-xs font-semibold text-white opacity-0 transition group-hover:opacity-100">
-                                  {isIcon ? "Change Logo / Icon Image" : "Choose Image"}
-                                </div>
+                                {resolvedImgUrl ? <img src={resolvedImgUrl} alt={currentAlt || (isIcon ? "Selected icon" : "Selected image")} /> : <span className="dx-hint">No picture yet</span>}
+                                <span className="dx-fp" style={{ left: `${focal ? focal[1] : 50}%`, top: `${focal ? focal[2] : 50}%` }} />
                               </div>
-
-                              {/* Image Resolution / Sizing */}
-                              <div className="flex items-center justify-between gap-2 pt-1">
-                                <span className="text-[11px] font-medium text-ink-2">
-                                  {isContainer ? "Background Sizing" : isIcon ? "Graphic Fitting" : "Image Resolution"}
-                                </span>
+                              {!readOnly && (
+                                <>
+                                  <div className="dx-g2">
+                                    <button type="button" data-tour="image-replace" className="dx-btn dx-pri" onClick={openLibrary}>Replace</button>
+                                    <button type="button" className="dx-btn dx-ghost" onClick={openLibrary}>Upload</button>
+                                  </div>
+                                  <button type="button" className="dx-btn dx-soft dx-full" onClick={openLibrary}>Media library ({capturedHtmlImages.length})</button>
+                                </>
+                              )}
+                              {!isContainer && !isIcon && (
+                                <>
+                                  <div className="dx-f">
+                                    <div className="dx-fl"><label htmlFor="dx-img-url">Image URL</label></div>
+                                    <input
+                                      id="dx-img-url"
+                                      type="text"
+                                      disabled={readOnly}
+                                      placeholder="/assets/… or https://…"
+                                      value={rawImgVal}
+                                      onChange={(e) => change(picked.id, { ...edits[picked.id], value: e.target.value })}
+                                    />
+                                  </div>
+                                  {picked.href !== undefined && (
+                                    <div className="dx-f">
+                                      <div className="dx-fl"><label htmlFor="dx-img-link">Link <span className="dx-opt">(optional)</span></label></div>
+                                      <div className="dx-inp">
+                                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1" /></svg>
+                                        <input
+                                          id="dx-img-link"
+                                          type="text"
+                                          disabled={readOnly}
+                                          value={currentHref}
+                                          placeholder="Where clicking the image goes"
+                                          onChange={(e) => change(picked.id, { ...edits[picked.id], value: edits[picked.id]?.value ?? picked.value, href: e.target.value })}
+                                        />
+                                      </div>
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                              <div className="dx-sub">Fit &amp; crop</div>
+                              <div className="dx-f">
+                                <div className="dx-fl"><label htmlFor="dx-img-fit">How it fills its box</label></div>
                                 <select
+                                  id="dx-img-fit"
                                   disabled={readOnly}
                                   value={currentFit}
                                   onChange={(e) => {
                                     const nextMap = { ...styleMap };
-                                    if (isContainer) {
-                                      nextMap["background-size"] = e.target.value;
-                                    } else {
-                                      nextMap["object-fit"] = e.target.value;
-                                    }
+                                    if (isContainer) nextMap["background-size"] = e.target.value;
+                                    else nextMap["object-fit"] = e.target.value;
                                     changePickedStyle(writeStyle(nextMap), true);
                                   }}
-                                  className="h-7 w-40 rounded-lg border border-line bg-white px-2 text-[11px] font-medium text-ink outline-none focus:border-blue"
                                 >
-                                  <option value="cover">Full (Cover)</option>
-                                  <option value="contain">Contain (Full Image)</option>
+                                  <option value="cover">Full (cover)</option>
+                                  <option value="contain">Contain (whole image)</option>
                                   {isContainer ? (
                                     <>
-                                      <option value="auto">Auto (Default)</option>
                                       <option value="100% 100%">Stretch (100% × 100%)</option>
+                                      <option value="auto">Original size</option>
                                     </>
                                   ) : (
                                     <>
                                       <option value="fill">Stretch (100% × 100%)</option>
-                                      <option value="scale-down">Scale Down</option>
-                                      <option value="none">Original Size</option>
+                                      <option value="scale-down">Scale down</option>
+                                      <option value="none">Original size</option>
                                     </>
                                   )}
                                 </select>
                               </div>
-
-                              {/* Image / Container Background Position Control */}
-                              <ImagePositionControl
-                                value={isContainer ? (styleMap["background-position"] ?? computed["background-position"]) : (styleMap["object-position"] ?? computed["object-position"])}
-                                device={device}
-                                disabled={readOnly}
-                                onChange={(nextPos) => {
-                                  const nextMap = { ...styleMap };
-                                  if (isContainer) {
-                                    if (nextPos) nextMap["background-position"] = nextPos;
-                                    else delete nextMap["background-position"];
-                                  } else {
-                                    if (nextPos) nextMap["object-position"] = nextPos;
-                                    else delete nextMap["object-position"];
-                                  }
-                                  changePickedStyle(writeStyle(nextMap), true);
-                                  try {
-                                    const doc = frame.current?.contentDocument;
-                                    const targetEl = doc?.querySelector<HTMLElement>(`[data-dw-field="${CSS.escape(picked.id)}"]`);
-                                    if (targetEl) {
-                                      if (isContainer) targetEl.style.backgroundPosition = nextPos || "";
-                                      else {
-                                        targetEl.style.objectPosition = nextPos || "";
-                                        const innerImg = targetEl.querySelector<HTMLElement>("img, video");
-                                        if (innerImg) innerImg.style.objectPosition = nextPos || "";
-                                      }
-                                    }
-                                  } catch {}
-                                }}
-                                onCommit={() => commitHistory(edits)}
-                              />
-
-                              {isIcon && (
-                                <div className="flex items-center justify-between gap-2 pt-1">
-                                  <span className="text-[11px] font-medium text-ink-2">Image Address</span>
-                                  <input
-                                    type="text"
-                                    disabled={readOnly}
-                                    value={iconChoice && "src" in iconChoice ? iconChoice.src : /^(?:https?:|\/|data:)/i.test(rawImgVal) ? rawImgVal : ""}
-                                    placeholder="/assets/... or https://..."
-                                    onChange={(e) => {
-                                      const v = e.target.value.trim();
-                                      if (v) {
-                                        change(picked.id, { ...edits[picked.id], icon: { src: v }, value: v }, { commit: true });
-                                      } else {
-                                        const next = { ...edits[picked.id] };
-                                        delete next.icon;
-                                        change(picked.id, next, { commit: true });
-                                      }
-                                    }}
-                                    className="h-7 w-40 rounded-lg border border-line bg-white px-2 font-mono text-[11px] text-ink outline-none focus:border-blue"
-                                  />
-                                </div>
-                              )}
-
+                              <ImagePositionControl value={currentPos || computed[posKey]} device={device} disabled={readOnly} onChange={(next) => writePos(next ?? "")} onCommit={() => commitHistory(edits)} />
+                              <p className="dx-hint">Click the preview to set the crop's focal point.</p>
                               {!isContainer && !isIcon && (
                                 <>
-                                  {/* Caption / Alt */}
-                                  <div className="space-y-1">
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span className="text-[11px] font-medium text-ink-2">Caption / Alt</span>
-                                      <input
-                                        type="text"
-                                        disabled={readOnly}
-                                        value={currentAlt}
-                                        placeholder="Enter image caption or alt text"
-                                        onChange={(e) =>
-                                          change(picked.id, {
-                                            ...edits[picked.id],
-                                            value: edits[picked.id]?.value ?? picked.value,
-                                            alt: e.target.value,
-                                          })
-                                        }
-                                        className="h-7 w-40 rounded-lg border border-line bg-white px-2 text-[11px] text-ink outline-none focus:border-blue"
-                                      />
-                                    </div>
-                                  </div>
-
-                                  {/* Link */}
-                                  <div className="space-y-1">
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span className="text-[11px] font-medium text-ink-2">Link</span>
-                                      <input
-                                        type="text"
-                                        disabled={readOnly}
-                                        value={currentHref}
-                                        placeholder="None (or https://...)"
-                                        onChange={(e) =>
-                                          change(picked.id, {
-                                            ...edits[picked.id],
-                                            value: edits[picked.id]?.value ?? picked.value,
-                                            href: e.target.value,
-                                          })
-                                        }
-                                        className="h-7 w-40 rounded-lg border border-line bg-white px-2 font-mono text-[11px] text-ink outline-none focus:border-blue"
-                                      />
-                                    </div>
+                                  <div className="dx-sub">Details</div>
+                                  <div className="dx-f">
+                                    <div className="dx-fl"><label htmlFor="dx-img-alt">Alt text</label></div>
+                                    <textarea
+                                      id="dx-img-alt"
+                                      className="dx-ta"
+                                      disabled={readOnly}
+                                      value={currentAlt}
+                                      placeholder={picked.decorative ? "Marked as decoration" : "Describe it for someone who can't see it"}
+                                      onChange={(e) => change(picked.id, { ...edits[picked.id], value: edits[picked.id]?.value ?? picked.value, alt: e.target.value })}
+                                    />
                                   </div>
                                 </>
                               )}
@@ -3589,17 +3541,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
                         {picked.kind === "image" && !readOnly && <WebsiteImageFraming siteId={site.id} key={`${picked.id}:${device}:${edits[picked.id]?.value ?? picked.value}`} src={resolveImagePreview(edits[picked.id]?.value ?? picked.value)} style={pickedStyle ?? ""} onApply={next => changePickedStyle(next, true)} />}
 
-                        {!readOnly && !picked.sourceManaged && picked.tag !== "title" && picked.tag !== "meta" && picked.kind !== "image" && picked.kind !== "container" && (
-                          <div className="mb-2 flex justify-end">
-                            <button
-                              type="button"
-                              onClick={() => tell({ type: "edit", id: picked.id })}
-                              className="text-xs text-muted underline-offset-2 transition hover:text-blue hover:underline"
-                            >
-                              {typingId === picked.id ? "Typing on the page" : "Type on the page"}
-                            </button>
-                          </div>
-                        )}
+
                         {(absentIds.has(picked.id) || picked.id.startsWith("meta.") || picked.tag === "title" || picked.tag === "meta") && (
                           <div className="mb-3 rounded-xl border border-line bg-cream/70 p-3 text-xs leading-relaxed text-muted">
                             <div className="flex items-center justify-between gap-2">
@@ -3906,7 +3848,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                             </div>
                           );
                         })()}
-                        <FieldRow
+                        {picked.kind !== "image" && <FieldRow
                           key={`${loadToken}:${frameEdit}:${picked.id}`}
                           field={picked}
                           edit={edits[picked.id]}
@@ -3924,8 +3866,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                             setAssetModalOpen(true);
                           }}
                           computedBackgroundUrl={computed["background-image"]}
+                          onTypeOnPage={() => tell({ type: "edit", id: picked.id })}
                           bare
-                        />
+                        />}
                       </>
                     }
                   /></div>

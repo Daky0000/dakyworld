@@ -18,6 +18,7 @@ export function ButtonControls({
   publicUrl,
   onChange,
   readOnly,
+  compact = false,
 }: {
   field: SiteFieldRow;
   edit: FieldEdit | undefined;
@@ -27,11 +28,59 @@ export function ButtonControls({
   onNameFields?: () => void;
   naming?: boolean;
   readOnly: boolean;
+  /** The redesigned inspector: chips and a switch. */
+  compact?: boolean;
 }) {
   const variant = edit?.variant !== undefined ? edit.variant : (field.variant ?? null);
   const newTab = edit?.newTab ?? field.newTab ?? false;
   const choices = field.variants ?? [];
   const canRestyle = choices.some((candidate) => candidate !== variant);
+
+  if (compact) {
+    return (
+      <>
+        {canRestyle && (
+          <div className="dx-f">
+            <div className="dx-fl"><label>Button style</label></div>
+            <div className="dx-chips" role="group" aria-label="Button style">
+              {choices.map((candidate) => (
+                <button key={candidate} type="button" className="dx-chip" aria-pressed={variant === candidate} disabled={readOnly} onClick={() => onChange({ ...edit, variant: candidate })}>
+                  {variantLabel(field.variantStem, candidate)}
+                </button>
+              ))}
+              <button type="button" className="dx-chip" aria-pressed={variant === null} disabled={readOnly} onClick={() => onChange({ ...edit, variant: null })}>None</button>
+            </div>
+          </div>
+        )}
+        {field.newTab !== undefined && (
+          <label className="dx-toggle">
+            <span>Open in a new tab</span>
+            <input type="checkbox" checked={newTab} disabled={readOnly} onChange={(event) => onChange({ ...edit, newTab: event.target.checked })} />
+          </label>
+        )}
+        {(field.icon !== undefined || field.iconAddable) && (
+          <WebsiteIconPicker
+            siteId={siteId}
+            publicUrl={publicUrl}
+            current={field.icon}
+            currentType={field.iconType}
+            addable={field.iconAddable}
+            position={field.iconPosition}
+            choice={edit?.icon}
+            choicePosition={edit?.iconPosition ?? field.iconPosition}
+            readOnly={readOnly}
+            onChoose={(nextIcon, side) => onChange({ ...edit, icon: nextIcon, ...(side ? { iconPosition: side } : {}) })}
+            onReset={() => {
+              const next = { ...edit };
+              delete next.icon;
+              delete next.iconPosition;
+              onChange(next);
+            }}
+          />
+        )}
+      </>
+    );
+  }
 
   return (
     <div className="mt-2 space-y-2">
