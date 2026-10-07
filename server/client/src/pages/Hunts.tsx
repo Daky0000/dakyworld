@@ -105,14 +105,64 @@ const VERDICT_TONE: Record<Verdict["verdict"], "ok" | "warn" | "bad" | "idle"> =
   UNDECIDED: "warn",
 };
 
-export type HuntRegion = "all" | "africa" | "middle-east" | "asia" | "europe" | "oceania" | "north-america";
+export type HuntRegion = "all" | "top-10" | "africa" | "middle-east" | "asia" | "europe" | "oceania" | "north-america";
+
+export const TOP_10_COUNTRIES = [
+  "Liechtenstein",
+  "Singapore",
+  "Ireland",
+  "Luxembourg",
+  "Norway",
+  "Qatar",
+  "Switzerland",
+  "Brunei",
+  "Guyana",
+  "United States",
+] as const;
+
+export function getThesisCountry(thesis: Thesis): string | null {
+  const text = `${thesis.key} ${thesis.name} ${thesis.target} ${thesis.source?.name ?? ""}`.toLowerCase();
+  if (text.includes("liechtenstein") || text.includes("vaduz")) return "Liechtenstein";
+  if (text.includes("singapore")) return "Singapore";
+  if (text.includes("ireland") || text.includes("dublin")) return "Ireland";
+  if (text.includes("luxembourg")) return "Luxembourg";
+  if (text.includes("norway") || text.includes("oslo")) return "Norway";
+  if (text.includes("qatar") || text.includes("doha")) return "Qatar";
+  if (text.includes("switzerland") || text.includes("zurich")) return "Switzerland";
+  if (text.includes("brunei") || text.includes("bandar seri begawan")) return "Brunei";
+  if (text.includes("guyana") || text.includes("georgetown")) return "Guyana";
+  if (
+    text.includes("us-") ||
+    text.includes("united states") ||
+    text.includes("new york") ||
+    text.includes("los angeles") ||
+    text.includes("houston")
+  ) {
+    return "United States";
+  }
+  return null;
+}
 
 export function getThesisRegion(thesis: Thesis): { id: HuntRegion; label: string } {
   const text = `${thesis.key} ${thesis.name} ${thesis.target} ${thesis.timezone}`.toLowerCase();
-  if (text.includes("dubai") || text.includes("uae") || text.includes("middle east") || text.includes("asia/dubai")) {
+  if (
+    text.includes("dubai") ||
+    text.includes("uae") ||
+    text.includes("middle east") ||
+    text.includes("asia/dubai") ||
+    text.includes("qatar") ||
+    text.includes("doha")
+  ) {
     return { id: "middle-east", label: "Middle East" };
   }
-  if (text.includes("singapore") || text.includes("tokyo") || text.includes("asia") || text.includes("asia/singapore")) {
+  if (
+    text.includes("singapore") ||
+    text.includes("tokyo") ||
+    text.includes("asia") ||
+    text.includes("asia/singapore") ||
+    text.includes("brunei") ||
+    text.includes("bandar seri begawan")
+  ) {
     return { id: "asia", label: "Asia / APAC" };
   }
   if (
@@ -121,7 +171,14 @@ export function getThesisRegion(thesis: Thesis): { id: HuntRegion; label: string
     text.includes("zurich") ||
     text.includes("europe") ||
     text.includes("london") ||
-    text.includes("paris")
+    text.includes("paris") ||
+    text.includes("liechtenstein") ||
+    text.includes("vaduz") ||
+    text.includes("luxembourg") ||
+    text.includes("norway") ||
+    text.includes("oslo") ||
+    text.includes("dublin") ||
+    text.includes("ireland")
   ) {
     return { id: "europe", label: "Europe" };
   }
@@ -137,21 +194,24 @@ export function getThesisRegion(thesis: Thesis): { id: HuntRegion; label: string
     text.includes("usa") ||
     text.includes("canada") ||
     text.includes("toronto") ||
-    text.includes("houston")
+    text.includes("houston") ||
+    text.includes("guyana") ||
+    text.includes("georgetown")
   ) {
-    return { id: "north-america", label: "North America" };
+    return { id: "north-america", label: "Americas" };
   }
   return { id: "africa", label: "Africa" };
 }
 
 const REGION_TABS: { id: HuntRegion; label: string }[] = [
   { id: "all", label: "All Regions" },
+  { id: "top-10", label: "Top 10 Target Countries" },
   { id: "africa", label: "Africa" },
   { id: "middle-east", label: "Middle East" },
   { id: "asia", label: "Asia / APAC" },
   { id: "europe", label: "Europe" },
   { id: "oceania", label: "Oceania" },
-  { id: "north-america", label: "North America" },
+  { id: "north-america", label: "Americas" },
 ];
 
 export function Hunts() {
@@ -159,6 +219,7 @@ export function Hunts() {
   const [open, setOpen] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [selectedRegion, setSelectedRegion] = useState<HuntRegion>("all");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const list = useQuery({ queryKey: ["hunts"], refetchInterval: 20_000, queryFn: ({ signal }) => api.get<HuntList>("/hunts", signal) });
   const detail = useQuery({
@@ -183,6 +244,16 @@ export function Hunts() {
     onError: (err: Error) => setNote(err.message),
   });
 
+  const batchSetEnabled = useMutation({
+    mutationFn: ({ keys, enabled }: { keys: string[]; enabled: boolean }) =>
+      api.post<{ note: string }>("/hunts/batch/enabled", { keys, enabled }),
+    onSuccess: (result) => {
+      setNote(result.note);
+      invalidate();
+    },
+    onError: (err: Error) => setNote(err.message),
+  });
+
   const runNow = useMutation({
     mutationFn: (key: string) => api.post<{ note: string }>(`/hunts/${key}/run`),
     onSuccess: (result) => {
@@ -195,9 +266,34 @@ export function Hunts() {
   const theses = list.data?.theses ?? [];
   const summary = list.data?.summary;
 
-  const regionTheses = theses.map((t) => ({ thesis: t, region: getThesisRegion(t) }));
-  const filteredTheses =
-    selectedRegion === "all" ? regionTheses : regionTheses.filter((r) => r.region.id === selectedRegion);
+  const enrichedTheses = theses.map((t) => {
+    const country = getThesisCountry(t);
+    return {
+      thesis: t,
+      region: getThesisRegion(t),
+      country,
+      isTop10: Boolean(country && (TOP_10_COUNTRIES as readonly string[]).includes(country)),
+    };
+  });
+
+  const filteredTheses = enrichedTheses.filter(({ thesis, region, country, isTop10 }) => {
+    if (selectedRegion === "top-10" && !isTop10) return false;
+    if (selectedRegion !== "all" && selectedRegion !== "top-10" && region.id !== selectedRegion) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const match =
+        thesis.name.toLowerCase().includes(q) ||
+        thesis.target.toLowerCase().includes(q) ||
+        thesis.key.toLowerCase().includes(q) ||
+        (country && country.toLowerCase().includes(q)) ||
+        region.label.toLowerCase().includes(q);
+      if (!match) return false;
+    }
+    return true;
+  });
+
+  const top10Keys = enrichedTheses.filter((r) => r.isTop10).map((r) => r.thesis.key);
+  const top10RunningCount = enrichedTheses.filter((r) => r.isTop10 && r.thesis.enabled).length;
 
   return (
     <div className="space-y-8">
@@ -234,49 +330,101 @@ export function Hunts() {
         </StatGrid>
       )}
 
+      {/* Target Countries Quick Banner */}
+      <Card className="border-emerald-500/30 bg-emerald-500/5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Badge tone="positive">Top 10 Target Economies</Badge>
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted">
+                {top10RunningCount} of 10 active
+              </span>
+            </div>
+            <p className="text-xs text-ink/80">
+              Targeted markets: <strong>Liechtenstein</strong>, <strong>Singapore</strong>, <strong>Ireland</strong>, <strong>Luxembourg</strong>, <strong>Norway</strong>, <strong>Qatar</strong>, <strong>Switzerland</strong>, <strong>Brunei</strong>, <strong>Guyana</strong>, <strong>United States</strong>.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="primary"
+              disabled={batchSetEnabled.isPending || top10Keys.length === 0}
+              onClick={() => batchSetEnabled.mutate({ keys: top10Keys, enabled: true })}
+            >
+              {batchSetEnabled.isPending ? "Updating…" : "Enable all 10 countries"}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={batchSetEnabled.isPending || top10Keys.length === 0}
+              onClick={() => batchSetEnabled.mutate({ keys: top10Keys, enabled: false })}
+            >
+              Stop all 10
+            </Button>
+          </div>
+        </div>
+      </Card>
+
       {list.isLoading && <Card>Loading…</Card>}
       {!list.isLoading && theses.length === 0 && (
         <EmptyState message="No hunts are written yet. The shipped ones arrive on the next deploy, switched off." />
       )}
 
       {theses.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-line pb-3">
-          {REGION_TABS.map((tab) => {
-            const count = tab.id === "all" ? theses.length : regionTheses.filter((r) => r.region.id === tab.id).length;
-            if (count === 0 && tab.id !== "all") return null;
-            const active = selectedRegion === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setSelectedRegion(tab.id)}
-                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 font-mono text-xs transition ${
-                  active
-                    ? "bg-ink font-semibold text-cream shadow-sm"
-                    : "border border-line bg-white text-muted hover:border-ink/30 hover:text-ink"
-                }`}
-              >
-
-                <span>{tab.label}</span>
-                <span className={`rounded-full px-1.5 py-0.5 text-[11px] ${active ? "bg-cream/20 text-cream" : "bg-cream text-muted"}`}>
-                  {count}
-                </span>
-              </button>
-            );
-          })}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {REGION_TABS.map((tab) => {
+              const count =
+                tab.id === "all"
+                  ? theses.length
+                  : tab.id === "top-10"
+                  ? enrichedTheses.filter((r) => r.isTop10).length
+                  : enrichedTheses.filter((r) => r.region.id === tab.id).length;
+              if (count === 0 && tab.id !== "all") return null;
+              const active = selectedRegion === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setSelectedRegion(tab.id)}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 font-mono text-xs transition ${
+                    active
+                      ? "bg-ink font-semibold text-cream shadow-sm"
+                      : "border border-line bg-white text-muted hover:border-ink/30 hover:text-ink"
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  <span className={`rounded-full px-1.5 py-0.5 text-[11px] ${active ? "bg-cream/20 text-cream" : "bg-cream text-muted"}`}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="w-full sm:w-64">
+            <input
+              type="text"
+              placeholder="Filter by country, city, or niche…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full rounded-full border border-line bg-white px-3 py-1 text-xs text-ink placeholder:text-muted focus:border-ink focus:outline-none"
+            />
+          </div>
         </div>
       )}
 
       <div className="space-y-4">
-        {filteredTheses.map(({ thesis, region }) => (
+        {filteredTheses.map(({ thesis, region, country }) => (
           <Card key={thesis.id} className="transition-all hover:border-line-strong hover:border-line-strong">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusDot tone={thesis.enabled ? "live" : "idle"} />
                   <h3 className="text-base font-semibold text-ink">{thesis.name}</h3>
+                  {country && (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-sans text-[11px] font-semibold text-emerald-800">
+                      {country}
+                    </span>
+                  )}
                   <span className="inline-flex items-center gap-1 rounded-full border border-line bg-cream px-2 py-0.5 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
-
                     <span>{region.label}</span>
                   </span>
                   {thesis.custom && <Badge tone="muted">yours</Badge>}

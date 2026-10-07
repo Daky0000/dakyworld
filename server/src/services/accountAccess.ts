@@ -119,8 +119,12 @@ function escapeHtml(value: string): string {
 
 /* ------------------------------------------------------- the three flows -- */
 
-/** A customer who has just paid, or a colleague who has just been invited. */
-export async function sendSetPasswordLink(user: { id: string; email: string; name: string }, reason: "purchase" | "invite" = "invite") {
+/**
+ * A customer who has just paid, or somebody who has just been invited.
+ * `note` says who invited them and to what, so the email is not a stranger's
+ * "an account has been created for you" with no reason attached.
+ */
+export async function sendSetPasswordLink(user: { id: string; email: string; name: string }, reason: "purchase" | "invite" = "invite", note?: string) {
   const token = await issueToken(user.id, "SET_PASSWORD");
   const link = await linkFor("SET_PASSWORD", token, user.id);
   await deliver(
@@ -130,11 +134,19 @@ export async function sendSetPasswordLink(user: { id: string; email: string; nam
     reason === "purchase" ? "Your Website Builder account is ready" : "Your DakyXTech account is ready",
     reason === "purchase"
       ? "Thank you for your payment. Choose a password and your website editor is ready to use."
-      : "An account has been created for you. Choose a password to sign in.",
+      : note
+        ? `${note} Choose a password to sign in. The link works for seven days.`
+        : "An account has been created for you. Choose a password to sign in.",
     link,
     "Choose a password",
   );
   return link;
+}
+
+/** Somebody who already has an account and has just been given a website. */
+export async function sendWebsiteAccessNotice(user: { id: string; email: string; name: string }, note: string) {
+  const link = `${await signInBaseFor(user.id)}/website`;
+  await deliver(user.email, user.name, "You have access to a website", "You have access to a new website", `${note} Sign in with your usual password to open it.`, link, "Open the website");
 }
 
 export async function requestPasswordReset(email: string): Promise<void> {

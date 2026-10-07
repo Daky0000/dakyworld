@@ -58,6 +58,9 @@ import { pageSource } from "../website/site.js";
 
 const OFFER_KEY = "business.offer";
 
+/** The company's own website — the one row whose pages say what DakyXTech sells. */
+export const COMPANY_SITE_SLUG = "dakyworld";
+
 /** Which pages describe the offer. Anything else on the site is not about what is sold. */
 const OFFER_PAGES = [
   "index.html",
@@ -457,7 +460,7 @@ export async function syncBusinessOffer(options: { force?: boolean; siteSlug?: s
     costUsd: 0,
   });
 
-  const site = await prisma.site.findUnique({ where: { slug: options.siteSlug ?? "dakyworld" } });
+  const site = await prisma.site.findUnique({ where: { slug: options.siteSlug ?? COMPANY_SITE_SLUG } });
   if (!site) return unchanged(["There is no company website connected, so there is nothing to read the offer from."]);
 
   const { pages, notes: readNotes } = await readOfferPages(site);
@@ -560,9 +563,14 @@ function normalise(raw: Record<string, unknown>): Record<string, unknown> {
  * notice is not a change to what the company sells, and re-reading seven pages
  * with a model every time somebody fixes a typo on the terms page is how a
  * useful refresh becomes a bill.
+ *
+ * And only the company's own site. Every customer's website has an index.html,
+ * and before this asked which site it was, a customer publishing their home
+ * page forced a model to re-read DakyXTech's offer — at DakyXTech's expense,
+ * for a change to somebody else's business.
  */
-export function offerPagePublished(filePath: string): boolean {
-  if (!OFFER_PAGES.includes(filePath)) return false;
+export function offerPagePublished(site: { slug: string }, filePath: string): boolean {
+  if (site.slug !== COMPANY_SITE_SLUG || !OFFER_PAGES.includes(filePath)) return false;
   void syncBusinessOffer({ force: true })
     .then((result) => {
       if (result.changed) console.log(`[business] ${filePath} was published, so what the agents are told was re-read from the site.`);

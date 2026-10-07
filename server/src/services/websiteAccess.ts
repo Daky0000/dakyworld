@@ -5,6 +5,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { registerEnforced } from "../middleware/permissionGate.js";
 import { WebsiteError } from "./website/site.js";
+import { sendSetPasswordLink, sendWebsiteAccessNotice } from "./accountAccess.js";
 
 export const SITE_MEMBER_ROLES = ["VIEWER", "EDITOR", "REVIEWER", "PUBLISHER", "MANAGER", "DEVELOPER"] as const;
 export type WebsiteMemberRole = typeof SITE_MEMBER_ROLES[number];
@@ -264,9 +265,63 @@ export function assertWebsiteMemberChange(input: {
 const memberSelect = { id: true, role: true, createdAt: true, updatedAt: true, user: { select: { id: true, name: true, email: true, active: true } } } satisfies Prisma.SiteMemberSelect;
 const addMemberInput = z.object({
   userId: z.string().trim().min(1).max(100).optional(),
-  email: z.string().trim().email().max(254).optional(),
+  email: z.string().trim().email("Enter a full email address, like name@example.com.").max(254).optional(),
+  /** What to call somebody who has no account yet. Ignored for an existing account. */
+  name: z.string().trim().min(1).max(120).optional(),
   role: z.enum(SITE_MEMBER_ROLES),
-}).strict().refine(value => Boolean(value.userId) !== Boolean(value.email), "Enter one account email or user ID.");
+}).strict().refine(value => Boolean(value.userId) !== Boolean(value.email), "Enter the email address of the person to invite.");
+
+/**
+ * How many new accounts one person may create by inviting, per day. A site's
+ * plan already caps its members; this caps the emails, because removing and
+ * re-inviting would otherwise make the invite form a way to send DakyXTech mail
+ * to any address in the world.
+ */
+const INVITES_PER_DAY = 20;
+
+/**
+ * The account an invitation is for: the one that already has the address, or
+ * a new customer account with no password, which the person sets from the
+ * emailed link. The inviter is told the same thing either way — whether an
+ * address already has an account is exactly what somebody probing for accounts
+ * wants to learn, and the old "No active account matches that email" told them.
+ */
+async function findOrInvite(
+  tx: Prisma.TransactionClient,
+  inviter: WebsitePrincipal,
+  who: { userId?: string; email?: string; name?: string },
+): Promise<{ id: string; active: boolean; created: boolean }> {
+  if (who.userId) {
+    // An internal user ID is a staff tool. A customer invites by address.
+    if (inviter.external) throw new WebsiteError(400, "Invite people by their email address.");
+    const byId = await tx.user.findFirst({ where: { id: who.userId, active: true }, select: { id: true, active: true } });
+    if (!byId) throw new WebsiteError(404, "No active account has that user ID.");
+    return { ...byId, created: false };
+  }
+  const email = who.email!.trim().toLowerCase();
+  const found = await tx.user.findFirst({ where: { email: { equals: email, mode: "insensitive" } }, select: { id: true, active: true } });
+  if (found?.active) return { ...found, created: false };
+  // A switched-off account is not switched back on by somebody else's invitation.
+  if (found) throw new WebsiteError(409, "That address can't be added to this website. If you think it should be, ask DakyXTech.");
+  const today = await tx.siteAuditEvent.count({ where: { actorId: inviter.id, kind: "MEMBER_INVITED", createdAt: { gte: new Date(Date.now() - 24 * 60 * 60_000) } } });
+  if (today >= INVITES_PER_DAY) throw new WebsiteError(429, "You've invited a lot of people today. Try again tomorrow, or ask DakyXTech to help.");
+  const customerRole = await tx.accessRole.findFirst({ where: { external: true }, select: { id: true } });
+  if (!customerRole) throw new WebsiteError(503, "Invitations aren't switched on yet. Ask DakyXTech to add this person.");
+  const user = await tx.user.create({
+    data: {
+      email,
+      name: who.name?.trim() || email.split("@")[0]!,
+      role: "DEVELOPER",
+      active: true,
+      accessRoleId: customerRole.id,
+      // What they may do on a site is their membership; this only lets the
+      // product's own screens show them the Website section.
+      extraPermissions: ["website.view"],
+    },
+    select: { id: true, active: true },
+  });
+  return { ...user, created: true };
+}
 
 export function registerWebsiteMembership(router: Router) {
   const handle = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => { void fn(req, res).catch(next); };
@@ -283,8 +338,9 @@ export function registerWebsiteMembership(router: Router) {
   // A site row lock serialises *all* membership changes for a site, including two
   // managers demoting each other concurrently. Re-read the actor after acquiring
   // the lock: an already-authorised HTTP request may have lost its grant while waiting.
-  async function change(req: Request, nextRole: WebsiteMemberRole | null, identity?: { userId?: string; email?: string }) {
+  async function change(req: Request, nextRole: WebsiteMemberRole | null, identity?: { userId?: string; email?: string; name?: string }) {
     const actor = websitePrincipal(req);
+    let created = false;
     return prisma.$transaction(async tx => {
       const rows = await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "Site" WHERE "id" = ${req.params.siteId} FOR UPDATE`;
       if (!rows.length) throw new WebsiteError(404, "That website is not available.");
@@ -293,8 +349,9 @@ export function registerWebsiteMembership(router: Router) {
       if (!capabilities.members) throw new WebsiteError(403, "Only a website manager can change its members.");
       const previous = identity ? null : await tx.siteMember.findFirst({ where: { id: req.params.memberId, siteId: req.params.siteId }, include: { user: { select: { id: true, active: true } } } });
       if (!identity && !previous) throw new WebsiteError(404, "That member is not part of this website.");
-      const target = previous?.user ?? await tx.user.findFirst({ where: { active: true, ...(identity?.userId ? { id: identity.userId } : { email: { equals: identity?.email?.toLowerCase(), mode: "insensitive" as const } }) }, select: { id: true, active: true } });
-      if (!target) throw new WebsiteError(404, "No active account matches that email or user ID. Ask an account administrator to create it first.");
+      const invited = previous ? null : await findOrInvite(tx, actor, identity!);
+      if (invited?.created) created = true;
+      const target = previous?.user ?? invited!;
       const existing = previous ?? await tx.siteMember.findUnique({ where: { siteId_userId: { siteId: req.params.siteId, userId: target.id } } });
       if (identity && existing) throw new WebsiteError(409, "That account is already a member. Change its role in the list below.");
       const activeManagerCount = await tx.siteMember.count({ where: { siteId: req.params.siteId, role: "MANAGER", user: { active: true } } });
@@ -321,20 +378,35 @@ export function registerWebsiteMembership(router: Router) {
           : await tx.siteMember.create({ data: { siteId: req.params.siteId, userId: target.id, role: nextRole }, select: memberSelect });
       await tx.siteAuditEvent.create({ data: {
         siteId: req.params.siteId, actorId: actor.id, actorName: req.dbUser?.name ?? "Website manager",
-        kind: nextRole === null ? "MEMBER_REMOVED" : existing ? "MEMBER_ROLE_CHANGED" : "MEMBER_ADDED",
-        summary: nextRole === null ? `Removed ${member.user.name} from the website` : `${existing ? "Changed" : "Added"} ${member.user.name} as ${nextRole.toLowerCase()}`,
+        kind: nextRole === null ? "MEMBER_REMOVED" : existing ? "MEMBER_ROLE_CHANGED" : created ? "MEMBER_INVITED" : "MEMBER_ADDED",
+        summary: nextRole === null ? `Removed ${member.user.name} from the website` : `${existing ? "Changed" : created ? "Invited" : "Added"} ${member.user.name} as ${nextRole.toLowerCase()}`,
         detail: { userId: target.id, previousRole: existing?.role ?? null, role: nextRole },
       } });
       return member;
-    });
+    }).then(member => ({ member, created }));
+
   }
   router.post("/sites/:siteId/members", handle(async (req, res) => {
     const input = addMemberInput.parse(req.body);
-    res.status(201).json(await change(req, input.role, input));
+    const { member, created } = await change(req, input.role, input);
+    // After the commit, never inside it: a slow mail server must not hold the
+    // site's lock, and a rolled-back invitation must not have emailed anybody.
+    const site = await prisma.site.findUnique({ where: { id: req.params.siteId }, select: { name: true } });
+    const inviter = req.dbUser?.name ?? "A website manager";
+    const note = `${inviter} gave you access to the website “${site?.name ?? "your website"}” on DakyX.`;
+    try {
+      if (created) await sendSetPasswordLink({ id: member.user.id, email: member.user.email, name: member.user.name }, "invite", note);
+      else await sendWebsiteAccessNotice({ id: member.user.id, email: member.user.email, name: member.user.name }, note);
+    } catch (error) {
+      console.warn(`[website] ${member.user.email} was given access but the email did not send: ${(error as Error).message}`);
+    }
+    // One answer for both cases, so the response says nothing about whether the
+    // address already had an account.
+    res.status(201).json({ ...member, notice: `${member.user.email} can open this website now. We've emailed them a link to sign in.` });
   }));
   router.patch("/sites/:siteId/members/:memberId", handle(async (req, res) => {
     const input = z.object({ role: z.enum(SITE_MEMBER_ROLES) }).strict().parse(req.body);
-    res.json(await change(req, input.role));
+    res.json((await change(req, input.role)).member);
   }));
   router.delete("/sites/:siteId/members/:memberId", handle(async (req, res) => {
     await change(req, null);

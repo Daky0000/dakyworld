@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { useOverlay } from "./ui";
 import {
   IconCheck,
   IconCopy,
@@ -114,6 +115,9 @@ export function WebsiteSectionLibraryModal({
       onClose();
     },
   });
+  // Escape, the Tab trap and focus return. Without them this dialog stayed open
+  // over the toolbar and only a mouse could get out of it.
+  const overlayRef = useOverlay(open, onClose);
 
   if (!open) return null;
 
@@ -128,13 +132,16 @@ export function WebsiteSectionLibraryModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-4 backdrop-blur-2xs"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="section-library-title"
       onClick={onClose}
     >
       <div
-        className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-2xl"
+        ref={overlayRef}
+        tabIndex={-1}
+        data-os-overlay="true"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="section-library-title"
+        className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-2xl outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-line px-5 py-4">
@@ -353,6 +360,7 @@ export function WebsiteCommandPaletteModal({
       onToggleTheme,
     ],
   );
+  const overlayRef = useOverlay(open, onClose);
 
   if (!open) return null;
 
@@ -373,13 +381,16 @@ export function WebsiteCommandPaletteModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center bg-ink/50 pt-20 p-4 backdrop-blur-2xs"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Editor Command Palette"
       onClick={onClose}
     >
       <div
-        className="flex max-h-[75vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-2xl"
+        ref={overlayRef}
+        tabIndex={-1}
+        data-os-overlay="true"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Search the page and editor commands"
+        className="flex max-h-[75vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-2xl outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2.5 border-b border-line px-4 py-3">
@@ -387,11 +398,9 @@ export function WebsiteCommandPaletteModal({
           <input
             ref={inputRef}
             type="text"
+            aria-label="Search the page and editor commands"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") onClose();
-            }}
             placeholder="Type a command or search any heading, button, or section on this page…"
             className="w-full border-0 bg-transparent text-xs text-ink outline-none placeholder:text-muted"
           />
@@ -501,7 +510,6 @@ export function WebsiteRevisionCommentsModal({
 }) {
   const qc = useQueryClient();
   const [message, setMessage] = useState("");
-  const [authorName, setAuthorName] = useState("");
   const [pinToSelected, setPinToSelected] = useState(true);
 
   const commentsQuery = useQuery({
@@ -523,7 +531,8 @@ export function WebsiteRevisionCommentsModal({
             pinToSelected && selectedFieldId && selectedFieldLabel
               ? selectedFieldLabel
               : "General Page Note",
-          authorName: authorName.trim() || undefined,
+          // No name is sent: the server signs each note with the account that
+          // wrote it. A client outside the team comments through a review link.
           message: message.trim(),
         },
       );
@@ -545,6 +554,7 @@ export function WebsiteRevisionCommentsModal({
       void qc.invalidateQueries({ queryKey: ["website", "comments", siteId, pageId] });
     },
   });
+  const overlayRef = useOverlay(open, onClose);
 
   if (!open) return null;
 
@@ -554,13 +564,16 @@ export function WebsiteRevisionCommentsModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-4 backdrop-blur-2xs"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="revision-comments-title"
       onClick={onClose}
     >
       <div
-        className="flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-2xl"
+        ref={overlayRef}
+        tabIndex={-1}
+        data-os-overlay="true"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="revision-comments-title"
+        className="flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-2xl outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-line px-5 py-4">
@@ -609,13 +622,6 @@ export function WebsiteRevisionCommentsModal({
                 Tip: Click any heading or button on the canvas first to pin your note directly to it.
               </span>
             )}
-            <input
-              type="text"
-              value={authorName}
-              onChange={(e) => setAuthorName(e.target.value)}
-              placeholder="Reviewer name (optional)"
-              className="rounded-lg border border-line bg-white px-2.5 py-1 text-xs text-ink outline-none focus:border-blue"
-            />
           </div>
           <div className="flex gap-2">
             <input
@@ -781,6 +787,7 @@ export function WebsiteClientReportModal({
     queryFn: ({ signal }) =>
       api.get<ClientReportResponse>(`/website/sites/${siteId}/pages/${pageId}/report`, signal),
   });
+  const overlayRef = useOverlay(open, onClose);
 
   if (!open) return null;
   const r = reportQuery.data;
@@ -789,7 +796,7 @@ export function WebsiteClientReportModal({
     if (!r) return;
     const text = [
       `WEBSITE & SEO OPTIMIZATION REPORT — ${r.site.name} (${r.page.title})`,
-      `Overall Health & SEO Score: ${r.score}/100`,
+      `Search basics: ${r.score >= 85 ? "all in place" : "some missing"} (${r.score}/100)`,
       `Public URL: ${r.site.publicUrl}${r.page.path}`,
       `SEO Title: ${r.seo.title || "Not configured"}`,
       `Meta Description: ${r.seo.description || "Not configured"}`,
@@ -797,9 +804,10 @@ export function WebsiteClientReportModal({
       `Lazy-Loaded Speed Images: ${r.technical.imagesWithLazy}/${r.technical.totalImages} images`,
       `Schema.org JSON-LD Structured Data: ${r.technical.hasJsonLd ? "Active" : "Pending"}`,
       `WhatsApp/Lead Conversion Widget: ${r.technical.hasConversionBar ? "Active" : "Not enabled"}`,
+      // The same words as the tile: only what a check saw, never a filled-in number.
       r.healthMonitor
-        ? `Uptime & SSL Status: ${r.healthMonitor.online ? `ONLINE (${r.healthMonitor.responseTimeMs}ms)` : "Check required"} · SSL ${r.healthMonitor.ssl.valid ? `Valid (${r.healthMonitor.ssl.daysRemaining} days left)` : "Unverified"}`
-        : "",
+        ? `Online & certificate: ${r.healthMonitor.online ? (typeof r.healthMonitor.responseTimeMs === "number" ? `online, ${r.healthMonitor.responseTimeMs}ms` : "online") : "not answering"} · certificate ${r.healthMonitor.ssl.valid ? `valid, ${r.healthMonitor.ssl.daysRemaining} days left` : "not confirmed"}`
+        : "Online & certificate: not checked",
     ]
       .filter(Boolean)
       .join("\n");
@@ -813,13 +821,16 @@ export function WebsiteClientReportModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-4 backdrop-blur-2xs"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="client-report-title"
       onClick={onClose}
     >
       <div
-        className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-2xl"
+        ref={overlayRef}
+        tabIndex={-1}
+        data-os-overlay="true"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="client-report-title"
+        className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-2xl outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">

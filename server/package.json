@@ -30,7 +30,8 @@
     "demo:docs": "tsx scripts/demoDocuments.ts",
     "checks:browser": "node checks/browser/run.mjs",
     "geo:update": "tsx scripts/updateGeoCity.ts",
-    "geo:audit": "tsx scripts/auditGeoLegacy.ts"
+    "geo:audit": "tsx scripts/auditGeoLegacy.ts",
+    "hunts:top10": "tsx scripts/syncTop10Hunts.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

@@ -214,11 +214,20 @@ app.get("/assets/dw/:filename", legacyPublishedAsset);
 if (hasBuiltClient) {
   // Hashed asset filenames are safe to cache hard; index.html must not be,
   // or browsers keep serving the previous deploy's asset references.
+  // express.static skips dot-folders, which is right for everything except the
+  // one file a security researcher is told to look for.
+  app.get("/.well-known/security.txt", (_req, res) => {
+    res.type("text/plain").sendFile(path.join(CLIENT_DIST, ".well-known", "security.txt"), { headers: { "Cache-Control": "no-cache" } });
+  });
   app.use(express.static(CLIENT_DIST, { index: false, maxAge: 0, setHeaders(res, file) {
     res.setHeader("Cache-Control", /[-.][A-Za-z0-9_-]{8,}\.(?:js|css|woff2?|png|jpg|webp|svg)$/.test(file) ? "public, max-age=31536000, immutable" : "no-cache");
   } }));
   app.get("*", (req, res, next) => {
     if (req.path.startsWith("/api/")) return next();
+    // A request for a file that is not here is a 404, not the app. No screen's
+    // address has an extension, and answering /sitemap.xml or /wp-login.php
+    // with the sign-in page and a 200 told crawlers and scanners it existed.
+    if (path.extname(req.path)) return res.status(404).type("text/plain").send("Not found");
     res.sendFile(path.join(CLIENT_DIST, "index.html"), { headers: { "Cache-Control": "no-cache" } });
   });
 }

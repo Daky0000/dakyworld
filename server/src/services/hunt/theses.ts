@@ -930,6 +930,59 @@ export const THESIS_SEEDS: ThesisSeed[] = [
       },
     },
   },
+  {
+    key: "qatar-luxury-commercial-broken-shopfront",
+    name: "Qatar luxury hospitality and architectural firms with failing websites",
+    target:
+      "Doha luxury hospitality providers, architectural engineering contractors, private medical clinics, and VIP commercial service firms across Qatar with slow, non-mobile, or outdated web presences.",
+    rationale:
+      "Qatar boasts the highest per-capita purchasing power in the Gulf, with commercial and hospitality decisions driven almost entirely through premium mobile experiences. When high-net-worth clients or corporate procurement teams encounter a hotel, clinic, or engineering contractor with a sluggish, unoptimized mobile page, credibility evaporates instantly. Demonstrating visual proof of broken layouts and slow load times creates an immediate case for a high-ticket overhaul.",
+    offer:
+      "A flagship luxury digital rebuild — responsive mobile-first architecture, high-converting booking and inquiry flows, domain email security, and premier hosting care.",
+    qualifiers: [
+      "!has-website — they have a website, so there is something to review.",
+      "not-mobile — the site is not built for a phone, and their elite clientele is exclusively on mobile.",
+      "slow-site — it is slow enough to lose high-net-worth inquiries before the hero section renders.",
+      "looks-dated — the aesthetic does not match Qatar's modern luxury tier.",
+      "looks-smaller-than-it-is — the site fails to convey the scale of their commercial operations.",
+      "no-https — it is served without HTTPS, causing security warnings.",
+      "trading — there is real evidence of trade.",
+    ],
+    disqualifiers: [
+      ...NEVER,
+      "site-is-fine — nothing serious was found; their setup is in good order and there is nothing honest to sell them.",
+    ],
+    minScore: 50,
+    leadsPerRun: 5,
+    runTimes: ["08:00", "16:00"],
+    routePriority: 3,
+    routeAgentKey: "lead.orchestrator",
+    source: {
+      name: "Hunt · Qatar · failing website",
+      actorId: "compass/crawler-google-places",
+      preset: "GOOGLE_MAPS",
+      leadSource: "GOOGLE_MAPS",
+      groupName: "Hunt · Qatar · failing website",
+      maxItems: 20,
+      minScore: 20,
+      input: {
+        searchStringsArray: [
+          "luxury hotel",
+          "architectural engineering",
+          "interior design firm",
+          "private aesthetic clinic",
+          "event management company",
+          "commercial contracting",
+        ],
+        locationQuery: "Doha, Qatar",
+        maxCrawledPlacesPerSearch: 5,
+        language: "en",
+        website: "withWebsite",
+        maxReviews: 0,
+        maxImages: 0,
+      },
+    },
+  },
 
   // --- Asia & APAC ---------------------------------------------------------
   {
@@ -975,6 +1028,56 @@ export const THESIS_SEEDS: ThesisSeed[] = [
           "wellness centre",
         ],
         locationQuery: "Singapore",
+        maxCrawledPlacesPerSearch: 5,
+        language: "en",
+        maxReviews: 0,
+        maxImages: 0,
+      },
+    },
+  },
+  {
+    key: "brunei-corporate-logistics-manual-operations",
+    name: "Brunei corporate services and technical contractors running on manual work",
+    target:
+      "Bandar Seri Begawan engineering contractors, oilfield technical suppliers, commercial logistics firms, and private healthcare centres taking bookings, quotes, and customer inquiries manually by phone and email.",
+    rationale:
+      "Brunei is a high-income, English-speaking economy with extensive oilfield services, commercial logistics, and private healthcare operations. Many established mid-market businesses continue to manage client inquiries, job quotes, and appointment bookings through manual back-and-forth telephone calls and unorganized email inboxes. Presenting an automated client intake, quoting, and appointment scheduling workflow saves substantial administrative overhead and accelerates turnaround times.",
+    offer:
+      "An operations automation build — real-time intake forms, quotation dispatch pipelines, and automated customer notifications connected directly to existing business email and tools.",
+    qualifiers: [
+      "!The evidence shows this business takes bookings, appointments, orders or quotes, and there is no way at all to make one online — no form, no booking widget, no order page. State what you saw on the page that shows how a customer is expected to get in touch.",
+      "contact-unclear — a visitor cannot see how to get in touch without hunting for it.",
+      "The evidence shows a business with enough volume for manual handling to be expensive — several branches, long opening hours, a large review count, or a page describing a team rather than one person.",
+      "no-analytics — nothing on the site measures whether any of it works.",
+      "trading — there is real evidence of trade.",
+    ],
+    disqualifiers: [
+      ...NEVER,
+      "The evidence shows they already run a proper booking, ordering or customer portal — a real system, not a contact form.",
+    ],
+    minScore: 50,
+    leadsPerRun: 5,
+    runTimes: ["06:30", "14:30"],
+    routePriority: 3,
+    routeAgentKey: "lead.orchestrator",
+    source: {
+      name: "Hunt · Brunei · manual operations",
+      actorId: "compass/crawler-google-places",
+      preset: "GOOGLE_MAPS",
+      leadSource: "GOOGLE_MAPS",
+      groupName: "Hunt · Brunei · manual operations",
+      maxItems: 20,
+      minScore: 20,
+      input: {
+        searchStringsArray: [
+          "engineering contractor",
+          "oilfield services",
+          "logistics company",
+          "private medical clinic",
+          "corporate services",
+          "marine supply",
+        ],
+        locationQuery: "Bandar Seri Begawan, Brunei",
         maxCrawledPlacesPerSearch: 5,
         language: "en",
         maxReviews: 0,
@@ -1129,6 +1232,159 @@ export const THESIS_SEEDS: ThesisSeed[] = [
           "financial advisory",
         ],
         locationQuery: "Zurich, Switzerland",
+        maxCrawledPlacesPerSearch: 5,
+        language: "en",
+        website: "withWebsite",
+        maxReviews: 0,
+        maxImages: 0,
+      },
+    },
+  },
+  {
+    key: "liechtenstein-wealth-fiduciary-spoofable-mail",
+    name: "Liechtenstein wealth and fiduciary offices with forgeable email",
+    target:
+      "Vaduz and Schaan trust offices, wealth fiduciaries, private asset managers, and boutique legal consultancies in Liechtenstein operating without SPF or DMARC protection.",
+    rationale:
+      "Liechtenstein is among the highest-income jurisdictions on earth, managing multi-generational family trusts and cross-border European assets where client discretion and transaction integrity are absolute. An independent trustee or fiduciary firm whose domain can be spoofed by any external actor is an open target for payment redirection fraud and severe fiduciary liability. A technical DNS audit demonstrating unprotected email authentication creates an immediate, high-trust entry point with managing partners.",
+    offer:
+      "Executive domain security and email authentication hardening — strict SPF, DKIM, and DMARC enforcement with continuous mailbox monitoring and monthly care.",
+    qualifiers: [
+      "!no-dmarc — nothing stops a forged invoice or transaction instruction appearing to come from them.",
+      "no-spf — anyone can send mail as their domain.",
+      "trading — there is real evidence of trade, so a forged transaction instruction would be disastrous.",
+      "has-email — we have an address to write to.",
+    ],
+    disqualifiers: [
+      ...NEVER,
+      "mail-authenticated — their mail is already authenticated properly, so there is nothing to fix.",
+    ],
+    minScore: 60,
+    leadsPerRun: 5,
+    runTimes: ["08:30", "16:30"],
+    routePriority: 3,
+    routeAgentKey: "lead.orchestrator",
+    source: {
+      name: "Hunt · Liechtenstein · forgeable mail",
+      actorId: "compass/crawler-google-places",
+      preset: "GOOGLE_MAPS",
+      leadSource: "GOOGLE_MAPS",
+      groupName: "Hunt · Liechtenstein · forgeable mail",
+      maxItems: 20,
+      minScore: 20,
+      input: {
+        searchStringsArray: [
+          "trust company",
+          "fiduciary services",
+          "wealth management",
+          "family office",
+          "patent attorney",
+          "private investment advisory",
+        ],
+        locationQuery: "Vaduz, Liechtenstein",
+        maxCrawledPlacesPerSearch: 5,
+        language: "en",
+        website: "withWebsite",
+        maxReviews: 0,
+        maxImages: 0,
+      },
+    },
+  },
+  {
+    key: "luxembourg-fund-corporate-spoofable-mail",
+    name: "Luxembourg fund administration and corporate fiduciaries with forgeable email",
+    target:
+      "Luxembourg City investment fund administrators, Soparfi fiduciaries, private equity consultancies, and corporate legal boutiques operating with unprotected domain mail or unauthenticated SPF/DMARC.",
+    rationale:
+      "Luxembourg is the European Union's premier investment fund domicile, handling trillions in cross-border capital flows. Fund administrators and corporate service providers execute high-value wire transfers and shareholder distributions daily. Showing a managing director verifiable DNS evidence that their primary domain lacks DMARC or SPF safeguards converts immediately, as regulatory scrutiny and wire fraud risks make unauthenticated communication unacceptable.",
+    offer:
+      "Institutional email infrastructure hardening — enterprise SPF, DKIM, and strict DMARC enforcement, accompanied by managed domain hygiene and ongoing support.",
+    qualifiers: [
+      "!no-dmarc — nothing stops a forged wire instruction or advisory notice appearing to come from their domain.",
+      "no-spf — anyone can send mail as their domain.",
+      "trading — there is real evidence of trade, so a forged instruction would be devastating.",
+      "has-email — we have an address to write to.",
+    ],
+    disqualifiers: [
+      ...NEVER,
+      "mail-authenticated — their mail is already authenticated properly, so there is nothing to fix.",
+    ],
+    minScore: 60,
+    leadsPerRun: 5,
+    runTimes: ["09:00", "17:00"],
+    routePriority: 3,
+    routeAgentKey: "lead.orchestrator",
+    source: {
+      name: "Hunt · Luxembourg · forgeable mail",
+      actorId: "compass/crawler-google-places",
+      preset: "GOOGLE_MAPS",
+      leadSource: "GOOGLE_MAPS",
+      groupName: "Hunt · Luxembourg · forgeable mail",
+      maxItems: 20,
+      minScore: 20,
+      input: {
+        searchStringsArray: [
+          "fund administration",
+          "fiduciary services",
+          "wealth management",
+          "corporate legal services",
+          "private equity advisory",
+          "family office",
+        ],
+        locationQuery: "Luxembourg City, Luxembourg",
+        maxCrawledPlacesPerSearch: 5,
+        language: "en",
+        website: "withWebsite",
+        maxReviews: 0,
+        maxImages: 0,
+      },
+    },
+  },
+  {
+    key: "norway-maritime-engineering-broken-shopfront",
+    name: "Oslo maritime, energy, and engineering firms with dated websites",
+    target:
+      "Oslo maritime logistics brokers, clean energy consultancies, naval architecture studios, and specialized engineering suppliers whose websites are slow, non-responsive, or failing modern standards.",
+    rationale:
+      "Norway commands immense sovereign wealth and Nordic industrial prestige, but many mid-sized maritime logistics and technical engineering firms rely on brochure websites built years ago that fail mobile responsiveness or load sluggishly. In high-contract Nordic procurement, international partners and mobile executives evaluate credibility in seconds; a side-by-side technical performance audit provides incontrovertible proof that their digital shopfront is failing to reflect their engineering capability.",
+    offer:
+      "A modern engineering web rebuild — responsive Next.js architecture, ultra-fast mobile performance, SSL compliance, and dedicated managed care.",
+    qualifiers: [
+      "!has-website — they have a website, so there is something to review.",
+      "not-mobile — the site is not built for a phone, and international partners inspect it on one.",
+      "slow-site — it is slow enough to lose prospective partners before pages load.",
+      "looks-dated — the design is visibly from a prior generation.",
+      "looks-smaller-than-it-is — the site makes their engineering operation look smaller than it really is.",
+      "no-https — it is served without HTTPS, so modern browsers flag security warnings.",
+      "trading — there is real evidence of trade.",
+    ],
+    disqualifiers: [
+      ...NEVER,
+      "site-is-fine — nothing serious was found; their setup is in good order and there is nothing honest to sell them.",
+    ],
+    minScore: 45,
+    leadsPerRun: 5,
+    runTimes: ["08:00", "16:00"],
+    routePriority: 3,
+    routeAgentKey: "lead.orchestrator",
+    source: {
+      name: "Hunt · Norway · failing website",
+      actorId: "compass/crawler-google-places",
+      preset: "GOOGLE_MAPS",
+      leadSource: "GOOGLE_MAPS",
+      groupName: "Hunt · Norway · failing website",
+      maxItems: 20,
+      minScore: 20,
+      input: {
+        searchStringsArray: [
+          "maritime logistics",
+          "engineering consultancy",
+          "naval architecture",
+          "clean energy consultancy",
+          "specialist medical clinic",
+          "commercial legal services",
+        ],
+        locationQuery: "Oslo, Norway",
         maxCrawledPlacesPerSearch: 5,
         language: "en",
         website: "withWebsite",
@@ -1339,6 +1595,58 @@ export const THESIS_SEEDS: ThesisSeed[] = [
           "boutique hotel",
         ],
         locationQuery: "Los Angeles, California, United States",
+        maxCrawledPlacesPerSearch: 5,
+        language: "en",
+        website: "withWebsite",
+        maxReviews: 0,
+        maxImages: 0,
+      },
+    },
+  },
+  {
+    key: "guyana-energy-logistics-broken-shopfront",
+    name: "Guyana energy logistics and commercial contractors with dated websites",
+    target:
+      "Georgetown maritime logistics operators, commercial engineering contractors, corporate legal and accounting practices, and commercial suppliers expanding rapidly in Guyana's offshore energy economy but hindered by slow, non-HTTPS, or outdated websites.",
+    rationale:
+      "Guyana is currently the fastest-growing economy in the world, driven by massive offshore oil discoveries and an unprecedented influx of international energy operators and tier-1 EPC contractors. English is Guyana's official language. Local logistics firms, fabrication contractors, and legal/accounting practices are aggressively competing for multinational vendor qualification, where international procurement teams require modern, secure, and HTTPS-verified web presences. An audit exposing non-compliant or outdated web presences unlocks urgent, well-funded rebuilds.",
+    offer:
+      "A Foundation Build and vendor-ready digital presence — modern responsive Next.js/HTML architecture, secure HTTPS, corporate domain email, and managed maintenance.",
+    qualifiers: [
+      "!has-website — they have a website, so there is something to review.",
+      "not-mobile — the site is not built for a phone, and corporate evaluators review it on one.",
+      "slow-site — it is slow enough to lose prospective partners before pages load.",
+      "looks-dated — the site does not look like a tier-1 supplier capable of handling multinational contracts.",
+      "no-https — it is served without HTTPS, instantly disqualifying them in corporate vendor portals.",
+      "trading — there is real evidence of trade.",
+    ],
+    disqualifiers: [
+      ...NEVER,
+      "site-is-fine — nothing serious was found; their setup is in good order and there is nothing honest to sell them.",
+    ],
+    minScore: 45,
+    leadsPerRun: 5,
+    runTimes: ["12:00", "20:00"],
+    routePriority: 3,
+    routeAgentKey: "lead.orchestrator",
+    source: {
+      name: "Hunt · Guyana · failing website",
+      actorId: "compass/crawler-google-places",
+      preset: "GOOGLE_MAPS",
+      leadSource: "GOOGLE_MAPS",
+      groupName: "Hunt · Guyana · failing website",
+      maxItems: 20,
+      minScore: 20,
+      input: {
+        searchStringsArray: [
+          "logistics company",
+          "engineering contractor",
+          "freight forwarding",
+          "commercial construction",
+          "accounting firm",
+          "corporate legal services",
+        ],
+        locationQuery: "Georgetown, Guyana",
         maxCrawledPlacesPerSearch: 5,
         language: "en",
         website: "withWebsite",
@@ -1560,7 +1868,37 @@ export const THESIS_SEEDS: ThesisSeed[] = [
 ];
 
 /** Bumped when the shipped wording above changes. Never overwrites an edited row. */
-const SEED_REVISION = 2;
+const SEED_REVISION = 3;
+
+/** The 10 high-value target countries requested for lead hunting. */
+export const TOP_10_TARGET_COUNTRIES = [
+  "Liechtenstein",
+  "Singapore",
+  "Ireland",
+  "Luxembourg",
+  "Norway",
+  "Qatar",
+  "Switzerland",
+  "Brunei",
+  "Guyana",
+  "United States",
+] as const;
+
+/** The thesis keys covering the 10 target countries. */
+export const TOP_10_THESIS_KEYS = [
+  "liechtenstein-wealth-fiduciary-spoofable-mail",
+  "singapore-manual-operations",
+  "dublin-manual-operations",
+  "luxembourg-fund-corporate-spoofable-mail",
+  "norway-maritime-engineering-broken-shopfront",
+  "qatar-luxury-commercial-broken-shopfront",
+  "zurich-wealth-services-spoofable-mail",
+  "brunei-corporate-logistics-manual-operations",
+  "guyana-energy-logistics-broken-shopfront",
+  "us-services-spoofable-mail",
+  "newyork-professional-spoofable-mail",
+  "losangeles-luxury-creative-broken-shopfront",
+] as const;
 
 /**
  * Puts the shipped theses on the database, and the searches they hunt with.
@@ -1651,3 +1989,4 @@ export function thesisForPrompt(thesis: Pick<LeadThesis, "name" | "target" | "ra
     `Kept at a score of ${thesis.minScore} or more.`,
   ].join("\n");
 }
+

@@ -42,3 +42,6 @@ server/checks/artifacts/
 .design-review/**/*.png
 .design-review/**/*.log
 .design-review/live/*.json
+
+# Local website variant drafts
+website-drafts/

@@ -487,8 +487,15 @@ export function Dropdown({ label, children, active = false }: { label: ReactNode
   </details>;
 }
 
-/** Keep keyboard focus in the topmost overlay and restore the invoking control. */
-function useOverlay(open: boolean, onClose: () => void) {
+/**
+ * Keep keyboard focus in the topmost overlay and restore the invoking control.
+ *
+ * Exported for the dialogs that need their own frame — the editor's section
+ * library, notes and client report — so Escape, the Tab trap and focus return
+ * behave the same everywhere. Put the ref, `tabIndex={-1}`, `role="dialog"` and
+ * `data-os-overlay="true"` on the panel itself, not on the backdrop.
+ */
+export function useOverlay(open: boolean, onClose: () => void) {
   const ref = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
   close.current = onClose;
@@ -500,7 +507,11 @@ function useOverlay(open: boolean, onClose: () => void) {
     const previousViewportOverflow = viewport?.style.overflow;
     document.body.style.overflow = "hidden";
     if (viewport) viewport.style.overflow = "hidden";
-    const timer = requestAnimationFrame(() => ref.current?.focus());
+    // A field inside that asked for focus (a search box) keeps it; otherwise the
+    // panel takes it, so the next Tab starts inside the dialog.
+    const timer = requestAnimationFrame(() => {
+      if (!ref.current?.contains(document.activeElement)) ref.current?.focus();
+    });
     const onKey = (event: KeyboardEvent) => {
       const dialogs = document.querySelectorAll('[data-os-overlay="true"]');
       if (dialogs[dialogs.length - 1] !== ref.current) return;

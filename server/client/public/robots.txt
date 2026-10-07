@@ -1,0 +1,4 @@
+# editor.dakyx.com, app.dakyx.com and os.dakyx.com are private workspaces,
+# not public pages. The public website is https://dakyx.com.
+User-agent: *
+Disallow: /

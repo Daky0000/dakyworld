@@ -35,6 +35,7 @@ import { parseUserAgent } from "../lib/deviceParser.js";
 import { createVisitToken, verifyVisitToken } from "../lib/demoTokens.js";
 import { injectDemoTracker } from "../services/demoTracker.js";
 import { extractColorsFromHtml } from "../services/website/pageColors.js";
+import { updateSiteSettings } from "../services/websiteSiteSettings.js";
 
 /**
  * Demos: the pages built for prospects, and the public serving of them.
@@ -104,6 +105,18 @@ function readBriefMeta(brief: unknown): DemoBriefMeta {
 function readSitePageDraft(draft: unknown): Record<string, FieldValue> {
   if (!draft || typeof draft !== "object" || Array.isArray(draft)) return {};
   return draft as Record<string, FieldValue>;
+}
+
+/**
+ * Seeds a demo site's palette from the demo's own colours, unless the site
+ * already has one. Decided under the row lock (`updateSiteSettings`), so it
+ * can neither overwrite a palette somebody saved a moment earlier nor drop
+ * another feature's key by writing back a stale copy of the whole document.
+ */
+async function seedDemoPalette(siteId: string, colours: unknown[]): Promise<void> {
+  await updateSiteSettings(siteId, (current) =>
+    Array.isArray(current.colours) && current.colours.length ? current : { ...current, colours },
+  ).catch(() => {});
 }
 
 async function ensureDemoSitePage(
@@ -178,13 +191,7 @@ async function ensureDemoSitePage(
     siteId = createdSite.id;
     pageId = createdSite.pages[0]!.id;
   } else if (site.pages.length === 0) {
-    if (demoColours.length && (!site.settings || !(site.settings as Record<string, any>).colours?.length)) {
-      const curSettings = (site.settings && typeof site.settings === "object" ? site.settings : {}) as Record<string, any>;
-      await prisma.site.update({
-        where: { id: site.id },
-        data: { settings: { ...curSettings, colours: demoColours } },
-      }).catch(() => {});
-    }
+    if (demoColours.length) await seedDemoPalette(site.id, demoColours);
     const createdPage = await prisma.sitePage.create({
       data: {
         siteId: site.id,
@@ -199,13 +206,7 @@ async function ensureDemoSitePage(
   } else {
     siteId = site.id;
     pageId = site.pages[0]!.id;
-    if (demoColours.length && (!site.settings || !(site.settings as Record<string, any>).colours?.length)) {
-      const curSettings = (site.settings && typeof site.settings === "object" ? site.settings : {}) as Record<string, any>;
-      await prisma.site.update({
-        where: { id: site.id },
-        data: { settings: { ...curSettings, colours: demoColours } },
-      }).catch(() => {});
-    }
+    if (demoColours.length) await seedDemoPalette(site.id, demoColours);
     if (options.overwriteSourceHtml) {
       await prisma.sitePage.update({
         where: { id: pageId },

@@ -268,6 +268,47 @@ huntsRouter.patch("/:key", async (req, res, next) => {
 });
 
 /**
+ * Switch multiple hunts on or off in a single batch (e.g. all 10 target countries).
+ */
+huntsRouter.post("/batch/enabled", async (req, res, next) => {
+  try {
+    const { keys, enabled } = z
+      .object({
+        keys: z.array(z.string()).min(1),
+        enabled: z.boolean(),
+      })
+      .parse(req.body);
+
+    const theses = await prisma.leadThesis.findMany({
+      where: { key: { in: keys } },
+      include: { source: true },
+    });
+
+    const updatedKeys: string[] = [];
+    for (const thesis of theses) {
+      if (enabled && (!thesis.sourceId || thesis.runTimes.length === 0 || thesis.qualifiers.length === 0)) {
+        continue;
+      }
+      const item = await prisma.leadThesis.update({
+        where: { id: thesis.id },
+        data: { enabled, nextRunAt: enabled ? nextHuntAt({ ...thesis, enabled }) : null },
+      });
+      updatedKeys.push(item.key);
+    }
+
+    res.json({
+      updatedCount: updatedKeys.length,
+      keys: updatedKeys,
+      note: enabled
+        ? `Enabled ${updatedKeys.length} hunt(s) across target countries.`
+        : `Stopped ${updatedKeys.length} hunt(s).`,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * Switching a hunt on or off — its own endpoint, deliberately.
  *
  * The answer says what was actually agreed to, in numbers: how many businesses

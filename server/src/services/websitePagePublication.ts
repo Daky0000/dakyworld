@@ -241,7 +241,7 @@ export async function publishPageCommand(actor: WebsiteActor, input: {
             await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "PUBLISH", summary: `${isPR ? "Submitted PR for" : "Published"} ${page.title} · version ${version.number}`, actorName: author, actorId: actor.dbUser?.id, detail: summary } });
             return { version, cleared };
         });
-        offerPagePublished(page.filePath);
+        offerPagePublished(site, page.filePath);
         await syncDemoFromSitePage(site, page.id, plan.html, true);
         const finishedJob = publishJobView(await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } }));
         // A site with no repository is served by the OS itself: there is no
@@ -308,7 +308,7 @@ export async function publishVersionCommand(actor: WebsiteActor, input: {
             : await publishPage({ site, page, html: version.html, expectedSource: source.html, message: `Website: roll ${page.path} back to version ${version.number} (${author})` });
         // A rollback changes the live page like any other publish, and a price
         // rolled back is a price the agents must stop quoting.
-        offerPagePublished(page.filePath);
+        offerPagePublished(site, page.filePath);
         await advancePublishJob(job.id, "COMMITTING", { commitSha: commit.sha, commitUrl: commit.url });
         await beforeWebsiteExternalAction();
         return commitPublication(async (tx) => {
