@@ -120,7 +120,31 @@ export const TOP_10_COUNTRIES = [
   "United States",
 ] as const;
 
+export const TOP_10_THESIS_KEYS = [
+  "liechtenstein-commercial-hunt",
+  "singapore-commercial-hunt",
+  "ireland-commercial-hunt",
+  "luxembourg-commercial-hunt",
+  "norway-commercial-hunt",
+  "qatar-commercial-hunt",
+  "switzerland-commercial-hunt",
+  "brunei-commercial-hunt",
+  "guyana-commercial-hunt",
+  "united-states-commercial-hunt",
+] as const;
+
 export function getThesisCountry(thesis: Thesis): string | null {
+  if (thesis.key === "liechtenstein-commercial-hunt") return "Liechtenstein";
+  if (thesis.key === "singapore-commercial-hunt") return "Singapore";
+  if (thesis.key === "ireland-commercial-hunt") return "Ireland";
+  if (thesis.key === "luxembourg-commercial-hunt") return "Luxembourg";
+  if (thesis.key === "norway-commercial-hunt") return "Norway";
+  if (thesis.key === "qatar-commercial-hunt") return "Qatar";
+  if (thesis.key === "switzerland-commercial-hunt") return "Switzerland";
+  if (thesis.key === "brunei-commercial-hunt") return "Brunei";
+  if (thesis.key === "guyana-commercial-hunt") return "Guyana";
+  if (thesis.key === "united-states-commercial-hunt") return "United States";
+
   const text = `${thesis.key} ${thesis.name} ${thesis.target} ${thesis.source?.name ?? ""}`.toLowerCase();
   if (text.includes("liechtenstein") || text.includes("vaduz")) return "Liechtenstein";
   if (text.includes("singapore")) return "Singapore";
@@ -169,6 +193,7 @@ export function getThesisRegion(thesis: Thesis): { id: HuntRegion; label: string
     text.includes("amsterdam") ||
     text.includes("berlin") ||
     text.includes("zurich") ||
+    text.includes("switzerland") ||
     text.includes("europe") ||
     text.includes("london") ||
     text.includes("paris") ||
@@ -192,6 +217,8 @@ export function getThesisRegion(thesis: Thesis): { id: HuntRegion; label: string
     text.includes("new york") ||
     text.includes("america") ||
     text.includes("usa") ||
+    text.includes("united-states") ||
+    text.includes("united states") ||
     text.includes("canada") ||
     text.includes("toronto") ||
     text.includes("houston") ||
@@ -272,7 +299,7 @@ export function Hunts() {
       thesis: t,
       region: getThesisRegion(t),
       country,
-      isTop10: Boolean(country && (TOP_10_COUNTRIES as readonly string[]).includes(country)),
+      isTop10: (TOP_10_THESIS_KEYS as readonly string[]).includes(t.key),
     };
   });
 
