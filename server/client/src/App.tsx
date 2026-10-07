@@ -32,6 +32,7 @@ const WebsiteFrameworkEditor = lazy(() => import("./pages/WebsiteFrameworkEditor
 import { WebsiteLayout } from "./components/WebsiteLayout";
 import { WebsiteGuard } from "./components/WebsiteGuard";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { currentSurface } from "./lib/surface";
 const WebsiteSource = lazy(() => import("./components/WebsiteSourceEditor").then((module) => ({ default: module.WebsiteSource })));
 const WebsiteOverview = lazy(() => import("./pages/WebsiteOverview").then((module) => ({ default: module.WebsiteOverview })));
 // The plan's remaining screens. Each says what it will hold and is gated on
@@ -48,7 +49,6 @@ const WebsiteAudit = lazy(() => import("./pages/WebsiteAudit").then((module) => 
 const WebsiteSettings = lazy(() => import("./pages/WebsiteSettings").then((module) => ({ default: module.WebsiteSettings })));
 const WebsiteBilling = lazy(() => import("./pages/WebsiteBilling").then((module) => ({ default: module.WebsiteBilling })));
 const WebsiteBalance = lazy(() => import("./pages/WebsiteBalance").then((module) => ({ default: module.WebsiteBalance })));
-const ClientApprovalReview = lazy(() => import("./pages/ClientApprovalReview").then((module) => ({ default: module.ClientApprovalReview })));
 const FreelancerWorkspace = lazy(() => import("./pages/FreelancerWorkspace").then((module) => ({ default: module.FreelancerWorkspace })));
 const CustomerWorkspace = lazy(() => import("./pages/CustomerWorkspace").then((module) => ({ default: module.CustomerWorkspace })));
 
@@ -73,9 +73,9 @@ const CustomerWorkspace = lazy(() => import("./pages/CustomerWorkspace").then((m
  * the alternative is a page that renders and then fails one query at a time.
  */
 export default function App() {
-  const hostname = window.location.hostname;
-  const isAppSurface = hostname === "app.dakyx.com" || import.meta.env.VITE_APP_SURFACE === "app";
-  const editorSurface = hostname === "editor.dakyx.com" || import.meta.env.VITE_APP_SURFACE === "editor";
+  const surface = currentSurface();
+  const isAppSurface = surface === "app";
+  const editorSurface = surface === "editor";
 
   if (isAppSurface) {
     return (
@@ -89,7 +89,6 @@ export default function App() {
 
   if (editorSurface) return (
     <Routes>
-      <Route path="/review/:token" element={<ClientApprovalReview />} />
       <Route element={<Layout />}>
         <Route path="/" element={<Navigate to="/website/sites" replace />} />
         <Route path="/website" element={<WebsiteGuard><WebsiteLayout /></WebsiteGuard>}>
@@ -118,7 +117,6 @@ export default function App() {
   );
   return (
     <Routes>
-      <Route path="/review/:token" element={<ClientApprovalReview />} />
       <Route element={<Layout />}>
         <Route
           path="/"

@@ -6,7 +6,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { probeWebsiteUrl, resolveWebsiteAddress } from "../lib/websiteFetch.js";
 import { commitFiles, readRepoMetadata, updateRepoMetadata, type RepoMetadata } from "../lib/github.js";
-import { discoverFields, editingSource, restoreDocument, type FieldValue } from "./website/index.js";
+import { decodeEntities, discoverFields, editingSource, restoreDocument, type FieldValue } from "./website/index.js";
 import {
   pageSource,
   publishPages,
@@ -15,6 +15,7 @@ import {
   underSiteCredential,
   WebsiteError,
 } from "./website/site.js";
+import { setSiteSetting, updateSiteSettings } from "./websiteSiteSettings.js";
 import { invalidateSource } from "./website/sourceCache.js";
 
 export interface PageSeoData {
@@ -54,16 +55,13 @@ export const repoSeoPatchSchema = z.object({
   topics: z.array(z.string().max(60)).max(20).optional(),
 });
 
+/**
+ * Every entity, not seven of them: the hand-written list missed &reg; and
+ * friends, so a title like "DakyXTech&reg;" showed its entity raw in the
+ * search preview and in the report a client is sent.
+ */
 function decodeBasicEntities(str: string): string {
-  return str
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&mdash;/g, "—")
-    .replace(/&ndash;/g, "–")
-    .trim();
+  return decodeEntities(str).trim();
 }
 
 function escapeAttr(val: string): string {
@@ -1211,31 +1209,24 @@ export function registerWebsiteSeoRoutes(
         })
         .parse(req.body ?? {});
 
-      const settingsObj =
-        site.settings && typeof site.settings === "object" && !Array.isArray(site.settings)
-          ? { ...(site.settings as Record<string, unknown>) }
-          : {};
-      const existing = Array.isArray(settingsObj.revisionComments)
-        ? [...(settingsObj.revisionComments as RevisionComment[])]
-        : [];
-
       const newComment: RevisionComment = {
         id: randomUUID(),
         pageId: req.params.pageId,
         fieldId: body.fieldId ?? null,
         elementLabel: body.elementLabel || "Page Note",
-        authorName: body.authorName?.trim() || req.dbUser?.name || "Client Reviewer",
+        // The signed-in person, not a name the request carries: a note is
+        // somebody's word, and anyone could otherwise sign as anyone.
+        authorName: req.dbUser?.name || body.authorName?.trim() || "Website editor",
         message: body.message.trim(),
         resolved: false,
         createdAt: new Date().toISOString(),
       };
 
-      const updatedList = [newComment, ...existing].slice(0, 200);
-      settingsObj.revisionComments = updatedList;
-
-      await prisma.site.update({
-        where: { id: site.id },
-        data: { settings: settingsObj as unknown as Prisma.InputJsonValue },
+      let updatedList: RevisionComment[] = [];
+      await updateSiteSettings(site.id, (current) => {
+        const existing = Array.isArray(current.revisionComments) ? (current.revisionComments as RevisionComment[]) : [];
+        updatedList = [newComment, ...existing].slice(0, 200);
+        return { ...current, revisionComments: updatedList };
       });
 
       res.json({ comment: newComment, comments: updatedList.filter((c) => c.pageId === req.params.pageId) });
@@ -1254,28 +1245,19 @@ export function registerWebsiteSeoRoutes(
         })
         .parse(req.body ?? {});
 
-      const settingsObj =
-        site.settings && typeof site.settings === "object" && !Array.isArray(site.settings)
-          ? { ...(site.settings as Record<string, unknown>) }
-          : {};
-      let existing = Array.isArray(settingsObj.revisionComments)
-        ? [...(settingsObj.revisionComments as RevisionComment[])]
-        : [];
-
-      if (body.delete) {
-        existing = existing.filter((c) => c.id !== req.params.commentId);
-      } else {
-        existing = existing.map((c) =>
-          c.id === req.params.commentId
-            ? { ...c, resolved: body.resolved !== undefined ? body.resolved : !c.resolved }
-            : c,
-        );
-      }
-
-      settingsObj.revisionComments = existing;
-      await prisma.site.update({
-        where: { id: site.id },
-        data: { settings: settingsObj as unknown as Prisma.InputJsonValue },
+      let existing: RevisionComment[] = [];
+      await updateSiteSettings(site.id, (current) => {
+        existing = Array.isArray(current.revisionComments) ? [...(current.revisionComments as RevisionComment[])] : [];
+        if (body.delete) {
+          existing = existing.filter((c) => c.id !== req.params.commentId);
+        } else {
+          existing = existing.map((c) =>
+            c.id === req.params.commentId
+              ? { ...c, resolved: body.resolved !== undefined ? body.resolved : !c.resolved }
+              : c,
+          );
+        }
+        return { ...current, revisionComments: existing };
       });
 
       res.json({ comments: existing.filter((c) => c.pageId === req.params.pageId) });
@@ -1389,16 +1371,7 @@ export function registerWebsiteSeoRoutes(
       ssl,
     };
 
-    const settingsObj =
-      site.settings && typeof site.settings === "object" && !Array.isArray(site.settings)
-        ? { ...(site.settings as Record<string, unknown>) }
-        : {};
-    settingsObj.healthMonitor = result;
-
-    await prisma.site.update({
-      where: { id: site.id },
-      data: { settings: settingsObj as unknown as Prisma.InputJsonValue },
-    });
+    await setSiteSetting(site.id, "healthMonitor", result);
 
     return result;
   }

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { createNumberedInvoice } from "./invoiceNumber.js";
 import { raisePayment } from "./payments.js";
-import { appUrl } from "./emailSender.js";
+import { customerAppUrl } from "./emailSender.js";
 import { setupAssistancePrice, type PlanCurrency } from "./websitePricing.js";
 import { resolveEntitlement } from "./websiteEntitlement.js";
 import { WebsiteError } from "./website/site.js";
@@ -49,7 +49,7 @@ export function registerWebsiteSetupAssistance(router: Router) {
     "/setup-assistance",
     handler(async (req, res) => {
       const price = setupAssistancePrice();
-      const base = (await appUrl()).replace(/\/$/, "");
+      const base = customerAppUrl();
       res.json({
         currency: price.currency,
         amount: price.amount,
@@ -136,7 +136,7 @@ export function registerWebsiteSetupAssistance(router: Router) {
       let paymentUrl: string | null = null;
       try {
         const payment = await raisePayment(invoice.id, "paystack", {
-          callbackUrl: `${(await appUrl()).replace(/\/$/, "")}/website/settings?setup=paid`,
+          callbackUrl: `${customerAppUrl()}/website/settings?setup=paid`,
         });
         paymentUrl = payment.url;
       } catch (error) {

@@ -31,7 +31,7 @@ import { WebsiteVersions } from "../components/WebsiteVersions";
 import { WebsiteAssistant } from "../components/WebsiteAssistant";
 import { WebsiteAgentChat } from "../components/WebsiteAgentChat";
 import { WebsitePageSeoInspector } from "../components/WebsitePageSeoInspector";
-import { WebsiteTierStatusBanner, notifyTierStatusChanged, useWebsiteTierStatus } from "../components/WebsiteTierStatusBanner";
+import { WebsitePlanChip, notifyTierStatusChanged, useWebsiteTierStatus } from "../components/WebsiteTierStatusBanner";
 import { FieldRow } from "../components/WebsiteFieldRow";
 import { ConflictDialog } from "../components/WebsiteConflictDialog";
 
@@ -84,6 +84,8 @@ import { WebsiteIconPicker } from "../components/WebsiteIconPicker";
 import { iconPreviewSrc, svgPreviewSrc } from "../lib/websiteIconPreview";
 import { libraryIcon, libraryIconMarkup } from "../../../src/shared/websiteIcons";
 import type { IconChoice } from "../lib/types";
+import { setPageTitle } from "../lib/surface";
+import { reviewStatusLabel, useReviewLinks } from "../components/WebsiteReviewLinks";
 
 /**
  * One page of the website, open at full size, with everything about the thing
@@ -495,6 +497,13 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const isDemo = Boolean(demoIdFromUrl || page.data?.demo);
   // DakyX serves this page itself: no repository, live the moment it publishes.
   const hostedHere = !page.data?.site.repo && page.data?.readFrom === "imported file";
+  const pageTitle = page.data?.page.title;
+  useEffect(() => { if (pageTitle) setPageTitle(`Editing ${pageTitle}`); }, [pageTitle]);
+  // What the client said about the last draft sent for approval, if anything is
+  // still current — shown beside the save status, where the decision is made.
+  const reviewLinks = useReviewLinks(pageId);
+  const latestReview = reviewLinks.data?.links.find((link) => link.status !== "WITHDRAWN" && !(link.status === "PENDING" && link.expired)) ?? null;
+  const latestReviewStatus = latestReview ? reviewStatusLabel(latestReview) : null;
   const design = useQuery({ queryKey: ["website", "design", page.data?.site.id], enabled: !!page.data?.site.id, queryFn: ({ signal }) => api.get<{ options: { colours: string[]; fonts: string[]; aiEnabled: boolean; presets: BrandPreset[] } }>(`/website/sites/${page.data!.site.id}/design`, signal) });
 
   /* ------------------------------------------------------------- history */
@@ -2088,7 +2097,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               >
                 <span
                   className={`h-1.5 w-1.5 rounded-full ${
-                    dirty.current || changedCount > 0 ? "bg-amber-500" : "bg-emerald-500"
+                    dirty.current || changedCount > 0 ? "bg-warn" : "bg-positive"
                   }`}
                 />
                 <span className="truncate max-w-[180px]">{status}</span>
@@ -2098,6 +2107,18 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   </span>
                 )}
               </span>
+              {latestReview && (
+                <button
+                  type="button"
+                  onClick={() => setReviewOpen(true)}
+                  title={latestReview.feedback ? `“${latestReview.feedback}”` : "Open the review to see what was sent and any comments"}
+                  className={`hidden shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold sm:inline-flex ${
+                    latestReviewStatus!.tone === "positive" ? "bg-positive-surface text-positive-text" : latestReviewStatus!.tone === "warn" ? "bg-warn-surface text-warn-text" : "bg-info-surface text-info-text"
+                  }`}
+                >
+                  {latestReview.reviewerName && latestReview.status !== "PENDING" ? `${latestReview.reviewerName}: ` : ""}{latestReviewStatus!.text}
+                </button>
+              )}
               {peers.length > 0 && (
                 <div
                   className="flex items-center gap-1.5 border-l border-line pl-2"
@@ -2611,6 +2632,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             </>
           )}
 
+          <WebsitePlanChip siteId={site.id} />
+
           {/* Primary Publish CTA */}
           {canPublish && (
             <div data-walkthrough="publish">
@@ -2665,15 +2688,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         </div>
       </div>
 
-      <div className="flex-none border-b border-line bg-ink px-3.5 pt-2">
-        <WebsiteTierStatusBanner
-          siteId={site.id}
-          compact
-          onUserSwitched={() => {
-            void qc.invalidateQueries({ queryKey: ["website"] });
-          }}
-        />
-      </div>
 
       {(published || failure) && (
         <div className="flex-none border-b border-line px-4 py-3">

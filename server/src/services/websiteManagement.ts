@@ -13,7 +13,7 @@ import { assetUrl, embedWebsiteAssets, unpublishedUsesOf } from "./websiteAssets
 import { isR2Configured, uploadToR2, deleteFromR2, getR2PublicUrl } from "../lib/r2.js";
 import { runPublishGuardChecks } from "./websitePublishGuard.js";
 import { runVisualRegression } from "./websiteVisualRegression.js";
-import { assertWebsiteConnectionChange, canManageWebsiteConnection, websiteSiteFilter } from "./websiteAccess.js";
+import { assertWebsiteConnectionChange, assertWebsiteClientChange, canManageWebsiteConnection, websiteSiteFilter } from "./websiteAccess.js";
 import {
   assertImportAllowance,
   assertMediaStorageAllowance,
@@ -29,6 +29,7 @@ import { generateStarterSiteHtml, STARTER_TEMPLATES } from "./websiteSectionTemp
 import { prepareImportedHtml } from "./htmlCompiler.js";
 import { analyzeImportPackage, commitPackageToSite } from "./websitePackageImport.js";
 import { generatePagePrepublishReport, generateSitePrepublishReport } from "./websitePrepublishReport.js";
+import { updateSiteSettings } from "./websiteSiteSettings.js";
 
 const publicUrl = z.string().url().max(2000).refine(value => {
   const url = new URL(value);
@@ -354,23 +355,37 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       const combinedHtml = pages.map(p => p.sourceHtml || p.publishedHtml || "").filter(Boolean).join("\n");
       if (combinedHtml) {
         const extracted = extractColorsFromHtml(combinedHtml, { maxColors: 16 });
-        if (extracted.length > 0) {
-          colours = extracted;
-          const currentSettings = (site.settings && typeof site.settings === "object" ? site.settings : {}) as Record<string, any>;
-          await prisma.site.update({
-            where: { id: site.id },
-            data: { settings: { ...currentSettings, colours: extracted } },
-          }).catch(() => {});
-        }
+        // Offered, not saved: a read that wrote to the site raced every real
+        // save of the settings it overwrote.
+        if (extracted.length > 0) colours = extracted;
       }
     }
     res.json({ options: { colours, fonts, aiEnabled, presets } });
+  }));
+
+  /**
+   * Saves the design palette — colours, typefaces, presets. The design survey
+   * and the colour replacer both sent this for weeks with no route to receive
+   * it, and one of them swallowed the 404, so a palette change looked saved and
+   * was not.
+   */
+  router.put("/sites/:siteId/design", handler(async (req, res) => {
+    const site = await access.loadSite(req, req.params.siteId);
+    const input = websiteDesignOptions.partial().parse(req.body ?? {});
+    const previous = websiteDesignOptions.parse(site.settings ?? {});
+    const changed = Object.keys(input).filter(key => JSON.stringify(input[key as keyof typeof input]) !== JSON.stringify(previous[key as keyof typeof previous]));
+    if (!changed.length) return res.json({ saved: false, options: previous });
+    await assertTierFeatureAccess(req, "themeSettings", site.id);
+    const saved = await updateSiteSettings(site.id, current => ({ ...current, ...input }));
+    await prisma.siteAuditEvent.create({ data: { siteId: site.id, kind: "SETTINGS_UPDATED", summary: `Updated the design palette: ${changed.join(", ")}`, ...actor(req), detail: { changed } } });
+    res.json({ saved: true, options: websiteDesignOptions.parse(saved) });
   }));
 
   router.put("/sites/:siteId/config", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
     const { options, ...data } = siteInput.extend({ options: websiteDesignOptions }).parse(req.body);
     assertWebsiteConnectionChange(req, site, data);
+    assertWebsiteClientChange(req, site, data);
     if (!!data.repoOwner !== !!data.repoName) throw new WebsiteError(400, "Enter both the repository owner and name.");
     // Checked rather than left to the foreign key: a client id that does not
     // exist should read as "that client is not here", not as a 500.
@@ -386,10 +401,15 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       ...Object.keys(data).filter(key => data[key as keyof typeof data] !== site[key as keyof Site]),
       ...optionsChanged.map(key => `options.${key}`),
     ];
-    if (changed.length) await prisma.$transaction([
-      prisma.site.update({ where: { id: site.id }, data: { ...data, settings: options } }),
-      prisma.siteAuditEvent.create({ data: { siteId: site.id, kind: "SETTINGS_UPDATED", summary: `Updated website settings: ${changed.map(key => key.replace("options.", "")).join(", ")}`, ...actor(req), detail: { changed } } }),
-    ]);
+    if (changed.length) {
+      // The design options are merged into the settings document, never written
+      // over it: `settings: options` replaced the whole document with the four
+      // design keys, so every save of this screen deleted the editing policy,
+      // global content, acknowledged risks and anything else kept there.
+      if (Object.keys(data).length) await prisma.site.update({ where: { id: site.id }, data });
+      await updateSiteSettings(site.id, current => ({ ...current, ...options }));
+      await prisma.siteAuditEvent.create({ data: { siteId: site.id, kind: "SETTINGS_UPDATED", summary: `Updated website settings: ${changed.map(key => key.replace("options.", "")).join(", ")}`, ...actor(req), detail: { changed } } });
+    }
     res.json({ saved: true });
   }));
 
@@ -489,13 +509,12 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     // never be published. Both names are accepted so an open tab still works.
     const raw = z.object({ riskIds: z.array(z.string().min(1)).max(100).optional(), limits: z.array(z.string().min(1)).max(100).optional() }).parse(req.body);
     const input = { riskIds: raw.riskIds ?? raw.limits ?? [] };
-    const currentSettings = (site.settings && typeof site.settings === "object" ? site.settings : {}) as Record<string, any>;
-    const existingAcks = new Set<string>(currentSettings.acknowledgedPublishLimits || []);
-    for (const id of input.riskIds) existingAcks.add(id);
-    const updatedList = Array.from(existingAcks);
-    await prisma.site.update({
-      where: { id: site.id },
-      data: { settings: { ...currentSettings, acknowledgedPublishLimits: updatedList } },
+    let updatedList: string[] = [];
+    await updateSiteSettings(site.id, current => {
+      const existingAcks = new Set<string>(Array.isArray(current.acknowledgedPublishLimits) ? current.acknowledgedPublishLimits as string[] : []);
+      for (const id of input.riskIds) existingAcks.add(id);
+      updatedList = Array.from(existingAcks).slice(-500);
+      return { ...current, acknowledgedPublishLimits: updatedList };
     });
     res.json({ acknowledged: updatedList });
   }));

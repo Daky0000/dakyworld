@@ -2,6 +2,7 @@ import { useSiteDirectory, SiteDirectoryMore } from "../lib/siteDirectory";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { currentSurface } from "../lib/surface";
 import { useAuth } from "../lib/auth";
 import type { SiteSummary } from "../lib/types";
 import { Button, PageHeader } from "./ui";
@@ -27,7 +28,11 @@ export function WebsiteSettings() {
   // Whose website this is. It is what decides whether a retainer covers the
   // Website Builder for them, so a site with no client can only be told that
   // nothing decides — see the "Who pays for this" line on Onboarding.
-  const clients = useQuery({ queryKey: ["clients", "for-sites"], queryFn: ({ signal }) => api.get<Array<{ id: string; name: string }>>("/clients", signal) });
+  // Staff only, and only in the OS: the client list is internal, a customer has
+  // no business choosing "whose website" theirs is, and editor.dakyx.com
+  // refuses /api/clients outright — the picker used to load nothing there.
+  const pickClient = currentSurface() === "os" && !user?.external && can("clients.view");
+  const clients = useQuery({ queryKey: ["clients", "for-sites"], enabled: pickClient, queryFn: ({ signal }) => api.get<Array<{ id: string; name: string }>>("/clients", signal) });
   const [draft, setDraft] = useState<Config | null>(null);
   const [dirty, setDirty] = useState(false);
   const [colourText, setColourText] = useState("");
@@ -87,7 +92,7 @@ export function WebsiteSettings() {
       <fieldset disabled={save.isPending} className="space-y-6">
         <section className="rounded-2xl border border-line bg-white p-5">
           <h2 className="mb-4 font-display text-lg">Source & publishing</h2>
-          <label className="mb-4 block text-xs text-muted">Client<select className={INPUT} value={draft.clientId ?? ""} onChange={event => change("clientId" as keyof Config, (event.target.value || null) as never)}><option value="">DakyXTech&#39;s own website</option>{(Array.isArray(clients.data) ? clients.data : []).map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select><span className="mt-1 block text-[11px] text-faint">Whose website this is. A client on an active retainer gets the Website Builder at no charge; without a client here, nothing can work that out.</span></label>
+          {pickClient && <label className="mb-4 block text-xs text-muted">Client<select className={INPUT} value={draft.clientId ?? ""} onChange={event => change("clientId" as keyof Config, (event.target.value || null) as never)}><option value="">DakyXTech&#39;s own website</option>{(Array.isArray(clients.data) ? clients.data : []).map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select><span className="mt-1 block text-[11px] text-faint">Whose website this is. A client on an active retainer gets the Website Builder at no charge; without a client here, nothing can work that out.</span></label>}
           <div className="grid gap-4 sm:grid-cols-2">{([["name", "Name"], ["publicUrl", "Public address"], ["repoOwner", "Repository owner"], ["repoName", "Repository name"], ["repoBranch", "Branch"], ["repoPath", "HTML folder"]] as const).map(([key, label]) => <label key={key} className="text-xs text-muted">{label}<input className={INPUT} value={draft[key] ?? ""} disabled={key.startsWith("repo") && draft.connectionEditable === false} required={key === "name" || key === "publicUrl" || key === "repoBranch"} maxLength={key === "publicUrl" ? 2000 : key === "repoPath" ? 200 : key === "name" ? 120 : 100} type={key === "publicUrl" ? "url" : "text"} onChange={event => change(key, (key === "repoOwner" || key === "repoName") && !event.target.value ? null : event.target.value)} /></label>)}</div>
           <p className="mt-3 text-xs text-muted">Publishing writes to this branch. Your administrator connects the repository credentials. An imported page can also be downloaded as HTML.</p>
         </section>

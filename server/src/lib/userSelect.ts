@@ -32,4 +32,6 @@ export const SESSION_USER = {
   ...PUBLIC_USER, hourlyRate: true, accessRoleId: true, accessRole: true,
   extraPermissions: true, deniedPermissions: true, totpConfirmedAt: true,
   emailVerifiedAt: true, createdAt: true, updatedAt: true,
+  // Which guided tours and welcome steps this person has already seen.
+  uiState: true,
 } satisfies Prisma.UserSelect;

@@ -55,7 +55,7 @@ type Tab = {
  */
 export const WEBSITE_TABS: Tab[] = [
   { to: "/website", label: "Overview", end: true },
-  { to: "/website/sites", label: "Sites" },
+  { to: "/website/sites", label: "Pages" },
   { to: "/website/assets", label: "Assets" },
   { to: "/website/compatibility", label: "Compatibility" },
   { to: "/website/survey", label: "Site survey" },
@@ -74,7 +74,10 @@ export function WebsiteLayout() {
   const { can, user } = useAuth();
   const sites = useWebsiteSites();
   const location = useLocation();
-  const tabs = WEBSITE_TABS.filter((tab) => tab.siteAction
+  // Source files read a repository; a site DakyX hosts has none, so the tab is
+  // only offered when some site has one to open.
+  const anyRepository = Boolean(sites.data?.some(site => site.repo));
+  const tabs = WEBSITE_TABS.filter((tab) => (tab.siteAction === "source" && !anyRepository) ? false : tab.siteAction
     ? can("website.manage") || sites.data?.some(site => site.capabilities?.[tab.siteAction!])
     : !tab.needs || can(tab.needs));
 

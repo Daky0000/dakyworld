@@ -4,8 +4,36 @@ import { useAuth } from "../lib/auth";
 import { useWebsiteSites } from "./WebsiteGuard";
 import { CLIENT_NAV, useWorkspaceMode } from "../lib/clientWorkspace";
 import { Loading } from "./ui";
+import { currentSurface, setPageTitle } from "../lib/surface";
 
 type NavEntry = { to: string; label: string; end?: boolean; needs?: string };
+
+/**
+ * Names for the screens no menu item covers, so the bar and the tab title never
+ * fall back to "Detail" — which is what every website screen said before.
+ */
+const SCREEN_NAMES: Array<[RegExp, string]> = [
+  [/^\/website\/?$/, "Overview"],
+  [/^\/website\/sites/, "Pages"],
+  [/^\/website\/assets/, "Assets"],
+  [/^\/website\/compatibility/, "Compatibility"],
+  [/^\/website\/survey/, "Site survey"],
+  [/^\/website\/onboarding/, "Onboarding"],
+  [/^\/website\/welcome/, "Welcome"],
+  [/^\/website\/ai/, "AI assistant"],
+  [/^\/website\/updates/, "Updates"],
+  [/^\/website\/team/, "Team"],
+  [/^\/website\/audit/, "Activity"],
+  [/^\/website\/balance/, "Balance & invoices"],
+  [/^\/website\/settings/, "Settings"],
+  [/^\/website\/source/, "Source files"],
+  [/^\/website\/billing/, "Billing"],
+  [/^\/website\/account/, "Your account"],
+  [/^\/website\/inbox/, "Form inbox"],
+  [/^\/website\/analytics/, "Visitors"],
+  [/^\/products\/pricing/, "Product pricing"],
+  [/^\/demos/, "Demos"],
+];
 type NavGroup = { title: string; items: NavEntry[] };
 
 const navGroups: NavGroup[] = [
@@ -69,8 +97,7 @@ const navGroups: NavGroup[] = [
 
 
 export function Layout() {
-  const editorSurface = window.location.hostname === "editor.dakyx.com"
-    || import.meta.env.VITE_APP_SURFACE === "editor";
+  const editorSurface = currentSurface() === "editor";
   const { user, can, logout } = useAuth();
   const websites = useWebsiteSites();
   const navigate = useNavigate();
@@ -130,7 +157,10 @@ export function Layout() {
     : navGroups.map(group => ({ ...group, items: group.items.filter(allowed) })).filter(group => group.items.length);
   const visibleGroups = groups.map(group => ({ ...group, items: group.items.filter(item => `${group.title} ${item.label}`.toLowerCase().includes(filter.toLowerCase())) })).filter(group => group.items.length);
   const current = groups.flatMap(group => group.items).filter(item => item.to === "/" ? location.pathname === "/" : location.pathname.startsWith(item.to)).sort((a, b) => b.to.length - a.to.length)[0];
+  const screenName = current?.label ?? SCREEN_NAMES.find(([pattern]) => pattern.test(location.pathname))?.[1] ?? null;
   const fullBleed = /^\/website\/pages\//.test(location.pathname);
+  // The editor names its own tab after the page being edited.
+  useEffect(() => { if (!fullBleed) setPageTitle(screenName); }, [screenName, fullBleed]);
   if (fullBleed) return <div className="os-app flex h-screen flex-col overflow-hidden bg-cream text-ink"><Suspense fallback={<Loading />}><Outlet /></Suspense></div>;
 
   const navigation = (mobile = false) => <>
@@ -204,7 +234,7 @@ export function Layout() {
       <header className="os-topbar">
         <div className="flex min-w-0 items-center gap-4">
           <button ref={menuRef} type="button" className="os-menu-button" aria-expanded={mobileOpen} onClick={() => setMobileOpen(true)}>Menu</button>
-          <span className="os-workspace-label">{client ? "Client workspace" : "Workspace"}</span><span className="os-breadcrumb-divider">/</span><span className="truncate">{current?.label || "Detail"}</span>
+          <span className="os-workspace-label">{editorSurface ? "Website Editor" : client ? "Client portal" : "Workspace"}</span><span className="os-breadcrumb-divider">/</span><span className="truncate">{screenName ?? "Home"}</span>
           {!editorSurface && !user?.external && (
             <div className="ml-2 hidden sm:flex items-center gap-1 rounded-full border border-line bg-white/90 px-1.5 py-0.5 text-xs shadow-2xs">
               <button
@@ -234,7 +264,7 @@ export function Layout() {
         </div>
       </header>
       <main id="workspace" tabIndex={-1} className="os-workspace"><Suspense fallback={<Loading rows={5} />}><Outlet /></Suspense></main>
-      <footer className="os-workspace-footer"><span>{editorSurface ? "DakyXTech Editor" : "DakyXTech OS"}</span><span>{client ? "Your digital workspace" : "Built for considered work."}</span></footer>
+      <footer className="os-workspace-footer"><span>{editorSurface ? "DakyX Website Editor" : "DakyXTech OS"}</span><span>{editorSurface || client ? <a href="https://dakyx.com/website-builder-setup" className="underline-offset-2 hover:underline">Help &amp; guides</a> : "Built for considered work."}</span></footer>
     </div>
   </div>;
 }

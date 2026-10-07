@@ -1,467 +1,331 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { useParams } from "react-router-dom";
-import { api } from "../lib/api";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { api, ApiError } from "../lib/api";
+import { setPageTitle } from "../lib/surface";
 import { Button } from "../components/ui";
-import {
-  IconCheck,
-  IconEye,
-  IconMessageCircle,
-  IconShieldCheck,
-  IconSparkles,
-} from "../components/WebsiteIcons";
 
-export type VisualComment = {
+/**
+ * The page somebody's client opens from a review link — no account, no sign-in.
+ *
+ * Reached from `main.tsx` before the session is even looked at: the first
+ * version of this lived inside the signed-in app, so every reviewer was shown
+ * the staff sign-in screen instead of the changes. Everything it needs is in
+ * the token; the server (`services/websiteReviewLinks.ts`) does the rest.
+ *
+ * The page itself renders in a frame served by the server in an origin of its
+ * own, so the reviewer sees it with its real styles and scripts while nothing
+ * on it can reach this page. Pins cross by message for the same reason.
+ */
+
+type ReviewComment = {
   id: string;
   authorName: string;
-  authorEmail?: string;
-  content: string;
-  selectorOrFieldId?: string;
-  xPercent?: number;
-  yPercent?: number;
+  body: string;
+  xPercent: number | null;
+  yPercent: number | null;
+  anchorLabel: string | null;
   resolved: boolean;
   createdAt: string;
 };
 
-export type PublicReviewData = {
-  ok: boolean;
-  site: {
-    id: string;
-    name: string;
-    slug: string;
-    publicUrl: string;
-  };
-  page: {
-    id: string;
+type PublicReview = {
+  site: { name: string };
+  page: { title: string; path: string };
+  link: {
     title: string;
-    path: string;
-  };
-  approval: {
-    id: string;
-    token: string;
-    title: string;
-    pageTitle: string;
     status: "PENDING" | "APPROVED" | "CHANGES_REQUESTED";
-    versionNumber: number;
     createdAt: string;
+    expiresAt: string;
+    decidedAt: string | null;
+    reviewerName: string | null;
+    feedback: string | null;
   };
-  draftHtml: string;
-  liveHtml: string;
-  comments: VisualComment[];
-  tokens: Array<{ key: string; label: string; value: string }>;
+  comments: ReviewComment[];
+  frames: { draft: string; live: string };
 };
 
-export function ClientApprovalReview() {
-  const { token } = useParams<{ token: string }>();
+const NAME_KEY = "dakyx-reviewer-name";
+
+function rememberedName(): string {
+  try { return localStorage.getItem(NAME_KEY) ?? ""; } catch { return ""; }
+}
+
+function rememberName(name: string) {
+  try { localStorage.setItem(NAME_KEY, name); } catch { /* private mode */ }
+}
+
+const dateFormat = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" });
+
+export function ClientApprovalReview({ token: tokenProp }: { token?: string }) {
+  const token = tokenProp ?? decodeURIComponent(window.location.pathname.split("/")[2] ?? "");
   const qc = useQueryClient();
+  const frame = useRef<HTMLIFrameElement>(null);
+  const [view, setView] = useState<"draft" | "live">("draft");
+  const [name, setName] = useState(rememberedName);
+  const [commentText, setCommentText] = useState("");
+  const [pin, setPin] = useState<{ x: number; y: number; label: string } | null>(null);
+  const [pinMode, setPinMode] = useState(false);
+  const [decision, setDecision] = useState<"APPROVE" | "REQUEST_CHANGES" | null>(null);
+  const [email, setEmail] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [frameReady, setFrameReady] = useState(false);
 
-  const [viewMode, setViewMode] = useState<"draft" | "live" | "split">("draft");
-  const [showComments, setShowComments] = useState(false);
-  const [actionModal, setActionModal] = useState<"APPROVE" | "REQUEST_CHANGES" | null>(null);
-  const [authorName, setAuthorName] = useState("");
-  const [authorEmail, setAuthorEmail] = useState("");
-  const [actionNotes, setActionNotes] = useState("");
-  const [newCommentText, setNewCommentText] = useState("");
-  const [selectedPin, setSelectedPin] = useState<{ x: number; y: number } | null>(null);
-
-  const reviewQuery = useQuery({
-    queryKey: ["public", "review", token],
-    queryFn: ({ signal }) => api.get<PublicReviewData>(`/public/review/${token}`, signal),
+  const review = useQuery({
+    queryKey: ["public-review", token],
+    queryFn: ({ signal }) => api.get<PublicReview>(`/public/review/${encodeURIComponent(token)}`, signal),
     enabled: Boolean(token),
+    retry: false,
   });
+  const data = review.data;
 
-  const submitAction = useMutation({
-    mutationFn: (action: "APPROVE" | "REQUEST_CHANGES") =>
-      api.post(`/public/review/${token}/action`, {
-        action,
-        authorName: authorName.trim() || "Reviewer",
-        authorEmail: authorEmail.trim() || undefined,
-        notes: actionNotes.trim() || undefined,
-      }),
-    onSuccess: () => {
-      setActionModal(null);
-      void qc.invalidateQueries({ queryKey: ["public", "review", token] });
-    },
-  });
+  useEffect(() => {
+    setPageTitle(data ? `Review: ${data.page.title}` : "Review");
+  }, [data]);
+
+  const pins = useMemo(
+    () => (data?.comments ?? []).filter((comment) => comment.xPercent !== null && comment.yPercent !== null && !comment.resolved),
+    [data?.comments],
+  );
+
+  const tell = useCallback((message: Record<string, unknown>) => {
+    frame.current?.contentWindow?.postMessage({ source: "dakyx-review-host", ...message }, "*");
+  }, []);
+
+  // The frame is opaque: everything it says arrives as a message, checked to
+  // come from that frame and nothing else.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== frame.current?.contentWindow) return;
+      const message = event.data as { source?: string; type?: string; x?: number; y?: number; label?: string } | null;
+      if (message?.source !== "dakyx-review") return;
+      if (message.type === "ready") setFrameReady(true);
+      if (message.type === "pinned" && typeof message.x === "number" && typeof message.y === "number") {
+        setPin({ x: message.x, y: message.y, label: message.label ?? "" });
+        setPinMode(false);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
+  useEffect(() => {
+    if (!frameReady) return;
+    tell({ type: "pins", pins: view === "draft" ? pins.map((comment) => ({ x: comment.xPercent, y: comment.yPercent })) : [] });
+  }, [frameReady, pins, view, tell]);
+
+  useEffect(() => { tell({ type: "pin-mode", on: pinMode }); }, [pinMode, tell]);
 
   const addComment = useMutation({
     mutationFn: () =>
-      api.post(`/public/review/${token}/comments`, {
-        authorName: authorName.trim() || "Reviewer",
-        authorEmail: authorEmail.trim() || undefined,
-        content: newCommentText.trim(),
-        xPercent: selectedPin?.x,
-        yPercent: selectedPin?.y,
+      api.post<{ comment: ReviewComment }>(`/public/review/${encodeURIComponent(token)}/comments`, {
+        name: name.trim(),
+        body: commentText.trim(),
+        ...(pin ? { xPercent: pin.x, yPercent: pin.y, anchorLabel: pin.label.slice(0, 120) } : {}),
       }),
     onSuccess: () => {
-      setNewCommentText("");
-      setSelectedPin(null);
-      void qc.invalidateQueries({ queryKey: ["public", "review", token] });
+      rememberName(name.trim());
+      setCommentText("");
+      setPin(null);
+      void qc.invalidateQueries({ queryKey: ["public-review", token] });
     },
   });
 
-  const data = reviewQuery.data;
+  const decide = useMutation({
+    mutationFn: () =>
+      api.post<{ status: string }>(`/public/review/${encodeURIComponent(token)}/decision`, {
+        decision,
+        name: name.trim(),
+        email: email.trim(),
+        feedback: feedback.trim() || undefined,
+      }),
+    onSuccess: () => {
+      rememberName(name.trim());
+      setDecision(null);
+      void qc.invalidateQueries({ queryKey: ["public-review", token] });
+    },
+  });
 
-  if (reviewQuery.isLoading) {
+  if (review.isLoading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-sunken/40">
-        <div className="text-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-ink border-t-transparent mx-auto" />
-          <p className="mt-3 text-sm text-muted">Loading review draft…</p>
-        </div>
-      </div>
+      <main className="grid min-h-screen place-items-center bg-cream p-6">
+        <p role="status" className="text-sm text-muted">Opening the changes…</p>
+      </main>
     );
   }
 
-  if (reviewQuery.isError || !data) {
+  if (review.isError || !data) {
+    const gone = review.error instanceof ApiError && review.error.status === 404;
     return (
-      <div className="flex h-screen items-center justify-center bg-sunken/40 p-4">
-        <div className="max-w-md rounded-2xl border border-line bg-white p-6 text-center shadow-lg">
-          <h2 className="text-lg font-bold text-ink">Review Link Not Found</h2>
-          <p className="mt-2 text-xs text-muted">
-            This review link may have expired, or changes have already been published.
+      <main className="grid min-h-screen place-items-center bg-cream p-6">
+        <div className="w-full max-w-md rounded-2xl border border-line bg-white p-8 text-center">
+          <h1 className="font-display text-xl font-medium text-ink">{gone ? "This review link has ended" : "This review could not be opened"}</h1>
+          <p className="mt-3 text-sm leading-relaxed text-muted">
+            {gone
+              ? "It has expired or been withdrawn. Ask the person who sent it for a new one."
+              : "Something went wrong opening it. Check your connection and try again."}
           </p>
+          {!gone && <Button className="mt-5" onClick={() => void review.refetch()}>Try again</Button>}
         </div>
-      </div>
+      </main>
     );
   }
 
-  const { approval, page, site, comments } = data;
-  const isApproved = approval.status === "APPROVED";
-  const isChangesRequested = approval.status === "CHANGES_REQUESTED";
+  const { link } = data;
+  const decided = link.status !== "PENDING";
+  const canSubmitDecision = name.trim().length > 0 && (decision === "APPROVE" || feedback.trim().length > 0);
+
+  const submitComment = (event: FormEvent) => {
+    event.preventDefault();
+    if (!name.trim() || !commentText.trim()) return;
+    addComment.mutate();
+  };
+
+  const submitDecision = (event: FormEvent) => {
+    event.preventDefault();
+    if (canSubmitDecision) decide.mutate();
+  };
 
   return (
-    <div className="flex h-screen flex-col bg-sunken/40 font-sans">
-      {/* Top Header Bar */}
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-white px-6 py-3.5 shadow-xs">
-        <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-ink text-white font-display text-sm font-bold">
-            D
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="font-display text-sm font-bold text-ink">{page.title}</h1>
-              <span className="text-xs text-muted">· {site.name}</span>
-              <span
-                className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                  isApproved
-                    ? "bg-emerald-100 text-emerald-800"
-                    : isChangesRequested
-                      ? "bg-amber-100 text-amber-800"
-                      : "bg-blue/10 text-blue"
-                }`}
-              >
-                {isApproved
-                  ? "✓ Approved"
-                  : isChangesRequested
-                    ? "Changes Requested"
-                    : "Pending Sign-off"}
-              </span>
-            </div>
-            <p className="text-[11px] text-muted">
-              Client Review · Version {approval.versionNumber} · Safe Publish Verified
-            </p>
-          </div>
+    <main className="flex min-h-screen flex-col bg-cream text-ink lg:h-screen">
+      <header className="flex flex-none flex-wrap items-center justify-between gap-3 border-b border-line bg-white px-4 py-3 sm:px-6">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[.08em] text-muted">{data.site.name}</p>
+          <h1 className="truncate font-display text-lg font-medium tracking-[-.02em]">{link.title}</h1>
+          <p className="text-xs text-muted">
+            Sent {dateFormat.format(new Date(link.createdAt))}
+            {!decided && <> · Link works until {dateFormat.format(new Date(link.expiresAt))}</>}
+          </p>
         </div>
-
-        {/* View Switcher & Action CTAs */}
-        <div className="flex items-center gap-2.5">
-          <div className="inline-flex rounded-xl border border-line bg-sunken/40 p-0.5">
+        <div role="group" aria-label="What to show" className="flex rounded-full border border-line bg-cream p-1 text-xs font-semibold">
+          {(["draft", "live"] as const).map((option) => (
             <button
+              key={option}
               type="button"
-              onClick={() => setViewMode("draft")}
-              className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
-                viewMode === "draft" ? "bg-ink text-white" : "text-muted hover:text-ink"
-              }`}
+              aria-pressed={view === option}
+              onClick={() => { setView(option); setFrameReady(false); setPinMode(false); }}
+              className={`rounded-full px-3 py-1.5 transition ${view === option ? "bg-ink text-white" : "text-muted hover:text-ink"}`}
             >
-              Proposed Draft
+              {option === "draft" ? "Proposed changes" : "Current page"}
             </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("live")}
-              className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
-                viewMode === "live" ? "bg-ink text-white" : "text-muted hover:text-ink"
-              }`}
-            >
-              Live on Site
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("split")}
-              className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
-                viewMode === "split" ? "bg-ink text-white" : "text-muted hover:text-ink"
-              }`}
-            >
-              Side-by-Side
-            </button>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setShowComments(!showComments)}
-            className={`inline-flex items-center gap-1.5 rounded-xl border border-line px-3 py-1.5 text-xs font-semibold transition ${
-              showComments ? "bg-ink text-white" : "bg-white text-ink hover:bg-sunken"
-            }`}
-          >
-            <IconMessageCircle size={14} />
-            <span>Comments ({comments.length})</span>
-          </button>
-
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setActionModal("REQUEST_CHANGES")}
-          >
-            Request Changes
-          </Button>
-
-          <Button
-            variant="accent"
-            size="sm"
-            onClick={() => setActionModal("APPROVE")}
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <IconCheck size={14} />
-              <span>Approve Draft</span>
-            </span>
-          </Button>
+          ))}
         </div>
       </header>
 
-      {/* Main Canvas Viewport */}
-      <div className="relative flex flex-1 overflow-hidden">
-        {/* Frame Container */}
-        <div className="flex-1 overflow-auto p-4 flex gap-4 justify-center items-start">
-          {viewMode === "split" ? (
-            <>
-              <div className="flex-1 flex flex-col h-[calc(100vh-100px)] rounded-2xl border border-line bg-white shadow-md overflow-hidden">
-                <div className="border-b border-line bg-sunken/40 px-3 py-1.5 text-xs font-bold text-muted">
-                  Current Live Version
-                </div>
-                <iframe
-                  title="Current Live Page"
-                  srcDoc={data.liveHtml}
-                  className="flex-1 w-full border-0"
-                  sandbox="allow-scripts"
-                />
-              </div>
-              <div className="flex-1 flex flex-col h-[calc(100vh-100px)] rounded-2xl border border-blue/40 bg-white shadow-md overflow-hidden">
-                <div className="border-b border-blue/20 bg-blue/5 px-3 py-1.5 text-xs font-bold text-blue">
-                  Proposed Draft (Changes Staged)
-                </div>
-                <iframe
-                  title="Proposed Draft"
-                  srcDoc={data.draftHtml}
-                  className="flex-1 w-full border-0"
-                  sandbox="allow-scripts"
-                />
-              </div>
-            </>
-          ) : (
-            <div className="relative w-full max-w-5xl h-[calc(100vh-100px)] rounded-2xl border border-line bg-white shadow-lg overflow-hidden flex flex-col">
-              <div className="border-b border-line bg-sunken/30 px-3 py-1.5 text-xs font-semibold text-muted flex items-center justify-between">
-                <span>{viewMode === "draft" ? "Proposed Draft Preview" : "Live Page Preview"}</span>
-                <span className="text-[11px] text-muted">Click anywhere to drop a feedback pin</span>
-              </div>
-              <div
-                className="relative flex-1 w-full"
-                onClick={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const x = Math.round(((e.clientX - rect.left) / rect.width) * 100);
-                  const y = Math.round(((e.clientY - rect.top) / rect.height) * 100);
-                  setSelectedPin({ x, y });
-                  setShowComments(true);
-                }}
-              >
-                <iframe
-                  title="Page Preview"
-                  srcDoc={viewMode === "draft" ? data.draftHtml : data.liveHtml}
-                  className="w-full h-full border-0 pointer-events-none"
-                  sandbox="allow-scripts"
-                />
-
-                {/* Render Visual Comment Pins */}
-                {comments.map((c, i) => (
-                  c.xPercent !== undefined && c.yPercent !== undefined && (
-                    <div
-                      key={c.id}
-                      style={{ left: `${c.xPercent}%`, top: `${c.yPercent}%` }}
-                      className="absolute -translate-x-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-full bg-blue text-white text-[11px] font-bold shadow-lg ring-2 ring-white cursor-pointer hover:scale-110 transition"
-                      title={`${c.authorName}: ${c.content}`}
-                    >
-                      {i + 1}
-                    </div>
-                  )
-                ))}
-
-                {/* Active dropped pin */}
-                {selectedPin && (
-                  <div
-                    style={{ left: `${selectedPin.x}%`, top: `${selectedPin.y}%` }}
-                    className="absolute -translate-x-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-emerald-600 text-white text-xs font-bold shadow-xl ring-2 ring-white animate-pulse"
-                  >
-                    +
-                  </div>
-                )}
-              </div>
-            </div>
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+        <section aria-label={view === "draft" ? "The page with the proposed changes" : "The page as it is now"} className="relative min-h-[60vh] flex-1 bg-white lg:min-h-0">
+          {pinMode && (
+            <p role="status" className="absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full bg-ink px-4 py-2 text-xs font-semibold text-white shadow-lg">
+              Click the part of the page your comment is about
+            </p>
           )}
-        </div>
+          <iframe
+            ref={frame}
+            key={view}
+            title={view === "draft" ? "Proposed changes" : "Current page"}
+            src={view === "draft" ? data.frames.draft : data.frames.live}
+            className="h-full min-h-[60vh] w-full border-0 lg:min-h-0"
+          />
+        </section>
 
-        {/* Visual Comments Sidebar Drawer */}
-        {showComments && (
-          <aside className="w-80 border-l border-line bg-white flex flex-col shadow-xl z-20">
-            <div className="flex items-center justify-between border-b border-line px-4 py-3">
-              <h3 className="font-display text-sm font-bold text-ink">Visual Feedback Pins</h3>
-              <button
-                type="button"
-                onClick={() => setShowComments(false)}
-                className="text-muted hover:text-ink text-xs"
-              >
-                Close
-              </button>
-            </div>
-
-            {/* Comment List */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {comments.length === 0 && !selectedPin ? (
-                <div className="py-8 text-center text-xs text-muted">
-                  <IconMessageCircle size={28} className="mx-auto text-muted/50 mb-2" />
-                  <p>No comments pinned yet.</p>
-                  <p className="mt-1 text-[11px]">Click anywhere on the preview to pin a comment.</p>
-                </div>
-              ) : (
-                comments.map((comment, idx) => (
-                  <div key={comment.id} className="rounded-xl border border-line bg-sunken/30 p-3 text-xs">
-                    <div className="flex items-center justify-between gap-1 mb-1">
-                      <span className="font-semibold text-ink">#{idx + 1} {comment.authorName}</span>
-                      <span className="text-[10px] text-muted">
-                        {new Date(comment.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-                      </span>
-                    </div>
-                    <p className="text-ink/90 whitespace-pre-wrap">{comment.content}</p>
-                  </div>
-                ))
-              )}
-
-              {/* Pin creation form */}
-              {selectedPin && (
-                <div className="rounded-xl border border-blue/40 bg-blue/5 p-3 space-y-2 text-xs">
-                  <span className="font-bold text-blue">Pin dropped at ({selectedPin.x}%, {selectedPin.y}%)</span>
-                  <input
-                    type="text"
-                    placeholder="Your name"
-                    value={authorName}
-                    onChange={(e) => setAuthorName(e.target.value)}
-                    className="w-full rounded-lg border border-line bg-white px-2 py-1 text-xs outline-none"
-                  />
-                  <textarea
-                    rows={3}
-                    placeholder="Leave feedback or requested change here…"
-                    value={newCommentText}
-                    onChange={(e) => setNewCommentText(e.target.value)}
-                    className="w-full rounded-lg border border-line bg-white p-2 text-xs outline-none"
-                  />
-                  <div className="flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedPin(null)}
-                      className="px-2 py-1 text-xs text-muted hover:text-ink"
-                    >
-                      Cancel
-                    </button>
-                    <Button
-                      size="sm"
-                      disabled={!newCommentText.trim() || addComment.isPending}
-                      onClick={() => addComment.mutate()}
-                    >
-                      Post Pin
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </aside>
-        )}
-      </div>
-
-      {/* Approve / Request Changes Action Modal */}
-      {actionModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-4 backdrop-blur-2xs">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl space-y-4">
-            <div>
-              <h3 className="font-display text-lg font-bold text-ink">
-                {actionModal === "APPROVE" ? "Approve This Page Draft" : "Request Changes"}
-              </h3>
-              <p className="mt-1 text-xs text-muted">
-                {actionModal === "APPROVE"
-                  ? "Your approval will notify the development team that this page is cleared for publishing."
-                  : "Submit feedback notes to notify the team what adjustments are needed."}
-              </p>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="block font-semibold text-ink mb-1">Your Name</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Sarah Jenkins"
-                  value={authorName}
-                  onChange={(e) => setAuthorName(e.target.value)}
-                  className="w-full rounded-lg border border-line px-3 py-1.5 text-xs outline-none focus:border-blue"
-                />
+        <aside className="flex w-full flex-none flex-col border-t border-line bg-white lg:w-[22rem] lg:border-l lg:border-t-0">
+          <div className="border-b border-line p-4 sm:p-5">
+            {decided ? (
+              <div role="status" className={`rounded-xl px-4 py-3 text-sm ${link.status === "APPROVED" ? "bg-positive-surface text-positive-text" : "bg-warn-surface text-warn-text"}`}>
+                <p className="font-semibold">
+                  {link.status === "APPROVED" ? "Approved" : "Changes requested"}
+                  {link.reviewerName ? ` by ${link.reviewerName}` : ""}
+                  {link.decidedAt ? ` on ${dateFormat.format(new Date(link.decidedAt))}` : ""}.
+                </p>
+                {link.feedback && <p className="mt-1 whitespace-pre-wrap">“{link.feedback}”</p>}
+                <p className="mt-2 text-xs opacity-80">The person who sent this link has been told.</p>
               </div>
-              <div>
-                <label className="block font-semibold text-ink mb-1">Your Email (Optional)</label>
-                <input
-                  type="email"
-                  placeholder="sarah@example.com"
-                  value={authorEmail}
-                  onChange={(e) => setAuthorEmail(e.target.value)}
-                  className="w-full rounded-lg border border-line px-3 py-1.5 text-xs outline-none focus:border-blue"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold text-ink mb-1">
-                  {actionModal === "APPROVE" ? "Sign-off Notes (Optional)" : "Required Changes"}
+            ) : decision ? (
+              <form onSubmit={submitDecision} className="space-y-3">
+                <h2 className="font-display text-base font-medium">{decision === "APPROVE" ? "Approve these changes" : "Ask for changes"}</h2>
+                <label className="block text-xs font-semibold text-muted">
+                  Your name
+                  <input className="input mt-1" value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" required maxLength={100} />
                 </label>
-                <textarea
-                  rows={3}
-                  placeholder={
-                    actionModal === "APPROVE"
-                      ? "Looks wonderful! Ready to go live."
-                      : "Please change the header button text to 'Book Consultation' and update phone number."
-                  }
-                  value={actionNotes}
-                  onChange={(e) => setActionNotes(e.target.value)}
-                  className="w-full rounded-lg border border-line p-2 text-xs outline-none focus:border-blue"
-                />
+                <label className="block text-xs font-semibold text-muted">
+                  Your email <span className="font-normal">(optional)</span>
+                  <input className="input mt-1" type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" maxLength={200} />
+                </label>
+                <label className="block text-xs font-semibold text-muted">
+                  {decision === "APPROVE" ? "Anything to add? (optional)" : "What should change?"}
+                  <textarea className="input mt-1 min-h-24" value={feedback} onChange={(event) => setFeedback(event.target.value)} maxLength={2000} required={decision === "REQUEST_CHANGES"} />
+                </label>
+                {decide.isError && <p role="alert" className="text-xs text-warn-text">{(decide.error as Error).message}</p>}
+                <div className="flex gap-2">
+                  <Button type="submit" variant={decision === "APPROVE" ? "accent" : "primary"} disabled={!canSubmitDecision || decide.isPending}>
+                    {decide.isPending ? "Sending…" : decision === "APPROVE" ? "Approve" : "Send request"}
+                  </Button>
+                  <Button type="button" variant="ghost" onClick={() => setDecision(null)}>Back</Button>
+                </div>
+              </form>
+            ) : (
+              <div>
+                <p className="text-sm leading-relaxed text-muted">
+                  Look through the proposed changes, leave comments where something needs a second look, then tell them what you think.
+                </p>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <Button variant="accent" onClick={() => setDecision("APPROVE")}>Approve</Button>
+                  <Button variant="secondary" onClick={() => setDecision("REQUEST_CHANGES")}>Ask for changes</Button>
+                </div>
               </div>
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2 border-t border-line">
-              <Button
-                variant="ghost"
-                onClick={() => setActionModal(null)}
-                disabled={submitAction.isPending}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant={actionModal === "APPROVE" ? "accent" : "secondary"}
-                disabled={submitAction.isPending}
-                onClick={() => submitAction.mutate(actionModal)}
-              >
-                {submitAction.isPending
-                  ? "Submitting…"
-                  : actionModal === "APPROVE"
-                    ? "Confirm Approval"
-                    : "Send Change Request"}
-              </Button>
-            </div>
+            )}
           </div>
-        </div>
-      )}
-    </div>
+
+          <div className="flex min-h-0 flex-1 flex-col">
+            <h2 className="px-4 pt-4 font-display text-base font-medium sm:px-5">Comments ({data.comments.length})</h2>
+            <ol className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3 sm:px-5">
+              {data.comments.length === 0 && <li className="text-xs text-muted">No comments yet.</li>}
+              {data.comments.map((comment) => {
+                const pinNumber = pins.findIndex((candidate) => candidate.id === comment.id);
+                return (
+                  <li key={comment.id} className={`rounded-xl border border-line p-3 text-sm ${comment.resolved ? "opacity-60" : ""}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <strong className="text-xs">{comment.authorName}</strong>
+                      <span className="text-[11px] text-muted">{dateFormat.format(new Date(comment.createdAt))}</span>
+                    </div>
+                    <p className="mt-1 whitespace-pre-wrap">{comment.body}</p>
+                    {comment.anchorLabel && <p className="mt-1 text-[11px] text-muted">On: “{comment.anchorLabel}”</p>}
+                    {pinNumber >= 0 && view === "draft" && (
+                      <button type="button" className="mt-1 text-[11px] font-semibold text-blue hover:underline" onClick={() => tell({ type: "focus", y: comment.yPercent })}>
+                        Show pin {pinNumber + 1} on the page
+                      </button>
+                    )}
+                    {comment.resolved && <p className="mt-1 text-[11px] text-muted">Dealt with</p>}
+                  </li>
+                );
+              })}
+            </ol>
+            <form onSubmit={submitComment} className="space-y-2 border-t border-line p-4 sm:p-5">
+              <label className="block text-xs font-semibold text-muted">
+                Your name
+                <input className="input mt-1" value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" maxLength={100} required />
+              </label>
+              <label className="block text-xs font-semibold text-muted">
+                Comment
+                <textarea className="input mt-1 min-h-20" value={commentText} onChange={(event) => setCommentText(event.target.value)} maxLength={1000} required />
+              </label>
+              {pin ? (
+                <p className="text-xs text-muted">
+                  Pinned to “{pin.label || "that spot"}”.{" "}
+                  <button type="button" className="font-semibold text-blue hover:underline" onClick={() => setPin(null)}>Remove pin</button>
+                </p>
+              ) : view === "draft" ? (
+                <button type="button" className="text-xs font-semibold text-blue hover:underline disabled:opacity-50" disabled={!frameReady} onClick={() => setPinMode((on) => !on)}>
+                  {pinMode ? "Cancel pointing" : "Point at the part of the page this is about"}
+                </button>
+              ) : null}
+              {addComment.isError && <p role="alert" className="text-xs text-warn-text">{(addComment.error as Error).message}</p>}
+              <Button type="submit" disabled={!name.trim() || !commentText.trim() || addComment.isPending}>
+                {addComment.isPending ? "Posting…" : "Post comment"}
+              </Button>
+            </form>
+          </div>
+        </aside>
+      </div>
+    </main>
   );
 }

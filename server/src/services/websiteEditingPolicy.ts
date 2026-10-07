@@ -13,6 +13,7 @@
 import type { Request, Response, Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
+import { updateSiteSettings } from "./websiteSiteSettings.js";
 import { pageSource } from "./website/site.js";
 import { applyValues, discoverFields, editingSource, fieldValues, type FieldValue } from "./website/index.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
@@ -128,25 +129,21 @@ export function registerWebsiteEditingPolicyRoutes(router: Router): void {
         }).optional(),
       }).parse(req.body);
 
-      const current = readPolicy(site.settings);
-      const nextPolicy: SiteEditingPolicy = {
-        boundary: body.boundary ?? current.boundary,
-        defaultMode: body.defaultMode ?? current.defaultMode,
-        lockedElements: body.lockedElements ? { ...current.lockedElements, ...body.lockedElements } : current.lockedElements,
-        brandGuard: {
-          ...current.brandGuard,
-          ...(body.brandGuard || {}),
-        },
-      };
-
-      const siteSettings = {
-        ...(typeof site.settings === "object" && site.settings !== null ? site.settings : {}),
-        editingPolicy: nextPolicy,
-      };
-
-      await prisma.site.update({
-        where: { id: site.id },
-        data: { settings: siteSettings as any },
+      // Merged into the policy as it stands under the row lock, not as it stood
+      // when this request read the site.
+      let nextPolicy: SiteEditingPolicy | null = null;
+      await updateSiteSettings(site.id, (settings) => {
+        const current = readPolicy(settings);
+        nextPolicy = {
+          boundary: body.boundary ?? current.boundary,
+          defaultMode: body.defaultMode ?? current.defaultMode,
+          lockedElements: body.lockedElements ? { ...current.lockedElements, ...body.lockedElements } : current.lockedElements,
+          brandGuard: {
+            ...current.brandGuard,
+            ...(body.brandGuard || {}),
+          },
+        };
+        return { ...settings, editingPolicy: nextPolicy };
       });
 
       res.json({ ok: true, policy: nextPolicy });

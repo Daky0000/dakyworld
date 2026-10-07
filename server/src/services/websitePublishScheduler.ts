@@ -1,156 +1,130 @@
 /**
- * websitePublishScheduler.ts — Scheduled & Temporary Publishing.
+ * Scheduled publishing: "publish these changes on Friday at 8am", and
+ * optionally "put the page back on Monday" — a promotion that ends by itself.
  *
- * Supports scheduling page publications (e.g. "Publish October 1 at 8:00 AM")
- * and temporary promotional updates that automatically revert (e.g. "Revert October 31").
+ * A scheduled publish is the same publish a person's click makes, run later by
+ * the worker as the person who scheduled it: `publishPageCommand`, with its
+ * conflict checks, version row, publish job and verification. The first
+ * version of this file (never reachable: the access gate refused the route)
+ * kept jobs in `Site.settings` and, when one was due, called the low-level file
+ * writer directly — with a site row missing its repository fields and the
+ * page's stored HTML, which is empty for any site that has a repository.
+ *
+ * Two rules worth keeping:
+ *
+ * - **What was scheduled is what goes out.** The job records the draft
+ *   revision it was made from. If the draft has changed by the time it is due,
+ *   it is not published — nobody scheduled those words — and the job says why.
+ * - **A revert is "publish this version"** of whatever was live just before, the
+ *   same emergency rollback a person can press, so it goes through the same
+ *   guards and leaves the same record.
  */
 
-import { randomUUID } from "node:crypto";
 import type { Request, Response, Router } from "express";
+import type { ScheduledPublish } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { publishPage } from "./website/site.js";
+import { WITH_ACCESS, effectivePermissions } from "../lib/accessRoles.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
-import { applyValues, editingSource, fieldValues, type FieldValue } from "./website/index.js";
+import { publishPageCommand, publishVersionCommand } from "./websitePagePublication.js";
+import type { WebsiteActor } from "./websiteActor.js";
+import { WebsiteError } from "./website/site.js";
 
-export type ScheduledPublishJob = {
-  id: string;
-  siteId: string;
-  pageId: string;
-  pageTitle: string;
-  status: "PENDING" | "ACTIVE_TEMPORARY" | "COMPLETED" | "REVERTED" | "FAILED" | "CANCELLED";
-  scheduledAt: string; // ISO date
-  revertAt?: string;   // optional auto-revert ISO date
-  draftSnapshot: Record<string, FieldValue>;
-  revertSnapshot?: {
-    html: string;
-    versionNumber: number;
+const MAX_AHEAD_DAYS = 366;
+
+function jobView(job: ScheduledPublish & { createdBy?: { name: string } | null }) {
+  return {
+    id: job.id,
+    pageId: job.pageId,
+    status: job.status,
+    scheduledAt: job.scheduledAt.toISOString(),
+    revertAt: job.revertAt?.toISOString() ?? null,
+    notes: job.notes,
+    error: job.error,
+    executedAt: job.executedAt?.toISOString() ?? null,
+    revertedAt: job.revertedAt?.toISOString() ?? null,
+    createdAt: job.createdAt.toISOString(),
+    createdBy: job.createdBy?.name ?? null,
   };
-  notes?: string;
-  executedAt?: string;
-  revertedAt?: string;
-  error?: string;
-  createdAt: string;
-  createdBy: string;
-};
-
-function readScheduledJobs(settings: unknown): ScheduledPublishJob[] {
-  if (!settings || typeof settings !== "object" || Array.isArray(settings)) return [];
-  const s = settings as Record<string, unknown>;
-  return Array.isArray(s.scheduledPublishJobs) ? (s.scheduledPublishJobs as ScheduledPublishJob[]) : [];
 }
 
+const scheduleInput = z.object({
+  scheduledAt: z.string().datetime(),
+  revertAt: z.string().datetime().optional(),
+  notes: z.string().trim().max(300).optional(),
+}).superRefine((input, ctx) => {
+  const at = new Date(input.scheduledAt).getTime();
+  if (at < Date.now() - 60_000) ctx.addIssue({ code: "custom", message: "Choose a time in the future." });
+  if (at > Date.now() + MAX_AHEAD_DAYS * 86_400_000) ctx.addIssue({ code: "custom", message: "Schedules can be up to a year ahead." });
+  if (input.revertAt && new Date(input.revertAt).getTime() <= at) ctx.addIssue({ code: "custom", message: "The page can only be put back after it has gone out." });
+});
+
 export function registerWebsiteSchedulerRoutes(router: Router): void {
-  // 1. Create a Scheduled Publish
   router.post("/pages/:pageId/schedule", async (req: Request, res: Response, next) => {
     try {
-      const page = await prisma.sitePage.findUnique({
-        where: { id: req.params.pageId },
-        include: { site: true, versions: { orderBy: { number: "desc" }, take: 1 } },
-      });
-      if (!page) return res.status(404).json({ error: "Page not found" });
+      const page = await prisma.sitePage.findUnique({ where: { id: req.params.pageId }, select: { id: true, siteId: true, title: true, draft: true, draftRevision: true } });
+      if (!page) throw new WebsiteError(404, "That page is not in the editor.");
       await assertWebsiteSiteAccess(req, page.siteId, "publish");
-
-      const body = z.object({
-        scheduledAt: z.string().datetime(),
-        revertAt: z.string().datetime().optional(),
-        notes: z.string().max(300).optional(),
-      }).parse(req.body);
-
-      const draft = (page.draft ?? {}) as Record<string, FieldValue>;
-      if (Object.keys(draft).length === 0) {
-        return res.status(400).json({ error: "Cannot schedule publish with no draft changes." });
-      }
-
-      const existingJobs = readScheduledJobs(page.site.settings);
-      const newJob: ScheduledPublishJob = {
-        id: randomUUID(),
-        siteId: page.siteId,
-        pageId: page.id,
-        pageTitle: page.title,
-        status: "PENDING",
-        scheduledAt: body.scheduledAt,
-        revertAt: body.revertAt,
-        draftSnapshot: draft,
-        notes: body.notes,
-        createdAt: new Date().toISOString(),
-        createdBy: req.dbUser?.name || "Editor",
-      };
-
-      const updatedJobs = [newJob, ...existingJobs.filter(j => j.status !== "PENDING" || j.pageId !== page.id)].slice(0, 50);
-
-      const nextSettings = {
-        ...(typeof page.site.settings === "object" && page.site.settings !== null ? page.site.settings : {}),
-        scheduledPublishJobs: updatedJobs,
-      };
-
-      await prisma.site.update({
-        where: { id: page.siteId },
-        data: { settings: nextSettings as any },
+      const parsed = scheduleInput.safeParse(req.body ?? {});
+      if (!parsed.success) throw new WebsiteError(400, parsed.error.issues[0]?.message ?? "Check the date and time.");
+      const body = parsed.data;
+      if (!page.draft || !Object.keys(page.draft as object).length) throw new WebsiteError(409, "There is nothing to schedule — this page has no unpublished changes.");
+      // One scheduled publish per page at a time: a second would publish the
+      // same draft twice, or race the first.
+      const pending = await prisma.scheduledPublish.findFirst({ where: { pageId: page.id, status: { in: ["PENDING", "RUNNING"] } }, select: { id: true } });
+      if (pending) throw new WebsiteError(409, "This page already has a publish scheduled. Cancel that one first.");
+      const job = await prisma.scheduledPublish.create({
+        data: {
+          siteId: page.siteId,
+          pageId: page.id,
+          scheduledAt: new Date(body.scheduledAt),
+          revertAt: body.revertAt ? new Date(body.revertAt) : null,
+          draftRevision: page.draftRevision,
+          notes: body.notes || null,
+          createdById: req.dbUser?.id ?? null,
+        },
+        include: { createdBy: { select: { name: true } } },
       });
-
       await prisma.siteAuditEvent.create({
         data: {
           siteId: page.siteId,
           kind: "PUBLISH_SCHEDULED",
-          summary: `Publish scheduled for ${page.title} on ${new Date(body.scheduledAt).toLocaleString()}${body.revertAt ? ` (auto-reverts on ${new Date(body.revertAt).toLocaleString()})` : ""}`,
-          actorName: req.dbUser?.name || "Editor",
+          summary: `Scheduled ${page.title} to publish on ${job.scheduledAt.toISOString()}${job.revertAt ? `, back on ${job.revertAt.toISOString()}` : ""}`,
+          actorName: req.dbUser?.name ?? "Website editor",
           actorId: req.dbUser?.id,
-          detail: { jobId: newJob.id, pageId: page.id, scheduledAt: body.scheduledAt, revertAt: body.revertAt },
+          detail: { pageId: page.id, jobId: job.id },
         },
       });
-
-      res.status(201).json({ job: newJob });
+      res.status(201).json({ job: jobView(job) });
     } catch (err) {
       next(err);
     }
   });
 
-  // 2. List Scheduled Publishes
   router.get("/pages/:pageId/schedule", async (req: Request, res: Response, next) => {
     try {
-      const page = await prisma.sitePage.findUnique({
-        where: { id: req.params.pageId },
-        include: { site: true },
-      });
-      if (!page) return res.status(404).json({ error: "Page not found" });
+      const page = await prisma.sitePage.findUnique({ where: { id: req.params.pageId }, select: { id: true, siteId: true } });
+      if (!page) throw new WebsiteError(404, "That page is not in the editor.");
       await assertWebsiteSiteAccess(req, page.siteId, "view");
-
-      const jobs = readScheduledJobs(page.site.settings).filter(j => j.pageId === page.id);
-      res.json({ jobs });
+      const jobs = await prisma.scheduledPublish.findMany({ where: { pageId: page.id }, orderBy: { createdAt: "desc" }, take: 20, include: { createdBy: { select: { name: true } } } });
+      res.json({ jobs: jobs.map(jobView) });
     } catch (err) {
       next(err);
     }
   });
 
-  // 3. Cancel Scheduled Publish
   router.delete("/pages/:pageId/schedule/:jobId", async (req: Request, res: Response, next) => {
     try {
-      const page = await prisma.sitePage.findUnique({
-        where: { id: req.params.pageId },
-        include: { site: true },
-      });
-      if (!page) return res.status(404).json({ error: "Page not found" });
+      const page = await prisma.sitePage.findUnique({ where: { id: req.params.pageId }, select: { id: true, siteId: true } });
+      if (!page) throw new WebsiteError(404, "That page is not in the editor.");
       await assertWebsiteSiteAccess(req, page.siteId, "publish");
-
-      const existingJobs = readScheduledJobs(page.site.settings);
-      const updatedJobs = existingJobs.map(j => {
-        if (j.id === req.params.jobId && (j.status === "PENDING" || j.status === "ACTIVE_TEMPORARY")) {
-          return { ...j, status: "CANCELLED" as const };
-        }
-        return j;
+      // Only a job that has not started can be cancelled; an active temporary
+      // one is cancelled by stopping its revert, which leaves the page as it is.
+      const cancelled = await prisma.scheduledPublish.updateMany({
+        where: { id: req.params.jobId, pageId: page.id, status: { in: ["PENDING", "ACTIVE_TEMPORARY"] } },
+        data: { status: "CANCELLED" },
       });
-
-      const nextSettings = {
-        ...(typeof page.site.settings === "object" && page.site.settings !== null ? page.site.settings : {}),
-        scheduledPublishJobs: updatedJobs,
-      };
-
-      await prisma.site.update({
-        where: { id: page.siteId },
-        data: { settings: nextSettings as any },
-      });
-
+      if (!cancelled.count) throw new WebsiteError(409, "That scheduled publish has already run or been cancelled.");
       res.json({ ok: true, cancelledJobId: req.params.jobId });
     } catch (err) {
       next(err);
@@ -158,101 +132,76 @@ export function registerWebsiteSchedulerRoutes(router: Router): void {
   });
 }
 
+/** The person who scheduled it, as an actor the publish command can check. */
+async function actorFor(job: ScheduledPublish): Promise<WebsiteActor | null> {
+  if (!job.createdById) return null;
+  const user = await prisma.user.findUnique({ where: { id: job.createdById }, include: WITH_ACCESS });
+  if (!user?.active) return null;
+  return { dbUser: user, permissions: effectivePermissions(user), headers: {} };
+}
+
+function reason(error: unknown): string {
+  return error instanceof Error ? error.message : "The publish did not happen.";
+}
+
 /**
- * Periodically called by background worker or scheduler to process due jobs.
+ * Runs what is due. Called by the scheduler on the worker.
+ *
+ * Each job is claimed with a conditional update before anything happens to it,
+ * so two workers — or a tick that overlaps the next — cannot both publish it.
  */
-export async function tickScheduledPublishes(): Promise<{ executed: number; reverted: number }> {
-  let executedCount = 0;
-  let revertedCount = 0;
-  const now = new Date();
+export async function tickScheduledPublishes(now = new Date()): Promise<{ executed: number; reverted: number }> {
+  let executed = 0;
+  let reverted = 0;
 
-  const sites = await prisma.site.findMany({
-    select: { id: true, name: true, settings: true },
-  });
-
-  for (const site of sites) {
-    const jobs = readScheduledJobs(site.settings);
-    let mutated = false;
-
-    for (let i = 0; i < jobs.length; i++) {
-      const job = jobs[i];
-
-      // Case A: Pending job due for publishing
-      if (job.status === "PENDING" && new Date(job.scheduledAt) <= now) {
-        try {
-          const page = await prisma.sitePage.findUnique({
-            where: { id: job.pageId },
-            include: { versions: { orderBy: { number: "desc" }, take: 1 } },
-          });
-
-          if (page) {
-            // Store previous version snapshot for auto-revert if revertAt is configured
-            const latestVer = page.versions[0];
-            const revertSnapshot = latestVer ? { html: latestVer.html, versionNumber: latestVer.number } : undefined;
-            const draft = (page.draft ?? {}) as Record<string, FieldValue>;
-            const publishHtml = Object.keys(draft).length > 0
-              ? applyValues(editingSource(page.sourceHtml || "", draft), fieldValues(draft)).html
-              : (page.sourceHtml || "");
-
-            await publishPage({
-              site: site as any,
-              page: page as any,
-              html: publishHtml,
-              expectedSource: page.sourceHtml || "",
-              message: `Scheduled Publish: ${job.notes || "Auto-published by schedule"}`,
-            });
-
-            job.status = job.revertAt ? "ACTIVE_TEMPORARY" : "COMPLETED";
-            job.executedAt = now.toISOString();
-            job.revertSnapshot = revertSnapshot;
-            mutated = true;
-            executedCount++;
-          }
-        } catch (err: any) {
-          job.status = "FAILED";
-          job.error = err.message || "Publish failed during schedule execution";
-          mutated = true;
-        }
-      }
-
-      // Case B: Active temporary job due for auto-revert
-      else if (job.status === "ACTIVE_TEMPORARY" && job.revertAt && new Date(job.revertAt) <= now) {
-        try {
-          if (job.revertSnapshot?.html) {
-            const page = await prisma.sitePage.findUnique({ where: { id: job.pageId } });
-            if (page) {
-              await publishPage({
-                site: site as any,
-                page: { ...page, sourceHtml: job.revertSnapshot.html } as any,
-                html: job.revertSnapshot.html,
-                expectedSource: page.sourceHtml || "",
-                message: `Automatic revert of temporary promotion scheduled for ${new Date(job.revertAt).toLocaleDateString()}`,
-              });
-            }
-          }
-          job.status = "REVERTED";
-          job.revertedAt = now.toISOString();
-          mutated = true;
-          revertedCount++;
-        } catch (err: any) {
-          job.status = "FAILED";
-          job.error = `Revert failed: ${err.message}`;
-          mutated = true;
-        }
-      }
-    }
-
-    if (mutated) {
-      const nextSettings = {
-        ...(typeof site.settings === "object" && site.settings !== null ? site.settings : {}),
-        scheduledPublishJobs: jobs,
-      };
-      await prisma.site.update({
-        where: { id: site.id },
-        data: { settings: nextSettings as any },
+  const due = await prisma.scheduledPublish.findMany({ where: { status: "PENDING", scheduledAt: { lte: now } }, orderBy: { scheduledAt: "asc" }, take: 20 });
+  for (const job of due) {
+    const claimed = await prisma.scheduledPublish.updateMany({ where: { id: job.id, status: "PENDING" }, data: { status: "RUNNING" } });
+    if (!claimed.count) continue;
+    try {
+      const page = await prisma.sitePage.findUnique({ where: { id: job.pageId }, select: { draftRevision: true, draft: true } });
+      if (!page) throw new Error("The page is no longer in the editor.");
+      if (page.draftRevision !== job.draftRevision) throw new Error("The draft changed after it was scheduled, so it was not published. Schedule it again.");
+      const actor = await actorFor(job);
+      if (!actor) throw new Error("The person who scheduled this no longer has an active account.");
+      const before = await prisma.sitePageVersion.findFirst({ where: { pageId: job.pageId }, orderBy: { number: "desc" }, select: { id: true } });
+      const result = await publishPageCommand(actor, { pageId: job.pageId, body: { ifRevision: job.draftRevision } }) as { version?: number };
+      const published = typeof result?.version === "number"
+        ? await prisma.sitePageVersion.findFirst({ where: { pageId: job.pageId, number: result.version }, select: { id: true } })
+        : null;
+      await prisma.scheduledPublish.update({
+        where: { id: job.id },
+        data: {
+          status: job.revertAt ? "ACTIVE_TEMPORARY" : "COMPLETED",
+          executedAt: new Date(),
+          revertToVersionId: before?.id ?? null,
+          publishedVersionId: published?.id ?? null,
+          error: null,
+        },
       });
+      executed++;
+    } catch (error) {
+      await prisma.scheduledPublish.update({ where: { id: job.id }, data: { status: "FAILED", error: reason(error) } });
+      await prisma.siteAuditEvent.create({ data: { siteId: job.siteId, kind: "PUBLISH_SCHEDULE_FAILED", summary: `A scheduled publish did not go out: ${reason(error)}`.slice(0, 500), actorName: "Scheduler", detail: { pageId: job.pageId, jobId: job.id } } }).catch(() => {});
     }
   }
 
-  return { executed: executedCount, reverted: revertedCount };
+  const ending = await prisma.scheduledPublish.findMany({ where: { status: "ACTIVE_TEMPORARY", revertAt: { lte: now } }, orderBy: { revertAt: "asc" }, take: 20 });
+  for (const job of ending) {
+    const claimed = await prisma.scheduledPublish.updateMany({ where: { id: job.id, status: "ACTIVE_TEMPORARY" }, data: { status: "REVERTING" } });
+    if (!claimed.count) continue;
+    try {
+      if (!job.revertToVersionId) throw new Error("There was no earlier version to put back.");
+      const actor = await actorFor(job);
+      if (!actor) throw new Error("The person who scheduled this no longer has an active account.");
+      await publishVersionCommand(actor, { pageId: job.pageId, versionId: job.revertToVersionId });
+      await prisma.scheduledPublish.update({ where: { id: job.id }, data: { status: "REVERTED", revertedAt: new Date(), error: null } });
+      reverted++;
+    } catch (error) {
+      await prisma.scheduledPublish.update({ where: { id: job.id }, data: { status: "FAILED", error: `Putting the page back did not happen: ${reason(error)}` } });
+      await prisma.siteAuditEvent.create({ data: { siteId: job.siteId, kind: "PUBLISH_REVERT_FAILED", summary: `A scheduled revert did not happen: ${reason(error)}`.slice(0, 500), actorName: "Scheduler", detail: { pageId: job.pageId, jobId: job.id } } }).catch(() => {});
+    }
+  }
+
+  return { executed, reverted };
 }

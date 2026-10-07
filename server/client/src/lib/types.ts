@@ -3234,6 +3234,16 @@ export type SiteSummary = {
   client: { id: string; name: string } | null;
   pageCount: number;
   draftCount: number;
+  /** DakyX serves this site itself (no repository): publishing makes a change live at once. */
+  hosted?: boolean;
+  /** The hosted address, or null when the site has none yet. */
+  hostedUrl?: string | null;
+  /** The customer's own verified domain, if they have connected one. */
+  customDomain?: string | null;
+  /** When anything on this site last went out, or null if nothing has. */
+  lastPublishedAt?: string | null;
+  /** The page an "Edit" button should open — the home page where there is one. */
+  firstPageId?: string | null;
   capabilities?: Record<"view" | "edit" | "review" | "publish" | "manage" | "members" | "source", boolean>;
 };
 

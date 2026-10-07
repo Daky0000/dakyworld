@@ -10,6 +10,7 @@
 import type { Request, Response, Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
+import { setSiteSetting } from "./websiteSiteSettings.js";
 import { pageSource } from "./website/site.js";
 import { applyValues, discoverFields, editingSource, fieldValues, type FieldValue } from "./website/index.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
@@ -304,15 +305,7 @@ export function registerWebsiteBatchEditingRoutes(router: Router): void {
         }
       }
 
-      const siteSettings = {
-        ...(typeof site.settings === "object" && site.settings !== null ? site.settings : {}),
-        globalContent: nextTokens,
-      };
-
-      await prisma.site.update({
-        where: { id: site.id },
-        data: { settings: siteSettings as any },
-      });
+      await setSiteSetting(site.id, "globalContent", nextTokens);
 
       res.json({
         ok: true,

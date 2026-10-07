@@ -3,7 +3,7 @@ import { sendMail, mailerConfigured } from "../lib/mailer.js";
 import { priceFor } from "./websitePricing.js";
 import { WEBSITE_TIER_PLANS } from "./websiteTierPlans.js";
 import { subscriptionManagementLink } from "../lib/paystack.js";
-import { appUrl } from "./emailSender.js";
+import { customerAppUrl } from "./emailSender.js";
 
 /**
  * What happens when a renewal does not go through.
@@ -85,7 +85,7 @@ export async function sendDunningNotice(purchaseId: string): Promise<void> {
 
   const plan = WEBSITE_TIER_PLANS[purchase.tier];
   const price = priceFor(purchase.tier);
-  const fallbackUrl = `${(await appUrl()).replace(/\/$/, "")}/website/settings`;
+  const fallbackUrl = `${customerAppUrl()}/website/balance`;
   const updateUrl = purchase.providerSubscriptionCode
     ? await subscriptionManagementLink(purchase.providerSubscriptionCode).catch(() => fallbackUrl)
     : fallbackUrl;

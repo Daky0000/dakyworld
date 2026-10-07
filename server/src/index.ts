@@ -55,7 +55,7 @@ import { contextRouter } from "./routes/context.js";
 import { mcpRouter } from "./routes/mcp.js";
 import { websiteRouter } from "./routes/website.js";
 import { registerWebsiteFreelancerWorkspaceRoutes } from "./services/websiteFreelancerWorkspace.js";
-import { registerPublicReviewRoutes } from "./services/websiteApprovalAndReview.js";
+import { registerPublicReviewRoutes } from "./services/websiteReviewLinks.js";
 import { apiRateLimit, forceHttps, publicReviewRateLimit, securityHeaders, webhookRateLimit } from "./middleware/security.js";
 import { allowedRepos, bareEntries } from "./lib/github.js";
 import { settingsRouter } from "./routes/settings.js";

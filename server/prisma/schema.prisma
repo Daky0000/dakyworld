@@ -134,6 +134,13 @@ model User {
   authTokens           AuthToken[]
   websiteSubscriptions WebsitePurchase[] @relation("WebsiteSubscriber")
   websiteUsage         WebsiteUsage[]
+  reviewLinksCreated   ReviewLink[]      @relation("ReviewLinksCreated")
+  scheduledPublishesCreated ScheduledPublish[] @relation("ScheduledPublishesCreated")
+  /// What this person has already been shown: guided tours finished or
+  /// dismissed, the welcome done. Kept on the account rather than in one
+  /// browser, so a tour does not start again on a phone after it was finished
+  /// on a laptop. Shape: { tours: { [id]: { status, step, at } }, welcome? }.
+  uiState              Json              @default("{}")
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
 
@@ -4385,9 +4392,126 @@ model Site {
   sharedElements SharedElement[]
   publishJobs    PublishJob[]
   escalations    WebsiteEscalation[]
+  reviewLinks    ReviewLink[]
+  scheduledPublishes ScheduledPublish[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+enum ReviewLinkStatus {
+  PENDING
+  APPROVED
+  CHANGES_REQUESTED
+  WITHDRAWN
+}
+
+/// A link a customer sends their own client, who has no account, to look at an
+/// unpublished draft and approve it or ask for changes. services/websiteReviewLinks.ts.
+///
+/// Its own table, not a list inside `Site.settings`: the first version kept
+/// links and comments in that JSON, rewrote the whole of it on every anonymous
+/// comment, and found a token by loading every site in the system.
+model ReviewLink {
+  id     String   @id @default(cuid())
+  site   Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId String
+  page   SitePage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  pageId String
+
+  /// SHA-256 of the token in the link. The token itself exists only in the link.
+  tokenHash String           @unique
+  title     String
+  status    ReviewLinkStatus @default(PENDING)
+
+  /// The draft the reviewer is shown, frozen when the link was made, and the
+  /// revision it was taken at — so an approval names exactly what was approved,
+  /// and the editor can say when the draft has moved on since.
+  draftSnapshot Json
+  draftRevision Int
+
+  reviewerName  String?
+  reviewerEmail String?
+  feedback      String?
+  decidedAt     DateTime?
+
+  createdBy   User?    @relation("ReviewLinksCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  createdById String?
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  comments ReviewComment[]
+
+  @@index([pageId, createdAt])
+}
+
+/// A reviewer's note on a review link, optionally pinned to a spot on the page.
+model ReviewComment {
+  id     String     @id @default(cuid())
+  link   ReviewLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  linkId String
+
+  authorName String
+  body       String
+  /// Where on the page, as a share of the document's width and height, and the
+  /// words of the element that was clicked, so a pin still means something when
+  /// the layout moves.
+  xPercent    Float?
+  yPercent    Float?
+  anchorLabel String?
+  resolvedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([linkId, createdAt])
+}
+
+enum ScheduledPublishStatus {
+  PENDING
+  RUNNING
+  ACTIVE_TEMPORARY
+  REVERTING
+  COMPLETED
+  REVERTED
+  FAILED
+  CANCELLED
+}
+
+/// "Publish this on Friday at 8am" — and optionally "put it back on Monday".
+/// services/websitePublishScheduler.ts.
+///
+/// Its own table rather than a list in `Site.settings`, and run through the
+/// same publish command a person's click uses: the first version kept these in
+/// the JSON and, when due, called the low-level file writer with a half-loaded
+/// site and the page's stored HTML — empty for any site with a repository.
+model ScheduledPublish {
+  id     String   @id @default(cuid())
+  site   Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId String
+  page   SitePage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  pageId String
+
+  status      ScheduledPublishStatus @default(PENDING)
+  scheduledAt DateTime
+  revertAt    DateTime?
+  /// The draft revision that was scheduled. A draft that has moved on by the
+  /// time it is due is not published: nobody scheduled those words.
+  draftRevision      Int
+  /// What was live before it went out — what an automatic revert puts back —
+  /// and what it published.
+  revertToVersionId  String?
+  publishedVersionId String?
+  notes              String?
+  error              String?
+
+  createdBy   User?     @relation("ScheduledPublishesCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  createdById String?
+  executedAt  DateTime?
+  revertedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, scheduledAt])
+  @@index([pageId, createdAt])
 }
 
 enum SitePageStatus {
@@ -4437,6 +4561,8 @@ model SitePage {
   versions        SitePageVersion[]
   sharedInstances SharedElementInstance[]
   publishJobs     PublishJob[]
+  reviewLinks     ReviewLink[]
+  scheduledPublishes ScheduledPublish[]
 
   /// The published HTML, for a hosted site. The repository is the record for a
   /// site that has one; this is the record for a site that does not, and it is

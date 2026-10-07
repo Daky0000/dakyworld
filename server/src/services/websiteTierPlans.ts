@@ -385,6 +385,10 @@ export type SubscriptionPricingState = {
   standardMonthlyPrice: number;
   currentMonthlyPrice: number;
   priceDisplay: string;
+  /** "GHS 300" or "$25" — formatted in the customer's own currency, so no screen has to guess the symbol. */
+  promoDisplay: string;
+  standardDisplay: string;
+  currentDisplay: string;
   promoMonths: number;
   subscribedAt: string;
   promoEndsAt: string;
@@ -428,6 +432,9 @@ export function resolveSubscriptionPricing(input: {
     standardMonthlyPrice: price.standardMonthlyPrice,
     currentMonthlyPrice,
     priceDisplay: price.display,
+    promoDisplay: price.promoDisplay,
+    standardDisplay: price.standardDisplay,
+    currentDisplay: revertedToStandard ? price.standardDisplay : price.promoDisplay,
     promoMonths: plan.promoMonths,
     subscribedAt: input.subscribedAt.toISOString(),
     promoEndsAt: promoEndsAt.toISOString(),
@@ -468,27 +475,26 @@ export async function computeUserStorageAndUsage(req: WebsiteActor, siteId?: str
     tier: identity.tier,
     subscribedAt: identity.subscribedAt,
     simulateAfter3Months,
+    // The currency the customer actually pays in. Left out, every price came
+    // back in cedis — and the banner then printed those cedi numbers after a
+    // dollar sign, twelve times what a dollar customer is charged.
+    currency: identity.currency === "USD" ? "USD" : "GHS",
   });
 
+  // A customer's storage is their account's: every site they belong to, and
+  // nobody else's. Without a site this used to sum every asset in the system —
+  // each customer's meter showed the whole platform's usage, and the quota was
+  // checked against it. Staff have no quota; for them a site narrows it.
   let dbAssetBytes = 0;
   let dbAssetCount = 0;
   try {
-    if (siteId) {
-      const agg = await prisma.siteAsset.aggregate({
-        where: { siteId },
-        _sum: { size: true },
-        _count: { id: true },
-      });
-      dbAssetBytes = Number(agg._sum.size ?? 0);
-      dbAssetCount = Number(agg._count.id ?? 0);
-    } else {
-      const agg = await prisma.siteAsset.aggregate({
-        _sum: { size: true },
-        _count: { id: true },
-      });
-      dbAssetBytes = Number(agg._sum.size ?? 0);
-      dbAssetCount = Number(agg._count.id ?? 0);
-    }
+    const external = Boolean(req.dbUser?.accessRole?.external);
+    const where = external
+      ? { site: { members: { some: { userId: req.dbUser!.id } } } }
+      : siteId ? { siteId } : {};
+    const agg = await prisma.siteAsset.aggregate({ where, _sum: { size: true }, _count: { id: true } });
+    dbAssetBytes = Number(agg._sum.size ?? 0);
+    dbAssetCount = Number(agg._count.id ?? 0);
   } catch {
     // Fallback if database is unreachable in offline check mode
   }
@@ -938,13 +944,17 @@ export function registerWebsiteTierRoutes(router: Router) {
         };
       });
 
+      // In the currency this customer pays in, like their own plan above.
+      const currency = status.user.currency === "USD" ? "USD" : "GHS";
       const availableTiers = Object.values(WEBSITE_TIER_PLANS).map((p) => ({
         planCode: p.tier,
         tierName: p.name,
-        tierBadge: tierLabels(p.tier).badge,
-        priceDisplay: tierLabels(p.tier).priceDisplay,
-        promoMonthlyPrice: p.promoMonthlyPrice,
-        standardMonthlyPrice: p.standardMonthlyPrice,
+        tierBadge: tierLabels(p.tier, currency).badge,
+        priceDisplay: tierLabels(p.tier, currency).priceDisplay,
+        promoDisplay: tierLabels(p.tier, currency).promoDisplay,
+        standardDisplay: tierLabels(p.tier, currency).standardDisplay,
+        promoMonthlyPrice: priceFor(p.tier, currency).promoMonthlyPrice,
+        standardMonthlyPrice: priceFor(p.tier, currency).standardMonthlyPrice,
         promoMonths: p.promoMonths,
         storageLabel: p.storageQuotaLabel,
         maxSingleAssetBytes: p.maxUploadBytes,

@@ -39,11 +39,11 @@ export type FreelancerClientSummary = {
     isExpired: boolean;
     isProtected: boolean;
   } | null;
+  /** The newest client review still waiting for an answer. The link itself is never stored, so this points at the page. */
   pendingApproval: {
     id: string;
-    token: string;
     pageTitle: string;
-    shareUrl: string;
+    editorUrl: string;
     status: string;
     createdAt: string;
   } | null;
@@ -74,6 +74,18 @@ export function registerWebsiteFreelancerWorkspaceRoutes(router: Router): void {
       if (req.dbUser?.accessRole?.external) return res.status(403).json({ error: "This account does not have access to the internal system." });
       const base = await appUrl();
       const baseUrl = base.replace(/\/+$/, "");
+      // Client reviews still waiting for an answer, newest per site.
+      const waiting = await prisma.reviewLink.findMany({
+        where: { status: "PENDING", expiresAt: { gt: new Date() } },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, siteId: true, pageId: true, status: true, createdAt: true, page: { select: { title: true } } },
+      });
+      const waitingBySite = new Map<string, (typeof waiting)[number]>();
+      for (const link of waiting) if (!waitingBySite.has(link.siteId)) waitingBySite.set(link.siteId, link);
+      const pendingReview = (siteId: string): FreelancerClientSummary["pendingApproval"] => {
+        const link = waitingBySite.get(siteId);
+        return link ? { id: link.id, pageTitle: link.page.title, editorUrl: `${baseUrl}/website/pages/${link.pageId}`, status: link.status, createdAt: link.createdAt.toISOString() } : null;
+      };
 
       const clients = await prisma.client.findMany({
         include: {
@@ -154,20 +166,8 @@ export function registerWebsiteFreelancerWorkspaceRoutes(router: Router): void {
             }
           }
 
-          // Check settings for approval links & boundary
           const settings = primarySite.settings as Record<string, any> | null;
-          const approvals = Array.isArray(settings?.approvalLinks) ? settings!.approvalLinks : [];
-          const pending = approvals.find((a: any) => a.status === "PENDING");
-          if (pending) {
-            pendingApprovalData = {
-              id: pending.id,
-              token: pending.token,
-              pageTitle: pending.pageTitle || "Page",
-              shareUrl: `${baseUrl}/review/${pending.token}`,
-              status: pending.status,
-              createdAt: pending.createdAt,
-            };
-          }
+          pendingApprovalData = pendingReview(primarySite.id);
 
           const boundary = settings?.editingPolicy?.boundary || "flexible";
 
@@ -252,18 +252,7 @@ export function registerWebsiteFreelancerWorkspaceRoutes(router: Router): void {
         }
 
         const settings = site.settings as Record<string, any> | null;
-        const approvals = Array.isArray(settings?.approvalLinks) ? settings!.approvalLinks : [];
-        const pending = approvals.find((a: any) => a.status === "PENDING");
-        const pendingApprovalData = pending
-          ? {
-              id: pending.id,
-              token: pending.token,
-              pageTitle: pending.pageTitle || "Page",
-              shareUrl: `${baseUrl}/review/${pending.token}`,
-              status: pending.status,
-              createdAt: pending.createdAt,
-            }
-          : null;
+        const pendingApprovalData = pendingReview(site.id);
 
         clientSummaries.push({
           clientId: site.id,

@@ -236,7 +236,7 @@ export const apiRateLimit = rateLimit({
  */
 export const publicReviewRateLimit = rateLimit({
   windowMs: 60_000,
-  max: 40,
+  max: 120,
   message: "Too many requests for this review link. Try again in {minutes}.",
 });
 

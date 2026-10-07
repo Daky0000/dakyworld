@@ -6,7 +6,7 @@ import { resolveEntitlement, readUsage, bumpUsage, usagePeriod } from "./website
 import { WEBSITE_TIER_PLANS, tierLabels } from "./websiteTierPlans.js";
 import { createNumberedInvoice } from "./invoiceNumber.js";
 import { raisePayment } from "./payments.js";
-import { appUrl } from "./emailSender.js";
+import { customerAppUrl } from "./emailSender.js";
 import { websiteSiteFilter } from "./websiteAccess.js";
 import { subscriptionManagementLink } from "../lib/paystack.js";
 
@@ -407,8 +407,7 @@ export function registerWebsiteClientPortal(router: Router) {
       // Generate payment link via Paystack
       let paymentUrl: string | null = null;
       try {
-        const base = await appUrl();
-        const callbackUrl = `${base.replace(/\/$/, "")}/website/balance?addon=ordered&inv=${invoice.invoiceNumber}`;
+        const callbackUrl = `${customerAppUrl()}/website/balance?addon=ordered&inv=${invoice.invoiceNumber}`;
         const payment = await raisePayment(invoice.id, "paystack", { callbackUrl });
         paymentUrl = payment.url;
       } catch (err) {

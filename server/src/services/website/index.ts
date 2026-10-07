@@ -97,6 +97,7 @@ export { MARKDOWN_ADAPTER_VERSION, MARKDOWN_EXTENSIONS, discoverMarkdownFields, 
 export type { MarkdownField, MarkdownDiscovery, MarkdownIssue, MarkdownApplyResult } from "./markdown.js";
 export { discoverRouterRoutes, routerCandidates } from "./router.js";
 export { pageFile, drawnByScript } from "./site.js";
+export { decodeEntities } from "./parse.js";
 export { publicFolder, frameworkAdapters, detectFramework, frameworkFor, nextRoutes, astroRoutes, svelteRoutes, vueRoutes, viteReactRoutes, EDITABLE_SOURCE_EXTENSIONS, isEditableSourcePath } from "./frameworks.js";
 export type { FrameworkAdapter, DiscoveredRoute, SourceKind } from "./frameworks.js";
 

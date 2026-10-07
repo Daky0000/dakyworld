@@ -3,7 +3,7 @@ import type { AuthTokenKind, User } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { hashPassword } from "../lib/password.js";
 import { sendMail, mailerConfigured } from "../lib/mailer.js";
-import { appUrl } from "./emailSender.js";
+import { appUrl, customerAppUrl } from "./emailSender.js";
 import { WebsiteError } from "./website/site.js";
 
 /**
@@ -77,8 +77,18 @@ export async function consumeToken(token: string, kind: AuthTokenKind): Promise<
   return row.user;
 }
 
-async function linkFor(kind: AuthTokenKind, token: string): Promise<string> {
-  const base = (await appUrl()).replace(/\/$/, "");
+/**
+ * The door a person uses: the editor for a customer, the OS for staff. A
+ * customer's role is external; nothing else is. Exported for every email that
+ * links somebody back into the product.
+ */
+export async function signInBaseFor(userId: string): Promise<string> {
+  const person = await prisma.user.findUnique({ where: { id: userId }, select: { accessRole: { select: { external: true } } } });
+  return person?.accessRole?.external ? customerAppUrl() : (await appUrl()).replace(/\/$/, "");
+}
+
+async function linkFor(kind: AuthTokenKind, token: string, userId: string): Promise<string> {
+  const base = await signInBaseFor(userId);
   const path = kind === "EMAIL_VERIFICATION" ? "verify-email" : "set-password";
   return `${base}/${path}?token=${encodeURIComponent(token)}`;
 }
@@ -112,7 +122,7 @@ function escapeHtml(value: string): string {
 /** A customer who has just paid, or a colleague who has just been invited. */
 export async function sendSetPasswordLink(user: { id: string; email: string; name: string }, reason: "purchase" | "invite" = "invite") {
   const token = await issueToken(user.id, "SET_PASSWORD");
-  const link = await linkFor("SET_PASSWORD", token);
+  const link = await linkFor("SET_PASSWORD", token, user.id);
   await deliver(
     user.email,
     user.name,
@@ -133,7 +143,7 @@ export async function requestPasswordReset(email: string): Promise<void> {
   // about which case it was.
   if (!user || !user.active) return;
   const token = await issueToken(user.id, "PASSWORD_RESET");
-  const link = await linkFor("PASSWORD_RESET", token);
+  const link = await linkFor("PASSWORD_RESET", token, user.id);
   await deliver(
     user.email,
     user.name,
@@ -147,7 +157,7 @@ export async function requestPasswordReset(email: string): Promise<void> {
 
 export async function sendEmailVerification(user: { id: string; email: string; name: string }) {
   const token = await issueToken(user.id, "EMAIL_VERIFICATION");
-  const link = await linkFor("EMAIL_VERIFICATION", token);
+  const link = await linkFor("EMAIL_VERIFICATION", token, user.id);
   await deliver(
     user.email,
     user.name,

@@ -56,6 +56,21 @@ export function assertWebsiteConnectionChange(req: WebsiteActor, current: { repo
   }
 }
 
+/**
+ * Which client a site belongs to is a staff decision. It decides who pays —
+ * a client on an active retainer gets the Website Builder free
+ * (`decideAccess()` in services/products.ts) — so a customer managing their own
+ * site must not be able to set it: until 7 Oct 2026 any site manager could,
+ * through the settings screen's API, attach their site to a retainer client.
+ */
+export function assertWebsiteClientChange(req: WebsiteActor, current: { clientId: string | null }, next: { clientId?: string | null }): void {
+  if (next.clientId === undefined || next.clientId === current.clientId) return;
+  const user = req.dbUser;
+  const internal = Boolean(user && !user.accessRole?.external);
+  const allowed = internal && (user!.accessRole?.superAdmin || req.permissions?.has("clients.view") || req.permissions?.has("website.manage"));
+  if (!allowed) throw new WebsiteError(403, "Only DakyXTech staff can change which client a website belongs to.");
+}
+
 /** Global permissions stay internal. Site membership is the only customer grant. */
 export function websiteCapabilities(principal: WebsitePrincipal, role: WebsiteMemberRole | null): WebsiteCapabilities {
   const globalView = !principal.external && (principal.superAdmin || principal.permissions.has("website.view"));
@@ -143,8 +158,11 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
   if (/^\/pages\/[^/]+\/schedule(?:\/[^/]+)?\/?$/.test(path)) return "publish";
   if (/^\/sites\/[^/]+\/acknowledge-publish-limits\/?$/.test(path)) return "publish";
   if (/^\/sites\/[^/]+\/editing-policy\/?$/.test(path)) return "manage";
+  if (/^\/sites\/[^/]+\/design\/?$/.test(path)) return "manage";
   if (/^\/sites\/[^/]+\/import-package\/?$/.test(path)) return "manage";
-  if (/^\/pages\/[^/]+\/approval-link\/?$/.test(path)) return "edit";
+  // Client sign-off: making, withdrawing and resolving are editing; reading is
+  // covered by the GET line above.
+  if (/^\/pages\/[^/]+\/review-links(?:\/[^/]+\/(?:withdraw|comments\/[^/]+\/resolve))?\/?$/.test(path)) return "edit";
   if (/^\/pages\/[^/]+\/versions\/[^/]+\/cherry-pick\/?$/.test(path)) return "edit";
   if (/^\/sites\/[^/]+\/find-replace\/search\/?$/.test(path)) return "view";
   if (/^\/sites\/[^/]+\/(?:find-replace\/apply|global-content)\/?$/.test(path)) return "edit";

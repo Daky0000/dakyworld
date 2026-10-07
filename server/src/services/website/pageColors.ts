@@ -1,5 +1,6 @@
 import { PrismaClient, Prisma, Site } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
+import { updateSiteSettings } from "../websiteSiteSettings.js";
 
 /**
  * Extracts, normalises, and ranks all colours used in an HTML page or site.
@@ -269,41 +270,20 @@ export function extractColorsFromHtml(html: string, options: { maxColors?: numbe
 export async function autoPopulateSitePaletteFromHtml(
   siteId: string,
   html: string,
-  tx?: PrismaClient | Prisma.TransactionClient,
 ): Promise<string[]> {
-  const db = tx ?? prisma;
-  const site = await db.site.findUnique({
-    where: { id: siteId },
-    select: { id: true, settings: true },
-  });
-  if (!site) return [];
-
   const extracted = extractColorsFromHtml(html, { maxColors: 16 });
   if (extracted.length === 0) return [];
+  const exists = await prisma.site.findUnique({ where: { id: siteId }, select: { id: true } });
+  if (!exists) return [];
 
-  const currentSettings = (site.settings && typeof site.settings === "object" ? site.settings : {}) as Record<string, any>;
-  const currentColours: string[] = Array.isArray(currentSettings.colours) ? currentSettings.colours : [];
-
-  let nextColours: string[];
-  if (currentColours.length === 0) {
-    nextColours = extracted;
-  } else {
+  // Merged under the row lock, so an import finishing while somebody saves the
+  // palette cannot put their old colours back. See websiteSiteSettings.ts.
+  let nextColours: string[] = [];
+  await updateSiteSettings(siteId, (current) => {
+    const currentColours: string[] = Array.isArray(current.colours) ? (current.colours as string[]) : [];
     // Preserve existing, append newly discovered brand colours up to 16
-    nextColours = Array.from(new Set([...currentColours, ...extracted])).slice(0, 16);
-    if (nextColours.length === currentColours.length && nextColours.every((c, i) => c === currentColours[i])) {
-      return currentColours; // No change
-    }
-  }
-
-  await db.site.update({
-    where: { id: siteId },
-    data: {
-      settings: {
-        ...currentSettings,
-        colours: nextColours,
-      },
-    },
+    nextColours = currentColours.length === 0 ? extracted : Array.from(new Set([...currentColours, ...extracted])).slice(0, 16);
+    return { ...current, colours: nextColours };
   });
-
   return nextColours;
 }

@@ -34,7 +34,8 @@ const COMMON_PUBLIC_PATHS = [
 // Demos live on the editor too. Leads and clients stay concealed, so linking a
 // demo to one of them is done from the OS.
 const EDITOR_AUTHENTICATED_PATHS = ["/api/website", "/api/products", "/api/demos"];
-const APP_AUTHENTICATED_PATHS = ["/api/products", "/api/website/tier-plans", "/api/website/sites"];
+// What the account screen reads: the sites list, and the plan with its usage.
+const APP_AUTHENTICATED_PATHS = ["/api/products", "/api/website/tier-plans", "/api/website/tier-status", "/api/website/sites"];
 
 function matches(path: string, allowed: string): boolean {
   return path === allowed || path.startsWith(allowed.endsWith("/") ? allowed : `${allowed}/`);

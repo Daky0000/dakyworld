@@ -33,7 +33,7 @@ import { registerSubscriberSelfService } from "../services/websiteSubscriberSelf
 import { registerWebsiteSetupAssistance } from "../services/websiteSetupAssistance.js";
 import { registerWebsiteClientPortal } from "../services/websiteClientPortal.js";
 import { registerWebsiteEscalationRoutes } from "../services/websiteEscalationService.js";
-import { registerWebsiteApprovalRoutes } from "../services/websiteApprovalAndReview.js";
+import { registerWebsiteReviewLinkRoutes } from "../services/websiteReviewLinks.js";
 import { registerWebsiteSchedulerRoutes } from "../services/websitePublishScheduler.js";
 import { registerWebsiteBatchEditingRoutes } from "../services/websiteBatchEditing.js";
 import { registerWebsiteEditingPolicyRoutes } from "../services/websiteEditingPolicy.js";
@@ -42,7 +42,7 @@ import { z } from "zod";
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { assertWebsiteConnectionChange, getWebsiteCapabilities, assertWebsiteSiteAccess, registerWebsiteMembership, websiteAccessGate, websiteCapabilities, websitePrincipal, websiteSiteFilter } from "../services/websiteAccess.js";
+import { assertWebsiteConnectionChange, assertWebsiteClientChange, getWebsiteCapabilities, assertWebsiteSiteAccess, registerWebsiteMembership, websiteAccessGate, websiteCapabilities, websitePrincipal, websiteSiteFilter } from "../services/websiteAccess.js";
 import { recordPresence, removePresence } from "../services/websitePresence.js";
 // The engine comes through its one door — see services/website/index.ts for why.
 // `site.js` is the other half and stays separate on purpose: it is the part that
@@ -91,7 +91,7 @@ registerSubscriberSelfService(websiteRouter);
 registerWebsiteSetupAssistance(websiteRouter);
 registerWebsiteClientPortal(websiteRouter);
 registerWebsiteEscalationRoutes(websiteRouter);
-registerWebsiteApprovalRoutes(websiteRouter);
+registerWebsiteReviewLinkRoutes(websiteRouter);
 registerWebsiteSchedulerRoutes(websiteRouter);
 registerWebsiteBatchEditingRoutes(websiteRouter);
 registerWebsiteEditingPolicyRoutes(websiteRouter);
@@ -203,17 +203,41 @@ websiteRouter.get("/sites", async (req, res, next) => {
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       select: { id: true, name: true, slug: true, publicUrl: true, repoOwner: true, repoName: true,
         sourceKind: true, repoBranch: true, _count: { select: { pages: true } },
+        hostedSlug: true, hostedEnabled: true, customDomain: true, customDomainVerifiedAt: true,
         client: { select: { id: true, name: true } }, members: { where: { userId: principal.id }, select: { role: true } } },
     });
     const sites = rows.slice(0, limit);
-    const grouped = await prisma.sitePage.groupBy({ by: ["siteId"], where: { siteId: { in: sites.map(site => site.id) }, NOT: { draft: { equals: Prisma.DbNull } } }, _count: true });
+    const ids = sites.map(site => site.id);
+    const [grouped, stored, published, firstPages] = await Promise.all([
+      prisma.sitePage.groupBy({ by: ["siteId"], where: { siteId: { in: ids }, NOT: { draft: { equals: Prisma.DbNull } } }, _count: true }),
+      // A page whose HTML is kept here rather than read from a repository or a
+      // live site is one DakyX serves itself.
+      prisma.sitePage.groupBy({ by: ["siteId"], where: { siteId: { in: ids }, sourceHtml: { not: null } }, _count: true }),
+      prisma.sitePage.groupBy({ by: ["siteId"], where: { siteId: { in: ids } }, _max: { lastPublishedAt: true } }),
+      prisma.sitePage.findMany({ where: { siteId: { in: ids }, status: "LIVE" }, orderBy: [{ path: "asc" }], distinct: ["siteId"], select: { siteId: true, id: true } }),
+    ]);
     const drafts = new Map(grouped.map(row => [row.siteId, row._count]));
+    const hostedPages = new Map(stored.map(row => [row.siteId, row._count]));
+    const lastPublished = new Map(published.map(row => [row.siteId, row._max.lastPublishedAt]));
+    const firstPage = new Map(firstPages.map(row => [row.siteId, row.id]));
     if (rows.length > limit) res.set("X-Next-Cursor", sites[sites.length - 1]!.id);
-    res.json(sites.map(site => ({ id: site.id, name: site.name, slug: site.slug, publicUrl: site.publicUrl,
-      repo: siteRepo(site), sourceKind: site.sourceKind, branch: site.repoBranch, client: site.client,
-      pageCount: site._count.pages, draftCount: drafts.get(site.id) ?? 0,
-      capabilities: websiteCapabilities(principal, site.members[0]?.role ?? null),
-    })));
+    res.json(sites.map(site => {
+      const repo = siteRepo(site);
+      const hosted = !repo && (site.hostedEnabled || (hostedPages.get(site.id) ?? 0) > 0);
+      return { id: site.id, name: site.name, slug: site.slug, publicUrl: site.publicUrl,
+        repo, sourceKind: site.sourceKind, branch: site.repoBranch, client: site.client,
+        pageCount: site._count.pages, draftCount: drafts.get(site.id) ?? 0,
+        // What the customer workspace and the page list need to say true
+        // things: whether DakyX serves this site, where, and whether anything
+        // has gone out yet.
+        hosted,
+        hostedUrl: hosted ? hostedUrlFor(site) : null,
+        customDomain: site.customDomainVerifiedAt ? site.customDomain : null,
+        lastPublishedAt: lastPublished.get(site.id) ?? null,
+        firstPageId: firstPage.get(site.id) ?? null,
+        capabilities: websiteCapabilities(principal, site.members[0]?.role ?? null),
+      };
+    }));
   } catch (error) { next(error); }
 });
 
@@ -307,6 +331,7 @@ websiteRouter.patch("/sites/:siteId", async (req, res, next) => {
     const body = siteInput.partial().parse(req.body);
     const previous = await loadSite(req, req.params.siteId);
     assertWebsiteConnectionChange(req, previous, body);
+    assertWebsiteClientChange(req, previous, body);
     const site = await prisma.site.update({ where: { id: req.params.siteId }, data: body });
     res.json({ id: site.id, name: site.name, publicUrl: site.publicUrl, repo: siteRepo(site), branch: site.repoBranch });
   } catch (err) {

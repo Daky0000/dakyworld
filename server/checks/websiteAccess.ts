@@ -161,6 +161,14 @@ async function databaseChecks() {
     response = await request(manager, `/website/sites/${own.id}`, "PATCH", { repoOwner: "another-tenant", repoName: "private" }); check("site manager cannot repoint shared GitHub credentials", () => assert.equal(response.status, 403)); await response.text();
     response = await request(manager, `/website/sites/${own.id}/config`); const config = await response.json() as Record<string, unknown>; check("connection controls identify their administrator requirement", () => assert.equal(config.connectionEditable, false));
     response = await request(manager, `/website/sites/${own.id}/config`, "PUT", { ...config, repoOwner: "another-tenant", repoName: "private" }); check("full settings update cannot bypass connection isolation", () => assert.equal(response.status, 403)); await response.text();
+    // Which client a site belongs to decides who pays: a retainer client gets the
+    // product free. A customer must not be able to attach their site to one.
+    const retainerClient = await prisma.client.create({ data: { name: `${mark}-retainer` } });
+    response = await request(manager, `/website/sites/${own.id}/config`, "PUT", { ...config, clientId: retainerClient.id }); check("a customer cannot attach their site to another client through settings", () => assert.equal(response.status, 403)); await response.text();
+    response = await request(manager, `/website/sites/${own.id}`, "PATCH", { clientId: retainerClient.id }); check("nor through the site update", () => assert.equal(response.status, 403)); await response.text();
+    const owner = (await prisma.site.findUniqueOrThrow({ where: { id: own.id }, select: { clientId: true } })).clientId;
+    check("the site still belongs to nobody", () => assert.equal(owner, null));
+    await prisma.client.delete({ where: { id: retainerClient.id } });
     response = await request(viewer, `/website/sites/${own.id}/design`); check("a viewer can load the design palette without management settings", () => assert.equal(response.status, 200)); await response.text();
     response = await request(manager, `/website/sites/${own.id}/members`, "POST", { email: newcomer.email.toUpperCase(), role: "EDITOR" }); check("manager can add existing account by case-insensitive email", () => assert.equal(response.status, 201)); const added = await response.json() as { id: string };
     response = await request(manager, `/website/sites/${own.id}/members`, "POST", { userId: newcomer.id, role: "MANAGER" }); check("duplicate membership does not silently elevate role", () => assert.equal(response.status, 409)); await response.text();

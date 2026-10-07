@@ -95,10 +95,14 @@ export function Website() {
   return (
     <div>
       <PageHeader
-        title="Sites"
+        title="Pages"
         eyebrow={current.name}
         subtitle={`Choose a page and change its words, links and pictures. ${
-          current.repo ? "Publishing commits the page and the live site rebuilds." : "No repository is connected, so pages can be edited but not published."
+          current.repo
+            ? "Publishing commits the page and the live site rebuilds."
+            : current.hosted
+              ? "DakyX hosts this website, so publishing makes a change live straight away."
+              : "Nothing is connected to publish to yet, so pages can be edited but not published."
         }`}
         action={
           <div className="flex flex-wrap items-center gap-2">

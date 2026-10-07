@@ -48,9 +48,8 @@ export type FreelancerClientSummary = {
   } | null;
   pendingApproval: {
     id: string;
-    token: string;
     pageTitle: string;
-    shareUrl: string;
+    editorUrl: string;
     status: string;
     createdAt: string;
   } | null;
@@ -322,18 +321,14 @@ export function FreelancerWorkspace() {
                                   : "Awaiting Client Sign-off"}
                             </span>
                             <div className="mt-1 flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => handleCopy(`app-${approval.id}`, approval.shareUrl)}
+                              {/* The link is never stored — only its hash — so the
+                                  page it was sent from is where to follow it up. */}
+                              <a
+                                href={approval.editorUrl}
                                 className="inline-flex items-center gap-1 text-[11px] text-blue hover:underline"
                               >
-                                {copiedId === `app-${approval.id}` ? (
-                                  <IconCheck size={11} className="text-emerald-600" />
-                                ) : (
-                                  <IconCopy size={11} />
-                                )}
-                                <span>{copiedId === `app-${approval.id}` ? "Copied" : "Copy Review Link"}</span>
-                              </button>
+                                <span>Open {approval.pageTitle}</span>
+                              </a>
                             </div>
                           </div>
                         ) : (

@@ -291,15 +291,36 @@ const ENTITIES: Record<string, string> = {
   copy: "©", reg: "®", trade: "™", laquo: "«", raquo: "»",
   lsquo: "‘", rsquo: "’", ldquo: "“", rdquo: "”", times: "×",
   middot: "·", bull: "•", deg: "°", euro: "€", pound: "£",
+  sbquo: "‚", bdquo: "„", dagger: "†", Dagger: "‡", permil: "‰", lsaquo: "‹", rsaquo: "›",
+  OElig: "Œ", oelig: "œ", Scaron: "Š", scaron: "š", Yuml: "Ÿ", fnof: "ƒ",
+  prime: "′", Prime: "″", uarr: "↑", darr: "↓", minus: "−", le: "≤", ge: "≥", ne: "≠", check: "✓",
 };
+
+/**
+ * The Latin-1 named entities, which are exactly U+00A0 to U+00FF in this order,
+ * so "Café" written as `Caf&eacute;` or "Côte d'Ivoire" as `C&ocirc;te` reads
+ * as a person wrote it. The table above had none of the accented letters, and
+ * every one of them showed as its raw entity in the SEO tab and the client
+ * report. None of these is whitespace, so no element's text goes from empty to
+ * not-empty or back — which is what decides whether it is offered as a field.
+ */
+const LATIN1 = "nbsp iexcl cent pound curren yen brvbar sect uml copy ordf laquo not shy reg macr deg plusmn sup2 sup3 acute micro para middot cedil sup1 ordm raquo frac14 frac12 frac34 iquest Agrave Aacute Acirc Atilde Auml Aring AElig Ccedil Egrave Eacute Ecirc Euml Igrave Iacute Icirc Iuml ETH Ntilde Ograve Oacute Ocirc Otilde Ouml times Oslash Ugrave Uacute Ucirc Uuml Yacute THORN szlig agrave aacute acirc atilde auml aring aelig ccedil egrave eacute ecirc euml igrave iacute icirc iuml eth ntilde ograve oacute ocirc otilde ouml divide oslash ugrave uacute ucirc uuml yacute thorn yuml".split(" ");
+LATIN1.forEach((name, index) => { if (!(name in ENTITIES)) ENTITIES[name] = String.fromCharCode(0xa0 + index); });
 
 /** Entities to characters, for the places a value is shown to a person rather than written back. */
 export function decodeEntities(text: string): string {
-  return text.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (whole, body: string) => {
-    if (body.startsWith("#x") || body.startsWith("#X")) return String.fromCodePoint(parseInt(body.slice(2), 16));
-    if (body.startsWith("#")) return String.fromCodePoint(parseInt(body.slice(1), 10));
-    return ENTITIES[body.toLowerCase()] ?? whole;
+  return text.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/g, (whole, body: string) => {
+    if (body.startsWith("#x") || body.startsWith("#X")) return codePoint(parseInt(body.slice(2), 16), whole);
+    if (body.startsWith("#")) return codePoint(parseInt(body.slice(1), 10), whole);
+    // Names are case-sensitive (`&Eacute;` is É, `&eacute;` is é); the
+    // lower-case retry keeps the old tolerance for `&AMP;` and friends.
+    return ENTITIES[body] ?? ENTITIES[body.toLowerCase()] ?? whole;
   });
+}
+
+/** A numeric entity beyond Unicode stays as written rather than throwing out of a page read. */
+function codePoint(code: number, whole: string): string {
+  return Number.isInteger(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
 }
 
 /** The visible text of an element, tags removed and entities decoded. */

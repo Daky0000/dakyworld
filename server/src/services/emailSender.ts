@@ -167,6 +167,20 @@ export async function appUrl(): Promise<string> {
 }
 
 /**
+ * Where a Website Builder customer signs in, without a trailing slash.
+ *
+ * `appUrl` is the staff host, and every customer link used to be built from
+ * it: a customer who had just paid was emailed a set-password link to
+ * os.dakyx.com, and landed on a sign-in screen headed "Internal Operations".
+ * One address cannot serve both audiences, so anything a customer is sent — a
+ * set-password link, a review link, a billing notice, a payment return — is
+ * built from this instead. `EDITOR_URL` overrides it, for local development.
+ */
+export function customerAppUrl(): string {
+  return (process.env.EDITOR_URL?.trim() || "https://editor.dakyx.com").replace(/\/+$/, "");
+}
+
+/**
  * Only a cold approach carries an opt-out. See emailRender for why.
  *
  * Exported so the preview renders the same message the send would: an opt-out

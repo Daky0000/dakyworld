@@ -1,10 +1,59 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { isMfaChallenge, useAuth } from "../lib/auth";
 import { ApiError } from "../lib/api";
 import { Button, Notice } from "../components/ui";
+import { currentSurface, setPageTitle, type Surface } from "../lib/surface";
+
+/**
+ * What the sign-in screen says, per product.
+ *
+ * The same screen answers on all three hosts, and it used to say "DakyXTech OS ·
+ * Internal Operations" on every one — so the first thing a paying customer read
+ * after setting their password was that they had walked into somebody else's
+ * office. Staff keep the OS wording; customers are told what they bought.
+ */
+const COPY: Record<Surface, { caption: string; headline: [string, string]; lede: string; edition: string; badge: string; help: ReactNode }> = {
+  os: {
+    caption: "DakyXTech OS",
+    headline: ["Good work.", "Clear direction."],
+    lede: "One considered workspace for your business, your clients and everything ahead.",
+    edition: "The business workspace",
+    badge: "Internal Operations",
+    help: <>Need access? Contact your workspace administrator.</>,
+  },
+  editor: {
+    caption: "DakyX Website Editor",
+    headline: ["Your website.", "Your words."],
+    lede: "Change your text, pictures and prices, check them on a phone, and publish — without waiting for a developer.",
+    edition: "Website Editor",
+    badge: "Website Editor",
+    help: (
+      <>
+        New to DakyX? <a href="https://dakyx.com/website-builder#price" className="underline underline-offset-2 hover:text-ink">See the plans</a>
+        {" · "}
+        <a href="https://dakyx.com/website-builder-setup" className="underline underline-offset-2 hover:text-ink">How it works</a>
+      </>
+    ),
+  },
+  app: {
+    caption: "DakyX",
+    headline: ["Everything you run", "with DakyX."],
+    lede: "Your website, your plan and your invoices, in one account.",
+    edition: "Customer account",
+    badge: "Customer account",
+    help: (
+      <>
+        New to DakyX? <a href="https://dakyx.com/products" className="underline underline-offset-2 hover:text-ink">See what we offer</a>
+      </>
+    ),
+  },
+};
 
 export function Login() {
   const { login, completeLogin } = useAuth();
+  const surface = currentSurface();
+  const copy = COPY[surface];
+  useEffect(() => setPageTitle("Sign in"), []);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
@@ -45,13 +94,13 @@ export function Login() {
   const inputClass = "input";
 
   return (
-    <div className="os-login">
-      <section className="os-login-intro"><span className="os-caption">DakyXTech OS</span><h2>Good work.<br />Clear direction.</h2><p>One considered workspace for your business, your clients and everything ahead.</p><span className="os-login-edition">The business workspace</span></section>
+    <main className="os-login">
+      <section className="os-login-intro"><span className="os-caption">{copy.caption}</span><h2>{copy.headline[0]}<br />{copy.headline[1]}</h2><p>{copy.lede}</p><span className="os-login-edition">{copy.edition}</span></section>
       <div className="os-login-form">
         <div className="mb-8 flex items-center gap-3">
           <div className="leading-none">
-            <img src="/brand/lockup-on-light.png" alt="DakyXTech OS" className="block h-8 w-auto" />
-            <div className="mt-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">Internal Operations</div>
+            <img src="/brand/lockup-on-light.png" alt={copy.caption} className="block h-8 w-auto" />
+            <div className="mt-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">{copy.badge}</div>
           </div>
         </div>
 
@@ -144,10 +193,8 @@ export function Login() {
           )}
         </form>
 
-        <p className="mt-4 text-center text-xs text-muted">
-          Need access? Contact your workspace administrator.
-        </p>
+        <p className="mt-4 text-center text-xs text-muted">{copy.help}</p>
       </div>
-    </div>
+    </main>
   );
 }

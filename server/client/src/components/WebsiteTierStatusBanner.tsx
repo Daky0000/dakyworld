@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../lib/api";
-import { IconCheck, IconLock } from "./WebsiteIcons";
 
 export interface WebsiteTierFeatures {
   visualEditor: boolean;
@@ -28,6 +28,12 @@ export interface WebsiteTierStatus {
     standardMonthlyPrice: number;
     effectiveMonthlyPrice: number;
     priceDisplay: string;
+    /** The currency this customer pays in, fixed at purchase. */
+    currency?: "GHS" | "USD";
+    /** "GHS 300" or "$25", formatted by the server in that currency. */
+    promoDisplay?: string;
+    standardDisplay?: string;
+    currentDisplay?: string;
     activeBillingLabel: string;
     promoActive: boolean;
     revertedToStandard: boolean;
@@ -68,6 +74,8 @@ export interface WebsiteTierStatus {
     tierName: string;
     tierBadge: string;
     priceDisplay: string;
+    promoDisplay?: string;
+    standardDisplay?: string;
     promoMonthlyPrice: number;
     standardMonthlyPrice: number;
     promoMonths: number;
@@ -84,6 +92,7 @@ export interface WebsiteTierStatus {
     featureSummary: string[];
     lockedFeatures: string[];
   }>;
+  /** Only ever filled on a local machine; the server seeds no test accounts anywhere deployed. */
   testUsers: Array<{
     email: string;
     password: string;
@@ -205,6 +214,91 @@ export function useWebsiteTierStatus(siteId?: string) {
   };
 }
 
+const dateFormat = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" });
+
+/**
+ * What the customer pays, in the currency they pay in.
+ *
+ * The first version printed the cedi amounts after a dollar sign — "GHS 300"
+ * in one chip and "$300" in the next — because the dollar sign was typed into
+ * the screen. The server now formats every figure in the customer's own
+ * currency (cedis in Ghana, dollars elsewhere at the merchant rate), and this
+ * only ever shows what it was given.
+ */
+export function planPriceSentence(pricing: WebsiteTierStatus["pricing"]): string {
+  const current = pricing.currentDisplay ?? pricing.priceDisplay;
+  if (pricing.revertedToStandard || !pricing.standardDisplay || pricing.standardDisplay === current) return `${current} a month`;
+  return `${current} a month until ${dateFormat.format(new Date(pricing.promoEndsAt))}, then ${pricing.standardDisplay}`;
+}
+
+function usageLine(used: number, limit: number | null, noun: string): string {
+  return limit === null ? `${used} ${noun} this month` : `${used} of ${limit} ${noun} this month`;
+}
+
+/** Storage and this month's usage — shared by the banner and the toolbar chip. */
+function PlanUsage({ status }: { status: WebsiteTierStatus }) {
+  const full = status.storage.percentUsed >= 90;
+  const filling = status.storage.percentUsed >= 70;
+  return (
+    <div className="space-y-2 text-xs">
+      <div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-muted">Picture storage</span>
+          <span className="font-semibold text-ink">{status.storage.usedFormatted} of {status.storage.quotaFormatted}</span>
+        </div>
+        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-sunken" role="meter" aria-label="Picture storage used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(status.storage.percentUsed)}>
+          <div className={`h-full rounded-full ${full ? "bg-danger" : filling ? "bg-warn" : "bg-blue"}`} style={{ width: `${Math.max(2, status.storage.percentUsed)}%` }} />
+        </div>
+      </div>
+      <ul className="space-y-0.5 text-muted">
+        <li>{usageLine(status.usage.editsUsed, status.usage.editsLimit, "edits")}</li>
+        <li>{usageLine(status.usage.importsUsed, status.usage.importsLimit, "imports")}</li>
+        {status.features.aiAssistant && <li>{usageLine(status.usage.aiPromptsUsed, status.usage.aiPromptsLimit, "AI requests")}</li>}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * The plan, as one chip in the editor's toolbar.
+ *
+ * It replaced a full-width banner that took ninety pixels off the page being
+ * edited on every screen, printed the customer's own email back at them, and
+ * offered paying customers a "Switch Test User / Tier Plan" control that only
+ * ever worked on a developer's laptop.
+ */
+export function WebsitePlanChip({ siteId }: { siteId?: string }) {
+  const { status } = useWebsiteTierStatus(siteId);
+  if (!status) return null;
+  const limited = status.usage.editsLimit !== null;
+  const low = limited && (status.usage.editsRemaining ?? 0) <= Math.max(3, Math.round((status.usage.editsLimit ?? 0) * 0.1));
+  return (
+    <details className="relative" data-tour="plan-chip">
+      <summary
+        className={`flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-xl border px-2.5 text-xs font-semibold transition [&::-webkit-details-marker]:hidden ${
+          low ? "border-warn-line bg-warn-surface text-warn-text" : "border-line bg-white text-ink hover:border-line-strong"
+        }`}
+        title="Your plan and what it includes"
+      >
+        <span>{status.tierName}</span>
+        {limited && <span className="font-normal text-muted">· {status.usage.editsRemaining} edits left</span>}
+      </summary>
+      <div className="absolute right-0 top-10 z-40 w-72 rounded-2xl border border-line bg-white p-4 text-ink shadow-menu">
+        <p className="font-display text-sm font-semibold">{status.tierName} plan</p>
+        <p className="mt-0.5 text-xs text-muted">{planPriceSentence(status.pricing)}</p>
+        <div className="mt-3">
+          <PlanUsage status={status} />
+        </div>
+        <Link to="/website/balance" className="mt-3 inline-block text-xs font-semibold text-blue hover:underline">Plan, invoices and upgrades</Link>
+      </div>
+    </details>
+  );
+}
+
+/**
+ * The plan, as a row above a screen that spends from it — the media library,
+ * importing a page, the pricing screen.
+ */
 export function WebsiteTierStatusBanner({
   siteId,
   compact = false,
@@ -214,301 +308,40 @@ export function WebsiteTierStatusBanner({
   compact?: boolean;
   onUserSwitched?: () => void;
 }) {
-  const { status, loading, simulateMonths, switchTestUser, toggleSimulateMonths } = useWebsiteTierStatus(siteId);
-  const [expanded, setExpanded] = useState(false);
-
+  const { status, simulateMonths, switchTestUser, toggleSimulateMonths } = useWebsiteTierStatus(siteId);
   if (!status) return null;
-
-  const badgeColors: Record<string, { bg: string; border: string; text: string }> = {
-    EDITOR: { bg: "rgba(56, 189, 248, 0.12)", border: "rgba(56, 189, 248, 0.35)", text: "#38BDF8" },
-    CARE: { bg: "rgba(184, 255, 61, 0.12)", border: "rgba(184, 255, 61, 0.4)", text: "#B8FF3D" },
-    MANAGED: { bg: "rgba(192, 132, 252, 0.14)", border: "rgba(192, 132, 252, 0.45)", text: "#C084FC" },
-  };
-  const theme = badgeColors[status.planCode] ?? badgeColors.EDITOR;
-
-  const storageColor =
-    status.storage.percentUsed >= 90
-      ? "#F87171"
-      : status.storage.percentUsed >= 70
-        ? "#FBBF24"
-        : theme.text;
-
   return (
-    <div
-      style={{
-        background: "rgba(8, 16, 31, 0.88)",
-        border: `1px solid ${theme.border}`,
-        borderRadius: 8,
-        padding: compact ? "8px 12px" : "10px 14px",
-        marginBottom: compact ? 10 : 14,
-        color: "#F4F5F0",
-        fontSize: "0.78rem",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
-      >
-        {/* Left: Tier badge + Pricing + Active User */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span
-            style={{
-              background: theme.bg,
-              border: `1px solid ${theme.border}`,
-              color: theme.text,
-              fontWeight: 700,
-              padding: "3px 8px",
-              borderRadius: 4,
-              fontSize: "0.72rem",
-              letterSpacing: "0.04em",
-            }}
-          >
-            {status.tierName} • {status.pricing.priceDisplay}/mo
-          </span>
-
-          <span
-            style={{
-              background: status.pricing.revertedToStandard
-                ? "rgba(251, 191, 36, 0.14)"
-                : "rgba(52, 211, 153, 0.14)",
-              border: `1px solid ${
-                status.pricing.revertedToStandard ? "rgba(251, 191, 36, 0.4)" : "rgba(52, 211, 153, 0.35)"
-              }`,
-              color: status.pricing.revertedToStandard ? "#FBBF24" : "#34D399",
-              padding: "2px 7px",
-              borderRadius: 4,
-              fontSize: "0.7rem",
-              fontWeight: 600,
-            }}
-          >
-            {status.pricing.revertedToStandard
-              ? `Month 4+ Standard Rate: $${status.pricing.effectiveMonthlyPrice}/mo`
-              : `Months 1–3 Promo: $${status.pricing.effectiveMonthlyPrice}/mo (reverts to $${status.pricing.standardMonthlyPrice}/mo after 3 mos)`}
-          </span>
-
-          <span style={{ color: "rgba(244,245,240,0.72)", fontSize: "0.73rem" }}>
-            Subscriber: <strong style={{ color: "#F4F5F0" }}>{status.userName}</strong>{" "}
-            <span style={{ fontFamily: "monospace", color: "rgba(244,245,240,0.55)" }}>({status.userEmail})</span>
-          </span>
+    <section aria-label="Your plan" className={`rounded-2xl border border-line bg-white ${compact ? "mb-3 px-3 py-2.5" : "mb-4 px-4 py-3"}`}>
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-ink">{status.tierName} plan</p>
+          <p className="text-xs text-muted">{planPriceSentence(status.pricing)}</p>
         </div>
-
-        {/* Right: Storage Bar + Usage Counters + Switcher Toggle */}
-        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-          {/* Storage quota mini bar */}
-          <div style={{ display: "flex", alignItems: "center", gap: 7 }} title="Per-user Media Library storage quota">
-            <span style={{ color: "rgba(244,245,240,0.65)", fontSize: "0.72rem" }}>Storage:</span>
-            <div
-              style={{
-                width: 74,
-                height: 7,
-                background: "rgba(255,255,255,0.1)",
-                borderRadius: 999,
-                overflow: "hidden",
-              }}
-            >
-              <div
-                style={{
-                  width: `${Math.max(3, status.storage.percentUsed)}%`,
-                  height: "100%",
-                  background: storageColor,
-                }}
-              />
-            </div>
-            <span style={{ fontFamily: "monospace", fontSize: "0.72rem", color: "#F4F5F0" }}>
-              {status.storage.usedFormatted} / {status.storage.quotaFormatted}
-            </span>
-          </div>
-
-          {/* Monthly usage */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: "0.72rem", color: "rgba(244,245,240,0.75)" }}>
-            <span>
-              Imports:{" "}
-              <strong style={{ color: "#F4F5F0" }}>
-                {status.usage.importsUsed}/{status.usage.importsLimit ?? "∞"}
-              </strong>
-            </span>
-            <span>
-              Edits:{" "}
-              <strong style={{ color: "#F4F5F0" }}>
-                {status.usage.editsUsed}/{status.usage.editsLimit ?? "∞"}
-              </strong>
-            </span>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setExpanded((v) => !v)}
-            style={{
-              background: expanded ? theme.bg : "rgba(255,255,255,0.06)",
-              border: `1px solid ${expanded ? theme.border : "rgba(255,255,255,0.16)"}`,
-              color: expanded ? theme.text : "#F4F5F0",
-              borderRadius: 5,
-              padding: "4px 9px",
-              fontSize: "0.71rem",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            {expanded ? "Hide Tier & User Switcher ▲" : "Switch Test User / Tier Plan ▼"}
-          </button>
+        <div className="min-w-[14rem] flex-1 sm:max-w-sm">
+          <PlanUsage status={status} />
         </div>
       </div>
-
-      {/* Expandable Test User Switcher, 3-Month Price Reversion Simulator & Tier Comparison */}
-      {expanded && (
-        <div
-          style={{
-            marginTop: 12,
-            paddingTop: 12,
-            borderTop: "1px solid rgba(255,255,255,0.1)",
-            display: "grid",
-            gap: 12,
-          }}
-        >
-          {/* Row 1: Subscribed Test Users + 3-Month Reversion Toggle */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 12,
-              flexWrap: "wrap",
-              background: "rgba(255,255,255,0.03)",
-              padding: "10px 12px",
-              borderRadius: 6,
-              border: "1px solid rgba(255,255,255,0.08)",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ fontWeight: 700, fontSize: "0.74rem", color: "#B8FF3D" }}>
-                Subscribed Test Users (1-Click Switch):
-              </span>
-              {status.testUsers.map((u) => {
-                const isCurrent = status.userEmail.toLowerCase() === u.email.toLowerCase();
-                return (
-                  <button
-                    key={u.email}
-                    type="button"
-                    disabled={loading}
-                    onClick={async () => {
-                      await switchTestUser(u.email);
-                      onUserSwitched?.();
-                    }}
-                    style={{
-                      background: isCurrent ? "rgba(184, 255, 61, 0.18)" : "rgba(255,255,255,0.05)",
-                      border: `1px solid ${isCurrent ? "#B8FF3D" : "rgba(255,255,255,0.16)"}`,
-                      color: isCurrent ? "#B8FF3D" : "#F4F5F0",
-                      borderRadius: 5,
-                      padding: "5px 10px",
-                      fontSize: "0.72rem",
-                      cursor: "pointer",
-                      textAlign: "left",
-                    }}
-                  >
-                    <strong>{u.tierLabel}</strong> ({u.priceDisplay}) — {u.email}
-                    <span style={{ display: "block", fontSize: "0.66rem", opacity: 0.72 }}>
-                      Pwd: {u.password} • Storage: {u.storageLabel}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* 3-Month Promo -> Standard Price Reversion Simulator */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ fontSize: "0.72rem", color: "rgba(244,245,240,0.75)" }}>Billing Period Test:</span>
+      {status.testUsers.length > 0 && (
+        <details className="mt-3 rounded-xl border border-dashed border-line-strong bg-sunken p-3 text-xs">
+          <summary className="cursor-pointer font-semibold text-muted">Local test accounts (this only appears on a developer's machine)</summary>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {status.testUsers.map((user) => (
               <button
+                key={user.email}
                 type="button"
-                onClick={() => void toggleSimulateMonths(0)}
-                style={{
-                  background: simulateMonths < 3 ? "rgba(52, 211, 153, 0.18)" : "rgba(255,255,255,0.05)",
-                  border: `1px solid ${simulateMonths < 3 ? "#34D399" : "rgba(255,255,255,0.15)"}`,
-                  color: simulateMonths < 3 ? "#34D399" : "#F4F5F0",
-                  borderRadius: 4,
-                  padding: "4px 8px",
-                  fontSize: "0.7rem",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
+                className={`rounded-lg border px-2.5 py-1.5 ${status.userEmail === user.email ? "border-blue bg-info-surface text-info-text" : "border-line bg-white text-ink hover:border-line-strong"}`}
+                onClick={async () => { await switchTestUser(user.email); onUserSwitched?.(); }}
               >
-                Months 1–3 Promo ($3 / $10 / $25)
+                {user.tierLabel} — {user.email}
               </button>
-              <button
-                type="button"
-                onClick={() => void toggleSimulateMonths(4)}
-                style={{
-                  background: simulateMonths >= 3 ? "rgba(251, 191, 36, 0.2)" : "rgba(255,255,255,0.05)",
-                  border: `1px solid ${simulateMonths >= 3 ? "#FBBF24" : "rgba(255,255,255,0.15)"}`,
-                  color: simulateMonths >= 3 ? "#FBBF24" : "#F4F5F0",
-                  borderRadius: 4,
-                  padding: "4px 8px",
-                  fontSize: "0.7rem",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
-              >
-                Month 4+ Standard Reversion ($5 / $16 / $45)
-              </button>
-            </div>
+            ))}
           </div>
-
-          {/* Row 2: 3-Tier Plan Feature & Quota Cards */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
-              gap: 10,
-            }}
-          >
-            {status.availableTiers.map((tier) => {
-              const active = tier.planCode === status.planCode;
-              return (
-                <div
-                  key={tier.planCode}
-                  style={{
-                    background: active ? "rgba(184, 255, 61, 0.06)" : "rgba(255,255,255,0.02)",
-                    border: `1px solid ${active ? "#B8FF3D" : "rgba(255,255,255,0.1)"}`,
-                    borderRadius: 6,
-                    padding: "10px 12px",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-                    <strong style={{ fontSize: "0.8rem", color: active ? "#B8FF3D" : "#F4F5F0" }}>
-                      {tier.tierName} ({tier.tierBadge})
-                    </strong>
-                    <span style={{ fontFamily: "monospace", fontWeight: 700, fontSize: "0.82rem", color: "#B8FF3D" }}>
-                      {tier.priceDisplay}/mo
-                    </span>
-                  </div>
-                  <div style={{ fontSize: "0.68rem", color: "rgba(244,245,240,0.6)", marginBottom: 6 }}>
-                    ${tier.promoMonthlyPrice}/mo first {tier.promoMonths} months, then reverts to ${tier.standardMonthlyPrice}/mo standard
-                  </div>
-                  <div style={{ fontSize: "0.71rem", color: "#F4F5F0", marginBottom: 6 }}>
-                    • Media Storage: <strong>{tier.storageLabel}</strong> • Imports:{" "}
-                    <strong>{tier.limits.monthlyImports ?? "Unlimited"}/mo</strong> • Edits:{" "}
-                    <strong>{tier.limits.monthlyEdits ?? "Unlimited"}/mo</strong>
-                  </div>
-                  <div style={{ fontSize: "0.68rem", color: "#34D399", display: "flex", alignItems: "center", gap: 5 }}>
-                    <IconCheck size={11} />
-                    <span>{tier.featureSummary.slice(0, 4).join(" • ")}</span>
-                  </div>
-                  {tier.lockedFeatures.length > 0 && (
-                    <div style={{ fontSize: "0.67rem", color: "#F87171", marginTop: 4, display: "flex", alignItems: "center", gap: 5 }}>
-                      <IconLock size={11} />
-                      <span>Locked: {tier.lockedFeatures.join(", ")}</span>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+          <div className="mt-2 flex gap-2">
+            <button type="button" className={`rounded-lg border px-2.5 py-1.5 ${simulateMonths < 3 ? "border-blue bg-info-surface" : "border-line bg-white"}`} onClick={() => void toggleSimulateMonths(0)}>Months 1–3</button>
+            <button type="button" className={`rounded-lg border px-2.5 py-1.5 ${simulateMonths >= 3 ? "border-blue bg-info-surface" : "border-line bg-white"}`} onClick={() => void toggleSimulateMonths(4)}>Month 4 onwards</button>
           </div>
-        </div>
+        </details>
       )}
-    </div>
+    </section>
   );
 }

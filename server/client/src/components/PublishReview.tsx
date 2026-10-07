@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { api, apiUrl } from "../lib/api";
 import { Button } from "./ui";
+import { WebsiteReviewLinks } from "./WebsiteReviewLinks";
 import {
   IconCheck,
   IconCopy,
@@ -73,13 +74,6 @@ export type WebsiteReview = Pick<PublicationOptions, "mode" | "prTitle"> & {
   prTitle?: string;
   publishGuard?: SafePublishGuardResult;
   visualRegression?: VisualRegressionResult;
-  approvalLink?: {
-    id: string;
-    token: string;
-    shareUrl: string;
-    status: string;
-    createdAt: string;
-  } | null;
   editingBoundary?: string;
   editingMode?: string;
   prepublishReport?: {
@@ -155,9 +149,8 @@ export function PublishReview({
   const busy = useRef(pending);
   const [mode, setMode] = useState<"commit" | "pull_request">("commit");
   const [prTitle, setPrTitle] = useState("");
-  const [viewTab, setViewTab] = useState<"guard" | "diff" | "regression" | "visual" | "prepublish">("guard");
+  const [viewTab, setViewTab] = useState<"guard" | "diff" | "regression" | "visual" | "prepublish" | "approval">("guard");
   const [copiedLink, setCopiedLink] = useState(false);
-  const [copiedApprovalLink, setCopiedApprovalLink] = useState(false);
   const [regressionDevice, setRegressionDevice] = useState<"desktop" | "tablet" | "mobile">("desktop");
 
   const acknowledgeLimits = useMutation({
@@ -237,18 +230,6 @@ export function PublishReview({
     } catch {}
   };
 
-  const createApproval = useMutation({
-    mutationFn: () => api.post<{ approval: any; shareUrl: string }>(`/website/pages/${pageId}/approvals`, { title: "Draft Sign-off" }),
-    onSuccess: async (res) => {
-      await qc.invalidateQueries({ queryKey: ["website", "review", pageId] });
-      try {
-        await navigator.clipboard.writeText(res.shareUrl);
-        setCopiedApprovalLink(true);
-        setTimeout(() => setCopiedApprovalLink(false), 3000);
-      } catch {}
-    },
-  });
-
   const schedulePublish = useMutation({
     mutationFn: () =>
       api.post(`/website/pages/${pageId}/schedule`, {
@@ -266,7 +247,6 @@ export function PublishReview({
   const guard = data?.publishGuard;
   const regression = data?.visualRegression;
   const activeRegression = regression ? regression[regressionDevice] : null;
-  const approvalLink = data?.approvalLink;
   const isBlockedByGuard = guard && !guard.safeToPublish;
 
   return (
@@ -315,28 +295,18 @@ export function PublishReview({
               <span>{copiedLink ? "Link Copied" : "Draft Link"}</span>
             </button>
 
-            {/* Approval Link CTA */}
+            {/* Client approval: a link the person the site is built for opens
+                without an account. See components/WebsiteReviewLinks.tsx. */}
             <button
               type="button"
-              disabled={createApproval.isPending}
-              onClick={() => {
-                if (approvalLink?.shareUrl) {
-                  navigator.clipboard.writeText(approvalLink.shareUrl);
-                  setCopiedApprovalLink(true);
-                  setTimeout(() => setCopiedApprovalLink(false), 2500);
-                } else {
-                  createApproval.mutate();
-                }
-              }}
+              onClick={() => setViewTab("approval")}
+              aria-pressed={viewTab === "approval"}
+              data-tour="send-for-approval"
               className="inline-flex items-center gap-1.5 rounded-xl border border-blue/30 bg-blue/5 px-2.5 py-1.5 text-xs font-semibold text-blue transition hover:bg-blue/10"
-              title="Generate a public sign-off link for your client (no login required)"
+              title="Send these changes to your client to approve — no login needed"
             >
-              {copiedApprovalLink ? (
-                <IconCheck size={13} className="text-emerald-600" />
-              ) : (
-                <IconExternalLink size={13} />
-              )}
-              <span>{copiedApprovalLink ? "Approval Link Copied" : "Send for Approval"}</span>
+              <IconExternalLink size={13} />
+              <span>Send for approval</span>
             </button>
 
             {/* Tabs */}
@@ -414,6 +384,12 @@ export function PublishReview({
           )}
 
           {/* TAB 1: SAFE PUBLISH GUARD */}
+          {viewTab === "approval" && (
+            <div className="mt-4">
+              <WebsiteReviewLinks pageId={pageId} hasDraft={(data?.summary.length ?? 0) > 0} canEdit />
+            </div>
+          )}
+
           {viewTab === "guard" && guard && (
             <div className="space-y-4">
               {/* Highlight Hero Card */}

@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../lib/api";
+import { SURFACE_NAME, currentSurface, setPageTitle } from "../lib/surface";
 
 /**
  * The three screens somebody reaches from a link in an email, plus the "I have
@@ -10,14 +11,16 @@ import { api } from "../lib/api";
  * gate, from the path alone.
  */
 
-function Shell({ title, children }: { title: string; children: React.ReactNode }) {
+function Shell({ title, children }: { title: string; children: ReactNode }) {
+  useEffect(() => setPageTitle(title), [title]);
   return (
-    <div className="grid min-h-screen place-items-center bg-cream p-6">
+    <main className="grid min-h-screen place-items-center bg-cream p-6">
       <div className="w-full max-w-md rounded-2xl border border-line bg-surface p-8">
+        <img src="/brand/lockup-on-light.png" alt={SURFACE_NAME[currentSurface()]} className="mb-5 block h-7 w-auto" />
         <h1 className="font-display text-xl font-medium text-ink">{title}</h1>
         <div className="mt-5 space-y-4 text-sm text-ink">{children}</div>
       </div>
-    </div>
+    </main>
   );
 }
 
@@ -190,7 +193,7 @@ export function VerifyEmail() {
       {state === "failed" && <p className="text-muted">{message}</p>}
       {state !== "working" && (
         <a className="text-blue hover:underline" href="/">
-          Go to DakyXTech OS
+          Go to {SURFACE_NAME[currentSurface()]}
         </a>
       )}
     </Shell>

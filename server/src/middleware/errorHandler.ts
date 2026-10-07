@@ -6,7 +6,7 @@ import { HubtelError } from "../lib/hubtel.js";
 import { MessagingError } from "../services/messageSender.js";
 import { BudgetExceeded } from "../services/budgets.js";
 import { WebsiteError } from "../services/website/site.js";
-import { GitHubError } from "../lib/github.js";
+import { GitHubError, GitHubNotConfiguredError } from "../lib/github.js";
 import { PaystackError } from "../lib/paystack.js";
 import { PaymentRefused } from "../services/payments.js";
 import { CapacityError } from "../lib/capacity.js";
@@ -31,7 +31,7 @@ import { CapacityError } from "../lib/capacity.js";
  * it, and the reference ties the two together so a user reporting "it said
  * something went wrong" can be traced to the exact log line.
  */
-export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
+export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
   res.set("Cache-Control", "private, no-store");
   if (err instanceof CapacityError) return res.status(err.status).set("Retry-After", String(err.retryAfter)).json({ error: err.message });
   const reference = Math.random().toString(36).slice(2, 10);
@@ -45,6 +45,19 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
   if (err instanceof GitHubError && err.status === 401) {
     return res.status(503).json({
       error: "GitHub rejected the connection credentials. Ask the site administrator to reconnect GitHub or update the token under Settings > Developer, then try again.",
+      reference,
+    });
+  }
+
+  // A setting, not a fault — and who is reading decides what the sentence is.
+  // Staff can connect GitHub; a customer can only ask. It used to fall through
+  // to "Something went wrong." with a 500, which on the Source files screen sent
+  // customers looking for a bug.
+  if (err instanceof GitHubNotConfiguredError) {
+    return res.status(409).json({
+      error: req.dbUser?.accessRole?.external
+        ? "This website is not connected to GitHub yet, so its source files cannot be opened here. Ask DakyXTech to connect it."
+        : err.message,
       reference,
     });
   }

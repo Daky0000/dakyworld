@@ -882,11 +882,15 @@ export function WebsiteClientReportModal({
                 </div>
                 <div className="flex items-center gap-3 rounded-xl border border-line bg-white px-4 py-2.5 shadow-2xs">
                   <div className="text-right">
+                    {/* Named for what it counts: five things a search engine
+                        reads off the page — a title, a description, one main
+                        heading, structured data, picture descriptions. It is
+                        not speed and not uptime, and a client is shown this. */}
                     <div className="text-[10px] font-bold uppercase tracking-wider text-muted">
-                      Health &amp; SEO Score
+                      Search basics
                     </div>
-                    <div className="text-[11px] text-emerald-700 font-semibold">
-                      {r.score >= 85 ? "Excellent Standing" : "Optimization Active"}
+                    <div className={`text-[11px] font-semibold ${r.score >= 85 ? "text-positive-text" : "text-warn-text"}`}>
+                      {r.score >= 85 ? "All in place" : "Some missing"}
                     </div>
                   </div>
                   <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-ink font-display text-lg font-bold text-white">
@@ -919,16 +923,23 @@ export function WebsiteClientReportModal({
                   <div className="text-[11px] text-muted">Rich search snippets</div>
                 </div>
                 <div className="rounded-xl border border-line p-3">
-                  <div className="text-[10px] font-bold uppercase text-muted">Uptime &amp; SSL</div>
+                  <div className="text-[10px] font-bold uppercase text-muted">Online &amp; certificate</div>
+                  {/* Only what a check actually saw. This tile used to read
+                      "Verified / HTTPS Configured" precisely when nothing had
+                      been checked, and invented 120ms when no time existed. */}
                   <div className="mt-1 font-display text-base font-bold text-ink">
-                    {r.healthMonitor?.online
-                      ? `${r.healthMonitor.responseTimeMs ?? 120}ms`
-                      : "Verified"}
+                    {!r.healthMonitor
+                      ? "Not checked"
+                      : r.healthMonitor.online
+                        ? typeof r.healthMonitor.responseTimeMs === "number" ? `Online · ${r.healthMonitor.responseTimeMs}ms` : "Online"
+                        : "Not answering"}
                   </div>
                   <div className="text-[11px] text-muted">
-                    {r.healthMonitor?.ssl.valid
-                      ? `SSL valid (${r.healthMonitor.ssl.daysRemaining}d left)`
-                      : "HTTPS Configured"}
+                    {!r.healthMonitor
+                      ? "Run a check from the SEO tab"
+                      : r.healthMonitor.ssl.valid
+                        ? `Certificate valid · ${r.healthMonitor.ssl.daysRemaining} days left`
+                        : "Certificate not confirmed"}
                   </div>
                 </div>
               </div>
