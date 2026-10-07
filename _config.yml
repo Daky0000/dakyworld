@@ -1,0 +1,28 @@
+# GitHub Pages publishes this repository's root as dakyx.com.
+#
+# Jekyll is switched on for one reason: so that the paths below are NOT
+# published. The OS and editor source, their docs and the internal audits live
+# beside the website in this repository, and with `.nojekyll` every one of them
+# was served at dakyx.com/<path> — dakyx.com/server/src/index.ts,
+# dakyx.com/SECURITY.md and the rest.
+#
+# No site file has front matter, so Jekyll copies every one of them byte for
+# byte; nothing is rendered or templated. Markdown is excluded wholesale because
+# GitHub Pages turns any .md file into a page of its own — blog/*.md would
+# otherwise overwrite the blog/*.html generated from them.
+#
+# Adding a top-level folder that is not part of the website? Add it here too.
+exclude:
+  - server/
+  - apify/
+  - docs/
+  - scripts/
+  - src/
+  - node_modules/
+  - "*.md"
+  - "blog/*.md"
+  - AGENT_SYSTEM_PLAN.html
+  - blueprint.pdf
+  - package.json
+  - package-lock.json
+  - railway.json

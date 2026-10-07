@@ -18,6 +18,16 @@ serve from the root or `/docs` on this repo, and changing that needs a
 dashboard setting. It is not a mistake — don't "tidy" it into a subfolder
 without also changing the Pages source, or the live site 404s.
 
+**`_config.yml` decides what of this repository is public at dakyx.com.**
+Until 7 Oct 2026 a `.nojekyll` file published the whole tree, so
+dakyx.com/server/src/index.ts, dakyx.com/SECURITY.md and the infrastructure
+docs were all served. Jekyll now runs only to *exclude* `server/`, `docs/`,
+`scripts/`, `apify/`, `src/`, every `.md` and a few internal files; no site file
+has front matter, so everything else is copied byte for byte. **A new top-level
+folder that is not part of the website must be added to that exclude list.**
+The repository itself is still public on GitHub — that is a settings decision,
+not something a commit can fix.
+
 `CNAME` contains `dakyx.com`. It claimed `os.dakyx.com` for months
 while that subdomain actually pointed at Railway, so Pages served nothing and
 the apex returned 404 with a bad certificate. If the apex ever breaks again,
