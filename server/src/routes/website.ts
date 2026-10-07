@@ -37,7 +37,6 @@ import { registerWebsiteApprovalRoutes } from "../services/websiteApprovalAndRev
 import { registerWebsiteSchedulerRoutes } from "../services/websitePublishScheduler.js";
 import { registerWebsiteBatchEditingRoutes } from "../services/websiteBatchEditing.js";
 import { registerWebsiteEditingPolicyRoutes } from "../services/websiteEditingPolicy.js";
-import { registerWebsiteFreelancerWorkspaceRoutes } from "../services/websiteFreelancerWorkspace.js";
 
 import { z } from "zod";
 
@@ -48,7 +47,7 @@ import { recordPresence, removePresence } from "../services/websitePresence.js";
 // The engine comes through its one door — see services/website/index.ts for why.
 // `site.js` is the other half and stays separate on purpose: it is the part that
 // talks to GitHub and the network, and nothing in the core does.
-import { DOCUMENT_KEY, draftDocument, editingSource, fieldValues, sourceHash, documentChanged, changeStructure, structureControls, applyValues, categoriseChanges, describeChanges, buildPreview, discoverFields, isVariantOfStem, sanitizeValue, validateFieldChange, type FieldValue, type SiteField } from "../services/website/index.js";
+import { DOCUMENT_KEY, draftDocument, editingSource, fieldValues, sourceHash, documentChanged, changeStructure, structureControls, applyValues, categoriseChanges, describeChanges, buildPreview, discoverFields, drawnByScript, isVariantOfStem, sanitizeValue, validateFieldChange, type FieldValue, type SiteField } from "../services/website/index.js";
 import { discoverPages, PAGE_LIST_FIELDS, pageSource, pageUrl, siteRepo, siteStyleClasses, WebsiteError } from "../services/website/site.js";
 
 import { tailwindCdnCss } from "../services/website/cdnStyles.js";
@@ -96,7 +95,6 @@ registerWebsiteApprovalRoutes(websiteRouter);
 registerWebsiteSchedulerRoutes(websiteRouter);
 registerWebsiteBatchEditingRoutes(websiteRouter);
 registerWebsiteEditingPolicyRoutes(websiteRouter);
-registerWebsiteFreelancerWorkspaceRoutes(websiteRouter);
 
 // Tier feature enforcement across SEO, AI Assistant, AI Builder Agent, and Source Editor routes
 websiteRouter.use((req, _res, next) => {
@@ -425,6 +423,14 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
         lastPublishedAt: page.lastPublishedAt,
       },
       readFrom: source.from,
+      // Whether this page belongs to a prospect demo. Decided here, from the
+      // demo record, because "was imported from a file" is also how every
+      // hosted customer site starts and is no evidence of being a demo.
+      demo: linkedDemo ? { id: linkedDemo.id, slug: linkedDemo.slug } : null,
+      // A page that is an empty shell its own scripts fill in. The preview shows
+      // it isolated and unclickable, and the editor says why rather than leaving
+      // somebody clicking a page that cannot answer.
+      drawnByScript: drawnByScript(source.html),
       // Set only for a framework page: what is being shown is a build of the
       // file named here, and how fresh that build is. A person editing needs
       // both — "this is last night's deploy" and "your words go into page.tsx"

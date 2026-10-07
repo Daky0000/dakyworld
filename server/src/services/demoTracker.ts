@@ -34,7 +34,10 @@ export function generateTrackerScript(options: {
   const { slug, visitId, token, sessionId, disabled } = options;
 
   if (disabled) {
-    return `<script id="dw-demo-tracker">/* Tracking disabled in preview/heatmap mode */</script>`;
+    // Nothing is counted in preview or heatmap mode. The page is sandboxed, so
+    // the heatmap around it cannot measure it either — it says its own height
+    // instead, which is all the overlay needs to line the clicks up.
+    return `<script id="dw-demo-tracker">/* Tracking disabled in preview/heatmap mode */(function(){function h(){try{var d=document.documentElement,b=document.body;parent.postMessage({source:"dakyx-demo",type:"height",value:Math.max(d?d.scrollHeight:0,b?b.scrollHeight:0)},"*")}catch(e){}}window.addEventListener("load",h);setTimeout(h,400);setTimeout(h,1500);})();</script>`;
   }
 
   return `<script id="dw-demo-tracker">
@@ -312,7 +315,7 @@ export function generateTrackerScript(options: {
           var sent = false;
           if (navigator.sendBeacon) {
             try {
-              var blob = new Blob([jsonStr], { type: "application/json" });
+              var blob = new Blob([jsonStr], { type: "text/plain;charset=UTF-8" });
               sent = navigator.sendBeacon(endpoint, blob);
             } catch(e) { sent = false; }
           }
@@ -320,7 +323,7 @@ export function generateTrackerScript(options: {
             try {
               fetch(endpoint, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "text/plain;charset=UTF-8" },
                 body: jsonStr,
                 keepalive: true
               }).catch(function() {});
@@ -334,7 +337,7 @@ export function generateTrackerScript(options: {
 
         fetch(endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "text/plain;charset=UTF-8" },
           body: jsonStr,
           keepalive: true
         }).then(function(res) {

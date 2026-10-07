@@ -139,10 +139,13 @@ export function PublishReview({
   pending,
   onClose,
   onConfirm,
+  hasRepository = true,
 }: {
   pageId: string;
   siteId?: string;
   pending: boolean;
+  /** False for a site DakyX hosts itself: there is no branch to commit to and no pull request to open. */
+  hasRepository?: boolean;
   onClose: () => void;
   onConfirm: (review: WebsiteReview) => void;
 }) {
@@ -158,8 +161,8 @@ export function PublishReview({
   const [regressionDevice, setRegressionDevice] = useState<"desktop" | "tablet" | "mobile">("desktop");
 
   const acknowledgeLimits = useMutation({
-    mutationFn: (limits: string[]) =>
-      api.post(`/website/sites/${siteId}/acknowledge-publish-limits`, { limits }),
+    mutationFn: (riskIds: string[]) =>
+      api.post(`/website/sites/${siteId}/acknowledge-publish-limits`, { riskIds }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["website", "review", pageId] });
     },
@@ -725,6 +728,8 @@ export function PublishReview({
                     </Button>
                   </div>
                 </div>
+              ) : !hasRepository ? (
+                <p className="text-xs text-muted">DakyX serves this website, so publishing makes the change live straight away.</p>
               ) : (
                 <div className="flex gap-2">
                   <button

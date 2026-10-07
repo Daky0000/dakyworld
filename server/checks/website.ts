@@ -174,6 +174,7 @@ const SANITISER: Array<[string, string, (out: string) => boolean, string]> = [
   ["keeps a real link", `<a href=${q}/contact${q}>Talk to us</a>`, (out) => out.includes(`href=${q}/contact${q}`), ""],
   ["unwraps a pasted div, keeping the sentence", "<div><p>Some words</p></div>", (out) => out.includes("Some words") && !out.includes("<div"), ""],
   ["drops a style that fetches", `<span style=${q}background:url(http://x/y)${q}>hi</span>`, (out) => !out.includes("url("), ""],
+  ["drops a background that would run script", `<span style=${q}background:url(javascript:alert(1))${q}>hi</span>`, (out) => !out.includes("javascript"), ""],
   ["keeps a style that only colours", `<span style=${q}color:var(--blue)${q}>hi</span>`, (out) => out.includes("color:var(--blue)"), "half a dozen headings carry exactly this"],
   ["escapes a stray angle bracket", "2 < 3", (out) => out.includes("&lt;"), ""],
   ["leaves an existing entity alone", "Kumasi &mdash; Ghana", (out) => out.includes("&mdash;") && !out.includes("&amp;mdash;"), ""],

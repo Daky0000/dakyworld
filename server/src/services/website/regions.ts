@@ -1440,7 +1440,11 @@ function isSafeBackground(value: string): boolean {
   if (/javascript:|expression\s*\(|<script/i.test(value)) return false;
   const withoutUrls = value.replace(/url\(\s*(?:"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|([^)]*))\s*\)/gi, (token, d, s, u) => {
     const raw = (d ?? s ?? u ?? "").trim();
-    if (/^(?:https?:|\/|data:image\/|#)/i.test(raw) && !/javascript:/i.test(raw)) {
+    // https, the site's own paths and inline images. Not cleartext `http:`: on
+    // an https page it is mixed content a browser blocks or downgrades, and the
+    // media library never hands one out. A developer's existing http background
+    // survives anyway — `safeStyle` keeps declarations the page already had.
+    if (/^(?:https:|\/|data:image\/|#)/i.test(raw) && !/javascript:/i.test(raw)) {
       return " url_token ";
     }
     return token;

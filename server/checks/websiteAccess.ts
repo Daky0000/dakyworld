@@ -132,13 +132,21 @@ async function databaseChecks() {
     const foreignMember = await prisma.siteMember.create({ data: { siteId: foreign.id, userId: stranger.id, role: "MANAGER" } });
     const [ownPage, foreignPage] = await Promise.all([own, foreign].map(site => prisma.sitePage.create({ data: { siteId: site.id, title: site.name, path: "/", filePath: "index.html", sourceHtml: `<h1>${site.name}</h1>` } })));
     await prisma.sitePageVersion.createMany({ data: [ownPage, foreignPage].map(page => ({ pageId: page.id, number: 1, html: `<h1>${page.title}</h1>` })) });
+    const { registerWebsiteFreelancerWorkspaceRoutes } = await import("../src/services/websiteFreelancerWorkspace.js");
     const app = express(); app.use(express.json()); app.use("/api", attachUser, requireAuth, scopeExternal);
     app.use("/api/website", websiteRouter); app.use("/api/auth", authRouter); app.get("/api/leads", (_req, res) => { res.json([]); });
+    // Mounted exactly as index.ts mounts it: once, at /api, beside the OS routers.
+    const cockpit = express.Router(); registerWebsiteFreelancerWorkspaceRoutes(cockpit); app.use("/api", cockpit);
     app.use((error: unknown, _req: Request, res: express.Response, _next: express.NextFunction) => { res.status(error instanceof WebsiteError ? error.status : 500).json({ error: (error as Error).message }); });
     server = app.listen(0, "127.0.0.1"); await new Promise<void>(resolve => server!.once("listening", resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const request = (person: typeof manager, path: string, method = "GET", body?: unknown) => fetch(`${base}/api${path}`, { method, headers: { Cookie: `dw_session=${person.token}`, "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
     let response = await request(manager, "/leads"); check("real external session still cannot enter the internal OS", () => assert.equal(response.status, 403)); await response.text();
+    // The cockpit reads every client, site, demo and approval token. It used to
+    // be mounted under the website router too, where the access gate waved it
+    // through — any customer could download the whole client book.
+    response = await request(viewer, "/website/freelancer-workspace/overview"); check("the client book is not reachable under the website router", () => assert.ok([403, 404].includes(response.status), `answered ${response.status}`)); await response.text();
+    response = await request(manager, "/freelancer-workspace/overview"); check("an external account cannot read the client book, even holding every global permission", () => assert.equal(response.status, 403)); await response.text();
     response = await request(viewer, "/auth/me"); const me = await response.json() as { external: boolean }; check("auth identifies an external account for client navigation", () => assert.equal(me.external, true));
     response = await request(viewer, "/website/sites"); const list = await response.json() as Array<{ id: string; capabilities: { view: boolean; edit: boolean } }>; check("real session lists only its own site", () => assert.deepEqual(list.map(site => site.id), [own.id]));
     check("site list carries per-site viewer capabilities", () => { assert.equal(list[0].capabilities.view, true); assert.equal(list[0].capabilities.edit, false); });
@@ -174,6 +182,38 @@ async function databaseChecks() {
   }
 }
 
+/**
+ * The gate refuses any route it cannot classify, which is right for a gate and
+ * fatal for a feature: ten routes added in September — find and replace,
+ * scheduled publishing, client approval links, acknowledging publish risks,
+ * cherry-picking a version, the editing policy, ZIP import, global content —
+ * answered "That website action is not available" to everybody, Owner included.
+ * Walk the real router so the next route added without a line in
+ * `websiteRequestAction` fails here instead of in front of a customer.
+ */
+async function routeClassificationChecks() {
+  // Importing the router loads the auth module, which decides DEV_NO_AUTH once,
+  // at import — and `.env` turns it on. The database section needs it off.
+  process.env.DEV_NO_AUTH = "false";
+  const { websiteRouter } = await import("../src/routes/website.js");
+  const { websiteRequestAction, websiteGateHandlesDirectly } = await import("../src/services/websiteAccess.js");
+  const unclassified: string[] = [];
+  let routes = 0;
+  for (const layer of (websiteRouter as unknown as { stack: Array<{ route?: { path: string; methods: Record<string, boolean> } }> }).stack) {
+    if (!layer.route) continue;
+    for (const method of Object.keys(layer.route.methods)) {
+      routes++;
+      const verb = method.toUpperCase();
+      const path = String(layer.route.path).replace(/:[A-Za-z]+/g, "sample");
+      if (websiteGateHandlesDirectly(verb, path)) continue;
+      if (!websiteRequestAction(verb, path)) unclassified.push(`${verb} ${layer.route.path}`);
+    }
+  }
+  check(`the router was walked (${routes} routes)`, () => assert.ok(routes > 100));
+  check("every website route is classified by the access gate", () => assert.deepEqual(unclassified, []));
+}
+
+await routeClassificationChecks();
 await httpGateChecks();
 if (process.argv.includes("--database")) await databaseChecks();
 console.log(`\n${passed} website access checks passed.`);

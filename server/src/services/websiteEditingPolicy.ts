@@ -200,68 +200,6 @@ export function registerWebsiteEditingPolicyRoutes(router: Router): void {
       next(err);
     }
   });
-
-  // 4. Asset Optimizer: Calculates potential savings and simulation for media assets
-  router.post("/assets/optimize-preview", async (req: Request, res: Response, next) => {
-    try {
-      const body = z.object({
-        originalBytes: z.number().int().min(1),
-        mimeType: z.string().optional().default("image/png"),
-        width: z.number().int().optional(),
-        height: z.number().int().optional(),
-      }).parse(req.body);
-
-      // WebP/AVIF simulation calculation:
-      // PNGs typically compress ~85-92% to WebP/AVIF, JPEGs compress ~40-60%
-      const isPng = body.mimeType.includes("png");
-      const compressionRatio = isPng ? 0.09 : 0.45;
-      const optimizedBytes = Math.max(12_000, Math.round(body.originalBytes * compressionRatio));
-      const savingsBytes = Math.max(0, body.originalBytes - optimizedBytes);
-      const savingsPercent = Math.round((savingsBytes / body.originalBytes) * 100);
-
-      const formatSize = (bytes: number) => {
-        if (bytes > 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-        return `${Math.round(bytes / 1024)} KB`;
-      };
-
-      res.json({
-        originalBytes: body.originalBytes,
-        optimizedBytes,
-        savingsBytes,
-        savingsPercent,
-        formattedOriginal: formatSize(body.originalBytes),
-        formattedOptimized: formatSize(optimizedBytes),
-        estimatedPageSaving: formatSize(savingsBytes),
-        recommendedFormats: ["webp", "avif"],
-        summary: `Original: ${formatSize(body.originalBytes)} · Optimized: ${formatSize(optimizedBytes)} · Estimated page saving: ${formatSize(savingsBytes)}`,
-      });
-    } catch (err) {
-      next(err);
-    }
-  });
-}
-
-export function calculateAssetOptimization(filenameOrMime: string, originalBytes: number) {
-  const isPng = filenameOrMime.includes("png");
-  const compressionRatio = isPng ? 0.09 : 0.45;
-  const optimizedBytes = Math.max(12_000, Math.round(originalBytes * compressionRatio));
-  const savingsBytes = Math.max(0, originalBytes - optimizedBytes);
-  const savingsPercent = Math.round((savingsBytes / originalBytes) * 100);
-
-  const formatSize = (bytes: number) => {
-    if (bytes > 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${Math.round(bytes / 1024)} KB`;
-  };
-
-  return {
-    originalSizeBytes: originalBytes,
-    estimatedWebpSizeBytes: optimizedBytes,
-    estimatedAvifSizeBytes: Math.round(optimizedBytes * 0.85),
-    savingsPercent,
-    formattedOriginal: formatSize(originalBytes),
-    formattedWebp: formatSize(optimizedBytes),
-    formattedAvif: formatSize(Math.round(optimizedBytes * 0.85)),
-  };
 }
 
 export function evaluateElementEditAllowed(

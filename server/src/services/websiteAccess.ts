@@ -136,6 +136,18 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
   // Pointing a site at a customer's GitHub installation is changing where it
   // publishes to, which is the same decision as changing its repository.
   if (/^\/sites\/[^/]+\/github-app\/?$/.test(path)) return "manage";
+  // Each of these was answered "That website action is not available" for
+  // everybody until 7 Oct 2026: the routes were added without a line here, and
+  // this function denies what it does not recognise. `checks/websiteAccess.ts`
+  // now walks the router and fails on any route this returns null for.
+  if (/^\/pages\/[^/]+\/schedule(?:\/[^/]+)?\/?$/.test(path)) return "publish";
+  if (/^\/sites\/[^/]+\/acknowledge-publish-limits\/?$/.test(path)) return "publish";
+  if (/^\/sites\/[^/]+\/editing-policy\/?$/.test(path)) return "manage";
+  if (/^\/sites\/[^/]+\/import-package\/?$/.test(path)) return "manage";
+  if (/^\/pages\/[^/]+\/approval-link\/?$/.test(path)) return "edit";
+  if (/^\/pages\/[^/]+\/versions\/[^/]+\/cherry-pick\/?$/.test(path)) return "edit";
+  if (/^\/sites\/[^/]+\/find-replace\/search\/?$/.test(path)) return "view";
+  if (/^\/sites\/[^/]+\/(?:find-replace\/apply|global-content)\/?$/.test(path)) return "edit";
   if (/^\/shared\/[^/]+\/(?:draft|instances)(?:\/|$)/.test(path)) return "edit";
   if (/\/draft\/?$/.test(path) || /\/restore\/?$/.test(path) || /\/structure\/?$/.test(path) || /\/name-fields\/?$/.test(path)) return "edit";
   if (/\/assets(?:\/[^/]+)?\/?$/.test(path)) return "edit";
@@ -148,13 +160,30 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
   return null;
 }
 
+/** Routes about the signed-in account rather than one website. Their handlers scope themselves. */
+const ACCOUNT_ROUTES = /^\/(?:subscription(?:\/(?:cancel|manage))?|setup-assistance|starter-templates|balance(?:\/.*)?|activity(?:\/.*)?|escalations(?:\/[^/]+)?)\/?$/;
+
+/**
+ * Whether the gate answers a path without classifying it — account routes, the
+ * tier status, the collection reads, the GitHub App and creating a site. Every
+ * other route must get an action from `websiteRequestAction` or it is refused
+ * for everybody; exported so a check can hold the router to that.
+ */
+export function websiteGateHandlesDirectly(method: string, path: string): boolean {
+  return ACCOUNT_ROUTES.test(path)
+    || /^\/tier-status(?:\/|$)/.test(path)
+    || (/^\/(?:sites|overview|assets)\/?$/.test(path) && ["GET", "HEAD"].includes(method))
+    || /^\/github-app(?:\/|$)/.test(path)
+    || (/^\/sites\/?$/.test(path) && method === "POST");
+}
+
 export function createWebsiteAccessGate(reader = accessReader) {
   return (req: Request, _res: Response, next: NextFunction) => {
     void (async () => {
       const principal = websitePrincipal(req);
       // These routes operate on the signed-in customer's own account. Their
       // handlers check any optional site ID before using it.
-      if (/^\/(?:subscription(?:\/(?:cancel|manage))?|setup-assistance|starter-templates|balance(?:\/.*)?|activity(?:\/.*)?|escalations(?:\/[^/]+)?|freelancer-workspace(?:\/.*)?)\/?$/.test(req.path)) return;
+      if (ACCOUNT_ROUTES.test(req.path)) return;
       if (/^\/tier-status(?:\/|$)/.test(req.path)) {
         return;
       }

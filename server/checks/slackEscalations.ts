@@ -400,7 +400,8 @@ async function main() {
   check("lists what is still waiting", (listedBody.text ?? "").includes("two-year commitment"), listedBody.text?.slice(0, 120));
   check(
     "with the command to answer it, id filled in — the only road that works on every setup",
-    (listedBody.text ?? "").includes(`/dakyworld answer ${urgent.id}`),
+    // The command was renamed /dakyxtech on 5 Oct 2026; /dakyworld still answers as an alias.
+    (listedBody.text ?? "").includes(`/dakyxtech answer ${urgent.id}`),
     listedBody.text?.slice(0, 200),
   );
 

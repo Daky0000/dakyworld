@@ -488,6 +488,13 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
    * opened their real website instead of the copy being edited.
    */
   const liveDemoHref = page.data?.liveUrl ?? null;
+  // A prospect demo is decided by the demo record on the server, never by how
+  // the page arrived: every hosted customer site was "imported from a file"
+  // too, and treating those as demos sent customers back to a Demos screen they
+  // cannot open and published their pages without the review step.
+  const isDemo = Boolean(demoIdFromUrl || page.data?.demo);
+  // DakyX serves this page itself: no repository, live the moment it publishes.
+  const hostedHere = !page.data?.site.repo && page.data?.readFrom === "imported file";
   const design = useQuery({ queryKey: ["website", "design", page.data?.site.id], enabled: !!page.data?.site.id, queryFn: ({ signal }) => api.get<{ options: { colours: string[]; fonts: string[]; aiEnabled: boolean; presets: BrandPreset[] } }>(`/website/sites/${page.data!.site.id}/design`, signal) });
 
   /* ------------------------------------------------------------- history */
@@ -1800,12 +1807,23 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const canvas = (
     <div
       data-walkthrough="canvas"
+      data-tour="canvas"
+      role="region"
+      aria-label="Page canvas"
+      tabIndex={0}
       className="editor-canvas min-h-0 flex-1 overflow-auto bg-cream p-4"
       onContextMenu={(event) => {
         event.preventDefault();
         openEditorContextMenuFromEvent(event.clientX, event.clientY, null, null, false);
       }}
     >
+      {mode === "visual" && page.data?.drawnByScript && (
+        <p role="note" className="mx-auto mb-3 max-w-3xl rounded-xl border border-line bg-white px-3.5 py-2.5 text-xs leading-relaxed text-muted">
+          This page is drawn by its own scripts, so the canvas shows it exactly as a visitor sees it and it can't be clicked into.
+          Change its words in <button type="button" className="font-semibold text-ink underline underline-offset-2" onClick={() => setMode("edit")}>List</button> mode
+          {page.data.builtFrom ? " or under Source files" : ""}.
+        </p>
+      )}
       <div className="mx-auto h-full" style={{ width: frameWidth, minWidth: frameWidth, zoom }}>
         <iframe
           ref={mode === "visual" ? frame : undefined}
@@ -1821,7 +1839,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
   return (
     <div className={`website-editor editor-${editorTheme} flex h-full min-h-0 flex-col`}>
-      {reviewOpen && <PublishReview pageId={pageId} siteId={site.id} pending={publish.isPending} onClose={() => setReviewOpen(false)} onConfirm={review => publish.mutate(review)} />}
+      {reviewOpen && <PublishReview pageId={pageId} siteId={site.id} hasRepository={Boolean(site.repo)} pending={publish.isPending} onClose={() => setReviewOpen(false)} onConfirm={review => publish.mutate(review)} />}
       {showAI && canEdit && <WebsiteAssistant pageId={pageId} selectedFieldId={pickedId} fieldLabel={picked?.label} values={edits} onClose={() => setShowAI(false)} onApply={async (values, structuralActions) => {
         if (structuralActions && structuralActions.length > 0) {
           for (const action of structuralActions) {
@@ -2039,13 +2057,13 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         {/* Left zone: Back button + Page identity + Status pill */}
         <div className="flex min-w-0 items-center gap-2.5">
           <Link
-            to={demoIdFromUrl || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl) ? "/demos" : "/website/sites"}
-            title={demoIdFromUrl || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl) ? "Back to Demos list" : "Back to all pages"}
-            aria-label="Back"
+            to={isDemo ? "/demos" : "/website/sites"}
+            title={isDemo ? "Back to Demos list" : "Back to all pages"}
+            aria-label={isDemo ? "Back to Demos" : "Back to Pages"}
             className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-medium text-muted transition hover:border-line-strong hover:bg-sunken hover:text-ink"
           >
             <IconArrowLeft size={14} />
-            <span>{demoIdFromUrl || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl) ? "Demos" : "Pages"}</span>
+            <span>{isDemo ? "Demos" : "Pages"}</span>
           </Link>
 
           <div className="h-5 w-px shrink-0 bg-line" aria-hidden="true" />
@@ -2567,17 +2585,17 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             </div>
           </details>
 
-          {(demoIdFromUrl || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl)) && (
+          {(isDemo || hostedHere) && (
             <>
               {liveDemoHref && <a
                 href={liveDemoHref}
                 target="_blank"
                 rel="noreferrer"
-                title="Open the live public demo URL in a new tab"
+                title={isDemo ? "Open the live public demo URL in a new tab" : "Open the live website in a new tab"}
                 className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-semibold text-ink transition hover:border-blue hover:bg-sunken"
               >
                 <IconEye size={13} className="text-blue" />
-                <span className="hidden sm:inline">Live Demo</span>
+                <span className="hidden sm:inline">{isDemo ? "Live Demo" : "View live"}</span>
               </a>}
               {demoIdFromUrl && (
                 <a
@@ -2600,17 +2618,15 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 variant="accent"
                 size="sm"
               onClick={async () => {
-                const isDemoPage =
-                  Boolean(demoIdFromUrl) ||
-                  page.data.readFrom === "imported file" ||
-                  /\/demos\/[^/?#]+/i.test(site.publicUrl);
                 try {
                   if (dirty.current) await save.mutateAsync(latestEdits.current);
                   if (dirty.current) {
                     setFailure("Your latest edit is still saving. Review once it has saved.");
                     return;
                   }
-                  if (isDemoPage) {
+                  // A demo is DakyXTech's own sales page and goes out in one
+                  // click. Everything a customer owns goes through the review.
+                  if (isDemo) {
                     publish.mutate({
                       revision: revision.current,
                       sourceHash: "",
@@ -2626,8 +2642,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               disabled={
                 publish.isPending ||
                 save.isPending ||
-                (!(Boolean(demoIdFromUrl) || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl)) &&
-                  (changedCount === 0 || !site.repo))
+                (!isDemo && (changedCount === 0 || !(site.repo || hostedHere)))
               }
             >
               <span className="inline-flex items-center gap-1.5">
@@ -2635,7 +2650,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 <span>
                   {publish.isPending
                     ? "Publishing…"
-                    : Boolean(demoIdFromUrl) || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl)
+                    : isDemo
                       ? changedCount > 0
                         ? `Publish & Update Demo (${changedCount})`
                         : "Publish & Update Demo"
@@ -2666,11 +2681,13 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             <div className="rounded-xl border border-line bg-white p-3 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="font-semibold text-ink">
-                  {Boolean(demoIdFromUrl) || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl)
-                    ? `Demo HTML updated (version ${published.version}) — refresh the live demo URL to see your new changes!`
-                    : `Changes sent — version ${published.version}, ${published.changed} change${published.changed === 1 ? "" : "s"}.`}
+                  {isDemo
+                    ? `Demo updated (version ${published.version}) — refresh the live demo to see your changes.`
+                    : published.hosted
+                      ? `Published — version ${published.version}, ${published.changed} change${published.changed === 1 ? "" : "s"}.`
+                      : `Changes sent — version ${published.version}, ${published.changed} change${published.changed === 1 ? "" : "s"}.`}
                 </p>
-                {(Boolean(demoIdFromUrl) || page.data.readFrom === "imported file" || /\/demos\/[^/?#]+/i.test(site.publicUrl)) && (
+                {isDemo && (
                   <div className="flex flex-wrap items-center gap-2">
                     {liveDemoHref && <a
                       href={liveDemoHref}
@@ -2713,27 +2730,34 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   <code className="font-mono">npm run site</code> in the repository to match.
                 </p>
               )}
-              <p className="mt-1 text-xs text-muted">{published.note}</p>
+              {/* For a hosted page the progress panel below says the same thing. */}
+              {!(published.hosted && published.job) && <p className="mt-1 text-xs text-muted">{published.note}</p>}
               {/* A commit is not a deployment, and until this says so the only
                   honest claim is that the change is in the repository. */}
               {published.job && <PublishStatus siteId={site.id} jobId={published.job.id} />}
-              <p className="mt-1 text-xs text-muted">
-                This screen reads the page back from the published site, so it goes on showing the old words until that rebuild
-                finishes. It will catch up on its own; the circular arrow in the bar looks again now.
-              </p>
+              {/* Only a repository has a rebuild to wait for. A hosted page is
+                  served from here and is already what visitors get. */}
+              {!published.hosted && !isDemo && (
+                <p className="mt-1 text-xs text-muted">
+                  This screen reads the page back from the published site, so it goes on showing the old words until that rebuild
+                  finishes. It will catch up on its own; the circular arrow in the bar looks again now.
+                </p>
+              )}
               <div className="mt-2 flex flex-wrap items-center gap-4 text-xs">
                 {published.prUrl ? (
                   <a href={published.prUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-blue underline-offset-2 hover:underline">
                      View Pull Request #{published.prNumber} on GitHub
                   </a>
-                ) : (
+                ) : published.url ? (
                   <a href={published.url} target="_blank" rel="noreferrer" className="text-ink underline-offset-2 hover:underline">
                     Open the live page
                   </a>
+                ) : null}
+                {published.commit.url && (
+                  <a href={published.commit.url} target="_blank" rel="noreferrer" className="text-muted underline-offset-2 hover:underline">
+                    {published.mode === "pull_request" ? "See PR commit" : "See the commit"}
+                  </a>
                 )}
-                <a href={published.commit.url} target="_blank" rel="noreferrer" className="text-muted underline-offset-2 hover:underline">
-                  {published.mode === "pull_request" ? "See PR commit" : "See the commit"}
-                </a>
               </div>
             </div>
           )}

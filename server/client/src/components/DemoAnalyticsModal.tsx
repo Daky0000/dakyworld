@@ -102,6 +102,19 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
     return () => clearTimeout(timer);
   }, [viewportPreset, activeTab, demo?.url]);
 
+  // Demo pages run sandboxed in an origin of their own, so the frame cannot be
+  // measured from here; in heatmap mode the page reports its own height.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { source?: string; type?: string; value?: number } | null;
+      if (event.source !== iframeRef.current?.contentWindow || data?.source !== "dakyx-demo" || data.type !== "height") return;
+      const height = Number(data.value);
+      if (Number.isFinite(height) && height > 100 && height < 60_000) setIframeHeight(Math.max(height, 850));
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
   // Filter clicks based on selected visit and selected element
   const filteredClicks = useMemo(() => {
     if (!report?.heatmap?.clicks) return [];

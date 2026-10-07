@@ -1327,8 +1327,20 @@ const analyticsBeaconInput = z.object({
  * When a demo was imported directly from an HTML file by the Owner (`IMPORTED_CSP`),
  * `https:` assets (Tailwind CDN, web fonts, external images, icon libraries) are
  * allowed so the imported file renders faithfully while forms remain inert.
+ *
+ * **Both run sandboxed, in an origin of their own.** A demo is served from
+ * os., editor. and app.dakyx.com — the same hosts as the signed-in app — and its
+ * scripts are either a model's or an imported file's. Without `sandbox` they ran
+ * as whichever member of staff opened the demo to check it: same-origin `fetch`
+ * to `/api` carries the session. Without `allow-same-origin` the page is opaque,
+ * sends no cookies and cannot reach the window that opened it. No `allow-forms`:
+ * a prospect's demo has nothing to submit, and a form on our own domain that
+ * posts anywhere is the shape of a phishing page.
  */
+const DEMO_SANDBOX = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals";
+
 const CSP = [
+  DEMO_SANDBOX,
   "default-src 'none'",
   "img-src 'self' data:",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
@@ -1341,6 +1353,7 @@ const CSP = [
 ].join("; ");
 
 const IMPORTED_CSP = [
+  DEMO_SANDBOX,
   "default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'",
   "img-src 'self' https: data: blob:",
   "style-src 'self' 'unsafe-inline' https: data: blob:",
@@ -1351,7 +1364,7 @@ const IMPORTED_CSP = [
   "worker-src 'self' blob: data:",
   "child-src 'self' blob:",
   "frame-src * https: data: blob:",
-  "form-action * 'self'",
+  "form-action 'none'",
   "frame-ancestors 'self'",
 ].join("; ");
 
@@ -1380,6 +1393,11 @@ demoPagesRouter.get("/:slug/assets/dw/:filename", async (req, res, next) => {
 
 demoPagesRouter.post("/:slug/analytics", async (req, res, next) => {
   try {
+    // The demo runs sandboxed, so its beacons arrive from an opaque origin
+    // ("null"). They carry a signed visit token and no cookie, and the answer
+    // says nothing but whether it was counted — readable by anyone is fine, and
+    // it is what lets the tracker know to stop resending clicks.
+    res.set("Access-Control-Allow-Origin", "*");
     const slug = req.params.slug;
     const demo = await prisma.demo.findUnique({
       where: { slug },

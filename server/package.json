@@ -61,7 +61,7 @@
     "jszip": "^3.10.1",
     "mailparser": "^3.9.15",
     "maxmind": "^5.0.7",
-    "nodemailer": "^9.1.1",
+    "nodemailer": "^10.0.15",
     "pdfkit": "^0.15.1",
     "pg": "^8.23.1",
     "postcss": "^8.5.28",

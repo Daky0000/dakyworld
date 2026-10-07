@@ -484,7 +484,11 @@ export function registerWebsiteManagement(router: Router, access: Access) {
 
   router.post("/sites/:siteId/acknowledge-publish-limits", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
-    const input = z.object({ riskIds: z.array(z.string().min(1)).max(100) }).parse(req.body);
+    // `limits` is what the review screen sent until 7 Oct 2026 — every
+    // acknowledgement was refused as invalid, so a page with one warning could
+    // never be published. Both names are accepted so an open tab still works.
+    const raw = z.object({ riskIds: z.array(z.string().min(1)).max(100).optional(), limits: z.array(z.string().min(1)).max(100).optional() }).parse(req.body);
+    const input = { riskIds: raw.riskIds ?? raw.limits ?? [] };
     const currentSettings = (site.settings && typeof site.settings === "object" ? site.settings : {}) as Record<string, any>;
     const existingAcks = new Set<string>(currentSettings.acknowledgedPublishLimits || []);
     for (const id of input.riskIds) existingAcks.add(id);

@@ -67,10 +67,11 @@ check(
 
 /* ------------------------------------------------------- the country hint -- */
 
-equal("Cloudflare's country is read", countryHint({ headers: { "cf-ipcountry": "gb" } }), "GB");
-equal("Vercel's is read too", countryHint({ headers: { "x-vercel-ip-country": "NG" } }), "NG");
-equal("`XX` means Cloudflare does not know, and is not an answer", countryHint({ headers: { "cf-ipcountry": "XX" } }), null);
-equal("`T1` is Tor, and is not a country", countryHint({ headers: { "cf-ipcountry": "T1" } }), null);
+// Since 29 Sep 2026 an edge country header is not believed at all: this API is
+// not behind Cloudflare or Vercel, so anybody can send one, and a visitor in
+// Accra writing "cf-ipcountry: GB" would be quoted dollars. The address decides.
+equal("a Cloudflare country header alone is not believed", countryHint({ headers: { "cf-ipcountry": "gb" } }), null);
+equal("nor is Vercel's", countryHint({ headers: { "x-vercel-ip-country": "NG" } }), null);
 equal("no header is no answer", countryHint({ headers: {} }), null);
 
 // This API is behind Railway, which sends no country header, so the address
@@ -84,7 +85,7 @@ equal("loopback has no country", countryForIp("127.0.0.1"), null);
 equal("no address is no answer", countryForIp(undefined), null);
 equal("rubbish is no answer, not a crash", countryForIp("not an address"), null);
 equal("with no header the address answers", countryHint({ headers: {}, ip: "102.176.0.1" }), "GH");
-equal("a header still wins over the address", countryHint({ headers: { "cf-ipcountry": "GB" }, ip: "102.176.0.1" }), "GB");
+equal("a spoofed header cannot move a Ghanaian address abroad", countryHint({ headers: { "cf-ipcountry": "GB" }, ip: "102.176.0.1" }), "GH");
 withUsd(true, () => {
   equal("a visitor in Ghana is quoted cedis", resolveCurrency({ country: countryHint({ headers: {}, ip: "102.176.0.1" }) }), "GHS");
   equal("a visitor abroad is quoted dollars", resolveCurrency({ country: countryHint({ headers: {}, ip: "8.8.8.8" }) }), "USD");

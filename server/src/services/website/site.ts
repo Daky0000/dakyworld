@@ -894,17 +894,67 @@ export async function publishPagesAsPullRequest(input: {
   });
 }
 
-export type PreviewDocument = { html: string; csp: string };
+/**
+ * `isolated` says which of the two policies below the document was given, so a
+ * caller can tell the editor that nothing in it can be clicked.
+ */
+export type PreviewDocument = { html: string; csp: string; isolated: boolean };
 
-/** Isolated rendering of the original HTML, with only the editor's picker allowed to run. */
+/** What every preview may load, whichever of the two it is. */
+const PREVIEW_COMMON = ["default-src 'none'", "base-uri http: https:", "img-src 'self' data: blob: http: https:", "style-src 'self' 'unsafe-inline' http: https:", "font-src 'self' data: http: https:", "media-src http: https: data:", "object-src 'none'", "frame-ancestors 'self'", "form-action 'none'"];
+
+/**
+ * The page the editor reaches into.
+ *
+ * Selection, computed styles and live pushes all go through `contentDocument`,
+ * so this document keeps the app's origin — and for exactly that reason nothing
+ * of the page's own may run in it, only the picker, by nonce. A script here is
+ * the person editing: it can call `/api` with their session and read the editor
+ * around it. That was the original rule; a demo fix on 29 Sep 2026 widened it to
+ * every page, and a single `<script src="data:…">` in a customer's page could
+ * then read `/api/auth/me` as whoever had it open. `checks/websiteEditorComplete.ts`
+ * holds the rule.
+ */
+const editingPolicy = (nonce: string) => [...PREVIEW_COMMON, "sandbox allow-scripts allow-same-origin", `script-src 'nonce-${nonce}'`, "connect-src 'none'", "frame-src https:", "style-src-attr 'unsafe-inline'"].join("; ");
+
+/**
+ * The page exactly as a visitor gets it, scripts and all — in an origin of its
+ * own. Without `allow-same-origin` the document is opaque: it carries no
+ * session, its requests are cross-site, and it cannot touch the editor. Used for
+ * Preview, and for a page whose content only exists once its scripts have run.
+ */
+const ISOLATED_PREVIEW_POLICY = [...PREVIEW_COMMON, "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox", "script-src 'unsafe-inline' 'unsafe-eval' https: blob: data:", "connect-src https: blob: data:", "worker-src blob: https:", "frame-src https: data: blob:"].join("; ");
+
+/**
+ * Whether a document is an empty shell its scripts fill in — a Vite, Lovable or
+ * Create React App build with nothing in `<body>` but a root element. Such a page
+ * shows nothing without its scripts, and the editor could never click into it
+ * anyway: the scripts replace every element the server marked.
+ */
+export function drawnByScript(html: string): boolean {
+  if (!/<script\b[^>]*\bsrc\s*=/i.test(html)) return false;
+  const body = /<body\b[^>]*>([\s\S]*?)(?:<\/body>|$)/i.exec(html)?.[1] ?? html;
+  const quiet = body
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(script|style|noscript|template)\b[\s\S]*?<\/\1\s*>/gi, " ");
+  // A picture or a video is content somebody can change, so a page that has one
+  // is never treated as an empty shell, however little text it carries.
+  if (/<(?:img|picture|svg|video)\b/i.test(quiet)) return false;
+  const text = decodeEntities(quiet.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
+  if (!text) return true;
+  // A little text inside the root a framework mounts into is a loading message.
+  const mountPoint = /<(?:div|main|section|app-root)\b[^>]*\bid\s*=\s*["'](?:root|app|__next|__nuxt|svelte|q-app)["']/i.test(quiet);
+  return mountPoint && text.length < 80;
+}
+
 /**
  * `builtCss` is a stylesheet the page would have generated in the browser (see
  * cdnStyles.ts), added at the end of the head where the Play CDN puts its own.
  */
 export function previewDocument(html: string, baseUrl: string, editable?: SiteField[], allowEditing = true, builtCss?: string | null): PreviewDocument {
-  const policy = ["default-src 'none'", "sandbox allow-scripts allow-same-origin", "base-uri http: https:", "img-src 'self' data: blob: http: https:", "style-src 'self' 'unsafe-inline' http: https:", "font-src 'self' data: http: https:", "media-src http: https: data:", "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: blob: data:", "connect-src 'self' https: blob: data:", "object-src 'none'", "frame-src * http: https: data: blob:", "frame-ancestors 'self'", "form-action 'none'"].join("; ");
+  const editing = Boolean(editable?.length) && !drawnByScript(html);
   // Apply the original offsets first, then parse again before removing tags.
-  let out = editable?.length ? markEditable(html, editable) : html;
+  let out = editing ? markEditable(html, editable!) : html;
   const removed = [...walk(parseHtml(out))].filter(node => node.tag === "base" || (node.tag === "meta" && ["refresh", "content-security-policy"].includes(decodeEntities(attr(node, "http-equiv") ?? "").trim().toLowerCase())));
   for (const node of removed.sort((a, b) => b.start - a.start)) out = out.slice(0, node.start) + out.slice(node.end);
   // A document URL preserves relative asset paths on nested pages. A bare
@@ -915,13 +965,13 @@ export function previewDocument(html: string, baseUrl: string, editable?: SiteFi
   const interactionHead = [...walk(parseHtml(out))].find(node => node.tag === "head");
   const interactionAt = interactionHead?.innerEnd ?? out.length;
   out = out.slice(0, interactionAt) + (builtCss ? `<style data-dw-built-css>${builtCss}</style>` : "") + `<style data-dw-interaction-preview>${interactionCss(true)}</style>` + out.slice(interactionAt);
-  if (!editable?.length) return { html: out, csp: policy };
+  if (!editing) return { html: out, csp: ISOLATED_PREVIEW_POLICY, isolated: true };
   const nonce = randomBytes(16).toString("base64");
   // Parsed closing offsets avoid matching a fake </body> inside a script/string.
   const body = [...walk(parseHtml(out))].find(node => node.tag === "body");
   const at = body?.innerEnd ?? out.length;
   out = out.slice(0, at) + pickerAssets(nonce, allowEditing) + out.slice(at);
-  return { html: out, csp: policy.replace("script-src 'self'", `script-src 'self' 'nonce-${nonce}'`) + "; style-src-attr 'unsafe-inline'" };
+  return { html: out, csp: editingPolicy(nonce), isolated: false };
 }
 
 /**

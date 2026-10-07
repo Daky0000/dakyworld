@@ -229,6 +229,17 @@ export const apiRateLimit = rateLimit({
  * real integration replaying a backlog, tight enough that a bot cannot fill the
  * leads table through the contact form.
  */
+/**
+ * The public client-review pages. They answer anybody holding a link, and each
+ * request reads the page it shows, so they get a ceiling of their own rather
+ * than none — they are mounted above the API-wide limiter.
+ */
+export const publicReviewRateLimit = rateLimit({
+  windowMs: 60_000,
+  max: 40,
+  message: "Too many requests for this review link. Try again in {minutes}.",
+});
+
 export const webhookRateLimit = rateLimit({
   windowMs: 60_000,
   max: 60,

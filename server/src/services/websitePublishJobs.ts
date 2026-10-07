@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma.js";
 import { readFile } from "../lib/github.js";
 import { fetchWebsiteText } from "../lib/websiteFetch.js";
 import { pageUrl, repoFilePath, siteRepo } from "./website/site.js";
+import { hostedUrlFor } from "./websiteHosting.js";
 import type { FieldChangeSummary } from "./website/index.js";
 
 /**
@@ -104,13 +105,24 @@ export async function publishJobCommitted(input: {
 }, db: Prisma.TransactionClient = prisma): Promise<void> {
   const isLocalHosted = !siteRepo(input.site);
   const now = new Date();
+  // A hosted page is live the moment this row commits, because the OS serves it
+  // from the database — but only at the hosted address. The site's own
+  // `publicUrl` is wherever the customer's old site lives, and pointing "Open
+  // live website" there showed them a page without their change on it. Read
+  // after `ensureHostedAddress`, which may have just given the site its slug.
+  let hostedUrl: string | null = null;
+  if (isLocalHosted) {
+    const hosting = await db.site.findUnique({ where: { id: input.site.id }, select: { hostedSlug: true, customDomain: true, customDomainVerifiedAt: true } });
+    const root = hosting ? hostedUrlFor(hosting) : null;
+    hostedUrl = root ? `${root}${input.page.path === "/" ? "/" : input.page.path}` : null;
+  }
   await db.publishJob.update({
     where: { id: input.id },
     data: {
       state: isLocalHosted ? "COMPLETED" : "DEPLOYING",
       commitSha: input.commit.sha,
-      commitUrl: input.commit.url,
-      verifyUrl: pageUrl(input.site, input.page),
+      commitUrl: isLocalHosted ? null : input.commit.url,
+      verifyUrl: isLocalHosted ? hostedUrl : pageUrl(input.site, input.page),
       verifyText: verificationText(input.summary),
       expectedHash: hash(input.html),
       nextCheckAt: isLocalHosted ? null : new Date(Date.now() + VERIFY_BACKOFF_MS[0]!),

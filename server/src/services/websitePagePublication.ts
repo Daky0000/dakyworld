@@ -15,7 +15,7 @@ import { runPublishGuardChecks } from "./websitePublishGuard.js";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { assertWebsiteSiteAccess } from "./websiteAccess.js";
+import { assertWebsiteSiteAccess, getWebsiteCapabilities } from "./websiteAccess.js";
 import { editingSource, sourceHash, versionValues, categoriseChanges, describeChanges, buildPublishPlan, discoverFields } from "./website/index.js";
 import { pageSource, pageUrl, publishPage, publishSourcePage, siteRepo, underSiteCredential, WebsiteError } from "./website/site.js";
 import { offerPagePublished } from "./context/business.js";
@@ -119,9 +119,18 @@ export async function publishPageCommand(actor: WebsiteActor, input: {
             draftValues: values,
             brandGuard: policy?.brandGuard,
         });
-        if (!guard.canPublish && !body?.forceOverride) {
+        // The guard is the agency's rule for what a client may publish, so only
+        // somebody who may change the site's settings may step over it — and it
+        // is written down when they do. Before, `forceOverride: true` from any
+        // publisher skipped it and left no trace.
+        const overriding = !guard.canPublish && body?.forceOverride === true
+            && (await getWebsiteCapabilities(actor, site.id)).capabilities.manage;
+        if (!guard.canPublish && !overriding) {
             await failPublishJob(job.id, "CONFLICT", guard.summary);
             throw Object.assign(new WebsiteError(400, guard.summary), { blockers: guard.blockers, warnings: guard.warnings });
+        }
+        if (overriding) {
+            await prisma.siteAuditEvent.create({ data: { siteId: site.id, kind: "PUBLISH_GUARD_OVERRIDDEN", summary: `${actor.dbUser?.name ?? "Somebody"} published ${page.title} over the publish guard: ${guard.summary}`.slice(0, 500), actorName: actor.dbUser?.name ?? "Website editor", actorId: actor.dbUser?.id, detail: { pageId: page.id, blockers: guard.blockers } as Prisma.InputJsonValue } });
         }
         // Read once for the labels the summary is written in. The plan has already
         // parsed the page; this is the same parse and is kept separate rather than
@@ -234,17 +243,29 @@ export async function publishPageCommand(actor: WebsiteActor, input: {
         });
         offerPagePublished(page.filePath);
         await syncDemoFromSitePage(site, page.id, plan.html, true);
+        const finishedJob = publishJobView(await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } }));
+        // A site with no repository is served by the OS itself: there is no
+        // commit, no rebuild to wait for, and its address is the hosted one —
+        // not `publicUrl`, which is wherever the customer's old site still is.
+        const hostedAddress = repo ? null : finishedJob.verifyUrl ?? null;
         return {
-            job: publishJobView(await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } })),
+            job: finishedJob,
             draftRetained: cleared.count === 0,
             version: version.number,
             changed: plan.changed.length,
             summary,
             touched: categoriseChanges(summary),
-            commit: { sha: commit.sha, url: commit.url },
-            url: pageUrl(site, page),
+            commit: { sha: commit.sha, url: repo ? commit.url : null },
+            url: repo ? pageUrl(site, page) : hostedAddress,
+            hosted: !repo,
             ...(prResult ? { mode: "pull_request", ...prResult } : { mode: "commit" }),
-            note: prResult ? `Created Pull Request #${prResult.prNumber} on GitHub.` : "GitHub Pages rebuilds the site after a commit. The change is usually live within a minute or two, and this screen will say when it is.",
+            note: prResult
+                ? `Created Pull Request #${prResult.prNumber} on GitHub.`
+                : !repo
+                    ? hostedAddress
+                        ? "DakyX serves this page directly, so it is live now — there is no rebuild to wait for."
+                        : "Saved as the live version. This website has no public address yet — set one up in Website settings, under “Where this website is served”, so visitors can see it."
+                    : "GitHub Pages rebuilds the site after a commit. The change is usually live within a minute or two, and this screen will say when it is.",
         };
     });
     return result;

@@ -3380,6 +3380,14 @@ export type SitePageDetail = {
   };
   /** Which of the two sources answered — the repository, or the live site. */
   readFrom: "repository" | "live site" | "imported file" | "prerendered output" | "render service";
+  /**
+   * The prospect demo this page belongs to, decided by the server from the demo
+   * record. Null for every customer page — including hosted ones, which were
+   * also "imported from a file".
+   */
+  demo?: { id: string; slug: string } | null;
+  /** An empty shell its scripts fill in: shown isolated in the canvas and never clickable. */
+  drawnByScript?: boolean;
   /** Set when this page is built from a source file rather than being one. */
   builtFrom?: { filePath: string; detail: string | null; writableFields: number; problem?: string | null } | null;
   sections: SiteSectionRow[];
@@ -3454,8 +3462,12 @@ export type PublishResult = {
   changed: number;
   summary: FieldChangeSummary[];
   touched: ChangeCategories;
-  commit: { sha: string; url: string };
-  url: string;
+  /** `url` is null for a hosted site: there is no repository commit to link to. */
+  commit: { sha: string; url: string | null };
+  /** Where the page can be seen now. Null for a hosted site with no public address yet. */
+  url: string | null;
+  /** True when DakyX serves the site itself — live at once, no rebuild. */
+  hosted?: boolean;
   note: string;
   mode?: "commit" | "pull_request";
   prUrl?: string;

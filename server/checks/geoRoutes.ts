@@ -39,6 +39,12 @@ try {
   for (let i = 0; i < 2; i++) {
     const response = await fetch(`${origin}/demos/geo-demo`, { headers: { "x-forwarded-for": "81.2.69.160", "user-agent": "Mozilla/5.0", "cf-ray": "fake", "cf-ipcountry": "US" } });
     assert.equal(response.status, 200);
+    // A demo is served from the same hosts as the signed-in app, so it must run
+    // in an origin of its own: sandboxed, and never `allow-same-origin`.
+    const policy = response.headers.get("content-security-policy") ?? "";
+    assert.match(policy, /(^|;\s*)sandbox\b/, `demo page is sandboxed: ${policy}`);
+    assert.doesNotMatch(policy, /allow-same-origin/);
+    assert.doesNotMatch(policy, /allow-forms/);
     await response.text();
   }
   assert.equal(visits.length, 2);
@@ -54,6 +60,14 @@ try {
   });
   assert.equal(beacon.status, 200);
   for (const key of ["country", "city", "region", "locationStatus", "countrySource", "citySource"]) assert.equal(key in beaconWrite, false);
+  // What the sandboxed tracker actually sends: a simple text/plain request from
+  // an opaque origin, which must be counted and answered readably.
+  const sandboxed = await fetch(`${origin}/demos/geo-demo/analytics`, { method: "POST",
+    headers: { "content-type": "text/plain;charset=UTF-8", origin: "null", "x-forwarded-for": "8.8.4.4" },
+    body: JSON.stringify({ token, visitId: visits[0].id, sessionId: "reload-session", durationSeconds: 12 }),
+  });
+  assert.equal(sandboxed.status, 200, await sandboxed.clone().text());
+  assert.equal(sandboxed.headers.get("access-control-allow-origin"), "*");
   visits.push({ ...visits[0], id: "legacy", country: "GH", countryName: "Ghana", city: "Accra", locationStatus: null, countrySource: null, citySource: null });
   const reportResponse = await fetch(`${origin}/api/demos/geo-demo/analytics?range=7d`);
   assert.equal(reportResponse.status, 200);

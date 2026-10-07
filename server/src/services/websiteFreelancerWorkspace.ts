@@ -7,6 +7,7 @@
 
 import type { Request, Response, Router } from "express";
 import { prisma } from "../lib/prisma.js";
+import { requirePermission } from "../middleware/auth.js";
 import { appUrl } from "./emailSender.js";
 
 export type FreelancerClientSummary = {
@@ -58,9 +59,19 @@ export type FreelancerWorkspaceOverview = {
   clients: FreelancerClientSummary[];
 };
 
+/**
+ * The cockpit reads every client, site, demo and approval link in the company,
+ * so it is a staff screen and nothing else. It is mounted once, at `/api`, and
+ * never under the website router: that router is reachable from
+ * editor.dakyx.com and lets external accounts in, and an unscoped read there
+ * handed the whole client book to any signed-in customer.
+ */
 export function registerWebsiteFreelancerWorkspaceRoutes(router: Router): void {
-  router.get("/freelancer-workspace/overview", async (req: Request, res: Response, next) => {
+  router.get("/freelancer-workspace/overview", requirePermission("clients.view"), async (req: Request, res: Response, next) => {
     try {
+      // Belt and braces: an external role must never see this even if somebody
+      // ticks `clients.view` on it, because nothing below is scoped to a client.
+      if (req.dbUser?.accessRole?.external) return res.status(403).json({ error: "This account does not have access to the internal system." });
       const base = await appUrl();
       const baseUrl = base.replace(/\/+$/, "");
 

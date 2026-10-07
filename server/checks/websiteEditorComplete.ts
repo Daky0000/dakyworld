@@ -40,10 +40,13 @@ assert.equal(new Set(duplicated.map(field => field.id)).size, duplicated.length)
 assert.equal(safeStyle('font-family: "DM Sans", sans-serif'), 'font-family: "DM Sans", sans-serif');
 assert.equal(safeStyle('color: red" onclick="bad()'), "");
 const backgroundSource = '<section style="background-image: url(/hero.jpg); padding: 2rem"><h1>Hello</h1></section>';
-const backgroundField = discoverFields(backgroundSource).fields.find(field => field.kind === "container")!;
+// A styled section is offered as its background since 26 Sep 2026; it was a plain container before.
+const backgroundField = discoverFields(backgroundSource).fields.find(field => field.kind === "background" || field.kind === "container")!;
 const backgroundEdit = sanitizeValue(backgroundField, { style: "background-image: url(/hero.jpg); padding: 3rem" });
 assert.match(applyValues(backgroundSource, { [backgroundField.id]: backgroundEdit }).html, /background-image: url\(\/hero.jpg\); padding: 3rem/);
-assert.doesNotMatch(sanitizeValue(backgroundField, { style: "background-image: url(https://new-tracker.test); padding: 3rem" }).style ?? "", /new-tracker/);
+// Picture backgrounds from the media library are a capability since 29 Sep 2026, so an
+// https address is allowed; a script address never is.
+assert.equal(sanitizeValue(backgroundField, { style: "background-image: url(javascript:alert(1))" }).style ?? "", "");
 const responsiveImage = '<img src="/small.jpg" srcset="/small.jpg 1x, /large.jpg 2x" alt="Original">';
 const imageWithCandidates = discoverFields(responsiveImage).fields[0]!;
 const newPhoto = sanitizeValue(imageWithCandidates, { value: "/replacement.jpg" });
@@ -60,6 +63,22 @@ assert.match(preview.csp, /script-src 'nonce-[^']+'/);
 assert.doesNotMatch(preview.csp.match(/script-src[^;]*/)?.[0] ?? "", /unsafe-inline|https:|'self'/);
 assert.match(preview.csp, /connect-src 'none'/);
 assert.match(preview.csp, /style-src[^;]*'unsafe-inline'/);
+// The editor reaches into the editing preview, so it keeps the app's origin —
+// and a document that keeps the app's origin may run nothing but the picker.
+// A page that runs its own scripts gets an origin of its own instead.
+const watching = buildPreview(html, "https://example.com");
+assert.equal(watching.isolated, true);
+assert.doesNotMatch(watching.csp, /allow-same-origin/, "a preview that runs page scripts must not keep the app's origin");
+const shell = '<!doctype html><html><head><script type="module" src="/assets/index.js"></script></head><body><div id="root"><p>Loading…</p></div></body></html>';
+const shellPreview = buildPreview(shell, "https://example.com", discoverFields(shell).fields);
+assert.equal(shellPreview.isolated, true, "a page its scripts draw is shown isolated");
+assert.doesNotMatch(shellPreview.csp, /allow-same-origin/);
+const comingSoon = '<html><body><h1>Coming soon</h1><img src="/logo.png" alt="Logo"><script src="/site.js"></script></body></html>';
+const comingSoonPreview = buildPreview(comingSoon, "https://example.com", discoverFields(comingSoon).fields);
+assert.equal(comingSoonPreview.isolated, false, "a small static page with a script stays editable");
+for (const candidate of [preview, watching, shellPreview, comingSoonPreview]) {
+  if (/allow-same-origin/.test(candidate.csp)) assert.match(candidate.csp, /script-src 'nonce-[^' ]+'(;|$)/, `same-origin preview runs only the picker: ${candidate.csp}`);
+}
 const hostilePreview = buildPreview('<html><head><base href="https://wrong.test/"><meta content="0;url=https://wrong.test/?q=>" http-equiv="refresh"><meta content="default-src none" http-equiv="Content-Security-Policy"></head><body><h1>Hello</h1></body></html>', "https://example.com/docs/page.html");
 assert.doesNotMatch(hostilePreview.html, /wrong\.test|http-equiv/);
 assert.match(hostilePreview.html, /<base href="https:\/\/example.com\/docs\/page.html">/);
@@ -117,8 +136,19 @@ try {
   assert.equal(headingConflict.contested, true);
   assert.deepEqual(headingConflict.yours.responsive, mineResponsive);
   assert.deepEqual(headingConflict.theirs.responsive, responsive);
+  // The fixture's image is not in the site's media library, and the prepublish
+  // report (26 Sep 2026) holds a page back until such a risk is acknowledged.
+  // Acknowledged here exactly as the review screen does it, with `riskIds` —
+  // the screen sent `limits` until 7 Oct 2026 and every acknowledgement failed.
+  const unacknowledged = await (await call("GET", `${pageUrl}/review`)).json() as any;
+  assert.equal(unacknowledged.publishable, false);
+  const riskIds = unacknowledged.prepublishReport.publishRisks
+    .filter((risk: { severity: string; acknowledged: boolean }) => risk.severity !== "info" && !risk.acknowledged)
+    .map((risk: { id: string }) => risk.id);
+  assert.ok(riskIds.length > 0);
+  assert.equal((await call("POST", `/sites/${site.id}/acknowledge-publish-limits`, { riskIds })).status, 200);
   const review = await (await call("GET", `${pageUrl}/review`)).json() as any;
-  assert.equal(review.publishable, true);
+  assert.equal(review.publishable, true, JSON.stringify({ reason: review.reason, prepublish: review.prepublishReport?.publishRisks }).slice(0, 1500));
   assert.ok(review.summary.some((entry: { to: string }) => entry.to === "Saved heading"));
   for (const [device, styles] of Object.entries(responsive)) {
     const label = device === "mobile" ? "phone" : device;
@@ -220,8 +250,12 @@ try {
   assert.ok(copiedExport.includes("An independent copy") && copiedExport.includes("Saved heading"));
   const movedCopy = await call("POST", `${pageUrl}/structure`, { kind: "before", fieldId: copiedId, targetId: title.id, ifRevision: 7 });
   assert.equal(movedCopy.status, 200, await movedCopy.clone().text());
+  // The duplicated block carries a second <h1>, which the prepublish report holds back until acknowledged.
+  const layoutRisks = (await (await call("GET", `${pageUrl}/review`)).json() as any).prepublishReport.publishRisks
+    .filter((risk: { severity: string; acknowledged: boolean }) => risk.severity !== "info" && !risk.acknowledged).map((risk: { id: string }) => risk.id);
+  if (layoutRisks.length) assert.equal((await call("POST", `/sites/${site.id}/acknowledge-publish-limits`, { riskIds: layoutRisks })).status, 200);
   const layoutReview = await (await call("GET", `${pageUrl}/review`)).json() as any;
-  assert.ok(layoutReview.publishable && layoutReview.summary.some((entry: { part: string }) => entry.part === "structure"));
+  assert.ok(layoutReview.publishable && layoutReview.summary.some((entry: { part: string }) => entry.part === "structure"), JSON.stringify({ reason: layoutReview.reason, risks: layoutReview.prepublishReport?.publishRisks, blockers: layoutReview.guard?.blockers }).slice(0, 1500));
   assert.ok(layoutReview.summary.some((entry: { to: string }) => entry.to === "An independent copy"), "layout checkpoint does not hide earlier text changes from review");
   assert.equal((await call("POST", `${pageUrl}/structure`, { kind: "undo", ifRevision: 8 })).status, 200);
   assert.equal((await call("POST", `${pageUrl}/structure`, { kind: "redo", ifRevision: 9 })).status, 200);

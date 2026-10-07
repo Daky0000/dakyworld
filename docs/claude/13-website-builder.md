@@ -294,6 +294,20 @@ reach the page title, a picture's description, or a heading three screens down.
   the page's own inline scripts stay forbidden and only this one runs. Clicks
   are swallowed rather than followed, for the same reason `form-action` is
   `'none'`.
+- **Two policies, and the rule between them is the security boundary
+  (7 Oct 2026).** The editing preview keeps the app's origin
+  (`allow-same-origin`) because the editor reaches into it through
+  `contentDocument`, so its `script-src` is the picker's nonce and *nothing
+  else* — no `'self'`, `https:`, `data:` or `blob:`. Any page script that ran
+  there was the person editing: on 29 Sep a demo fix widened it to every page,
+  and a `<script src="data:…">` in a customer's page could read `/api/auth/me`
+  and the editor window around it — on os.dakyx.com that is the whole OS.
+  Preview mode, and any page `drawnByScript()` says is an empty app shell, get
+  `ISOLATED_PREVIEW_POLICY` instead: scripts on, **no** `allow-same-origin`, so
+  the document is opaque, carries no session and cannot touch the editor.
+  `checks/websiteEditorComplete.ts` asserts both, and that no policy ever has
+  `allow-same-origin` beside a non-nonce script source. Demo pages
+  (`routes/demos.ts`) are sandboxed the same way for the same reason.
 - **A style is an inline `style` on the element that was selected**, never a
   rule in a stylesheet — a rule applies to every page at once and to elements
   nobody was editing. Anything the panel has no control for is left as the
