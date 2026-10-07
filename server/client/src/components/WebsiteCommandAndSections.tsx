@@ -35,7 +35,7 @@ export type SectionTemplateId =
   | "faq"
   | "cta-banner";
 
-const SECTION_CATALOG: Array<{
+export const SECTION_CATALOG: Array<{
   id: SectionTemplateId;
   title: string;
   category: string;

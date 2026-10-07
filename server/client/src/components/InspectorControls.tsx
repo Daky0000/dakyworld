@@ -265,22 +265,16 @@ export function Section({
   action?: React.ReactNode;
 }) {
   return (
-    <section data-section={name ?? title} className="border-b border-line last:border-b-0">
-      <div className="flex items-center gap-1 px-3 pr-2">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
-          aria-label={title}
-          disabled={!onToggle}
-          className="flex min-w-0 flex-1 items-center gap-1.5 py-2.5 text-left text-[11px] font-semibold tracking-[.01em] text-ink transition hover:text-blue disabled:cursor-default disabled:hover:text-ink"
-        >
-          <span className="truncate">{title}</span>{onToggle && <span className="ml-auto text-[11px] font-normal text-muted">{open ? "Hide" : "Show"}</span>}
-          {changed && <span aria-label="Changed here" title="Something in this group has been changed" className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue" />}
+    <section data-section={name ?? title} className="dx-sec" data-open={open ? "" : undefined}>
+      <div className="dx-sec-h">
+        <button type="button" onClick={onToggle} aria-expanded={open} aria-label={title} disabled={!onToggle} className="dx-sec-b">
+          <span className="truncate">{title}</span>
+          {changed && <span aria-label="Changed here" title="Something in this group has been changed" className="dx-sec-dot" />}
+          {onToggle && <span className="dx-chev" aria-hidden="true" />}
         </button>
         {action}
       </div>
-      {open && <div className="space-y-1 px-3 pb-3">{children}</div>}
+      {open && <div className="dx-sec-body">{children}</div>}
     </section>
   );
 }
@@ -296,7 +290,7 @@ export function Section({
 export function Row({ label, control, rail }: { label?: string; control: React.ReactNode; rail?: React.ReactNode }) {
   return (
     <div data-row className="flex min-w-0 items-center gap-2">
-      {label !== undefined && <span title={label} className="w-[62px] shrink-0 truncate text-[11px] uppercase tracking-[.04em] text-muted">{label}</span>}
+      {label !== undefined && <span title={label} className="dx-row-l">{label}</span>}
       <div className="flex min-w-0 flex-1 items-center gap-1.5">{control}</div>
       <div className="flex w-[50px] shrink-0 justify-end">{rail}</div>
     </div>

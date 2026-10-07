@@ -50,42 +50,54 @@ try {
   // Offered once, to somebody who has never seen it.
   await page.getByRole("region", { name: "Editor basics tour" }).waitFor();
   await page.getByRole("button", { name: "Start the tour", exact: true }).click();
-  await step("This is your page").waitFor();
-  assert.match(await step("This is your page").innerText(), /1 of 7/i);
+  const next = () => page.getByRole("button", { name: "Next", exact: true }).click();
+  await step("Pick how you work").waitFor();
+  assert.match(await step("Pick how you work").innerText(), /STEP 1 OF 10/);
   assert.ok(saved.some((patch) => patch.tours?.editor?.status === "started"), "Starting a tour is recorded on the account");
+  // A held step stops stray clicks reaching the page.
+  assert.equal(await page.locator(".dx-t-block").count(), 1, "A reading step holds the screen still");
+  await next();
+  await step("Check every screen size").waitFor();
+  await next();
 
-  // 1 → 2: selecting something on the page, by any route, finishes the step.
+  // A waiting step lets the page through, and selecting something by any route finishes it.
+  await step("Click anything to edit it").waitFor();
+  assert.equal(await page.locator(".dx-t-block").count(), 0, "A doing step lets clicks reach the page");
+  assert.equal(await page.locator(".dx-t-ring.wait").count(), 1, "A doing step pulses its ring");
   await page.frameLocator('iframe[title="Page"]').locator("h1").waitFor();
   await page.frameLocator('iframe[title="Page"]').locator("h1").evaluate(() => parent.postMessage({ source: "dakyworld-preview", type: "select", id: "hero.title" }, location.origin));
-  await step("Change it").waitFor();
+  await step("All the settings in one place").waitFor();
+  await next();
 
-  // 2 → 3: changing it.
-  await page.getByRole("textbox", { name: "Main heading", exact: true }).fill("Welcome to our home");
-  await step("It saves by itself").waitFor();
-  await page.getByRole("button", { name: "Next", exact: true }).click();
+  // The tour asks the editor for the Style tab, where Normal / Hover lives.
+  await step("Style normal and hover").waitFor();
+  assert.equal(await page.getByRole("tab", { name: "Style", exact: true }).getAttribute("aria-selected"), "true", "A step that points into Style opens it");
+  await next();
+  await step("Your tools live here").waitFor();
+  await next();
+  await step("Right-click for quick actions").waitFor();
+  await next();
+  await step("Search every tool").waitFor();
+  await next();
+  // The agent step is optional: it is skipped on a plan without the agent.
+  await page.getByRole("dialog", { name: /^(Or just ask|Publish when you're ready)$/ }).waitFor();
+  if (await step("Or just ask").count()) await next();
 
-  // 4: the phone check is finished by switching to Phone.
-  await step("Check it on a phone").waitFor();
-  await page.getByRole("button", { name: "Phone", exact: true }).click();
-
-  // 5: Preview.
-  await step("See it as a visitor would").waitFor();
-  await page.getByRole("button", { name: /^Editor mode/ }).click();
-  await page.getByRole("menuitemradio", { name: "Preview", exact: true }).click();
-
-  // 6 puts the editor back in Visual for the publish step.
-  await step("Making it live").waitFor();
-  await page.getByRole("button", { name: "Editor mode: Visual", exact: true }).waitFor();
-  const card = await step("Making it live").boundingBox();
+  await step("Publish when you're ready").waitFor();
+  const card = await step("Publish when you're ready").boundingBox();
   assert.ok(card && card.x >= 0 && card.y >= 0 && card.x + card.width <= 1440 && card.y + card.height <= 1000, "The step card stays on screen");
   await mkdir("checks/artifacts", { recursive: true });
+  await page.waitForTimeout(600);
   await page.screenshot({ path: "checks/artifacts/editor-tour.png" });
-  await page.getByRole("button", { name: "Next", exact: true }).click();
-
-  await step("Your tools live here").waitFor();
   await page.getByRole("button", { name: "Finish", exact: true }).click();
+  await page.getByRole("dialog", { name: "Tour finished" }).waitFor();
+  await page.waitForTimeout(700);
+  const done = await page.getByRole("dialog", { name: "Tour finished" }).boundingBox();
+  assert.ok(done && Math.abs(done.x + done.width / 2 - 720) < 4, "The finish card is centred");
+  await page.screenshot({ path: "checks/artifacts/editor-tour-done.png" });
+  await page.getByRole("button", { name: "Start editing", exact: true }).click();
   await page.waitForTimeout(300);
-  assert.equal(await page.getByRole("dialog", { name: "Your tools live here" }).count(), 0, "Finishing closes the tour");
+  assert.equal(await page.getByRole("dialog", { name: "Tour finished" }).count(), 0, "Start editing closes the finish card");
   assert.ok(saved.some((patch) => patch.tours?.editor?.status === "done"), "Finishing is recorded on the account");
 
   // Not offered again, and Help shows it as taken.

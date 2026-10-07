@@ -1728,6 +1728,6 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
   }
 
   if (responsiveChanged) html = regenerateResponsiveStyles(html);
-  if (/--dw-(?:hover|focus|active)-|data-dw-interaction-styles/.test(html)) html = regenerateInteractionStyles(html);
+  if (/--dw-(?:hover-|focus-|active-|enter|loop|scroll)|data-dw-interaction-styles/.test(html)) html = regenerateInteractionStyles(html);
   return { html, changed, conflicts, missing };
 }

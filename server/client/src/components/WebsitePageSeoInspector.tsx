@@ -138,7 +138,7 @@ export function WebsitePageSeoInspector({
   useEffect(() => {
     if (!seoQuery.data) return;
     const pageEntry =
-      seoQuery.data.pages.find((p) => p.pageId === pageId) ?? seoQuery.data.pages[0];
+      (seoQuery.data.pages ?? []).find((p) => p.pageId === pageId) ?? seoQuery.data.pages?.[0];
     if (pageEntry) {
       setSeoTitle(pageEntry.seo.title || "");
       setSeoDescription(pageEntry.seo.description || "");
@@ -362,7 +362,8 @@ export function WebsitePageSeoInspector({
 
   const healthMonitorQuery = useQuery({
     queryKey: ["website", "health-monitor", siteId],
-    enabled: Boolean(siteId),
+    // Only where the uptime card is shown: the Theme drawer has no use for it.
+    enabled: Boolean(siteId) && show("grow"),
     queryFn: ({ signal }) =>
       api.get<{
         checkedAt: string;
@@ -699,7 +700,7 @@ export function WebsitePageSeoInspector({
             <span>{runHealthProbeMutation.isPending ? "Checking…" : "Check Now"}</span>
           </button>
         </div>
-        {healthMonitorQuery.data ? (
+        {healthMonitorQuery.data?.ssl ? (
           <div className="grid grid-cols-3 gap-1.5 text-[11px]">
             <div className="rounded-lg bg-white p-1.5 border border-line/60">
               <span className="block text-[9px] uppercase text-muted">Status</span>

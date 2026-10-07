@@ -454,6 +454,41 @@ reach the page title, a picture's description, or a heading three screens down.
   `publicUrl` to `<slug>.<WEBSITE_HOST_DOMAIN || sites.dakyx.com>` instead of
   the client inventing `name.com`. `checks/browser/welcomeFlow.mjs` walks it.
 
+### The redesign, finished (7 Oct 2026, second pass)
+
+- **Every rail item is a drawer now** — Add (`WebsiteSectionsPanel`), Notes
+  (`WebsiteNotesPanel`) and History (`WebsiteVersions inline`) joined Layers,
+  Theme, Media, SEO, Grow and Help. The old dialogs still exist for the
+  command palette's callers.
+- **Style has Normal and Hover.** Hover (`WebsiteHoverPanel`) writes only the
+  `--dw-hover-*` properties the published page already understood; the element
+  is shown in its hover state while the view is open. Shadow presets are tiles
+  in both (`SHADOW_PRESETS`, `InspectorDesign.tsx`).
+- **Interactions are motion, chosen by name** (`WebsiteMotionPanel`): entrance,
+  click effect, loop, scroll effect. The inspector stores a keyframe *name* in
+  `--dw-enter` / `--dw-loop` / `--dw-scroll` (plus durations); `MOTION_CSS` in
+  `shared/websiteInteraction.ts` is the only CSS that turns them into animation,
+  published by the same `regenerateInteractionStyles` as hover. Scroll-linked
+  entrances use `animation-timeline: view()` where supported and play on load
+  elsewhere; everything stops under reduced motion. "When clicked" on a link or
+  button rewrites its real `href` (page, URL, `wa.me`, `tel:`, `mailto:`) — no
+  script is ever added. `checks/websiteInteractions.ts` holds it.
+- **The canvas overlay** (`WebsiteCanvasOverlay`) draws the selection label, the
+  mini toolbar and the dark format bar for highlighted words over the frame, in
+  the editor — nothing in it can reach the page's HTML. The format bar replaced
+  the panel's text-formatting box.
+- **The right-click menu is the design's list**, each item a real operation:
+  Move up/down are structure moves (Designer controls), Hide on phone writes the
+  phone override `display: none`, Delete/Duplicate need the field's structure
+  permission and are disabled otherwise.
+- **The tour host** has three cards: a centred welcome (the offer), step cards
+  with a spotlight, and a centred finish with confetti. A reading step blocks
+  the page (a click nudges the card); a doing step (`waitFor`) lets clicks
+  through and pulses its ring. Steps can ask for an inspector tab
+  (`requestTourTab`). It portals into `.website-editor` so dark mode applies.
+- **A drawer's contents must not shrink**: `.dx-dbody > *` is `flex-shrink: 0`;
+  without it the section cards collapsed into each other.
+
 Built from `reusable_website_editor_system_plan.pdf` (23 Aug 2026), whose block
 model was deliberately not followed for this site; the plan lists converting an
 existing hard-coded website as a non-goal for version one, and this is why.

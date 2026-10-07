@@ -51,7 +51,7 @@ export const STYLESHEET_CANDIDATES = [
 
 /** A hover value in either spelling: `--dw-hover-color: red` in a template's
  * style attribute, or `"--dw-hover-color": "red"` in a JSX style object. */
-const HOVER_PROPERTY = /--dw-(?:hover|focus|active)-[a-z-]+["']?\s*:/;
+const HOVER_PROPERTY = /--dw-(?:(?:hover|focus|active)-[a-z-]+|enter[a-z-]*|loop[a-z-]*|scroll[a-z-]*)["']?\s*:/;
 
 const START = (page: string) => `/* dakyworld-editor:start ${page} */`;
 const END = (page: string) => `/* dakyworld-editor:end ${page} */`;

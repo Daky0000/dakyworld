@@ -1,3 +1,4 @@
+import { SHADOW_PRESETS, Tiles } from "./InspectorDesign";
 import { useMemo, useRef, useState } from "react";
 import { CssValueField, UnitPillSelector } from "./CssValueField";
 import {
@@ -1265,6 +1266,19 @@ export function ElementInspector({
                 />
               }
             />
+            <div className="dx-f">
+              <div className="dx-fl"><label>Shadow</label></div>
+              <Tiles
+                label="Shadow"
+                disabled={disabled}
+                options={SHADOW_PRESETS.map((option) => ({ value: option.value, label: option.label, demo: option.css }))}
+                value={SHADOW_PRESETS.find((option) => option.css === (declarations["box-shadow"] ?? (siteShadow ? "" : "none")))?.value ?? ""}
+                onChange={(next) => {
+                  set("box-shadow", next === "none" ? (siteShadow ? "none" : "") : SHADOW_PRESETS.find((option) => option.value === next)?.css ?? "");
+                  onCommit?.();
+                }}
+              />
+            </div>
             {extras.includes("box-shadow") ? (
               <Shadow property="box-shadow" declarations={declarations} disabled={disabled} onSet={set} onCommit={onCommit} />
             ) : siteShadow ? (
@@ -1292,7 +1306,7 @@ export function ElementInspector({
                 }}
                 className="w-full rounded-xl border border-dashed border-line py-2 text-[11px] font-semibold text-muted transition hover:border-blue hover:text-blue"
               >
-                + Add shadow
+                Fine-tune shadow
               </button>
             )}
           </Section>

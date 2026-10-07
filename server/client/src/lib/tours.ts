@@ -40,68 +40,117 @@ export type TourStep = {
   optional?: boolean;
   /** Put the editor in this mode before the step is shown. */
   mode?: "visual" | "edit" | "preview";
+  /** Open this inspector tab before the step is shown. */
+  tab?: "content" | "style" | "interactions";
+  /** The line in the "do this" box of a step that waits for an action. */
+  doText?: string;
+  /** A small hint row: what to do, and the keys for it. */
+  tip?: [string, string?];
+  /** Which side of its target the card prefers. */
+  side?: "top" | "bottom" | "left" | "right";
 };
 
 export type TourId = "editor" | "publishing" | "pictures" | "workspace";
-export type Tour = { id: TourId; title: string; summary: string; minutes: number; steps: TourStep[] };
+export type Tour = {
+  id: TourId;
+  title: string;
+  summary: string;
+  minutes: number;
+  steps: TourStep[];
+  /** The centred card that offers the tour, before step one. */
+  welcome?: { title: string; body: string };
+  /** What the finishing card lists as learned. */
+  done?: string[];
+};
 
 export const TOURS: Record<TourId, Tour> = {
   editor: {
     id: "editor",
     title: "Editor basics",
-    summary: "Change something on your page, check it on a phone, and see how it goes live.",
-    minutes: 2,
+    summary: "Select something, change it, see every screen size, and publish.",
+    minutes: 1,
+    welcome: {
+      title: "Welcome to the editor",
+      body: "Everything you need to change your website is here, and nothing goes live until you publish. This tour takes about a minute.",
+    },
+    done: ["Select anything to edit it", "Style normal and hover", "Use the tool rail and search", "Publish when ready"],
     steps: [
+      {
+        id: "modes",
+        target: '[data-tour="modes"]',
+        mode: "visual",
+        title: "Pick how you work",
+        body: "Edit on the page in Visual, edit all the words at once in List, or check it as a visitor in Preview.",
+      },
+      {
+        id: "devices",
+        target: '[data-tour="devices"]',
+        title: "Check every screen size",
+        body: "Switch between desktop, tablet and phone. Changes made on tablet or phone only apply to those screens.",
+        optional: true,
+      },
       {
         id: "canvas",
         target: '[data-tour="canvas"]',
         mode: "visual",
-        title: "This is your page",
-        body: "It is your real website, as visitors see it. Click a heading on it to select it.",
+        title: "Click anything to edit it",
+        body: "Selecting something opens its settings on the right. Double-click words to type straight into them.",
         waitFor: "field-selected",
+        doText: "Try it: click a heading on your page",
       },
       {
-        id: "change",
+        id: "inspector",
         target: '[data-tour="inspector"]',
-        mode: "visual",
-        title: "Change it",
-        body: "This panel shows what you picked. Change its words here, or double-click it on the page and type. Make any small change now — Ctrl+Z, or Undo in the bar, takes it back.",
-        waitFor: "text-edited",
+        side: "left",
+        tab: "content",
+        title: "All the settings in one place",
+        body: "Content is the words, links and pictures. Style is how it looks. Interactions are animations and what happens on click.",
       },
       {
-        id: "saved",
-        target: '[data-tour="save-status"]',
-        title: "It saves by itself",
-        body: "Every change is kept as a private draft as you go. Your live website has not changed, and nobody else can see this yet.",
+        id: "states",
+        target: '[data-tour="style-states"]',
+        side: "left",
+        tab: "style",
+        title: "Style normal and hover",
+        body: "Switch to Hover to change how it looks when the mouse is over it.",
         optional: true,
       },
       {
-        id: "phone",
-        target: '[data-tour="devices"]',
-        title: "Check it on a phone",
-        body: "Most visitors will see your website on a phone. Switch to Phone to see your change there.",
-        waitFor: "device-changed",
+        id: "rail",
+        target: '[data-tour="more"]',
+        side: "right",
+        title: "Your tools live here",
+        body: "Add sections, browse layers, set the page's colours and fonts, swap pictures, tune SEO and growth tools, leave notes, open History, and find the other tours under Help.",
+      },
+      {
+        id: "rightclick",
+        target: '[data-tour="canvas"]',
+        title: "Right-click for quick actions",
+        body: "Copy, paste, duplicate, copy a style to reuse, move things up or down, hide on phone, or delete. Highlight words while typing for bold, colour and links.",
+        tip: ["Right-click any element"],
+      },
+      {
+        id: "search",
+        target: '[data-tour="search"]',
+        title: "Search every tool",
+        body: "Can't remember where something is? Search finds any tool, panel or setting — and anything on this page.",
+        tip: ["Open search", "Ctrl K"],
         optional: true,
       },
       {
-        id: "preview",
-        target: '[data-tour="modes"]',
-        title: "See it as a visitor would",
-        body: "Open this menu to switch how you work. Preview shows the page without the editing outlines; List shows every word and link as a list — handy on a phone. Try Preview.",
-        waitFor: "mode-preview",
+        id: "agent",
+        target: '[data-tour="agent"]',
+        side: "left",
+        title: "Or just ask",
+        body: "Tell the builder agent what you want in plain words. It makes the change as a draft you can check first.",
+        optional: true,
       },
       {
         id: "publish",
         target: '[data-tour="publish"]',
         mode: "visual",
-        title: "Making it live",
-        body: "When you are happy, Publish shows exactly what will change — the old words and the new — before anything goes live. You can also send it to somebody for approval from there. The arrow beside it saves, downloads, and opens every earlier version.",
-      },
-      {
-        id: "more",
-        target: '[data-tour="more"]',
-        title: "Your tools live here",
-        body: "Add a section, browse every layer, set the page's colours and fonts, swap pictures, tune SEO, speed and lead tools, leave notes, open History, or find the other tours under Help.",
+        title: "Publish when you're ready",
+        body: "Edits save as a private draft by themselves. Publish shows exactly what will change before anything goes live. The arrow beside it saves, downloads and opens every earlier version.",
       },
     ],
   },
@@ -136,7 +185,7 @@ export const TOURS: Record<TourId, Tour> = {
         id: "versions",
         target: '[data-tour="more"]',
         title: "Every version is kept",
-        body: "Close the review, then click History on the left. Every publish is listed with what changed and who did it.",
+        body: "Close the review, then click History on the left. Every publish is listed with what changed, and can be put back.",
         waitFor: "versions-opened",
       },
       {
@@ -212,7 +261,7 @@ export const TOURS: Record<TourId, Tour> = {
       {
         id: "next",
         title: "Ready when you are",
-        body: "Open any page and the editor offers its own two-minute tour. You can take any tour again from More in the editor.",
+        body: "Open any page and the editor offers its own one-minute tour. You can take any tour again from Help in the editor.",
       },
     ],
   },
@@ -221,6 +270,7 @@ export const TOURS: Record<TourId, Tour> = {
 const ACTION_EVENT = "dakyx:tour-action";
 const START_EVENT = "dakyx:tour-start";
 const MODE_EVENT = "dakyx:tour-mode";
+const TAB_EVENT = "dakyx:tour-tab";
 
 /** A screen saying the person just did something a tour may be waiting for. */
 export function tourAction(action: TourAction) {
@@ -236,4 +286,9 @@ export function requestTourMode(mode: "visual" | "edit" | "preview") {
   window.dispatchEvent(new CustomEvent(MODE_EVENT, { detail: { mode } }));
 }
 
-export const TOUR_EVENTS = { action: ACTION_EVENT, start: START_EVENT, mode: MODE_EVENT } as const;
+/** Asks the editor to open an inspector tab before a step that points into it. */
+export function requestTourTab(tab: "content" | "style" | "interactions") {
+  window.dispatchEvent(new CustomEvent(TAB_EVENT, { detail: { tab } }));
+}
+
+export const TOUR_EVENTS = { action: ACTION_EVENT, start: START_EVENT, mode: MODE_EVENT, tab: TAB_EVENT } as const;

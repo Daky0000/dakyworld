@@ -38,6 +38,23 @@ assert.match(preview.html, /data-dw-interaction-preview/);
 assert.match(preview.html, /data-dw-state-preview/);
 const fragment = buildPreview('<h1>Hello</h1>', "https://example.com/");
 assert.match(fragment.html, /data-dw-interaction-preview/);
+// Motion from the Interactions tab: named keyframes in custom properties,
+// kept by the sanitiser, and the fixed rules that animate them published with
+// the page — and nothing that is not one of those names can become CSS.
+{
+  const motion = "--dw-enter: dw-enter-up; --dw-enter-dur: 0.8s; --dw-loop: dw-loop-pulse; --dw-active-transform: scale(.94); --dw-scroll: dw-scroll-fade";
+  const moved = sanitizeValue(cta, { style: motion });
+  for (const part of ["--dw-enter: dw-enter-up", "--dw-enter-dur: 0.8s", "--dw-loop: dw-loop-pulse", "--dw-active-transform: scale(.94)", "--dw-scroll: dw-scroll-fade"]) {
+    assert.ok(moved.style?.includes(part), `motion value survives sanitising: ${part}`);
+  }
+  assert.doesNotMatch(sanitizeValue(cta, { style: "--dw-enter: url(https://evil.example/x)" }).style ?? "", /url/, "a motion value cannot fetch");
+  const published = applyValues(source, { [cta.id]: moved }).html;
+  assert.match(published, /data-dw-interaction-styles/, "a page using motion carries the interaction rules");
+  assert.match(published, /@keyframes dw-enter-up\{/, "the entrance keyframes are published");
+  assert.match(published, /\[style\*="--dw-loop"\]\{animation:var\(--dw-loop\)/, "loops animate by name");
+  assert.match(published, /prefers-reduced-motion:reduce\)\{\[style\*="--dw-enter"\]/, "motion stops for reduced motion");
+  assert.match(interactionCss(), /animation-timeline:view\(\)/, "scroll-linked entrances where the browser supports it");
+}
 await mkdir('checks/artifacts', { recursive: true });
 await writeFile('checks/artifacts/interaction-published.html', plan.html!);
 console.log('websiteInteractions: selection markup, shared sanitization, metadata safety, published hover/focus CSS, resets and fragment previews passed.');

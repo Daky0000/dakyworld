@@ -1,8 +1,11 @@
 import { DeferredPanel } from "../components/DeferredPanel";
-import { formatActiveText } from "../lib/websiteTextSelection";
+import { editableInnerHtml, formatActiveText, formatTextRange, type InlineFormat } from "../lib/websiteTextSelection";
+import { WebsiteCanvasOverlay } from "../components/WebsiteCanvasOverlay";
 import { WebsiteRichText } from "../components/WebsiteRichText";
 import { WebsiteTextFormatting } from "../components/WebsiteTextFormatting";
-import { WebsiteInteractionStyles } from "../components/WebsiteInteractionStyles";
+import { WebsiteMotionPanel } from "../components/WebsiteMotionPanel";
+import { WebsiteHoverPanel } from "../components/WebsiteHoverPanel";
+import { Seg } from "../components/InspectorDesign";
 import { lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
@@ -30,6 +33,7 @@ import { extractColorsFromMarkup } from "../lib/pageColors";
 import { INSPECTED_PROPERTIES, toHex, type ElementFacts } from "../lib/elementInspector";
 import { WebsiteLayers, WebsiteBreadcrumbs } from "../components/WebsiteLayers";
 import { WebsiteVersions } from "../components/WebsiteVersions";
+import { WebsiteNotesPanel, WebsiteSectionsPanel } from "../components/WebsiteDrawerPanels";
 
 import { WebsiteAssistant } from "../components/WebsiteAssistant";
 import { WebsiteAgentChat } from "../components/WebsiteAgentChat";
@@ -151,9 +155,9 @@ const MODES: { key: Mode; label: string }[] = [
 ];
 
 /** The drawers the tool rail opens. One at a time: the page is what matters. */
-type EditorPanel = "layers" | "theme" | "media" | "seo" | "grow" | "help";
+type EditorPanel = "add" | "layers" | "theme" | "media" | "seo" | "grow" | "notes" | "history" | "help";
 
-const RAIL: { key: Exclude<EditorPanel, "help">; label: string; title: string; icon: typeof IconLayers }[] = [
+const RAIL: { key: Exclude<EditorPanel, "help" | "add" | "notes" | "history">; label: string; title: string; icon: typeof IconLayers }[] = [
   { key: "layers", label: "Layers", title: "Everything on this page, in order", icon: IconLayers },
   { key: "theme", label: "Theme", title: "Colours and fonts for the whole page", icon: IconPalette },
   { key: "media", label: "Media", title: "Pictures and files", icon: IconImage },
@@ -162,6 +166,9 @@ const RAIL: { key: Exclude<EditorPanel, "help">; label: string; title: string; i
 ];
 
 const RAIL_TITLES: Record<EditorPanel, { title: string; sub: string }> = {
+  add: { title: "Add", sub: "Drop in a ready-made section" },
+  notes: { title: "Notes", sub: "Revision notes for this page" },
+  history: { title: "History", sub: "Restore any earlier version" },
   layers: { title: "Layers", sub: "Everything on this page, in order. Click one to select it." },
   theme: { title: "Theme", sub: "Colours and fonts that apply across the whole page" },
   media: { title: "Media", sub: "Pictures on this page and in your library" },
@@ -318,6 +325,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const [liveBlind, setLiveBlind] = useState(false);
   const awaiting = useRef(0);
   const frame = useRef<HTMLIFrameElement | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
   const [device, setDevice] = useState<Device>(() => typeof window !== "undefined" && window.innerWidth <= 600 ? "mobile" : "desktop");
   useEffect(() => {
     const adapt = () => {
@@ -1354,6 +1362,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
   const { status: tierStatus } = useWebsiteTierStatus(page.data?.site?.id);
 
+  /** Normal or Hover, in the Style tab. A new selection starts at Normal. */
+  const [styleState, setStyleState] = useState<"normal" | "hover">("normal");
+  useEffect(() => setStyleState("normal"), [pickedId]);
+
   /** Which rail drawer is open, and which bar menu. */
   const [panel, setPanel] = useState<EditorPanel | null>(null);
   const [menu, setMenu] = useState<null | "mode" | "page" | "publish" | "account">(null);
@@ -1424,8 +1436,19 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       const next = (event as CustomEvent<{ mode?: Mode }>).detail?.mode;
       if (next) setMode(next);
     };
+    const onTab = (event: Event) => {
+      const next = (event as CustomEvent<{ tab?: "content" | "style" | "interactions" }>).detail?.tab;
+      if (!next) return;
+      const field = pickedRef.current ? (page.data?.sections ?? []).flatMap((section) => section.fields).find((candidate) => candidate.id === pickedRef.current) : null;
+      setInspectorTab(next === "content" && field?.kind === "container" ? "layout" : next);
+      setStyleState("normal");
+    };
     window.addEventListener(TOUR_EVENTS.mode, onMode);
-    return () => window.removeEventListener(TOUR_EVENTS.mode, onMode);
+    window.addEventListener(TOUR_EVENTS.tab, onTab);
+    return () => {
+      window.removeEventListener(TOUR_EVENTS.mode, onMode);
+      window.removeEventListener(TOUR_EVENTS.tab, onTab);
+    };
   }, []);
 
   /**
@@ -1931,10 +1954,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     <div
       data-walkthrough="canvas"
       data-tour="canvas"
+      ref={canvasRef}
       role="region"
       aria-label="Page canvas"
       tabIndex={0}
-      className="editor-canvas min-h-0 flex-1 overflow-auto bg-cream p-4"
+      className="editor-canvas relative min-h-0 flex-1 overflow-auto bg-cream p-4"
       onContextMenu={(event) => {
         event.preventDefault();
         openEditorContextMenuFromEvent(event.clientX, event.clientY, null, null, false);
@@ -1967,6 +1991,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           </button>
         </p>
       )}
+      {mode === "preview" && (
+        <div className="dx-preview-bar">
+          Previewing as a visitor
+          <button type="button" className="dx-btn dx-soft" onClick={() => setMode("visual")}>Back to editing</button>
+        </div>
+      )}
       {mode === "visual" && page.data?.drawnByScript && (
         <p role="note" className="mx-auto mb-3 max-w-3xl rounded-xl border border-line bg-white px-3.5 py-2.5 text-xs leading-relaxed text-muted">
           This page is drawn by its own scripts, so the canvas shows it exactly as a visitor sees it and it can't be clicked into.
@@ -1984,6 +2014,32 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           className="h-full min-h-[400px] w-full border border-line bg-white shadow-sm shadow-ink/5"
         />
       </div>
+      {mode === "visual" && picked && (
+        <WebsiteCanvasOverlay
+          stage={canvasRef}
+          frame={frame}
+          element={pickedElement}
+          label={picked.label}
+          kind={picked.kind}
+          zoom={zoom}
+          typing={typingId === picked.id}
+          readOnly={readOnly}
+          canDuplicate={!readOnly && Boolean(picked.structure?.duplicate)}
+          canDelete={!readOnly && Boolean(picked.structure?.remove)}
+          hasParent={Boolean(picked.parentId)}
+          agent={canEdit && (!tierStatus?.features || tierStatus.features.aiBuilderAgent)}
+          onEdit={() => tell({ type: "edit", id: picked.id })}
+          onBold={() => formatWhole({ "font-weight": "700" })}
+          onItalic={() => formatWhole({ "font-style": "italic" })}
+          onLink={() => setInspectorTab("content")}
+          onReplace={() => { setAssetTargetMode("image"); setAssetModalOpen(true); }}
+          onParent={() => picked.parentId && pick(picked.parentId)}
+          onAgent={() => setAgentOpen(true)}
+          onDuplicate={() => void runStructure("duplicate", picked.id)}
+          onDelete={() => void runStructure("remove", picked.id)}
+          onFormat={(html) => { change(picked.id, { ...edits[picked.id], value: html }, { fromFrame: true, commit: true }); setFrameEdit((token) => token + 1); }}
+        />
+      )}
     </div>
   );
 
@@ -2037,6 +2093,16 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       </span>
     </button>
   ) : null;
+
+  /** Bold or italic over the whole of the selected element, from the mini toolbar. */
+  const formatWhole = (styles: Partial<Record<InlineFormat, string>>) => {
+    if (!picked || !pickedElement || readOnly) return;
+    const range = pickedElement.ownerDocument.createRange();
+    range.selectNodeContents(pickedElement);
+    if (!formatTextRange(pickedElement, range, styles)) return;
+    change(picked.id, { ...edits[picked.id], value: editableInnerHtml(pickedElement) }, { fromFrame: true, commit: true });
+    setFrameEdit((token) => token + 1);
+  };
 
   /** Put a chosen file where the selection needs it — a picture, an icon, or a background. */
   const applyAsset = (asset: { url: string; alt?: string; preview?: string }, targetMode: "image" | "background") => {
@@ -2092,7 +2158,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const openVersions = async () => {
     try {
       if (dirty.current) await save.mutateAsync(latestEdits.current);
-      if (!dirty.current) setShowVersions(true);
+      if (!dirty.current) { setPanel("history"); setMenu(null); tourAction("versions-opened"); }
     } catch {
       /* Saving reports the failure and preserves local edits. */
     }
@@ -2395,7 +2461,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           setMode("visual");
           setPanel("seo");
         }}
-        onOpenSectionLibrary={() => setSectionLibraryOpen(true)}
+        onOpenSectionLibrary={() => openPanel("add")}
         onOpenAiAssistant={() => setShowAI(true)}
         onSetDevice={(dev) => setDevice(dev)}
         onToggleTheme={() => {
@@ -2580,6 +2646,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           <button
             type="button"
             className="dx-search dx-hide-sm"
+            data-tour="search"
             title="Search every tool, and everything on this page (Ctrl+K / Cmd+K)"
             aria-label="Command palette"
             onClick={() => setCommandPaletteOpen(true)}
@@ -2865,7 +2932,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         {mode !== "preview" && (
           <nav className="dx-rail" aria-label="Tools" data-tour="more">
             {canEdit && !readOnly && (
-              <button type="button" title="Add a ready-made section" aria-label="Add a section" onClick={() => setSectionLibraryOpen(true)}>
+              <button type="button" title="Add a ready-made section" aria-label="Add a section" aria-pressed={panel === "add"} onClick={() => openPanel("add")}>
                 <IconPlusSquare size={18} />Add
               </button>
             )}
@@ -2882,11 +2949,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 {item.label}
               </button>
             ))}
-            <button type="button" title="Revision notes for this page" aria-label="Notes" onClick={() => setCommentsModalOpen(true)}>
+            <button type="button" title="Revision notes for this page" aria-label="Notes" aria-pressed={panel === "notes"} onClick={() => openPanel("notes")}>
               <IconMessageSquare size={18} />Notes
             </button>
             <span className="dx-rail-sp" />
-            <button type="button" title="Every earlier version of this page" aria-label="History" disabled={save.isPending || publish.isPending || structureBusy} onClick={() => void openVersions()}>
+            <button type="button" title="Every earlier version of this page" aria-label="History" aria-pressed={panel === "history"} disabled={save.isPending || publish.isPending || structureBusy} onClick={() => void openVersions()}>
               <IconHistory size={18} />History
             </button>
             <button type="button" title="Tours, the guide and a person to ask" aria-label="Help" aria-pressed={panel === "help"} onClick={() => openPanel("help")}>
@@ -2956,6 +3023,44 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               {(panel === "seo" || panel === "grow") && (tierStatus?.features && !tierStatus.features.seoInspector
                 ? lockedNotice(panel === "seo" ? "Page SEO and structured data" : "Speed, uptime and lead tools", tierStatus)
                 : seoPanel(panel))}
+              {panel === "add" && (
+                <WebsiteSectionsPanel
+                  siteId={site.id}
+                  pageId={pageId}
+                  disabled={readOnly}
+                  onInserted={(label) => {
+                    dirty.current = false;
+                    setPreviewToken((token) => token + 1);
+                    showQuickToast(`${label} inserted`);
+                  }}
+                />
+              )}
+              {panel === "notes" && (
+                <WebsiteNotesPanel
+                  siteId={site.id}
+                  pageId={pageId}
+                  selectedFieldId={picked ? picked.id : null}
+                  selectedFieldLabel={picked ? picked.label : null}
+                  onSelectField={(fieldId) => { setMode("visual"); pick(fieldId); }}
+                />
+              )}
+              {panel === "history" && (
+                <WebsiteVersions
+                  inline
+                  pageId={pageId}
+                  siteId={site.id}
+                  draftRevision={revision.current}
+                  draftNote={status}
+                  onClose={() => setPanel(null)}
+                  onRestored={() => {
+                    dirty.current = false;
+                    try { sessionStorage.removeItem(localDraftKey); } catch { /* Optional recovery storage. */ }
+                    setPublished(null);
+                    void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
+                    setPreviewToken((token) => token + 1);
+                  }}
+                />
+              )}
               {panel === "help" && (
                 <div className="dx-stack">
                   {(["editor", "publishing", "pictures"] as const).map((id) => (
@@ -2993,62 +3098,39 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
         {mode === "edit" ? (
           <div className="dx-listview">
-            <aside className="w-[240px] flex-none overflow-y-auto border-r border-line bg-white p-3">
-              <div className="mb-2 px-1 font-sans text-xs font-bold uppercase tracking-[.06em] text-muted">Sections</div>
-              <ul className="space-y-0.5">
-                {sections.map((candidate) => {
-                  const edited = candidate.fields.some((field) => edits[field.id]);
-                  return (
-                    <li key={candidate.id}>
-                      <button
-                        type="button"
-                        onClick={() => setSectionId(candidate.id)}
-                        title={candidate.label}
-                        className={`flex w-full items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-left text-[12px] ${
-                          candidate.id === section?.id ? "bg-ink text-cream" : "text-ink hover:bg-sunken"
-                        }`}
-                      >
-                        <span className="truncate">{candidate.label}</span>
-                        <span className={`shrink-0 text-xs ${candidate.id === section?.id ? "text-cream/60" : "text-muted"}`}>
-                          {edited ? "●" : candidate.fields.length}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </aside>
-            <div className="min-h-0 flex-1 overflow-y-auto bg-cream px-6 py-6">
-              <div className="mx-auto max-w-3xl space-y-3">
-                {section ? (
-                  <>
-                    <h2 className="font-display text-lg tracking-[-.02em]">{section.label}</h2>
-                    {section.fields.map((field) => (
-                      <FieldRow
-                        key={`${loadToken}:${field.id}`}
-                        field={field}
-                        edit={edits[field.id]}
-                        problem={problems.get(field.id)}
-                        siteId={site.id}
-                        publicUrl={page.data.page.url}
-                        resolveImagePreview={resolveImagePreview}
-                        links={links ?? []}
-                        readOnly={readOnly}
-                        onChange={(next) => change(field.id, next)}
-                        onNameFields={() => void nameFields()}
-                        naming={naming}
-                        onOpenMediaLibrary={() => {
-                          pick(field.id);
-                          setAssetTargetMode(field.kind === "container" ? "background" : "image");
-                          setAssetModalOpen(true);
-                        }}
-                      />
-                    ))}
-                  </>
-                ) : (
-                  <p className="text-sm text-muted">This page has nothing editable on it.</p>
-                )}
-              </div>
+            <div className="dx-listwrap">
+              <p className="dx-hint">Every word, link and picture on the page, section by section. Edit here and it updates on the page.</p>
+              {sections.length === 0 && <p className="dx-hint">This page has nothing editable on it.</p>}
+              {sections.map((candidate) => (
+                <details key={candidate.id} className="dx-card dx-listcard" open>
+                  <summary>
+                    <h3>{candidate.label}</h3>
+                    <span className="dx-badge">{candidate.fields.length} item{candidate.fields.length === 1 ? "" : "s"}</span>
+                    {candidate.fields.some((field) => edits[field.id]) && <span className="dx-sec-dot" aria-label="Changed here" />}
+                  </summary>
+                  {candidate.fields.map((field) => (
+                    <FieldRow
+                      key={`${loadToken}:${field.id}`}
+                      field={field}
+                      edit={edits[field.id]}
+                      problem={problems.get(field.id)}
+                      siteId={site.id}
+                      publicUrl={page.data.page.url}
+                      resolveImagePreview={resolveImagePreview}
+                      links={links ?? []}
+                      readOnly={readOnly}
+                      onChange={(next) => change(field.id, next)}
+                      onNameFields={() => void nameFields()}
+                      naming={naming}
+                      onOpenMediaLibrary={() => {
+                        pick(field.id);
+                        setAssetTargetMode(field.kind === "container" ? "background" : "image");
+                        setAssetModalOpen(true);
+                      }}
+                    />
+                  ))}
+                </details>
+              ))}
             </div>
           </div>
         ) : (
@@ -3083,6 +3165,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               <button
                 type="button"
                 className="dx-ai"
+                data-tour="agent"
                 title="Builder agent — describe a change and it makes it"
                 aria-label="Builder agent"
                 aria-pressed={agentOpen}
@@ -3171,44 +3254,50 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                       three actions that belong to the whole element rather than
                       to any one property. One line each: this bar sits above
                       every panel and is not what somebody came to read. */}
-                  <div hidden={inspectorTab !== "style" && inspectorTab !== "layout"} className="editor-scope-strip border-b border-line px-3 py-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className={`rounded-[10px] px-1.5 py-0.5 text-xs font-semibold ${device === "desktop" ? "bg-white text-ink" : "bg-blue/10 text-blue"}`}>
-                        {device === "desktop" ? "Desktop (All screens)" : device === "tablet" ? "Tablet override (≤ 768px)" : "Phone override (≤ 480px)"}
-                      </span>
-                      <span className="font-mono text-xs text-muted">
-                        {computed.width || "—"} × {computed.height || "—"}
-                      </span>
+                  <div hidden={inspectorTab !== "style" && inspectorTab !== "layout"} className="dx-scope-wrap">
+                    {inspectorTab === "style" && (
+                      <div className="dx-states" data-tour="style-states">
+                        <Seg label="Pick a state to style" value={styleState} options={[{ value: "normal", label: "Normal" }, { value: "hover", label: "Hover" }]} onChange={setStyleState} />
+                      </div>
+                    )}
+                    <div className="dx-scope" title="Desktop styles apply to every screen unless you change them on tablet or phone">
+                      {device === "desktop" ? <IconDesktop size={15} /> : device === "tablet" ? <IconTablet size={15} /> : <IconPhoneDevice size={15} />}
+                      Editing <b>{device === "desktop" ? "Desktop · all screens" : device === "tablet" ? "Tablet and smaller" : "Phone only"}</b>
+                      <span className="dx-dim">{computed.width ? `${parseInt(computed.width)} × ${parseInt(computed.height || "0")}` : "—"}</span>
                     </div>
-                    <p className="mt-1.5 text-xs leading-relaxed text-muted">
-                      {device === "desktop"
-                        ? "Desktop styles govern all screen widths unless overridden at tablet or phone widths."
-                        : device === "tablet"
-                          ? "Edits here apply to tablet screens and below (≤ 768px). Reset any property to inherit from desktop."
-                          : "Edits here apply strictly to mobile phone screens (≤ 480px). Reset any property to inherit from larger screens."}
-                    </p>
                     {device !== "desktop" && /!\s*important/i.test(edits[picked.id]?.style ?? picked.style ?? "") && (
-                      <p className="mt-1.5 text-xs leading-relaxed text-warn-text">
-                        This element has a base style marked !important, so that property keeps its base value at every size until you change it
-                        under Desktop.
+                      <p className="dx-note warn">
+                        This element has a base style marked !important, so that property keeps its base value at every size until you change it under Desktop.
                       </p>
                     )}
-                    {designerMode && <div className="mt-2 flex flex-wrap gap-1">
-                      <button type="button" onClick={() => setStyleClipboard(pickedStyle)} className="rounded-[10px] bg-white px-2 py-1 text-xs font-semibold text-ink transition hover:text-blue">Copy style</button>
-                      <button type="button" disabled={readOnly || styleClipboard === null} onClick={() => changePickedStyle(styleClipboard!, true)} className="rounded-[10px] bg-white px-2 py-1 text-xs font-semibold text-ink transition hover:text-blue disabled:text-faint">Paste</button>
-                      {device !== "desktop" && <button type="button" disabled={readOnly || !pickedStyle} onClick={() => changePickedStyle("", true)} className="rounded-[10px] bg-white px-2 py-1 text-xs font-semibold text-ink transition hover:text-blue disabled:text-faint">Clear overrides</button>}
-                      <span className="ml-auto self-center text-xs text-faint">{picked.confidence === "annotated" ? "Stable field" : "Discovered"}</span>
-                    </div>}
                   </div>
 
                   {/* One inspector, drawn from what the element is. The frame is
                       what knows that — its display, its parent's, whether it has
                       words of its own — and when the frame cannot be reached the
                       field row is the only thing left to go on. */}
-                  {!readOnly && inspectorTab === "style" && <div className="px-3 pt-3"><WebsitePresetPicker presets={design.data?.options.presets ?? []} kind={picked.kind} tag={picked.tag} style={pickedStyle ?? ""} onApply={next => changePickedStyle(next, true)} /></div>}
-                  {picked.kind !== "container" && picked.kind !== "image" && !readOnly && <div className="px-3 pt-2"><WebsiteTextFormatting hideWhenEmpty element={pickedElement} onChange={html => { change(picked.id, { ...edits[picked.id], value: html }, { fromFrame: true, commit: true }); setFrameEdit(token => token + 1); }} /></div>}
-                  <div hidden={inspectorTab !== "interactions"}><WebsiteInteractionStyles element={pickedElement} style={edits[picked.id]?.style ?? picked.style ?? ""} readOnly={readOnly} onChange={style => change(picked.id, { ...edits[picked.id], style }, { commit: true })} /></div>
-                  <div hidden={inspectorTab === "interactions"}><ElementInspector
+                  {!readOnly && inspectorTab === "style" && styleState === "normal" && <div className="px-3 pt-3"><WebsitePresetPicker presets={design.data?.options.presets ?? []} kind={picked.kind} tag={picked.tag} style={pickedStyle ?? ""} onApply={next => changePickedStyle(next, true)} /></div>}
+                  {inspectorTab === "interactions" && (
+                    <WebsiteMotionPanel
+                      element={pickedElement}
+                      style={edits[picked.id]?.style ?? picked.style ?? ""}
+                      kind={picked.kind}
+                      href={edits[picked.id]?.href ?? picked.href ?? ""}
+                      pages={(links ?? []).map((link) => ({ label: link.title || link.path, href: link.path }))}
+                      readOnly={readOnly}
+                      onChange={(style) => change(picked.id, { ...edits[picked.id], style }, { commit: true })}
+                      onHref={(href) => change(picked.id, { ...edits[picked.id], value: edits[picked.id]?.value ?? picked.value, href }, { commit: true })}
+                    />
+                  )}
+                  {inspectorTab === "style" && styleState === "hover" && (
+                    <WebsiteHoverPanel
+                      element={pickedElement}
+                      style={edits[picked.id]?.style ?? picked.style ?? ""}
+                      readOnly={readOnly}
+                      onChange={(style) => change(picked.id, { ...edits[picked.id], style }, { commit: true })}
+                    />
+                  )}
+                  <div hidden={inspectorTab === "interactions" || (inspectorTab === "style" && styleState === "hover")}><ElementInspector
                     tab={inspectorTab === "layout" ? "layout" : inspectorTab === "style" ? "style" : "content"}
                     simple={!designerMode}
                     sitePublicUrl={page.data.page.url}
@@ -3854,380 +3943,75 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
       {contextMenu && (() => {
         const ctxField = contextMenu.fieldId ? allFields.find((f) => f.id === contextMenu.fieldId) ?? null : null;
-        const rawTag = (ctxField?.tag || contextMenu.tag || "page").toLowerCase();
-        const isHeading = /^h[1-6]$/.test(rawTag);
-        const currentText = (
-          (ctxField ? (edits[ctxField.id]?.value ?? ctxField.value) : contextMenu.text) ||
-          contextMenu.text ||
-          ""
-        )
-          .replace(/<[^>]+>/g, " ")
-          .replace(/\s+/g, " ")
-          .trim();
-        const currentStyle = ctxField ? (edits[ctxField.id]?.style ?? ctxField.style ?? "") : "";
-        const isCurrentlyHidden = /(?:^|;)\s*display\s*:\s*none\b/i.test(currentStyle);
-        const hiddenCount = Object.values(edits).filter((e) => /(?:^|;)\s*display\s*:\s*none\b/i.test(e.style ?? "")).length;
-
-        const toggleHideField = (targetField: SiteFieldRow) => {
-          const base = edits[targetField.id]?.style ?? targetField.style ?? "";
-          let nextStyle: string;
-          if (/(?:^|;)\s*display\s*:\s*none\b/i.test(base)) {
-            nextStyle = base
-              .split(";")
-              .map((s) => s.trim())
-              .filter((s) => s && !/^display\s*:\s*none$/i.test(s))
-              .join("; ");
-            showQuickToast(`Restored ${isHeading ? "heading" : targetField.label}`);
-          } else {
-            nextStyle = [base.trim().replace(/;$/, ""), "display: none"].filter(Boolean).join("; ");
-            showQuickToast(`Hidden ${isHeading ? "heading" : targetField.label} to preview layout (Right-click or Ctrl+Z to restore)`);
-          }
-          change(targetField.id, { ...edits[targetField.id], style: nextStyle }, { commit: true });
-          setContextMenu(null);
-        };
-
-        const applyQuickSeoFromText = async (modeType: "title" | "description" | "tags") => {
-          if (!currentText || !site?.id) return;
-          setContextMenu(null);
-          try {
-            if (modeType === "title") {
-              await api.post(`/website/sites/${site.id}/seo/page`, {
-                pageId,
-                title: currentText.slice(0, 70),
-                publishNow: false,
-              });
-              showQuickToast(`Set "${currentText.slice(0, 42)}" as Page SEO Title`);
-            } else if (modeType === "description") {
-              await api.post(`/website/sites/${site.id}/seo/page`, {
-                pageId,
-                description: currentText.slice(0, 160),
-                publishNow: false,
-              });
-              showQuickToast("Set text as Page Meta Description");
-            } else {
-              const extractedTags = currentText
-                .toLowerCase()
-                .replace(/[^a-z0-9\s-]/g, " ")
-                .split(/\s+/)
-                .filter((w) => w.length >= 3)
-                .slice(0, 8);
-              await api.post(`/website/sites/${site.id}/seo/page`, {
-                pageId,
-                keywords: extractedTags.join(", "),
-                tags: extractedTags,
-                publishNow: false,
-              });
-              showQuickToast(`Added "${extractedTags.join(", ")}" to Page SEO Tags`);
-            }
-            void qc.invalidateQueries({ queryKey: ["website", "seo", site.id] });
-            void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
-            pick(null);
-            setShowPanel(true);
-            setPanel("seo");
-          } catch {
-            showQuickToast("Could not update SEO property.");
-          }
-        };
-
+        const close = () => setContextMenu(null);
+        if (!ctxField) {
+          return (
+            <div role="menu" aria-label="Page actions" style={{ top: contextMenu.y, left: contextMenu.x }} onClick={(e) => e.stopPropagation()} className="dx-pop dx-ctx" >
+              <div className="dx-pop-pad"><b>Page</b></div>
+              {!readOnly && <button type="button" role="menuitem" className="dx-row" onClick={() => { close(); setPanel("add"); }}><IconPlusSquare size={15} /><span>Add a section</span></button>}
+              <button type="button" role="menuitem" className="dx-row" onClick={() => { close(); setPanel("notes"); }}><IconMessageSquare size={15} /><span>Add a note</span></button>
+              <button type="button" role="menuitem" className="dx-row" onClick={() => { close(); setPanel("seo"); }}><IconTarget size={15} /><span>Page SEO</span></button>
+            </div>
+          );
+        }
+        const isText = ctxField.kind !== "image" && ctxField.kind !== "container" && ctxField.kind !== "icon" && ctxField.kind !== "unsupported" && ctxField.tag !== "title" && ctxField.tag !== "meta";
+        const isImage = ctxField.kind === "image" || ctxField.kind === "icon";
+        const currentText = (edits[ctxField.id]?.value ?? ctxField.value ?? contextMenu.text ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+        const currentStyle = edits[ctxField.id]?.style ?? ctxField.style ?? "";
+        const phoneStyle = (edits[ctxField.id]?.responsive ?? ctxField.responsive ?? {}).mobile ?? "";
+        const hiddenOnPhone = /(?:^|;)\s*display\s*:\s*none\b/i.test(phoneStyle);
+        const parent = ctxField.parentId ? allFields.find((f) => f.id === ctxField.parentId) : undefined;
+        const busy = readOnly || save.isPending;
+        const item = (label: string, icon: React.ReactNode, onClick: () => void, opts: { keys?: string; disabled?: boolean; danger?: boolean; title?: string } = {}) => (
+          <button type="button" role="menuitem" className={`dx-row${opts.danger ? " danger" : ""}`} disabled={opts.disabled} title={opts.title} onClick={() => { close(); onClick(); }}>
+            {icon}<span>{label}</span>{opts.keys && <small>{opts.keys}</small>}
+          </button>
+        );
         return (
-          <div
-            role="menu"
-            aria-label="Visual editor context menu"
-            style={{ top: contextMenu.y, left: contextMenu.x }}
-            onClick={(e) => e.stopPropagation()}
-            className="fixed z-[110] w-64 rounded-2xl border border-line bg-white p-1.5 text-xs shadow-2xl"
-          >
-            {/* Header Badge */}
-            <div className="flex items-center gap-2 border-b border-line px-2.5 py-2">
-              <span className="rounded-md bg-ink px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-white">
-                {rawTag}
-              </span>
-              <span className="truncate font-semibold text-ink">
-                {ctxField ? ctxField.label : "Page Canvas"}
-              </span>
-            </div>
-
-            {ctxField && (
-              <div className="py-1">
-                {/* 1. Edit Heading / Element */}
-                {!readOnly && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setShowPanel(true);
-                      setInspectorTab("content");
-                      if (ctxField.kind !== "image" && ctxField.kind !== "container") {
-                        tell({ type: "edit", id: ctxField.id });
-                      }
-                      setContextMenu(null);
-                    }}
-                    className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left font-medium text-ink hover:bg-cream"
-                  >
-                    <span className="inline-flex items-center gap-2">
-                      <IconEdit />
-                      <span>{isHeading ? "Edit Heading" : `Edit ${ctxField.label}`}</span>
-                    </span>
-                    <span className="text-[10px] text-muted">Dbl-Click</span>
-                  </button>
-                )}
-
-                {/* 2. Copy Heading / Text */}
-                {currentText && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setTextClipboard(currentText);
-                      void navigator.clipboard?.writeText(currentText).catch(() => {});
-                      showQuickToast(`Copied ${isHeading ? "heading" : "text"}: "${currentText.slice(0, 32)}${currentText.length > 32 ? "…" : ""}"`);
-                      setContextMenu(null);
-                    }}
-                    className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left text-ink hover:bg-cream"
-                  >
-                    <span className="inline-flex items-center gap-2">
-                      <IconCopy />
-                      <span>{isHeading ? "Copy Heading" : "Copy Text"}</span>
-                    </span>
-                    <span className="text-[10px] text-muted">Ctrl+C</span>
-                  </button>
-                )}
-
-                {/* 3. Paste Text into Heading / Element */}
-                {!readOnly && ctxField.kind !== "image" && ctxField.kind !== "container" && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={async () => {
-                      let clip = textClipboard;
-                      if (!clip && navigator.clipboard?.readText) {
-                        try {
-                          clip = await navigator.clipboard.readText();
-                        } catch {
-                          clip = null;
-                        }
-                      }
-                      if (clip && clip.trim()) {
-                        change(ctxField.id, { ...edits[ctxField.id], value: clip.trim() }, { commit: true });
-                        showQuickToast(`Pasted into ${isHeading ? "heading" : ctxField.label}`);
-                      } else {
-                        showQuickToast("Copy a heading or text first to paste.");
-                      }
-                      setContextMenu(null);
-                    }}
-                    className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left text-ink hover:bg-cream"
-                  >
-                    <span className="inline-flex items-center gap-2">
-                      <IconPaste />
-                      <span>{isHeading ? "Paste into Heading" : "Paste Text"}</span>
-                    </span>
-                    <span className="text-[10px] text-muted">Ctrl+V</span>
-                  </button>
-                )}
-
-                {/* 4. Hide / Show Heading or Element to preview page layout */}
-                {!readOnly && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => toggleHideField(ctxField)}
-                    className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left font-medium text-ink hover:bg-cream"
-                  >
-                    <span className="inline-flex items-center gap-2">
-                      {isCurrentlyHidden ? <IconEye /> : <IconEyeOff />}
-                      <span>
-                        {isCurrentlyHidden
-                          ? `Show ${isHeading ? "Heading" : "Element"}`
-                          : `Hide ${isHeading ? "Heading" : "Element"} (Preview Page)`}
-                      </span>
-                    </span>
-                  </button>
-                )}
-
-                {/* 5. Copy Style & Paste Style */}
-                <div className="my-1 border-t border-line/70" />
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setStyleClipboard(currentStyle);
-                    showQuickToast(`Copied style from ${ctxField.label}`);
-                    setContextMenu(null);
-                  }}
-                  className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left text-ink hover:bg-cream"
-                >
-                  <span className="inline-flex items-center gap-2">
-                    <IconPalette />
-                    <span>Copy Style</span>
-                  </span>
-                </button>
-                {!readOnly && styleClipboard !== null && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      change(ctxField.id, { ...edits[ctxField.id], style: styleClipboard }, { commit: true });
-                      showQuickToast(`Pasted style onto ${ctxField.label}`);
-                      setContextMenu(null);
-                    }}
-                    className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left text-ink hover:bg-cream"
-                  >
-                    <span className="inline-flex items-center gap-2">
-                      <IconBrush />
-                      <span>Paste Style</span>
-                    </span>
-                  </button>
-                )}
-
-                {/* 6. SEO Power Shortcuts (Right-click Heading -> Use for SEO!) */}
-                {!readOnly && currentText && (
-                  <>
-                    <div className="my-1 border-t border-line/70" />
-                    <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted">
-                      SEO Power Actions
-                    </div>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => void applyQuickSeoFromText("title")}
-                      className="flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left font-medium text-blue hover:bg-blue/10"
-                    >
-                      <IconTarget />
-                      <span>{isHeading ? "Use Heading as SEO Title" : "Use as Page SEO Title"}</span>
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => void applyQuickSeoFromText("description")}
-                      className="flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-ink hover:bg-cream"
-                    >
-                      <IconFileText />
-                      <span>Use as Meta Description</span>
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => void applyQuickSeoFromText("tags")}
-                      className="flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-ink hover:bg-cream"
-                    >
-                      <IconTag />
-                      <span>Extract Words to SEO Tags</span>
-                    </button>
-                  </>
-                )}
-
-                {/* 7. Duplicate / Remove Structure Actions */}
-                {!readOnly && (ctxField.structure?.duplicate || ctxField.structure?.remove) && (
-                  <>
-                    <div className="my-1 border-t border-line/70" />
-                    {ctxField.structure?.duplicate && (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          void runStructure("duplicate", ctxField.id);
-                          setContextMenu(null);
-                        }}
-                        className="flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-ink hover:bg-cream"
-                      >
-                        <IconPlusSquare />
-                        <span>Duplicate {isHeading ? "Heading" : "Element"}</span>
-                      </button>
-                    )}
-                    {ctxField.structure?.remove && (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          void runStructure("remove", ctxField.id);
-                          setContextMenu(null);
-                        }}
-                        className="flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-danger-text hover:bg-danger-surface"
-                      >
-                        <IconTrash />
-                        <span>Remove {isHeading ? "Heading" : "Element"}</span>
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-
-            {/* Footer Page-Level Actions */}
-            <div className="border-t border-line/70 pt-1">
-              {hiddenCount > 0 && !readOnly && (
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    for (const [id, edit] of Object.entries(edits)) {
-                      if (/(?:^|;)\s*display\s*:\s*none\b/i.test(edit.style ?? "")) {
-                        const restored = (edit.style ?? "")
-                          .split(";")
-                          .map((s) => s.trim())
-                          .filter((s) => s && !/^display\s*:\s*none$/i.test(s))
-                          .join("; ");
-                        change(id, { ...edit, style: restored }, { commit: true });
-                      }
-                    }
-                    showQuickToast(`Restored ${hiddenCount} hidden element${hiddenCount > 1 ? "s" : ""}`);
-                    setContextMenu(null);
-                  }}
-                  className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left font-semibold text-emerald-700 hover:bg-emerald-500/10"
-                >
-                  <span className="inline-flex items-center gap-2">
-                    <IconEye />
-                    <span>Show All Hidden ({hiddenCount})</span>
-                  </span>
-                </button>
-              )}
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setCommentsModalOpen(true);
-                  setContextMenu(null);
-                }}
-                className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left font-medium text-ink hover:bg-cream"
-              >
-                <span className="inline-flex items-center gap-2">
-                  <IconMessageSquare />
-                  <span>{ctxField ? "Pin Revision Note to Element" : "Open Revision Checklist"}</span>
-                </span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  pick(null);
-                  setShowPanel(true);
-                  setPanel("seo");
-                  setContextMenu(null);
-                }}
-                className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left font-medium text-ink hover:bg-cream"
-              >
-                <span className="inline-flex items-center gap-2">
-                  <IconSearch />
-                  <span>Open Page SEO &amp; Repo Tags</span>
-                </span>
-              </button>
-              {picked && (
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    pick(null);
-                    setContextMenu(null);
-                  }}
-                  className="flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left text-muted hover:bg-cream hover:text-ink"
-                >
-                  <span className="inline-flex items-center gap-2">
-                    <IconXCircle />
-                    <span>Clear Selection</span>
-                  </span>
-                </button>
-              )}
-            </div>
+          <div role="menu" aria-label="Element actions" style={{ top: contextMenu.y, left: contextMenu.x }} onClick={(e) => e.stopPropagation()} className="dx-pop dx-ctx">
+            <div className="dx-pop-pad"><b>{ctxField.label}</b></div>
+            {isText && !readOnly && item("Edit text", <IconEdit size={15} />, () => { setInspectorTab("content"); tell({ type: "edit", id: ctxField.id }); }, { keys: "Dbl-click" })}
+            {isImage && !readOnly && item("Replace image", <IconImage size={15} />, () => { setAssetTargetMode("image"); setAssetModalOpen(true); })}
+            {canEdit && (!tierStatus?.features || tierStatus.features.aiBuilderAgent) && item("Ask the agent about this", <IconSparkles size={15} />, () => setAgentOpen(true))}
+            {item("Add a note", <IconMessageSquare size={15} />, () => setPanel("notes"))}
+            <hr />
+            {item("Copy", <IconCopy size={15} />, () => {
+              setTextClipboard(currentText);
+              void navigator.clipboard?.writeText(currentText).catch(() => {});
+              showQuickToast("Copied");
+            }, { keys: "Ctrl+C", disabled: !currentText })}
+            {isText && item("Paste", <IconPaste size={15} />, async () => {
+              let clip = textClipboard;
+              if (!clip && navigator.clipboard?.readText) { try { clip = await navigator.clipboard.readText(); } catch { clip = null; } }
+              if (clip?.trim()) { change(ctxField.id, { ...edits[ctxField.id], value: clip.trim() }, { commit: true }); showQuickToast("Pasted"); }
+              else showQuickToast("Nothing copied yet");
+            }, { keys: "Ctrl+V", disabled: busy })}
+            {item("Duplicate", <IconPlusSquare size={15} />, () => void runStructure("duplicate", ctxField.id), { disabled: busy || !ctxField.structure?.duplicate, title: ctxField.structure?.duplicateReason })}
+            <hr />
+            {item("Copy style", <IconPalette size={15} />, () => { setStyleClipboard(currentStyle); showQuickToast("Style copied"); })}
+            {styleClipboard !== null && item("Paste style", <IconBrush size={15} />, () => { change(ctxField.id, { ...edits[ctxField.id], style: styleClipboard }, { commit: true }); showQuickToast("Style pasted"); }, { disabled: busy })}
+            {item("Reset to website default", <IconRefresh size={15} />, () => {
+              const next = { ...edits[ctxField.id] };
+              delete next.style;
+              delete next.responsive;
+              change(ctxField.id, next, { commit: true });
+              showQuickToast("Back to the website default");
+            }, { disabled: busy || (!edits[ctxField.id]?.style && !edits[ctxField.id]?.responsive) })}
+            <hr />
+            {item("Move up", <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>, () => void runStructure("before", ctxField.id, ctxField.structure?.previousId), { disabled: busy || !designerMode || !ctxField.structure?.previousId, title: designerMode ? undefined : "Turn on Designer controls to move things" })}
+            {item("Move down", <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6" /></svg>, () => void runStructure("after", ctxField.id, ctxField.structure?.nextId), { disabled: busy || !designerMode || !ctxField.structure?.nextId, title: designerMode ? undefined : "Turn on Designer controls to move things" })}
+            {item("Select parent", <IconLayers size={15} />, () => parent && pick(parent.id), { disabled: !parent })}
+            {item(hiddenOnPhone ? "Show on phone" : "Hide on phone", hiddenOnPhone ? <IconEye size={15} /> : <IconEyeOff size={15} />, () => {
+              const responsive = { ...(edits[ctxField.id]?.responsive ?? ctxField.responsive ?? {}) };
+              const kept = phoneStyle.split(";").map((part) => part.trim()).filter((part) => part && !/^display\s*:/i.test(part));
+              if (!hiddenOnPhone) kept.push("display: none");
+              if (kept.length) responsive.mobile = safeResponsiveStyle(kept.join("; "));
+              else delete responsive.mobile;
+              change(ctxField.id, { ...edits[ctxField.id], responsive }, { commit: true });
+              showQuickToast(hiddenOnPhone ? "Shown on phone screens again" : "Hidden on phone screens");
+            }, { disabled: busy })}
+            <hr />
+            {item("Delete", <IconTrash size={15} />, () => void runStructure("remove", ctxField.id), { keys: "Del", danger: true, disabled: busy || !ctxField.structure?.remove, title: ctxField.structure?.reason })}
           </div>
         );
       })()}
@@ -4240,6 +4024,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           siteName={page.data.site?.name || "Website"}
           selectedFieldId={pickedId}
           fieldLabel={picked?.label}
+          onClearSelection={() => pick(null)}
           edits={edits}
           canEdit={canEdit}
           canUndo={historyState.canUndo}

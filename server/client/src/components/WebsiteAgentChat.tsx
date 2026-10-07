@@ -175,6 +175,7 @@ export function WebsiteAgentChat({
   siteName,
   selectedFieldId,
   fieldLabel,
+  onClearSelection,
   edits,
   canEdit,
   canUndo = false,
@@ -194,6 +195,8 @@ export function WebsiteAgentChat({
   siteName: string;
   selectedFieldId: string | null;
   fieldLabel?: string | null;
+  /** Clears the editor's selection, from the "Working on" chip. */
+  onClearSelection?: () => void;
   edits: Record<string, FieldEdit>;
   canEdit: boolean;
   canUndo?: boolean;
@@ -781,105 +784,30 @@ export function WebsiteAgentChat({
               void handleFilesSelected(e.dataTransfer.files);
             }
           }}
-          className={`fixed ${docked ? "right-3 top-[60px] max-h-[calc(100dvh-72px)]" : "bottom-24 right-6 max-h-[calc(100vh-7.5rem)]"} z-[9999] flex h-[620px] w-[calc(100vw-1.5rem)] max-w-[440px] flex-col overflow-hidden rounded-3xl border border-line bg-white shadow-2xl transition-all animate-in fade-in slide-in-from-bottom-4 duration-200`}
+          className={`dx-chat${docked ? " docked" : ""}`}
         >
           {/* Header */}
-          <div className="relative flex flex-none items-center justify-between border-b border-line bg-cream px-3.5 py-3">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-ink text-white shadow-xs">
-                <SparkIcon className="h-5 w-5 text-white fill-white" />
-                <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-positive-text ring-2 ring-white" />
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <h3 className="truncate font-display text-sm font-semibold text-ink leading-tight">
-                    Builder Agent
-                  </h3>
-                </div>
-                <p className="truncate text-[11px] text-muted">
-                  <strong className="text-ink font-medium">{pageTitle}</strong>
-                  {fieldLabel ? ` · ${fieldLabel}` : ""}
-                </p>
-              </div>
+          <header className="dx-chat-h">
+            <span className="dx-bot"><SparkIcon className="h-4 w-4 fill-white text-white" /></span>
+            <div className="dx-chat-t">
+              <b>Builder agent</b>
+              <span className="dx-live"><span className="dx-dot" />Can see this page{fieldLabel ? ` · ${fieldLabel}` : ""}</span>
             </div>
-
-            {/* Header Controls: Permission/Autonomy Icon, Undo, Redo, Reset, Close */}
-            <div className="flex items-center gap-1 shrink-0">
-              {/* Permission / Autonomy Mode Selector Button */}
-              <button
-                type="button"
-                onClick={() => setShowPermissionMenu((v) => !v)}
-                title={`Autonomy Mode: ${currentModeInfo.label}. Tap to configure when the agent asks for permission.`}
-                className={`flex items-center gap-1 rounded-xl border px-2 py-1 text-[11px] font-semibold transition ${
-                  permissionMode === "full"
-                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-800 hover:bg-emerald-500/20"
-                    : permissionMode === "ask"
-                      ? "border-amber-500/40 bg-amber-500/10 text-amber-800 hover:bg-amber-500/20"
-                      : "border-blue/30 bg-blue/10 text-blue hover:bg-blue/20"
-                }`}
-              >
-                <PermissionModeIcon mode={permissionMode} className="h-3.5 w-3.5" />
-                <span>{currentModeInfo.shortLabel}</span>
-              </button>
-
-              {/* Quick Undo */}
-              {onUndo && (
-                <button
-                  type="button"
-                  title="Undo last change on page"
-                  disabled={!canUndo}
-                  onClick={onUndo}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg text-muted hover:bg-sunken hover:text-ink transition disabled:opacity-35"
-                >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-                  </svg>
-                </button>
-              )}
-
-              {/* Quick Redo */}
-              {onRedo && (
-                <button
-                  type="button"
-                  title="Redo change on page"
-                  disabled={!canRedo}
-                  onClick={onRedo}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg text-muted hover:bg-sunken hover:text-ink transition disabled:opacity-35"
-                >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6" />
-                  </svg>
-                </button>
-              )}
-
-              {/* Reset Conversation */}
-              <button
-                type="button"
-                title="Reset conversation"
-                onClick={() => setMessages([initialWelcomeMessage])}
-                className="flex h-7 w-7 items-center justify-center rounded-lg text-muted hover:bg-sunken hover:text-ink transition"
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                  />
-                </svg>
-              </button>
-
-              {/* Close */}
-              <button
-                type="button"
-                title="Close chat"
-                onClick={() => setIsOpen(false)}
-                className="flex h-7 w-7 items-center justify-center rounded-lg text-muted hover:bg-sunken hover:text-ink transition"
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => setShowPermissionMenu((v) => !v)}
+              title={`Autonomy: ${currentModeInfo.label}. Choose when the agent asks before changing things.`}
+              aria-label={`Autonomy: ${currentModeInfo.label}`}
+              className="dx-ib"
+            >
+              <PermissionModeIcon mode={permissionMode} className="h-4 w-4" />
+            </button>
+            <button type="button" className="dx-ib" title="New chat" aria-label="New chat" onClick={() => setMessages([initialWelcomeMessage])}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7" /></svg>
+            </button>
+            <button type="button" className="dx-ib" title="Close" aria-label="Close chat" onClick={() => setIsOpen(false)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
 
             {/* Permission / Autonomy Mode Popover Drawer */}
             {showPermissionMenu && (
@@ -939,22 +867,36 @@ export function WebsiteAgentChat({
                 </div>
               </div>
             )}
-          </div>
+          </header>
 
           {/* Messages Area */}
-          <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-3.5 bg-white">
-            {messages.map((msg) => (
+          <div className="dx-msgs">
+            {messages.length === 1 && messages[0].id === "welcome" && (
+              <div className="dx-hello">
+                <span className="dx-bot big"><SparkIcon className="h-5 w-5 fill-white text-white" /></span>
+                <b>What should we change?</b>
+                <p>Describe it in plain words. I'll make the edit as a draft you can review.</p>
+                <div className="dx-sugg">
+                  {[
+                    ["Make the headline bigger", "Style change"],
+                    ["Add a FAQ section", "New section"],
+                    ["Rewrite the intro", "Copywriting"],
+                    ["Fix my SEO", "Title, description, alt text"],
+                  ].map(([prompt, hint]) => (
+                    <button key={prompt} type="button" disabled={isPending || !canEdit} onClick={() => void sendMessage(prompt)}>
+                      {prompt}<span>{hint}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {messages.filter((msg) => !(messages.length === 1 && msg.id === "welcome")).map((msg) => (
               <div
                 key={msg.id}
-                className={`flex flex-col ${msg.sender === "user" ? "items-end" : "items-start"}`}
+                className={`dx-msg${msg.sender === "user" ? " me" : ""}`}
               >
-                <div
-                  className={`max-w-[90%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed ${
-                    msg.sender === "user"
-                      ? "bg-ink text-white rounded-br-xs shadow-xs"
-                      : "bg-cream text-ink border border-line/80 rounded-bl-xs shadow-xs"
-                  }`}
-                >
+                {msg.sender !== "user" && <span className="dx-bot sm"><SparkIcon className="h-3 w-3 fill-white text-white" /></span>}
+                <div className="dx-bub">
                   {/* User Message Attachments Preview */}
                   {msg.attachments && msg.attachments.length > 0 && (
                     <div className="mb-2 flex flex-wrap gap-1.5">
@@ -1240,18 +1182,14 @@ export function WebsiteAgentChat({
                       </div>
                     )}
                 </div>
-                <span className="mt-1 px-1 text-[10px] text-muted">{msg.timestamp}</span>
+
               </div>
             ))}
 
             {isPending && (
-              <div className="flex items-start">
-                <div className="rounded-2xl rounded-bl-xs border border-line bg-cream px-3.5 py-2.5 text-xs text-muted shadow-xs">
-                  <span className="flex items-center gap-1.5">
-                    <SparkIcon className="h-3.5 w-3.5 text-blue fill-blue animate-pulse" />
-                    Working on your website…
-                  </span>
-                </div>
+              <div className="dx-msg" aria-label="Working on your website">
+                <span className="dx-bot sm"><SparkIcon className="h-3 w-3 fill-white text-white" /></span>
+                <div className="dx-bub dx-typing"><i /><i /><i /></div>
               </div>
             )}
 
@@ -1298,8 +1236,8 @@ export function WebsiteAgentChat({
             </div>
           )}
 
-          {/* Quick Prompts Bar */}
-          <div className="flex flex-none items-center gap-1.5 overflow-x-auto border-t border-line bg-sunken px-3 py-2">
+          {/* Quick Prompts Bar — only for an attachment waiting to be used. */}
+          {pendingAttachments.length > 0 && <div className="flex flex-none items-center gap-1.5 overflow-x-auto border-t border-line bg-sunken px-3 py-2">
             <span className="text-[10px] font-semibold text-muted shrink-0">
               {pendingAttachments.length > 0 ? "With file:" : "Try:"}
             </span>
@@ -1314,106 +1252,90 @@ export function WebsiteAgentChat({
                 {promptText}
               </button>
             ))}
-          </div>
+          </div>}
 
           {/* Chat Input Bar */}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void sendMessage();
-            }}
-            className="flex flex-none items-end gap-2 border-t border-line bg-white p-3"
-          >
-            {/* Hidden file input for images & documents */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,.zip,.mp4,.mp3"
-              onChange={(e) => {
-                if (e.target.files?.length) {
-                  void handleFilesSelected(e.target.files);
-                }
+          <div className="dx-composer">
+            {fieldLabel && (
+              <div className="dx-ctxchip">
+                Working on: {fieldLabel}
+                {onClearSelection && (
+                  <button type="button" aria-label="Stop working on this element" onClick={onClearSelection}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                  </button>
+                )}
+              </div>
+            )}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void sendMessage();
               }}
-              className="hidden"
-            />
-
-            {/* Active Attachment Upload Button */}
-            <button
-              type="button"
-              disabled={isPending || isUploading || !canEdit}
-              onClick={() => fileInputRef.current?.click()}
-              title="Attach image or file (replace backgrounds, swap images, or link buttons to files)"
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition ${
-                pendingAttachments.length > 0
-                  ? "border-blue bg-blue/15 text-blue"
-                  : "border-line bg-sunken text-ink hover:border-blue hover:bg-sunken hover:text-blue"
-              } disabled:opacity-40`}
+              className="dx-chatform"
             >
-              {isUploading ? (
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-blue border-t-transparent" />
-              ) : (
-                <svg
-                  className="h-4 w-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth="2"
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,.zip,.mp4,.mp3"
+                onChange={(e) => {
+                  if (e.target.files?.length) void handleFilesSelected(e.target.files);
+                }}
+                className="hidden"
+              />
+              <textarea
+                ref={inputRef}
+                rows={1}
+                value={input}
+                aria-label="Message the builder agent"
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  e.target.style.height = "auto";
+                  e.target.style.height = `${e.target.scrollHeight}px`;
+                }}
+                onPaste={(e) => {
+                  if (e.clipboardData?.files?.length) {
+                    e.preventDefault();
+                    void handleFilesSelected(e.clipboardData.files);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void sendMessage();
+                  }
+                }}
+                disabled={isPending}
+                placeholder={pendingAttachments.length > 0 ? "Tell me what to do with this file…" : "Ask for a change…"}
+              />
+              <div className="dx-cbar">
+                <button
+                  type="button"
+                  className="dx-ib"
+                  disabled={isPending || isUploading || !canEdit}
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Attach an image or file"
+                  aria-label="Attach an image or file"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
-                  />
-                </svg>
-              )}
-            </button>
-
-            {/* Input textarea */}
-            <textarea
-              ref={inputRef}
-              rows={1}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onPaste={(e) => {
-                if (e.clipboardData?.files?.length) {
-                  e.preventDefault();
-                  void handleFilesSelected(e.clipboardData.files);
-                }
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void sendMessage();
-                }
-              }}
-              disabled={isPending}
-              placeholder={
-                pendingAttachments.length > 0
-                  ? "Tell me what to do with this attachment (e.g., replace my background)…"
-                  : "Ask to edit text, styles, backgrounds, links, undo/redo…"
-              }
-              className="min-h-[38px] max-h-24 flex-1 resize-none rounded-xl border border-line bg-sunken p-2 text-xs text-ink placeholder:text-muted outline-none hover:border-blue focus:border-blue focus:ring-2 focus:ring-blue/25 transition"
-            />
-
-            {/* Send button */}
-            <button
-              type="submit"
-              disabled={isPending || isUploading || (!input.trim() && pendingAttachments.length === 0)}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue text-white transition hover:bg-blue-light active:scale-95 disabled:opacity-40"
-              title="Send message (Enter)"
-            >
-              <svg
-                className="h-4 w-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth="2.2"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
-              </svg>
-            </button>
-          </form>
+                  {isUploading ? (
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-blue border-t-transparent" />
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="M21 16l-5-5-9 9" /></svg>
+                  )}
+                </button>
+                <span className="dx-hint">Changes land as a draft</span>
+                <button
+                  type="submit"
+                  className="dx-send"
+                  disabled={isPending || isUploading || (!input.trim() && pendingAttachments.length === 0)}
+                  title="Send (Enter)"
+                  aria-label="Send"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </>

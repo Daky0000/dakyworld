@@ -40,10 +40,13 @@ try {
   await page.getByRole('tab',{name:'Style',exact:true}).click();
   await page.getByRole('button',{name:'Typography',exact:true}).waitFor();
   assert.equal(await heading.isVisible(),false);
+  await page.getByRole('button',{name:'Hover',exact:true}).click();
+  await page.getByRole('radiogroup',{name:'Hover movement'}).waitFor();
+  await page.getByLabel('Hover text colour',{exact:false}).first().waitFor();
+  await page.getByRole('button',{name:'Normal',exact:true}).click();
   await page.getByRole('tab',{name:'Interactions',exact:true}).click();
-  await page.getByLabel('hover color',{exact:true}).waitFor();
-  await page.getByRole('button',{name:'Active',exact:true}).click();
-  await page.getByLabel('active color',{exact:true}).waitFor();
+  await page.getByRole('radiogroup',{name:'Entrance animation'}).waitFor();
+  await page.getByRole('radiogroup',{name:'Click effect'}).waitFor();
   assert.equal(writes.length,0,'Viewing tabs must not save anything');
   await page.getByRole('tab',{name:'Content',exact:true}).click();
   await heading.fill('Changed heading');await page.keyboard.press('Control+s');

@@ -43,6 +43,10 @@ function summaryLine(entry: FieldChangeSummary): string {
   return `${entry.label}${what}: “${entry.from}” → “${entry.to}”`;
 }
 
+function ClockIcon() {
+  return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>;
+}
+
 function TouchedBadges({ touched }: { touched: SitePageVersionRow["touched"] }) {
   const marks = [
     touched.seo && "Search listing",
@@ -63,7 +67,7 @@ function TouchedBadges({ touched }: { touched: SitePageVersionRow["touched"] }) 
   );
 }
 
-export function WebsiteVersions({ pageId, siteId, draftRevision, onClose, onRestored }: { pageId: string; siteId: string; draftRevision: number; onClose: () => void; onRestored: () => void }) {
+export function WebsiteVersions({ pageId, siteId, draftRevision, onClose, onRestored, inline = false, draftNote }: { pageId: string; siteId: string; draftRevision: number; onClose: () => void; onRestored: () => void; /** Drawn inside the editor's History drawer rather than over the page. */ inline?: boolean; draftNote?: string }) {
   const qc = useQueryClient();
   const access = useWebsiteAccess(siteId);
   const [failure, setFailure] = useState<string | null>(null);
@@ -73,7 +77,10 @@ export function WebsiteVersions({ pageId, siteId, draftRevision, onClose, onRest
 
   const versions = useQuery({
     queryKey: ["website", "versions", pageId],
-    queryFn: ({ signal }) => api.get<SitePageVersionRow[]>(`/website/pages/${pageId}/versions`, signal),
+    queryFn: async ({ signal }) => {
+      const rows = await api.get<SitePageVersionRow[]>(`/website/pages/${pageId}/versions`, signal);
+      return Array.isArray(rows) ? rows : [];
+    },
   });
 
   const restore = useMutation({
@@ -131,6 +138,74 @@ export function WebsiteVersions({ pageId, siteId, draftRevision, onClose, onRest
       onRestored();
     },
   });
+
+  const confirmDialog = confirming && (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-ink/40 p-6">
+      <div className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-xl">
+        <div className="flex-none border-b border-line px-6 py-4">
+          <h3 className="font-display text-base tracking-[-.02em]">Put version {confirming.version.number} back on the site?</h3>
+          <p className="mt-1 text-xs text-warn-text">{confirming.diff.warning}</p>
+          <p className="mt-1 text-xs text-warn-text">This also replaces the saved draft with this version.</p>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          {confirming.diff.identical ? (
+            <p className="text-sm text-ink">The page already says exactly this. There is nothing to publish.</p>
+          ) : (
+            <ul className="space-y-2">
+              {confirming.diff.differences.map((entry, index) => (
+                <li key={`${entry.id}:${index}`} className="rounded-xl border border-line p-2.5 text-xs">
+                  <div className="mb-1 font-bold uppercase tracking-[.08em] text-muted">{entry.label}</div>
+                  <div className="break-words text-muted"><span className="line-through">{entry.now}</span></div>
+                  <div className="break-words text-ink">{entry.after}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="flex flex-none items-center justify-end gap-2 border-t border-line px-6 py-3">
+          <Button variant="ghost" size="sm" onClick={() => setConfirming(null)}>Cancel</Button>
+          <Button size="sm" disabled={confirming.diff.identical || rollback.isPending} onClick={() => rollback.mutate(confirming.version.id)}>
+            {rollback.isPending ? "Publishing…" : `Publish version ${confirming.version.number}`}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (inline) {
+    return (
+      <div className="dx-stack">
+        {failure && <p role="alert" className="dx-note warn" style={{ margin: 0 }}>{failure}</p>}
+        {note && <p className="dx-hint">{note}</p>}
+        <div className="dx-row sel">
+          <ClockIcon />
+          <div><div>Current draft</div><div className="dx-hint">{draftNote ?? "Saved as you work"}</div></div>
+        </div>
+        {versions.isLoading && <p className="dx-hint">Loading…</p>}
+        {!versions.isLoading && (versions.data?.length ?? 0) === 0 && <p className="dx-hint">Nothing has been published from this page yet. Every publish will be listed here and can be put back.</p>}
+        {versions.data?.map((version) => (
+          <div key={version.id} className="dx-vrow">
+            <div className="dx-row">
+              <ClockIcon />
+              <div className="min-w-0 flex-1">
+                <div className="truncate">Version {version.number}{version.publishedBy?.name ? ` · ${version.publishedBy.name}` : ""}</div>
+                <div className="dx-hint"><RelativeTime value={version.createdAt} /> · {version.summary[0] ? summaryLine(version.summary[0]) : `${version.changed} change${version.changed === 1 ? "" : "s"}`}</div>
+              </div>
+              {access.data?.capabilities.edit && (
+                <button type="button" className="dx-btn dx-soft" style={{ height: 26 }} disabled={restore.isPending} onClick={() => { if (window.confirm("Replace the saved draft with the edits from this version?")) restore.mutate(version.id); }}>
+                  Restore
+                </button>
+              )}
+            </div>
+            {access.data?.capabilities.publish && (
+              <button type="button" className="dx-link dx-vpub" disabled={askRollback.isPending} onClick={() => askRollback.mutate(version)}>Publish this version again</button>
+            )}
+          </div>
+        ))}
+        {confirmDialog}
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-ink/30">

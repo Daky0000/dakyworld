@@ -182,7 +182,7 @@ console.log("\n6. Active Tab Stability");
 // Verify that WebsiteEditor supports layout, style, and interactions for containers
 check(
   "WebsiteEditor defines container tabs with layout, style, and interactions",
-  websiteEditorSource.includes('picked.kind === "container"\n                  ? (["layout", "style", "interactions"] as const)'),
+  /picked\.kind === "container"\s*\?\s*\(\["layout", "style", "interactions"\] as const\)/.test(websiteEditorSource),
 );
 
 // Verify that switching elements retains valid tabs without resetting unnecessarily
