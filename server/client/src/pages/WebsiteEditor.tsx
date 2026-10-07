@@ -10,7 +10,9 @@ import { api, ApiError, apiUrl } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import type { DraftConflict, DraftSaveResult, FieldEdit, PublishResult, SiteFieldRow, SiteSectionRow, SitePageDetail } from "../lib/types";
 import { Badge, Button, RelativeTime } from "../components/ui";
-import { WebsiteQuickStart } from "../components/WebsiteQuickStart";
+import { TourHost } from "../components/TourHost";
+import { startTour, tourAction, TOUR_EVENTS, TOURS, type TourId } from "../lib/tours";
+import { tourSeen, useUiState } from "../lib/uiState";
 
 
 import { WebsiteImageFraming } from "../components/WebsiteImageFraming";
@@ -113,9 +115,7 @@ import { reviewStatusLabel, useReviewLinks } from "../components/WebsiteReviewLi
  * sees, so it is a button somebody presses on purpose.
  */
 
-const WebsiteGuideModal = lazy(() => import("../components/WebsiteGuideModal").then(module => ({ default: module.WebsiteGuideModal })));
 const WebsiteFindReplaceModal = lazy(() => import("../components/WebsiteFindReplaceModal").then(module => ({ default: module.WebsiteFindReplaceModal })));
-const WebsiteSpotlightWalkthrough = lazy(() => import("../components/WebsiteSpotlightWalkthrough").then(module => ({ default: module.WebsiteSpotlightWalkthrough })));
 const WebsiteClientReportModal = lazy(() => import("../components/WebsiteCommandAndSections").then(module => ({ default: module.WebsiteClientReportModal })));
 const WebsiteCommandPaletteModal = lazy(() => import("../components/WebsiteCommandAndSections").then(module => ({ default: module.WebsiteCommandPaletteModal })));
 const WebsiteRevisionCommentsModal = lazy(() => import("../components/WebsiteCommandAndSections").then(module => ({ default: module.WebsiteRevisionCommentsModal })));
@@ -183,9 +183,14 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const [showLayers, setShowLayers] = useState(false);
   const [showPanel, setShowPanel] = useState(() => typeof window === "undefined" || window.innerWidth > 600);
   const [editorTheme, setEditorTheme] = useState(() => { try { return localStorage.getItem("website-editor-theme") || "dark"; } catch { return "dark"; } });
-  const [showGuide, setShowGuide] = useState(false);
-  const [spotlightWalkthroughOpen, setSpotlightWalkthroughOpen] = useState(false);
-  const [guideModalOpen, setGuideModalOpen] = useState(false);
+  /**
+   * Arriving with ?walkthrough (a new customer, straight after adding their
+   * website) starts the editor tour; anybody else is offered it once.
+   */
+  const [tourOnArrival] = useState<TourId | null>(() => {
+    try { return new URLSearchParams(window.location.search).get("walkthrough") ? "editor" : null; } catch { return null; }
+  });
+  const uiState = useUiState();
   const [sectionLibraryOpen, setSectionLibraryOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commentsModalOpen, setCommentsModalOpen] = useState(false);
@@ -204,31 +209,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     if (!user?.id) return;
     try {
       setDesignerMode(localStorage.getItem(`website-designer:${user.id}`) === "yes");
-      setShowGuide(localStorage.getItem(`website-guide:${user.id}`) !== "done");
-    } catch {
-      setShowGuide(true);
-    }
-  }, [user?.id]);
-  useEffect(() => {
-    try {
-      const sp = new URLSearchParams(window.location.search);
-      if (sp.get("walkthrough") === "interactive") {
-        setSpotlightWalkthroughOpen(true);
-      } else if (sp.get("walkthrough") === "true") {
-        setShowGuide(true);
-      }
-    } catch {}
-  }, []);
-  const closeGuide = () => {
-    setShowGuide(false);
-    setSpotlightWalkthroughOpen(false);
-    try {
-      localStorage.setItem(`website-guide:${user?.id}`, "done");
-      window.dispatchEvent(new CustomEvent("dw:walkthrough-completed"));
     } catch {
       /* Preferences are optional. */
     }
-  };
+  }, [user?.id]);
   const localDraftKey = `website-draft:${user?.id}:${pageId}`;
   const recovered = useRef(false);
 
@@ -1344,6 +1328,50 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
   const { status: tierStatus, switchTestUser } = useWebsiteTierStatus(page.data?.site?.id);
 
+  // What a guided tour may be waiting for (lib/tours.ts). Announced from
+  // state, so every way of doing the thing counts — clicking the page, the
+  // layers list, a keyboard shortcut — not only the one the tour points at.
+  useEffect(() => {
+    if (!pickedId) return;
+    tourAction("field-selected");
+    const kind = page.data?.sections.flatMap((section) => section.fields).find((field) => field.id === pickedId)?.kind;
+    if (kind === "image") tourAction("image-selected");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickedId]);
+  const editedForTour = useRef(0);
+  useEffect(() => {
+    const count = Object.values(edits).filter((edit) => Object.keys(edit).length > 0).length;
+    if (count > editedForTour.current) tourAction("text-edited");
+    editedForTour.current = count;
+  }, [edits]);
+  useEffect(() => {
+    if (page.data?.draft.savedAt) tourAction("draft-saved");
+  }, [page.data?.draft.savedAt]);
+  const deviceForTour = useRef(device);
+  useEffect(() => {
+    if (device === deviceForTour.current) return;
+    deviceForTour.current = device;
+    tourAction("device-changed");
+  }, [device]);
+  const modeForTour = useRef(mode);
+  useEffect(() => {
+    if (mode === modeForTour.current) return;
+    modeForTour.current = mode;
+    tourAction(mode === "preview" ? "mode-preview" : mode === "edit" ? "mode-list" : "mode-visual");
+  }, [mode]);
+  useEffect(() => { if (reviewOpen) tourAction("publish-review-opened"); }, [reviewOpen]);
+  useEffect(() => { if (showVersions) tourAction("versions-opened"); }, [showVersions]);
+  useEffect(() => { if (assetModalOpen) tourAction("asset-picker-opened"); }, [assetModalOpen]);
+  // A step that needs a particular mode asks for it.
+  useEffect(() => {
+    const onMode = (event: Event) => {
+      const next = (event as CustomEvent<{ mode?: Mode }>).detail?.mode;
+      if (next) setMode(next);
+    };
+    window.addEventListener(TOUR_EVENTS.mode, onMode);
+    return () => window.removeEventListener(TOUR_EVENTS.mode, onMode);
+  }, []);
+
   /**
    * These hooks sit above the early returns below on purpose. React counts
    * hooks per render: the first render of this page is a loading one that
@@ -2023,31 +2051,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           onCancel={() => setConflict(null)}
         />
       )}
-      {showGuide && (
-        <WebsiteQuickStart
-          onClose={closeGuide}
-          onLaunchSpotlight={() => setSpotlightWalkthroughOpen(true)}
-        />
-      )}
-      <DeferredPanel active={spotlightWalkthroughOpen}><WebsiteSpotlightWalkthrough
-        open={spotlightWalkthroughOpen}
-        onClose={() => setSpotlightWalkthroughOpen(false)}
-        onComplete={() => {
-          closeGuide();
-          showQuickToast("Interactive walkthrough completed! Have fun editing.");
-        }}
-        onSelectDevice={(dev) => setDevice(dev)}
-        onSelectTab={(tab) => {
-          setInspectorTab(tab);
-          setShowPanel(true);
-        }}
-        onOpenSections={() => setSectionLibraryOpen(true)}
-        onOpenLayers={() => {
-          setShowLayers(true);
-          setShowPanel(true);
-        }}
-      /></DeferredPanel>
-      <DeferredPanel active={guideModalOpen}><WebsiteGuideModal open={guideModalOpen} onClose={() => setGuideModalOpen(false)} /></DeferredPanel>
+      {/* Guided tours (lib/tours.ts): offered once to somebody who can edit,
+          started straight away for a customer who has just added a website. */}
+      <TourHost scope="editor" offer="editor" autoStart={tourOnArrival} canOffer={canEdit && !readOnly} />
       {site && (
         <>
           <DeferredPanel active={sectionLibraryOpen}><WebsiteSectionLibraryModal
@@ -2195,6 +2201,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 {page.data.page.path}
               </span>
               <span
+                data-tour="save-status"
                 className={`hidden sm:inline-flex items-center gap-1.5 rounded-full border border-line bg-sunken/40 px-2 py-0.5 text-[11px] font-medium ${
                   dirty.current || changedCount > 0 ? "text-ink" : "text-muted"
                 }`}
@@ -2256,7 +2263,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               </div>
             )}
           </div>
-          {publishButton && <div className="ml-auto shrink-0 sm:hidden">{publishButton}</div>}
+          {publishButton && <div data-tour="publish" className="ml-auto shrink-0 sm:hidden">{publishButton}</div>}
         </div>
 
         {/* Right / Center Controls: Icon groups + Dropdowns + Publish CTA */}
@@ -2270,8 +2277,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             className="hidden h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-medium text-muted transition hover:border-line-strong hover:bg-sunken hover:text-ink sm:inline-flex"
           >
             <IconSearch size={13} />
-            <span className="hidden md:inline">Search</span>
-            <kbd className="rounded border border-line bg-white px-1 py-0.2 font-mono text-[10px] text-muted">
+            <span className="hidden 2xl:inline">Search</span>
+            <kbd className="hidden rounded border border-line bg-white px-1 py-0.2 font-mono text-[10px] text-muted 2xl:inline">
               ⌘K
             </kbd>
           </button>
@@ -2285,7 +2292,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               className="hidden h-8 items-center gap-1.5 rounded-xl border border-line bg-sunken/40 px-2.5 text-xs font-semibold text-ink transition hover:border-blue hover:bg-sunken sm:inline-flex"
             >
               <IconPlusSquare size={14} className="text-blue" />
-              <span className="hidden lg:inline">Section</span>
+              <span className="hidden 2xl:inline">Section</span>
             </button>
           )}
 
@@ -2330,7 +2337,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           {/* Viewport Device Switcher (Icons) + Zoom Dropdown. Not on a phone:
               the canvas there is already a phone's width. */}
           {mode !== "edit" && (
-            <div data-walkthrough="viewports" className="hidden items-center gap-1 rounded-xl border border-line bg-sunken/30 p-0.5 sm:inline-flex">
+            <div data-walkthrough="viewports" data-tour="devices" className="hidden items-center gap-1 rounded-xl border border-line bg-sunken/30 p-0.5 sm:inline-flex">
               {DEVICES.map((option) => {
                 const active = device === option.key;
                 const DeviceIcon =
@@ -2363,7 +2370,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 title="Canvas zoom level"
                 value={zoom}
                 onChange={(e) => setZoom(Number(e.target.value))}
-                className="hidden h-7 cursor-pointer rounded-lg border-0 bg-transparent px-1.5 font-mono text-[11px] font-medium text-ink outline-none hover:bg-white md:block"
+                className="hidden h-7 cursor-pointer rounded-lg border-0 bg-transparent px-1.5 font-mono text-[11px] font-medium text-ink outline-none hover:bg-white 2xl:block"
               >
                 {[0.5, 0.75, 1, 1.25, 1.5].map((value) => (
                   <option key={value} value={value}>
@@ -2375,7 +2382,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           )}
 
           {/* Editor View Mode (Visual / Edit / Preview) */}
-          <div className="flex rounded-xl border border-line bg-sunken/40 p-0.5">
+          <div data-tour="modes" className="flex rounded-xl border border-line bg-sunken/40 p-0.5">
             {MODES.map((option) => (
               <button
                 key={option.key}
@@ -2478,7 +2485,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   }`}
                 >
                   <IconSave size={13} />
-                  <span className="hidden xl:inline">Save</span>
+                  <span className="hidden 2xl:inline">Save</span>
                 </button>
               </>
             )}
@@ -2487,6 +2494,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           {/* More Tools & Settings Dropdown */}
           <details
             data-walkthrough="more"
+            data-tour="more"
             className="relative"
             data-editor-menu
             onKeyDown={(event) => {
@@ -2562,44 +2570,37 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               </button>
               <div className="my-1 h-px bg-line" />
               <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted">
-                Tools & Documentation
+                Guided tours
               </div>
-              <button
-                type="button"
-                onClick={(event) => {
-                  setSpotlightWalkthroughOpen(true);
-                  const details = event.currentTarget.closest("details");
-                  if (details) details.open = false;
-                }}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs font-semibold text-blue transition hover:bg-sunken"
-              >
-                <IconSparkles size={14} className="text-blue" />
-                <span>Interactive Spotlight Tour</span>
-              </button>
-              <button
-                type="button"
-                onClick={(event) => {
-                  setGuideModalOpen(true);
-                  const details = event.currentTarget.closest("details");
-                  if (details) details.open = false;
-                }}
+              {(["editor", "publishing", "pictures"] as const).map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={(event) => {
+                    const details = event.currentTarget.closest("details");
+                    if (details) details.open = false;
+                    startTour(id);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
+                >
+                  <IconSparkles size={14} className={tourSeen(uiState, id) ? "text-muted" : "text-blue"} />
+                  <span className="flex-1">{TOURS[id].title}</span>
+                  {uiState.tours?.[id]?.status === "done" && <IconCheck size={12} className="text-positive-text" aria-label="Taken" />}
+                </button>
+              ))}
+              <a
+                href="https://dakyx.com/website-builder-setup"
+                target="_blank"
+                rel="noreferrer"
                 className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
               >
                 <IconBookOpen size={14} className="text-muted" />
-                <span>Interactive Guide & Docs</span>
-              </button>
-              <button
-                type="button"
-                onClick={(event) => {
-                  setShowGuide(true);
-                  const details = event.currentTarget.closest("details");
-                  if (details) details.open = false;
-                }}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
-              >
-                <IconSparkles size={14} className="text-muted" />
-                <span>First edit walkthrough</span>
-              </button>
+                <span>Setup guide</span>
+              </a>
+              <div className="my-1 h-px bg-line" />
+              <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted">
+                This page
+              </div>
               <button
                 type="button"
                 aria-label="Versions"
@@ -2758,7 +2759,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
           {/* Primary Publish CTA — on a phone it sits beside the title instead. */}
           {publishButton && (
-            <div data-walkthrough="publish" className="hidden sm:block">
+            <div data-walkthrough="publish" data-tour="publish" className="hidden sm:block">
               {publishButton}
             </div>
           )}
@@ -2861,6 +2862,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         {mode === "visual" && showPanel && (
           <aside
             data-walkthrough="inspector"
+            data-tour="inspector"
             aria-label="Element inspector"
             className="editor-sidebar flex flex-none flex-col border-r border-line bg-white"
           >
@@ -3350,6 +3352,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                                 {!readOnly && (
                                   <button
                                     type="button"
+                                    data-tour="image-replace"
                                     onClick={() => {
                                       setAssetTargetMode(isContainer ? "background" : "image");
                                       setAssetModalOpen(true);

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { clearLoginAttempts, loginAccountRateLimit, loginRateLimit, rateLimit } from "../middleware/security.js";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { hashPassword, verifyPassword } from "../lib/password.js";
 import { assertPasswordAcceptable, WeakPasswordError } from "../lib/passwordPolicy.js";
@@ -62,6 +63,7 @@ function publicUser(user: {
   extraPermissions: string[];
   deniedPermissions: string[];
   accessRole: { id: string; name: string; external: boolean; superAdmin: boolean; permissions: string[] } | null;
+  uiState?: unknown;
 }) {
   return {
     id: user.id,
@@ -73,6 +75,9 @@ function publicUser(user: {
     roleName: user.accessRole?.name ?? null,
     external: Boolean(user.accessRole?.external),
     permissions: [...effectivePermissions(user)].sort(),
+    // Which tours and welcome steps this person has already seen, so a guide
+    // finished on one device is not offered again on another.
+    uiState: user.uiState && typeof user.uiState === "object" && !Array.isArray(user.uiState) ? user.uiState : {},
   };
 }
 
@@ -354,6 +359,62 @@ authRouter.post("/2fa/recovery-codes", requireAuth, async (req, res, next) => {
     await prisma.user.update({ where: { id: user.id }, data: { totpRecoveryHashes: hashes } });
     res.json({ recoveryCodes: codes });
   } catch (err) {
+    next(err);
+  }
+});
+
+/* ----------------------------------------------- what you have been shown -- */
+
+const tourRecord = z.object({
+  status: z.enum(["done", "dismissed", "started"]),
+  step: z.number().int().min(0).max(50).optional(),
+  at: z.string().max(40),
+}).strict();
+const uiStatePatch = z.object({
+  tours: z.record(z.string().regex(/^[a-z][a-z0-9-]{0,39}$/), tourRecord).optional(),
+  welcome: z.object({ status: z.enum(["done", "skipped"]), at: z.string().max(40) }).strict().optional(),
+  checklist: z.object({ hidden: z.boolean() }).strict().optional(),
+}).strict();
+const STATUS_RANK = { started: 0, dismissed: 1, done: 2 } as const;
+
+/**
+ * Records tour and welcome progress (client: lib/uiState.ts). Merged under a
+ * row lock, so two tabs finishing different tours both stick, and a late
+ * "started" from a slow tab never turns a finished tour back on.
+ */
+authRouter.patch("/ui-state", requireAuth, async (req, res, next) => {
+  try {
+    const parsed = uiStatePatch.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "That is not a progress record this app keeps." });
+    const userId = req.dbUser!.id;
+    const merged = await prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<Array<{ uiState: unknown }>>`SELECT "uiState" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+      const raw = rows[0]?.uiState;
+      const current = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as {
+        tours?: Record<string, z.infer<typeof tourRecord>>;
+        welcome?: unknown;
+        checklist?: unknown;
+      };
+      const tours = { ...(current.tours ?? {}) };
+      for (const [id, record] of Object.entries(parsed.data.tours ?? {})) {
+        const before = tours[id];
+        tours[id] = before && record.status === "started" && STATUS_RANK[before.status] > 0 ? before : record;
+      }
+      // Bounded: tours are a fixed list in the client, so anything past this
+      // many is not progress, it is somebody filling a column.
+      if (Object.keys(tours).length > 30) throw Object.assign(new Error("Too many tour records."), { status: 400 });
+      const next = {
+        ...current,
+        tours,
+        ...(parsed.data.welcome ? { welcome: parsed.data.welcome } : {}),
+        ...(parsed.data.checklist ? { checklist: parsed.data.checklist } : {}),
+      };
+      await tx.user.update({ where: { id: userId }, data: { uiState: next as Prisma.InputJsonValue } });
+      return next;
+    });
+    res.json(merged);
+  } catch (err) {
+    if ((err as { status?: number }).status === 400) return res.status(400).json({ error: (err as Error).message });
     next(err);
   }
 });

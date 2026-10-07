@@ -12,7 +12,8 @@ await page.route("**/api/**", route => {
   const url = new URL(route.request().url());
   // Presence leases are expected on mount; all other writes remain subject to the assertions below.
   if (url.pathname.endsWith("/presence")) return route.fulfill({ json: { editors: [] } });
-  if (route.request().method() !== "GET") writes.push(url.pathname);
+  // Remembering which tours somebody has seen is not a change to the page.
+  if (route.request().method() !== "GET" && !url.pathname.endsWith("/auth/ui-state")) writes.push(url.pathname);
   if (url.pathname.endsWith("/draft")) {
     const payload=route.request().postDataJSON();
     document.draft={...document.draft, values:payload?.values ?? {}, revision:document.draft.revision+1, savedAt:new Date().toISOString()};
@@ -21,7 +22,7 @@ await page.route("**/api/**", route => {
   if (url.pathname.endsWith("/assistant/preview")) return route.fulfill({json:{html:'<h1>Better together</h1>'}});
   if (url.pathname.endsWith("/assistant")) return route.fulfill({json:{explanation:"A clearer heading",values:{"hero.title":{value:"Better together"}},changes:[{fieldId:"hero.title",label:"Main heading",property:"value",before:"Welcome home",after:"Better together"}],costUsd:0,model:"test",note:null}});
   if (url.pathname.endsWith("/review")) return route.fulfill({json:{revision:document.draft.revision,sourceHash:"fixture",summary:[],problems:[],conflicts:[],missing:[],publishable:true}});
-  if (url.pathname.endsWith("/auth/me")) return route.fulfill({ json: { id: "tester", name: "Client", external: true, permissions: [] } });
+  if (url.pathname.endsWith("/auth/me")) return route.fulfill({ json: { id: "tester", name: "Client", external: true, permissions: [], uiState: { tours: { editor: { status: "dismissed", at: "2026-10-07T00:00:00.000Z" } } } } });
   if (url.pathname.endsWith("/access")) return route.fulfill({ json: { capabilities } });
   if (url.pathname.endsWith("/assets")) return route.fulfill({ json: [] });
   if (url.pathname.endsWith("/design")) return route.fulfill({ json: { options: { colours: [], fonts: [], presets: [], aiEnabled: true } } });
@@ -31,7 +32,6 @@ await page.route("**/api/**", route => {
 try {
   const started=Date.now();
   await page.goto("http://127.0.0.1:5199/builder-harness.html?editor");
-  await page.getByRole('button',{name:'Close guide'}).click();
   await page.getByRole('button',{name:'Layers',exact:true}).click();
   await page.getByRole('treeitem',{name:'Welcome home'}).click();
   const heading=page.getByRole('textbox',{name:'Main heading',exact:true});await heading.waitFor();

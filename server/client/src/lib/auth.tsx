@@ -23,6 +23,8 @@ export type CurrentUser = {
    */
   permissions: string[];
   twoFactorEnabled?: boolean;
+  /** Tours and welcome steps already seen — read through lib/uiState.ts. */
+  uiState?: unknown;
 };
 
 /**

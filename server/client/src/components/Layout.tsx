@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, Suspense } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { TourHost } from "./TourHost";
 import { useAuth } from "../lib/auth";
 import { useWebsiteSites } from "./WebsiteGuard";
 import { CLIENT_NAV, useWorkspaceMode } from "../lib/clientWorkspace";
@@ -264,6 +265,7 @@ export function Layout() {
         </div>
       </header>
       <main id="workspace" tabIndex={-1} className="os-workspace"><Suspense fallback={<Loading rows={5} />}><Outlet /></Suspense></main>
+      <TourHost scope="workspace" />
       <footer className="os-workspace-footer"><span>{editorSurface ? "DakyX Website Editor" : "DakyXTech OS"}</span><span>{editorSurface || client ? <a href="https://dakyx.com/website-builder-setup" className="underline-offset-2 hover:underline">Help &amp; guides</a> : "Built for considered work."}</span></footer>
     </div>
   </div>;

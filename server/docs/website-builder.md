@@ -530,7 +530,7 @@ was dead.
 | Security — prompt injection | Not started, with §6 |
 | Security — cross-site access, expired-license access, token leakage, role escalation | **Built** — `checks/websiteAccess.ts` over real sessions with `DEV_NO_AUTH=false`; plan features in `checks/websiteTierFeatures.ts` |
 | Integration — GitHub read, commit, build failure, rate limits, token expiry | Not started |
-| Browser (Playwright) | **Built** — `npm run checks:browser` runs the eight files in `checks/browser/` against the Vite harness on port 5199 |
+| Browser (Playwright) | **Built** — `npm run checks:browser` runs the nine files in `checks/browser/` (the editor tour among them) against the Vite harness on port 5199 |
 | Backup and recovery — failed commit, rollback after a bad publish | Partly — rollback is built and checked |
 
 **The one that cannot be faked:** the client portal must be exercised over real

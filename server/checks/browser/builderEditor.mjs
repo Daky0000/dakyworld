@@ -12,7 +12,8 @@ await page.route("**/api/**", route => {
   const url = new URL(route.request().url());
   // Presence leases are expected on mount; all other writes remain subject to the assertions below.
   if (url.pathname.endsWith("/presence")) return route.fulfill({ json: { editors: [] } });
-  if (route.request().method() !== "GET") writes.push(url.pathname);
+  // Remembering which tours somebody has seen is not a change to the page.
+  if (route.request().method() !== "GET" && !url.pathname.endsWith("/auth/ui-state")) writes.push(url.pathname);
   if (url.pathname.endsWith("/auth/me")) return route.fulfill({ json: { id: "tester", name: "Client", external: true, permissions: [] } });
   if (url.pathname.endsWith("/access")) return route.fulfill({ json: { capabilities } });
   if (url.pathname.endsWith("/assets")) return route.fulfill({ json: [] });
@@ -23,7 +24,9 @@ await page.route("**/api/**", route => {
 try {
   await page.goto("http://127.0.0.1:5199/builder-harness.html?editor");
   await page.getByRole("tab", { name: "Content", exact: true }).waitFor();
-  await page.getByRole("button", { name: "Close guide" }).click();
+  // The editor offers its tour once, to somebody who has never seen it.
+  await page.getByRole("region", { name: "Editor basics tour" }).waitFor();
+  await page.getByRole("button", { name: "Not now", exact: true }).click();
   assert.equal(await page.getByRole("button", { name: "Versions", exact: true }).isVisible(), false);
   await page.getByText("More", { exact: true }).click();
   await page.getByRole("button", { name: "Versions", exact: true }).waitFor();
@@ -40,7 +43,8 @@ try {
   await page.reload();
   await page.getByText("More", { exact: true }).click();
   assert.equal(await page.getByLabel("Designer controls", { exact: true }).isChecked(), true);
-  assert.equal(await page.getByRole("region", { name: "First edit walkthrough" }).count(), 0, "Dismissed walkthrough stays dismissed for this user");
+  await page.waitForTimeout(1500);
+  assert.equal(await page.getByRole("region", { name: "Editor basics tour" }).count(), 0, "A tour offer put away stays put away");
   assert.deepEqual(errors, []);
   console.log("builderEditor: assembled editor toolbar, mode persistence, guide dismissal, preview switching and zero incidental writes passed.");
 } finally { await browser.close(); }

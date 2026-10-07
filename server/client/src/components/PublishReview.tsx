@@ -648,6 +648,7 @@ export function PublishReview({
                 <span className="text-xs font-bold text-ink">Publishing Options</span>
                 <button
                   type="button"
+                  data-tour="schedule"
                   onClick={() => setShowScheduleForm(!showScheduleForm)}
                   className="inline-flex items-center gap-1 text-xs font-semibold text-blue hover:underline"
                 >

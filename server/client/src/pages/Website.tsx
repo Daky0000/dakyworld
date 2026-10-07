@@ -3,14 +3,14 @@ import { ConnectWebsite } from "../components/ConnectWebsite";
 import { ImportWebsitePage } from "../components/ImportWebsitePage";
 import { useState } from "react";
 import { useMutation, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { api, ApiError } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import type { SitePageRow, SiteSummary } from "../lib/types";
 import { Badge, Button, EmptyState, PageHeader, RelativeTime, Table } from "../components/ui";
-import { WebsiteClientOnboarding } from "../components/WebsiteClientOnboarding";
-import { WebsiteSubscriberOnboarding } from "../components/WebsiteSubscriberOnboarding";
-import { WebsiteGuideModal } from "../components/WebsiteGuideModal";
+import { GettingStarted } from "../components/GettingStarted";
+import { startTour } from "../lib/tours";
+import { useUiState } from "../lib/uiState";
 
 /**
  * A page whose file the visual editor cannot open, and which therefore edits as
@@ -38,7 +38,7 @@ export function Website() {
   const [showHidden, setShowHidden] = useState(false);
   const [scanResult, setScanResult] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
-  const [guideOpen, setGuideOpen] = useState(false);
+  const ui = useUiState();
 
   const sites = useSiteDirectory<SiteSummary>();
 
@@ -78,11 +78,14 @@ export function Website() {
 
   if (sites.isLoading) return <div className="text-sm text-muted">Loading…</div>;
 
+  // No website yet: the welcome screen is where one is added. Somebody who
+  // chose "Skip for now" there is not sent straight back to it.
   if (!current) {
+    if (ui.welcome?.status !== "skipped") return <Navigate to="/website/welcome" replace />;
     return (
       <div className="space-y-6">
-        <PageHeader title="Website Builder" subtitle="Connect your website, customize it on the live canvas, and launch to visitors." />
-        <WebsiteSubscriberOnboarding onSiteCreated={(newSiteId) => setSiteId(newSiteId)} />
+        <PageHeader title="Pages" subtitle="Your website's pages appear here once it is added." />
+        <EmptyState message="No website yet." action={<Link to="/website/welcome"><Button>Add your website</Button></Link>} />
       </div>
     );
   }
@@ -106,15 +109,8 @@ export function Website() {
         }`}
         action={
           <div className="flex flex-wrap items-center gap-2">
-            {visible[0] && (
-              <Link to={`/website/pages/${visible[0].id}?walkthrough=interactive`}>
-                <Button variant="accent">
-                  ✨ Interactive Tour
-                </Button>
-              </Link>
-            )}
-            <Button variant="secondary" onClick={() => setGuideOpen(true)}>
-              Guide & Tips
+            <Button variant="secondary" onClick={() => startTour("workspace")}>
+              Take the tour
             </Button>
             {canManage && <ImportWebsitePage key={current.id} siteId={current.id} />}
             {canManage && (
@@ -158,11 +154,7 @@ export function Website() {
       {scanResult && <p className="mb-4 rounded-2xl border border-line bg-white p-4 text-sm text-ink">{scanResult}</p>}
       {scanError && <p className="mb-4 rounded-2xl border border-warn-line bg-warn-surface p-4 text-sm text-warn-text">{scanError}</p>}
 
-      <WebsiteClientOnboarding
-        siteId={current.id}
-        siteName={current.name}
-        firstPageId={visible[0]?.id}
-      />
+      <GettingStarted site={current} pages={all} />
 
       {pages.isLoading ? (
         <div className="text-sm text-muted">Loading pages…</div>
@@ -179,6 +171,7 @@ export function Website() {
         />
       ) : (
         <>
+          <div data-tour="pages-list">
           <Table>
             <thead>
               <tr className="border-b border-line font-sans text-[11px] uppercase tracking-[.06em] text-muted">
@@ -247,6 +240,7 @@ export function Website() {
               ))}
             </tbody>
           </Table>
+          </div>
           {pages.hasNextPage && <Button variant="secondary" disabled={pages.isFetchingNextPage} onClick={() => void pages.fetchNextPage()}>Load more pages</Button>}
 
           {hiddenCount > 0 && (
@@ -261,9 +255,6 @@ export function Website() {
         </>
       )}
 
-      {current && (
-        <WebsiteGuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
-      )}
     </div>
   );
 }

@@ -43,7 +43,8 @@ await page.route("**/api/**", async route => {
   const request = route.request();
   const url = new URL(request.url());
   if (url.pathname.endsWith("/presence")) return route.fulfill({ json: { editors: [] } });
-  if (url.pathname.endsWith("/auth/me")) return route.fulfill({ json: { id: "image-tester", name: "Client", external: true, permissions: [] } });
+  // The editor tour has been seen, so its offer stays out of the way of these clicks.
+  if (url.pathname.endsWith("/auth/me")) return route.fulfill({ json: { id: "image-tester", name: "Client", external: true, permissions: [], uiState: { tours: { editor: { status: "dismissed", at: "2026-10-07T00:00:00.000Z" } } } } });
   if (url.pathname.endsWith("/access")) return route.fulfill({ json: { capabilities } });
   if (url.pathname.endsWith("/design")) return route.fulfill({ json: { options: { colours: [], fonts: [], presets: [], aiEnabled: false } } });
   if (url.pathname.endsWith("/tier-status")) return route.fulfill({ status: 404, json: { error: "No tier fixture" } });
@@ -106,7 +107,6 @@ async function assertBackgroundLoaded() {
 
 try {
   await page.goto(`${origin}/builder-harness.html?editor`);
-  await page.getByRole("button", { name: "Close guide" }).click();
   await selectLayer("Hero image");
   await page.getByRole("button", { name: /^Media Library \(/ }).click();
   const library = page.getByRole("dialog", { name: "Media Library", exact: true });

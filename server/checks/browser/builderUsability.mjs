@@ -16,10 +16,7 @@ await page.route("**/api/website/**", async route => {
 });
 try {
   await page.goto("http://127.0.0.1:5199/builder-harness.html");
-  await page.getByText("First edit · 1 of 4", { exact: false }).waitFor();
-  await page.getByRole("button", { name: "Next step" }).click();
-  assert.match(await page.getByRole("region", { name: "First edit walkthrough" }).innerText(), /2 of 4/);
-  await page.getByRole("button", { name: "Close guide" }).click();
+  await page.getByLabel("Designer controls").waitFor();
   assert.equal(await page.locator('[data-section="typography"]').count(), 0);
   await page.getByLabel("Designer controls").check();
   await page.locator('[data-section="typography"]').waitFor();

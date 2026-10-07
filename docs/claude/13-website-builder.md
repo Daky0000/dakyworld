@@ -383,6 +383,23 @@ reach the page title, a picture's description, or a heading three screens down.
   their account is switched off and signed out at once and **anonymised**, not
   deleted, after the hold, so invoices and the audit trail still resolve.
   Refused while paying or while they are the only manager of a site others use.
+- **Guided tours are data plus events** (`lib/tours.ts`, `components/TourHost.tsx`).
+  A step points at a `data-tour="…"` element and, where it can, waits for an
+  action the screens announce with `tourAction()` — `field-selected`,
+  `text-edited`, `device-changed`, `mode-preview`, `publish-review-opened`… —
+  emitted from state, so every route to the action counts. **A new screen
+  feature a tour describes must announce its action, or the tour waits for
+  ever** (the step still has Skip). The host is not modal; optional steps
+  whose target is off screen are skipped. Progress is `User.uiState` via
+  `PATCH /auth/ui-state` (row-locked merge; a late "started" never undoes
+  "done"), cached in localStorage. `checks/browser/builderTour.mjs` takes the
+  editor tour end to end. The editor hosts its own `TourHost` (it renders
+  outside `Layout`); `Layout` hosts the workspace one.
+- **Onboarding is `/website/welcome` plus `GettingStarted`.** No website →
+  the welcome (wrapping `WebsiteSubscriberOnboarding`, which lands in the
+  editor with `?walkthrough` and so with the tour running); "Skip for now" is
+  remembered so Pages does not bounce back. The checklist is derived from the
+  site and account, never ticked by hand.
 - **A phone opens the editor in List mode**, and the toolbar's secondary actions
   live in More. Menus in the bar sit at `z-[9990]`, above the floating Layers
   window (`z-[9980]`), which opens in the same top-right corner — under it,
