@@ -2082,6 +2082,7 @@ const profileInput = z.object({
   email: z.string().email("That isn't a valid email address").or(z.literal("")).optional(),
   phone: z.string().max(40).optional(),
   phoneAlt: z.string().max(40).optional(),
+  whatsapp: z.string().max(40).optional(),
   web: z.string().max(120).optional(),
   social: z
     .object({

@@ -855,6 +855,8 @@ export interface CompanyProfile {
   email: string;
   phone: string;
   phoneAlt: string;
+  /** Offered to customers in the editor's Help. Empty means no WhatsApp option is shown. */
+  whatsapp: string;
   web: string;
   social: { linkedin: string; x: string; instagram: string; facebook: string; youtube: string };
   currency: string;

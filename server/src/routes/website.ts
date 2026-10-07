@@ -30,6 +30,8 @@ import { assertEditAllowance, assertTierFeatureAccess, recordAiPromptUsed, recor
 import { registerWebsitePublishJobs } from "../services/websitePublishJobs.js";
 import { hostedUrlFor, registerWebsiteHosting } from "../services/websiteHosting.js";
 import { registerSubscriberSelfService } from "../services/websiteSubscriberSelfService.js";
+import { registerWebsiteFormRoutes } from "../services/websiteForms.js";
+import { registerWebsiteVisitRoutes } from "../services/websiteVisits.js";
 import { registerWebsiteSetupAssistance } from "../services/websiteSetupAssistance.js";
 import { registerWebsiteClientPortal } from "../services/websiteClientPortal.js";
 import { registerWebsiteEscalationRoutes } from "../services/websiteEscalationService.js";
@@ -116,6 +118,8 @@ registerWebsiteReviewLinkRoutes(websiteRouter);
 registerWebsiteSchedulerRoutes(websiteRouter);
 registerWebsiteBatchEditingRoutes(websiteRouter);
 registerWebsiteEditingPolicyRoutes(websiteRouter);
+registerWebsiteFormRoutes(websiteRouter);
+registerWebsiteVisitRoutes(websiteRouter);
 
 registerWebsiteMembership(websiteRouter);
 registerWebsiteWorkQueue(websiteRouter);

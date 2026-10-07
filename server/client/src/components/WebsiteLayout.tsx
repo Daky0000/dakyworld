@@ -64,6 +64,8 @@ export const WEBSITE_TABS: Tab[] = [
   { to: "/website/updates", label: "Updates", needs: "website.manage", unbuilt: true },
   { to: "/website/team", label: "Team & Permissions" },
   { to: "/website/audit", label: "Activity" },
+  { to: "/website/analytics", label: "Visitors" },
+  { to: "/website/inbox", label: "Form inbox", siteAction: "manage" },
   { to: "/website/balance", label: "Balance & Invoices" },
   { to: "/website/settings", label: "Settings", siteAction: "manage" },
   { to: "/website/source", label: "Source files", siteAction: "source" },
@@ -96,7 +98,7 @@ export function WebsiteLayout() {
     <div>
       <nav className="os-product-nav" aria-label="Website navigation">
         {tabs.filter(tab => ["/website", "/website/sites", "/website/assets"].includes(tab.to)).map(tab => <NavLink key={tab.to} to={tab.to} end={tab.end} className={`os-product-tab ${isActive(tab) ? "is-active" : ""}`}>{tab.label}</NavLink>)}
-        {[{ label: "Design & delivery", paths: ["compatibility", "survey", "onboarding", "ai", "updates", "source"] }, { label: "Manage website", paths: ["team", "audit", "balance", "settings", "billing"] }].map(group => {
+        {[{ label: "Design & delivery", paths: ["compatibility", "survey", "onboarding", "ai", "updates", "source"] }, { label: "Manage website", paths: ["team", "audit", "analytics", "inbox", "balance", "settings", "billing"] }].map(group => {
           const entries = tabs.filter(tab => group.paths.some(path => tab.to === `/website/${path}`));
           if (!entries.length) return null;
           const current = entries.find(isActive);

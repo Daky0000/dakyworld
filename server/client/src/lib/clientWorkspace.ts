@@ -14,13 +14,24 @@
 
 import { useState, useEffect } from "react";
 
-export type ClientNavItem = { to: string; label: string };
+export type ClientNavItem = {
+  to: string;
+  label: string;
+  /**
+   * Offered only to somebody who manages at least one website. The form inbox
+   * holds visitors' contact details, so the API answers it for managers only,
+   * and a tab that leads to a refusal is worse than no tab.
+   */
+  needs?: "manage";
+};
 
 export const CLIENT_NAV: ClientNavItem[] = [
   { to: "/website/sites", label: "Pages" },
   { to: "/website/assets", label: "Assets" },
   { to: "/website/team", label: "Team" },
   { to: "/website/audit", label: "Activity" },
+  { to: "/website/analytics", label: "Visitors" },
+  { to: "/website/inbox", label: "Form inbox", needs: "manage" },
   { to: "/website/balance", label: "Balance & Invoices" },
 ];
 

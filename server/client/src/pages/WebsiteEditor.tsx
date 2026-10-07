@@ -11,6 +11,7 @@ import { useAuth } from "../lib/auth";
 import type { DraftConflict, DraftSaveResult, FieldEdit, PublishResult, SiteFieldRow, SiteSectionRow, SitePageDetail } from "../lib/types";
 import { Badge, Button, RelativeTime } from "../components/ui";
 import { TourHost } from "../components/TourHost";
+import { HelpDialog } from "../components/HelpDialog";
 import { startTour, tourAction, TOUR_EVENTS, TOURS, type TourId } from "../lib/tours";
 import { tourSeen, useUiState } from "../lib/uiState";
 
@@ -191,6 +192,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     try { return new URLSearchParams(window.location.search).get("walkthrough") ? "editor" : null; } catch { return null; }
   });
   const uiState = useUiState();
+  const [helpOpen, setHelpOpen] = useState(false);
   const [sectionLibraryOpen, setSectionLibraryOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commentsModalOpen, setCommentsModalOpen] = useState(false);
@@ -2054,6 +2056,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       {/* Guided tours (lib/tours.ts): offered once to somebody who can edit,
           started straight away for a customer who has just added a website. */}
       <TourHost scope="editor" offer="editor" autoStart={tourOnArrival} canOffer={canEdit && !readOnly} />
+      <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} context={page.data?.page.title} />
       {site && (
         <>
           <DeferredPanel active={sectionLibraryOpen}><WebsiteSectionLibraryModal
@@ -2597,6 +2600,18 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 <IconBookOpen size={14} className="text-muted" />
                 <span>Setup guide</span>
               </a>
+              <button
+                type="button"
+                onClick={(event) => {
+                  const details = event.currentTarget.closest("details");
+                  if (details) details.open = false;
+                  setHelpOpen(true);
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-sunken"
+              >
+                <IconMessageSquare size={14} className="text-muted" />
+                <span>Talk to a person</span>
+              </button>
               <div className="my-1 h-px bg-line" />
               <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted">
                 This page

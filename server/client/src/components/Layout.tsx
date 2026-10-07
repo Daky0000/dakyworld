@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, Suspense } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { TourHost } from "./TourHost";
+import { HelpDialog } from "./HelpDialog";
 import { useAuth } from "../lib/auth";
 import { useWebsiteSites } from "./WebsiteGuard";
 import { CLIENT_NAV, useWorkspaceMode } from "../lib/clientWorkspace";
@@ -104,6 +105,7 @@ export function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const mobileRef = useRef<HTMLElement>(null);
@@ -154,7 +156,7 @@ export function Layout() {
     ? Boolean(client || can("website.view") || websites.data?.length)
     : !client && (!item.needs || can(item.needs));
   const groups: NavGroup[] = client
-    ? [{ title: "Your workspace", items: [...CLIENT_NAV.map(item => ({ to: item.to, label: item.label })), ...(editorSurface && can("demos.view") ? [{ to: "/demos", label: "Demos" }] : [])] }]
+    ? [{ title: "Your workspace", items: [...CLIENT_NAV.filter(item => item.needs !== "manage" || websites.data?.some(site => site.capabilities?.manage)).map(item => ({ to: item.to, label: item.label })), ...(editorSurface && can("demos.view") ? [{ to: "/demos", label: "Demos" }] : [])] }]
     : navGroups.map(group => ({ ...group, items: group.items.filter(allowed) })).filter(group => group.items.length);
   const visibleGroups = groups.map(group => ({ ...group, items: group.items.filter(item => `${group.title} ${item.label}`.toLowerCase().includes(filter.toLowerCase())) })).filter(group => group.items.length);
   const current = groups.flatMap(group => group.items).filter(item => item.to === "/" ? location.pathname === "/" : location.pathname.startsWith(item.to)).sort((a, b) => b.to.length - a.to.length)[0];
@@ -225,7 +227,7 @@ export function Layout() {
         </div>
       )}
     </nav>
-    {user && <div className="os-account"><div className="os-initials">{user.name.slice(0, 2).toUpperCase()}</div><div className="min-w-0 flex-1"><strong>{user.name}</strong><span>{user.roleName || user.role || user.email}</span></div><div className="flex flex-col items-end gap-1"><Link to="/website/account">Account</Link><button type="button" onClick={() => void logout()}>Sign out</button></div></div>}
+    {user && <div className="os-account"><div className="os-initials">{user.name.slice(0, 2).toUpperCase()}</div><div className="min-w-0 flex-1"><strong>{user.name}</strong><span>{user.roleName || user.role || user.email}</span></div><div className="flex flex-col items-end gap-1"><button type="button" onClick={() => setHelpOpen(true)}>Help</button><Link to="/website/account">Account</Link><button type="button" onClick={() => void logout()}>Sign out</button></div></div>}
   </>;
   return <div className="os-app os-shell">
     <a href="#workspace" className="os-skip">Skip to content</a>
@@ -266,6 +268,7 @@ export function Layout() {
       </header>
       <main id="workspace" tabIndex={-1} className="os-workspace"><Suspense fallback={<Loading rows={5} />}><Outlet /></Suspense></main>
       <TourHost scope="workspace" />
+      <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
       <footer className="os-workspace-footer"><span>{editorSurface ? "DakyX Website Editor" : "DakyXTech OS"}</span><span>{editorSurface || client ? <a href="https://dakyx.com/website-builder-setup" className="underline-offset-2 hover:underline">Help &amp; guides</a> : "Built for considered work."}</span></footer>
     </div>
   </div>;

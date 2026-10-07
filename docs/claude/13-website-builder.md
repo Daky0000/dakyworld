@@ -400,6 +400,28 @@ reach the page title, a picture's description, or a heading three screens down.
   editor with `?walkthrough` and so with the tour running); "Skip for now" is
   remembered so Pages does not bounce back. The checklist is derived from the
   site and account, never ticked by hand.
+- **Hosted sites get a form inbox** (`services/websiteForms.ts`). When a page
+  is *served* (not when it is published), a `<form>` that posts nowhere —
+  no action, `#`, `mailto:` — and looks like a message (POST, a textarea, an
+  email/phone/name field; never a search) is pointed at `POST /__dakyx/forms`
+  on the site's own host, with a `_page`, a `_form` and a `_gotcha` honeypot.
+  The hosting middleware answers that path before its GET-only rule. A filled
+  honeypot or a link flood is stored as spam and not emailed; a bot is told the
+  same as a person. Files are refused (415), floods are limited in memory
+  (no IP is stored), `_next` may only be a same-site path. The inbox API is
+  `manage`-only (visitors' contact details); the ETag gains `-f1` when the
+  served copy differs from the stored one.
+- **Visitors are counted server-side** (`services/websiteVisits.ts`) as the
+  hosting middleware serves a page (200 or 304): bots, link previews,
+  prefetches and HEAD are not visits. A visitor is a SHA-256 of a daily salt
+  that is never stored, the site, the IP and the user agent — kept in memory
+  for the day only. Counts flush every 30 s into `SiteVisitDay` (path `"*"` is
+  the whole site) and `SiteReferrerDay` (Search · Google, Facebook, Direct, a
+  domain; clicks inside the site are not a source). A restart re-salts, so a
+  returning visitor can be counted twice that day: an overcount, never a loss.
+- **Help** is `GET /website/help` (account route): email and phone from the
+  company profile, and WhatsApp only when `profile.whatsapp` is set in System
+  settings — empty by default on purpose.
 - **A phone opens the editor in List mode**, and the toolbar's secondary actions
   live in More. Menus in the bar sit at `z-[9990]`, above the floating Layers
   window (`z-[9980]`), which opens in the same top-right corner — under it,

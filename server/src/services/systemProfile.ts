@@ -45,6 +45,12 @@ export interface CompanyProfile {
   phone: string;
   /** A second line — WhatsApp, a landline. Empty when there isn't one. */
   phoneAlt: string;
+  /**
+   * The number customers can message on WhatsApp from the editor's Help.
+   * Empty by default on purpose: offering a WhatsApp link to a number that is
+   * not on WhatsApp is worse than offering none.
+   */
+  whatsapp: string;
   web: string;
 
   /** Where a client is sent to find us. Empty strings are simply not shown. */
@@ -83,6 +89,7 @@ export const DEFAULT_PROFILE: CompanyProfile = {
   email: COMPANY.email,
   phone: COMPANY.phone,
   phoneAlt: "",
+  whatsapp: "",
   web: COMPANY.web,
   social: { linkedin: "", x: "", instagram: "", facebook: "", youtube: "" },
   currency: "GHS",
@@ -126,6 +133,7 @@ function merge(stored: unknown): CompanyProfile {
     email: text(raw.email, DEFAULT_PROFILE.email),
     phone: text(raw.phone, DEFAULT_PROFILE.phone),
     phoneAlt: optional(raw.phoneAlt),
+    whatsapp: optional(raw.whatsapp).replace(/[^\d+]/g, "").slice(0, 20),
     // Stored bare, so every caller can decide whether it wants a link or a
     // label. A pasted "https://dakyx.com/" would otherwise print in full
     // across the bottom of every email.

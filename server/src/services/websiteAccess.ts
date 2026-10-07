@@ -139,6 +139,10 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
   if (/^\/sites\/[^/]+\/agent\/publish-batch\/?$/.test(path)) return "publish";
   if (/^\/sites\/[^/]+\/hosting\/(?:domain|verify)\/?$/.test(path)) return "manage";
   if (/^\/sites\/[^/]+\/erase(?:\/cancel)?\/?$/.test(path)) return "manage";
+  // Messages from the site's forms carry visitors' names and contact details.
+  if (/^\/sites\/[^/]+\/forms(?:\/[^/]+)?\/?$/.test(path)) return "manage";
+  // Visit counts identify nobody, so anybody the site is shared with may read them.
+  if (/^\/sites\/[^/]+\/visits\/?$/.test(path)) return "view";
   if (/^\/sites\/[^/]+\/members(?:\/[^/]+)?\/?$/.test(path)) return "members";
   if (/\/(?:source|source-project)(?:\/|$)/.test(path)) return "source";
   if (/^\/sites\/[^/]+\/config\/?$/.test(path)) return "manage";
@@ -180,7 +184,7 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
 }
 
 /** Routes about the signed-in account rather than one website. Their handlers scope themselves. */
-const ACCOUNT_ROUTES = /^\/(?:subscription(?:\/(?:cancel|manage))?|setup-assistance|starter-templates|balance(?:\/.*)?|activity(?:\/.*)?|escalations(?:\/[^/]+)?)\/?$/;
+const ACCOUNT_ROUTES = /^\/(?:subscription(?:\/(?:cancel|manage))?|setup-assistance|help|starter-templates|balance(?:\/.*)?|activity(?:\/.*)?|escalations(?:\/[^/]+)?)\/?$/;
 
 /**
  * Whether the gate answers a path without classifying it — account routes, the

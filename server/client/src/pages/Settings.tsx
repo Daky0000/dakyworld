@@ -339,6 +339,9 @@ function SystemPanel({ settings }: { settings: AppSettings }) {
               <Field label="Second line" hint="WhatsApp, a landline. Left blank it simply isn't printed.">
                 <input className="input" value={form.phoneAlt} placeholder="optional" onChange={(e) => set("phoneAlt", e.target.value)} />
               </Field>
+              <Field label="WhatsApp for customer help" hint="With the country code. Customers see a WhatsApp button in the editor's Help only once this is set — check the number is on WhatsApp first.">
+                <input className="input" value={form.whatsapp ?? ""} placeholder="+233 …" onChange={(e) => set("whatsapp", e.target.value)} />
+              </Field>
               <Field label="City and country" hint="The short location line beside the logo.">
                 <input className="input" value={form.location} placeholder={defaults.location} onChange={(e) => set("location", e.target.value)} />
               </Field>

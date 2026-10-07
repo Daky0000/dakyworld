@@ -4403,11 +4403,68 @@ model Site {
   escalations    WebsiteEscalation[]
   reviewLinks    ReviewLink[]
   scheduledPublishes ScheduledPublish[]
+  formSubmissions FormSubmission[]
+  visitDays      SiteVisitDay[]
+  referrerDays   SiteReferrerDay[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([deletionScheduledFor])
+}
+
+/// A message somebody sent through a form on a website DakyX hosts
+/// (services/websiteForms.ts). What they typed and the page they were on —
+/// no IP address. Deleted with the site.
+model FormSubmission {
+  id       String  @id @default(cuid())
+  site     Site    @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId   String
+  /// The page it was sent from, as the visitor saw its address.
+  pagePath String
+  /// The form's name or id, so two forms on one site can be told apart.
+  formName String?
+  /// Field name to value, as typed. Bounded on the way in.
+  fields   Json
+  /// The address to reply to, when the form had one.
+  email    String?
+  /// A robot filled the hidden field, or the message is mostly links. Not emailed.
+  spam     Boolean @default(false)
+  readAt   DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([siteId, spam, createdAt])
+}
+
+/// Visits to a website DakyX hosts, counted on the server as its pages are
+/// served (services/websiteVisits.ts): no script on the page, no cookie, and no
+/// IP address kept. One row per site, day and page; `path` "*" is the whole
+/// site, whose `visitors` counts each visitor once however many pages they saw.
+model SiteVisitDay {
+  id       String   @id @default(cuid())
+  site     Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId   String
+  day      DateTime @db.Date
+  path     String
+  views    Int      @default(0)
+  visitors Int      @default(0)
+  /// Views from a phone.
+  phone    Int      @default(0)
+
+  @@unique([siteId, day, path])
+}
+
+/// Where a hosted website's visitors arrived from, per day: a search engine,
+/// another website, or nowhere (typed in, bookmarked, an app).
+model SiteReferrerDay {
+  id     String   @id @default(cuid())
+  site   Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId String
+  day    DateTime @db.Date
+  source String
+  views  Int      @default(0)
+
+  @@unique([siteId, day, source])
 }
 
 enum ReviewLinkStatus {

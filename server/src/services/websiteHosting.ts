@@ -11,6 +11,8 @@ import { WebsiteError } from "./website/site.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
 
 import { SVG_CONTENT_SECURITY_POLICY } from "../lib/svgSanitize.js";
+import { FORM_ENDPOINT, receiveFormPost, routeFormsToInbox } from "./websiteForms.js";
+import { recordVisit } from "./websiteVisits.js";
 
 /**
  * Serving a customer's published website.
@@ -92,6 +94,24 @@ function etagFor(html: string): string {
   return `W/"${crypto.createHash("sha1").update(html).digest("base64url")}"`;
 }
 
+/**
+ * The page as served: forms that post nowhere pointed at the site's inbox
+ * (services/websiteForms.ts). Remembered per published version, and the ETag
+ * says when the served copy differs from the stored one, so a browser holding
+ * the page from before this existed is not told it is still current.
+ */
+const servedCopies = new Map<string, string>();
+function servedPage(html: string, path: string, etag: string): { html: string; etag: string } {
+  const key = `${etag}|${path}`;
+  let out = servedCopies.get(key);
+  if (out === undefined) {
+    out = routeFormsToInbox(html, path);
+    if (servedCopies.size > 300) servedCopies.clear();
+    servedCopies.set(key, out);
+  }
+  return out === html ? { html, etag } : { html: out, etag: etag.replace(/"$/, '-f1"') };
+}
+
 const NOT_FOUND_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page not found</title><style>body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;background:#fafafa;color:#1b2029}main{text-align:center;padding:24px}h1{font-size:20px;margin:0 0 8px}p{color:#5b6572;margin:0}</style></head><body><main><h1>Page not found</h1><p>This address is not part of this website.</p></main></body></html>`;
 
 const NOT_PUBLISHED_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Not published yet</title><style>body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;background:#fafafa;color:#1b2029}main{text-align:center;padding:24px;max-width:32rem}h1{font-size:20px;margin:0 0 8px}p{color:#5b6572;margin:0;line-height:1.6}</style></head><body><main><h1>This website has not been published yet</h1><p>The address is reserved and working. As soon as its first page is published in the editor, it will appear here.</p></main></body></html>`;
@@ -116,6 +136,16 @@ export function publicSiteHosting() {
       return res.status(503).set("Cache-Control", "no-store").end();
     }
     if (!site) return res.status(404).set("Cache-Control", "no-store").end();
+    // A form on the site sending its message — the one thing a visitor posts.
+    if (req.method === "POST" && req.path === FORM_ENDPOINT) {
+      try {
+        await receiveFormPost(site, req, res);
+      } catch (error) {
+        console.error(`[hosting] form post to ${host} failed:`, (error as Error).message);
+        if (!res.headersSent) res.status(503).set("Cache-Control", "no-store").end();
+      }
+      return;
+    }
     if (!["GET", "HEAD"].includes(req.method)) return res.status(405).set("Cache-Control", "no-store").end();
 
     const path = (req.path || "/").replace(/\/+$/, "") || "/";
@@ -163,9 +193,12 @@ export function publicSiteHosting() {
           .send(NOT_PUBLISHED_HTML);
       }
 
-      const etag = page.publishedEtag ?? etagFor(page.publishedHtml);
+      const served = servedPage(page.publishedHtml, path, page.publishedEtag ?? etagFor(page.publishedHtml));
+      const etag = served.etag;
       const edgeAllowed = capacity.edge && Boolean(cloudflareZones()[host]) && !req.headers.cookie && !req.headers.authorization && !res.hasHeader("Set-Cookie");
       res.set("ETag", etag).set("Cache-Control", edgeAllowed ? "public, max-age=0, s-maxage=25, must-revalidate" : "private, no-cache");
+      // A page somebody was shown — fresh or from their cache — is a visit.
+      recordVisit(site.id, req, path, host);
       if (req.headers["if-none-match"] === etag) return res.status(304).end();
       return res
         .status(200)
@@ -174,7 +207,7 @@ export function publicSiteHosting() {
         // Short, because a customer who presses Publish expects to see it. The
         // ETag is what saves the bandwidth on a reload.
         .set("X-Content-Type-Options", "nosniff")
-        .send(page.publishedHtml);
+        .send(served.html);
     } catch (error) {
       console.error(`[hosting] ${host}${req.path} failed:`, (error as Error).message);
       return res.status(503).set("Cache-Control", "no-store").end();

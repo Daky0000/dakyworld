@@ -53,6 +53,8 @@ const FreelancerWorkspace = lazy(() => import("./pages/FreelancerWorkspace").the
 const CustomerWorkspace = lazy(() => import("./pages/CustomerWorkspace").then((module) => ({ default: module.CustomerWorkspace })));
 const WebsiteAccount = lazy(() => import("./pages/WebsiteAccount").then((module) => ({ default: module.WebsiteAccount })));
 const WebsiteWelcome = lazy(() => import("./pages/WebsiteWelcome").then((module) => ({ default: module.WebsiteWelcome })));
+const WebsiteInbox = lazy(() => import("./pages/WebsiteInbox").then((module) => ({ default: module.WebsiteInbox })));
+const WebsiteVisits = lazy(() => import("./pages/WebsiteVisits").then((module) => ({ default: module.WebsiteVisits })));
 
 /**
  * Screens are loaded when somebody goes to them, not all at once.
@@ -105,6 +107,8 @@ export default function App() {
           <Route path="team" element={<WebsiteTeam />} />
           <Route path="audit" element={<WebsiteAudit />} />
           <Route path="balance" element={<WebsiteBalance />} />
+          <Route path="inbox" element={<WebsiteInbox />} />
+          <Route path="analytics" element={<WebsiteVisits />} />
           <Route path="settings" element={<WebsiteGuard needs="manage"><WebsiteSettings /></WebsiteGuard>} />
           <Route path="source" element={<WebsiteGuard needs="source"><WebsiteSource /></WebsiteGuard>} />
           <Route path="billing" element={<Guard needs="website.manage"><WebsiteBilling /></Guard>} />
@@ -162,6 +166,8 @@ export default function App() {
           <Route path="team" element={<WebsiteTeam />} />
           <Route path="audit" element={<WebsiteAudit />} />
           <Route path="balance" element={<WebsiteBalance />} />
+          <Route path="inbox" element={<WebsiteInbox />} />
+          <Route path="analytics" element={<WebsiteVisits />} />
           <Route path="settings" element={<WebsiteGuard needs="manage"><WebsiteSettings /></WebsiteGuard>} />
           <Route path="source" element={<WebsiteGuard needs="source"><WebsiteSource /></WebsiteGuard>} />
           <Route path="billing" element={<Guard needs="website.manage"><WebsiteBilling /></Guard>} />

@@ -34,13 +34,18 @@ const routeFor: Record<string, string> = {
   "/website/team": "/sites/one/members",
   "/website/audit": "/sites/one/audit",
   "/website/balance": "/balance",
+  "/website/inbox": "/sites/one/forms",
+  "/website/analytics": "/sites/one/visits",
 };
 for (const item of CLIENT_NAV) {
   const path = routeFor[item.to];
   check(`${item.label} maps to a known API route`, path !== undefined);
   if (path && path !== "/sites") {
     const action = websiteRequestAction("GET", path);
-    check(`${item.label} reads as a view or members action, not a write`, action === "view" || action === "members");
+    // A tab only managers are shown must be one the API answers for managers —
+    // and every other tab must be readable by anybody the site was shared with.
+    if (item.needs === "manage") check(`${item.label} is offered to managers, and the API asks for exactly that`, action === "manage");
+    else check(`${item.label} reads as a view or members action, not a write`, action === "view" || action === "members");
   }
 }
 

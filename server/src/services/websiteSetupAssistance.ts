@@ -8,6 +8,7 @@ import { resolveCurrency, setupAssistancePrice, type PlanCurrency } from "./webs
 import { resolveEntitlement } from "./websiteEntitlement.js";
 import { WebsiteError } from "./website/site.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
+import { companyProfile } from "./systemProfile.js";
 
 /**
  * "Do it for me", as a thing somebody can buy in the connect dialog.
@@ -44,6 +45,27 @@ const handler =
     fn(req, res).catch(next);
 
 export function registerWebsiteSetupAssistance(router: Router) {
+  /**
+   * How a customer reaches a person: the company's own email and phone from
+   * System settings, and WhatsApp only when a number has been set there for
+   * it. Read by the editor's Help, so changing the number is a setting, not a
+   * deploy.
+   */
+  router.get(
+    "/help",
+    handler(async (_req, res) => {
+      const profile = await companyProfile();
+      const whatsapp = profile.whatsapp.replace(/[^\d]/g, "");
+      res.set("Cache-Control", "private, max-age=300").json({
+        name: profile.displayName,
+        email: profile.email,
+        phone: profile.phone,
+        whatsapp: whatsapp.length >= 8 ? { display: profile.whatsapp, link: `https://wa.me/${whatsapp}` } : null,
+        guide: "https://dakyx.com/website-builder-setup",
+      });
+    }),
+  );
+
   /** What it costs, in the currency this customer is billed in. */
   router.get(
     "/setup-assistance",
