@@ -78,23 +78,39 @@ function EnvNote({ variable }: { variable: string }) {
 export function PaystackPanel({ settings }: { settings: AppSettings }) {
   const save = useSave();
   const paystack = settings.paystack;
-  const [secretKey, setSecretKey] = useState("");
-  const [publicKey, setPublicKey] = useState("");
+  const blank = { secret: "", public: "" };
+  const [entered, setEntered] = useState<Record<"live" | "test", { secret: string; public: string }>>({ live: blank, test: blank });
+  const enter = (mode: "live" | "test", field: "secret" | "public", value: string) =>
+    setEntered((current) => ({ ...current, [mode]: { ...current[mode], [field]: value } }));
   const [callbackUrl, setCallbackUrl] = useState(paystack.callbackCustom ? paystack.callbackUrl : "");
   const modes = ["live", "test"] as const;
   const [missing, setMissing] = useState<"live" | "test" | null>(null);
 
   const connect = useMutation({
-    mutationFn: () =>
-      api.put<AppSettings>("/settings/paystack", {
-        ...(secretKey.trim() ? { secretKey } : {}),
-        ...(publicKey.trim() ? { publicKey } : {}),
-        ...(paystack.callbackEnvManaged ? {} : { callbackUrl }),
-      }),
+    // One save covers both modes: each filled pair is sent on its own, so a
+    // rejected live key names live and leaves a good test key stored.
+    mutationFn: async () => {
+      let result: AppSettings | null = null;
+      for (const mode of modes) {
+        const secretKey = entered[mode].secret.trim();
+        const publicKey = entered[mode].public.trim();
+        if (!secretKey && !publicKey) continue;
+        if (secretKey && !secretKey.startsWith(`sk_${mode}_`)) throw new Error(`The ${mode} secret key should start with sk_${mode}_.`);
+        if (publicKey && !publicKey.startsWith(`pk_${mode}_`)) throw new Error(`The ${mode} public key should start with pk_${mode}_.`);
+        try {
+          result = await api.put<AppSettings>("/settings/paystack", { ...(secretKey ? { secretKey } : {}), ...(publicKey ? { publicKey } : {}) });
+        } catch (err) {
+          throw new Error(`${mode === "live" ? "Live" : "Test"}: ${(err as Error).message}`);
+        }
+        setEntered((current) => ({ ...current, [mode]: blank }));
+      }
+      if (!paystack.callbackEnvManaged && callbackUrl !== (paystack.callbackCustom ? paystack.callbackUrl : "")) {
+        result = await api.put<AppSettings>("/settings/paystack", { callbackUrl });
+      }
+      return result;
+    },
     onSuccess: (result) => {
-      setSecretKey("");
-      setPublicKey("");
-      save(result);
+      if (result) save(result);
     },
   });
   const remove = useMutation({
@@ -175,7 +191,7 @@ export function PaystackPanel({ settings }: { settings: AppSettings }) {
             ))}
             {missing && (
               <p className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-xs text-warn-text">
-                There is no {missing} key yet. Paste your <code className="font-mono">sk_{missing}_…</code> secret key below and save, then switch.
+                There is no {missing} key yet. Fill in the {missing} keys below and save, then switch.
               </p>
             )}
             {paystack.modeEnvManaged && <EnvNote variable="PAYSTACK_MODE" />}
@@ -197,15 +213,22 @@ export function PaystackPanel({ settings }: { settings: AppSettings }) {
       }
     >
       <div className="mt-4 max-w-xl space-y-3">
-        {!(paystack.envManaged.live && paystack.envManaged.test) && (
-          <>
-            <Field label="Secret key" full hint="Test or live — the prefix decides which slot it fills. Checked against Paystack before it is stored.">
-              <input className="input" type="password" value={secretKey} placeholder="sk_test_… or sk_live_…" onChange={(event) => setSecretKey(event.target.value)} />
-            </Field>
-            <Field label="Public key" full hint="From the same tab as the secret key. Not secret; used by Paystack's inline checkout.">
-              <input className="input" value={publicKey} placeholder="pk_test_… or pk_live_…" onChange={(event) => setPublicKey(event.target.value)} />
-            </Field>
-          </>
+        {modes.map((mode) =>
+          paystack.envManaged[mode] ? (
+            <EnvNote key={mode} variable={mode === "live" ? "PAYSTACK_SECRET_KEY" : "PAYSTACK_TEST_SECRET_KEY"} />
+          ) : (
+            <fieldset key={mode} className="space-y-3 rounded-xl border border-line p-4">
+              <legend className="px-1 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
+                {mode} keys {paystack.keys[mode] ? "· saved — paste to replace" : ""}
+              </legend>
+              <Field label={`${mode === "live" ? "Live" : "Test"} secret key`} full>
+                <input className="input" type="password" value={entered[mode].secret} placeholder={`sk_${mode}_…`} onChange={(event) => enter(mode, "secret", event.target.value)} />
+              </Field>
+              <Field label={`${mode === "live" ? "Live" : "Test"} public key`} full>
+                <input className="input" value={entered[mode].public} placeholder={paystack.publicKeys[mode] ?? `pk_${mode}_…`} onChange={(event) => enter(mode, "public", event.target.value)} />
+              </Field>
+            </fieldset>
+          ),
         )}
         {paystack.callbackEnvManaged ? (
           <EnvNote variable="PAYSTACK_CALLBACK_URL" />
@@ -215,7 +238,7 @@ export function PaystackPanel({ settings }: { settings: AppSettings }) {
           </Field>
         )}
         <Button
-          disabled={connect.isPending || (secretKey.trim().length > 0 && secretKey.trim().length < 10)}
+          disabled={connect.isPending}
           onClick={() => connect.mutate()}
         >
           {connect.isPending ? "Checking…" : "Save"}
