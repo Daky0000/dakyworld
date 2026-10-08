@@ -7,6 +7,8 @@ import { setPageTitle } from "../lib/surface";
 import type { SiteSummary } from "../lib/types";
 import { Button, Field, PageHeader } from "../components/ui";
 import { TwoFactorControls, useTwoFactorState } from "../components/TwoFactorControls";
+import { NewPasswordField, PasswordInput } from "../components/PasswordField";
+import { passwordStrength } from "../lib/passwordStrength";
 
 /**
  * Everything a customer can do about their own account without asking anybody:
@@ -49,6 +51,7 @@ function Notice({ kind, children }: { kind: "ok" | "error"; children: ReactNode 
 }
 
 function PasswordSection() {
+  const { user } = useAuth();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const change = useMutation({
@@ -67,13 +70,13 @@ function PasswordSection() {
         }}
       >
         <Field label="Current password">
-          <input className="input" type="password" autoComplete="current-password" required value={current} onChange={(e) => setCurrent(e.target.value)} />
-        </Field>
-        <Field label="New password" hint="At least 10 characters.">
-          <input className="input" type="password" autoComplete="new-password" required minLength={10} value={next} onChange={(e) => setNext(e.target.value)} />
+          <PasswordInput autoComplete="current-password" required value={current} onChange={(e) => setCurrent(e.target.value)} />
         </Field>
         <div className="sm:col-span-2">
-          <Button type="submit" disabled={change.isPending || !current || next.length < 10}>
+          <NewPasswordField value={next} onChange={setNext} context={{ email: user?.email, name: user?.name }} />
+        </div>
+        <div className="sm:col-span-2">
+          <Button type="submit" disabled={change.isPending || !current || !passwordStrength(next, { email: user?.email, name: user?.name }).acceptable}>
             {change.isPending ? "Changing…" : "Change password"}
           </Button>
         </div>

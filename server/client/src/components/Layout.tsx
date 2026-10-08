@@ -179,19 +179,19 @@ export function Layout() {
 
   const navigation = (mobile = false) => <>
     <div className="os-brand">
-      <div><img src="/brand/lockup-on-dark.png" alt="DakyXTech" className="block h-7 w-auto" /><span>{client ? "Website studio" : "Business workspace"}</span></div>
+      <div><img src="/brand/lockup-on-light.png" alt="DakyXTech" className="block h-7 w-auto" /><span>{editorSurface ? "Website editor" : client ? "Website studio" : "Business workspace"}</span></div>
       {mobile && <button type="button" onClick={() => setMobileOpen(false)} className="os-nav-close">Close</button>}
     </div>
     {!editorSurface && !user?.external && (
       <div className="px-3 pb-3">
-        <div className="flex rounded-xl bg-[#161F2E] p-1 border border-[#354052]/60" role="group" aria-label="Workspace view mode">
+        <div className="mt-3 flex rounded-xl bg-[#F6F7F9] p-1" role="group" aria-label="Workspace view mode">
           <button
             type="button"
             onClick={() => handleSetMode("admin")}
             className={`flex-1 rounded-lg py-1.5 text-center text-[11px] font-semibold transition ${
               workspaceMode === "admin"
-                ? "bg-[#223251] text-white shadow-xs"
-                : "text-[#A9B3C5] hover:text-white"
+                ? "bg-white text-ink shadow-[0_1px_2px_rgba(9,24,51,.08)]"
+                : "text-muted hover:text-ink"
             }`}
           >
             Admin OS
@@ -202,7 +202,7 @@ export function Layout() {
             className={`flex-1 rounded-lg py-1.5 text-center text-[11px] font-semibold transition ${
               workspaceMode === "client"
                 ? "bg-blue text-white font-medium shadow-xs"
-                : "text-[#A9B3C5] hover:text-white"
+                : "text-muted hover:text-ink"
             }`}
           >
             Client Portal
@@ -227,11 +227,11 @@ export function Layout() {
       })}
       {!visibleGroups.length && <p className="os-nav-empty">No matching pages.</p>}
       {workspaceMode === "client" && !user?.external && (
-        <div className="mt-4 px-1 pt-3 border-t border-[#293244]">
+        <div className="mt-4 px-1 pt-3 border-t border-line">
           <button
             type="button"
             onClick={() => handleSetMode("admin")}
-            className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#161F2E] px-3 py-2 text-xs font-semibold text-[#A9B3C5] border border-[#354052]/60 hover:bg-[#223251] hover:text-white transition"
+            className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#F6F7F9] px-3 py-2 text-xs font-semibold text-muted hover:bg-[#EAF1FF] hover:text-blue transition"
           >
             <span>&larr;</span> Back to Admin OS
           </button>
@@ -277,10 +277,12 @@ export function Layout() {
           <span className="os-topbar-date">{new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(new Date())}</span>
         </div>
       </header>
+      <div className="os-page">
       <main id="workspace" tabIndex={-1} className="os-workspace"><Suspense fallback={<Loading rows={5} />}><Outlet /></Suspense></main>
       <TourHost scope="workspace" />
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
       <footer className="os-workspace-footer"><span>{editorSurface ? "DakyX Website Editor" : "DakyXTech OS"}</span><span>{editorSurface || client ? <a href="https://dakyx.com/website-builder-setup" className="underline-offset-2 hover:underline">Help &amp; guides</a> : "Built for considered work."}</span></footer>
+      </div>
     </div>
   </div>;
 }

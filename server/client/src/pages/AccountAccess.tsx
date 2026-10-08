@@ -1,6 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../lib/api";
 import { SURFACE_NAME, currentSurface, setPageTitle } from "../lib/surface";
+import { passwordStrength } from "../lib/passwordStrength";
+import { ConfirmPasswordField, NewPasswordField } from "../components/PasswordField";
+import { AuthFrame } from "./Login";
 
 /**
  * The three screens somebody reaches from a link in an email, plus the "I have
@@ -11,16 +14,14 @@ import { SURFACE_NAME, currentSurface, setPageTitle } from "../lib/surface";
  * gate, from the path alone.
  */
 
-function Shell({ title, children }: { title: string; children: ReactNode }) {
+function Shell({ title, lead, children }: { title: string; lead?: ReactNode; children: ReactNode }) {
   useEffect(() => setPageTitle(title), [title]);
   return (
-    <main className="grid min-h-screen place-items-center bg-cream p-6">
-      <div className="w-full max-w-md rounded-2xl border border-line bg-surface p-8">
-        <img src="/brand/lockup-on-light.png" alt={SURFACE_NAME[currentSurface()]} className="mb-5 block h-7 w-auto" />
-        <h1 className="font-display text-xl font-medium text-ink">{title}</h1>
-        <div className="mt-5 space-y-4 text-sm text-ink">{children}</div>
-      </div>
-    </main>
+    <AuthFrame footer={<a href="/">Back to sign in</a>}>
+      <h1 className="os-login-title">{title}</h1>
+      {lead && <p className="os-login-lead">{lead}</p>}
+      <div className="space-y-4 text-sm text-ink">{children}</div>
+    </AuthFrame>
   );
 }
 
@@ -35,6 +36,8 @@ export function SetPassword({ kind }: { kind: "SET_PASSWORD" | "PASSWORD_RESET" 
   const [verifying, setVerifying] = useState(false);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  // One switch shows or hides both fields, so the two can be compared by eye.
+  const [shown, setShown] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,6 +61,10 @@ export function SetPassword({ kind }: { kind: "SET_PASSWORD" | "PASSWORD_RESET" 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
+    if (!passwordStrength(password, { email }).acceptable) {
+      setError("That password doesn't meet the rules under it yet.");
+      return;
+    }
     if (password !== confirm) {
       setError("The two passwords are not the same.");
       return;
@@ -97,53 +104,28 @@ export function SetPassword({ kind }: { kind: "SET_PASSWORD" | "PASSWORD_RESET" 
   }
 
   const title = kind === "PASSWORD_RESET" ? "Choose a new password" : "Create your password";
+  const ready = passwordStrength(password, { email }).acceptable && password === confirm;
 
   return (
-    <Shell title={title}>
-      {isOnboarding && (
-        <p className="text-xs leading-relaxed text-muted">
-          Create a secure password for your account to access the website editor and complete your onboarding.
-        </p>
-      )}
+    <Shell
+      title={title}
+      lead={isOnboarding ? "This is the password you'll sign in with from now on." : "Pick one you haven't used before. The old one stops working as soon as you save."}
+    >
       {email && (
-        <div className="rounded-xl border border-line bg-cream p-3 text-xs text-ink">
-          <span className="block text-[11px] font-medium uppercase tracking-wide text-muted">Account email</span>
-          <span className="mt-0.5 block text-sm font-semibold text-ink">{email}</span>
+        <div className="os-login-account">
+          <span>Account</span>
+          <b>{email}</b>
         </div>
       )}
       <form className="space-y-4" onSubmit={submit}>
-        <label className="block">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted">New password</span>
-          <input
-            type="password"
-            autoComplete="new-password"
-            required
-            minLength={10}
-            className="mt-1 w-full rounded-xl border border-line bg-cream px-3 py-2 text-ink"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-        </label>
-        <label className="block">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted">Confirm password</span>
-          <input
-            type="password"
-            autoComplete="new-password"
-            required
-            minLength={10}
-            className="mt-1 w-full rounded-xl border border-line bg-cream px-3 py-2 text-ink"
-            value={confirm}
-            onChange={(event) => setConfirm(event.target.value)}
-          />
-        </label>
-        <p className="text-xs text-muted">At least 10 characters. Longer beats complicated.</p>
-        {error && <p className="rounded-lg bg-warn-surface p-3 text-xs text-warn-text">{error}</p>}
-        <button
-          type="submit"
-          disabled={busy}
-          className="w-full cursor-pointer rounded-xl bg-ink px-4 py-2.5 font-medium text-white transition hover:bg-ink/90 disabled:opacity-60"
-        >
-          {busy ? "Saving…" : isOnboarding ? "Create password & Continue to Onboarding →" : "Save and sign in"}
+        {/* The username field lets a password manager file the new password
+            under the right account instead of asking which one it was for. */}
+        {email && <input type="email" name="username" autoComplete="username" value={email} readOnly hidden />}
+        <NewPasswordField value={password} onChange={setPassword} context={{ email }} shown={shown} onToggle={() => setShown((value) => !value)} autoFocus />
+        <ConfirmPasswordField value={confirm} onChange={setConfirm} against={password} shown={shown} onToggle={() => setShown((value) => !value)} />
+        {error && <p role="alert" className="rounded-xl bg-warn-surface p-3 text-xs text-warn-text">{error}</p>}
+        <button type="submit" disabled={busy || !ready} className="os-login-submit">
+          {busy ? "Saving…" : isOnboarding ? "Create password and continue" : "Save and sign in"}
         </button>
       </form>
     </Shell>
@@ -167,11 +149,8 @@ export function ForgotPassword() {
 
   if (sent) {
     return (
-      <Shell title="Check your email">
-        <p className="text-muted">
-          If {email} has an account, a link to choose a new password is on its way. It is good for one hour.
-        </p>
-        <a className="text-blue hover:underline" href="/">
+      <Shell title="Check your email" lead={<>If {email} has an account, a link to choose a new password is on its way. It is good for one hour.</>}>
+        <a className="os-login-submit" href="/">
           Back to sign in
         </a>
       </Shell>
@@ -179,29 +158,15 @@ export function ForgotPassword() {
   }
 
   return (
-    <Shell title="Forgotten password">
+    <Shell title="Forgotten your password?" lead="Enter the address you sign in with and we'll email you a link to choose a new one.">
       <form className="space-y-4" onSubmit={submit}>
-        <label className="block">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted">Your email address</span>
-          <input
-            type="email"
-            required
-            autoComplete="email"
-            className="mt-1 w-full rounded-xl border border-line bg-cream px-3 py-2"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-          />
+        <label className="os-login-field">
+          <span>Email</span>
+          <input type="email" required autoComplete="email" className="input" value={email} onChange={(event) => setEmail(event.target.value)} autoFocus />
         </label>
-        <button
-          type="submit"
-          disabled={busy}
-          className="w-full rounded-xl bg-ink px-4 py-2.5 font-medium text-white disabled:opacity-60"
-        >
+        <button type="submit" disabled={busy} className="os-login-submit">
           {busy ? "Sending…" : "Send me a link"}
         </button>
-        <a className="block text-center text-xs text-muted hover:underline" href="/">
-          Back to sign in
-        </a>
       </form>
     </Shell>
   );
@@ -235,7 +200,7 @@ export function VerifyEmail() {
       {state === "done" && <p className="text-muted">{message} is confirmed. You can close this tab.</p>}
       {state === "failed" && <p className="text-muted">{message}</p>}
       {state !== "working" && (
-        <a className="text-blue hover:underline" href="/">
+        <a className="os-login-submit" href="/">
           Go to {SURFACE_NAME[currentSurface()]}
         </a>
       )}

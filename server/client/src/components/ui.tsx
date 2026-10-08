@@ -501,7 +501,7 @@ export function useOverlay(open: boolean, onClose: () => void) {
   useEffect(() => {
     if (!open) return;
     const previousFocus = document.activeElement as HTMLElement | null;
-    const viewport = document.querySelector<HTMLElement>(".os-viewport");
+    const viewport = document.querySelector<HTMLElement>(".os-page");
     const previousBodyOverflow = document.body.style.overflow;
     const previousViewportOverflow = viewport?.style.overflow;
     document.body.style.overflow = "hidden";
