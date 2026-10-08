@@ -64,8 +64,13 @@ function escapeHtml(value: string): string {
  */
 function preheader(text: string): string {
   const line = escapeHtml(text.replace(/\s+/g, " ").trim().slice(0, 140));
-  // The trailing entities push the real body text out of the preview window.
-  return `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:${PAGE};opacity:0">${line}${"&#847;&zwnj;&nbsp;".repeat(40)}</div>`;
+  // Hidden by display and size alone. It used to be hidden four ways at once —
+  // 1px type, the background's own colour, zero opacity and a run of invisible
+  // filler characters — and SpamAssassin scores exactly that as disguised text
+  // (FONT_INVIS_MSGID, −2.5 on mail-tester, 8 Oct 2026). Without the filler a
+  // client may show a few words of the letter after this line; that is the
+  // letter's own opening, which is fine.
+  return `<div style="display:none;max-height:0;max-width:0;overflow:hidden;mso-hide:all">${line}</div>`;
 }
 
 /**
