@@ -145,21 +145,10 @@ def run():
     avatar_512.save(os.path.join(brand_dir, "og-mark-512.png"))
     print("Saved avatar-512.png and og-mark-512.png")
 
-    # 7. Update og-share.png (1200 x 630)
-    og_share_path = os.path.join(brand_dir, "og-share.png")
-    if os.path.exists(og_share_path):
-        og_img = Image.open(og_share_path).convert("RGBA")
-        # In og-share, the logo sits at (82, 71) to (536, 166)
-        # Background is dark navy: sample corner near (80, 65)
-        bg_col = og_img.getpixel((80, 65))
-        # Create patch over old logo
-        patch = Image.new("RGBA", (465, 105), bg_col)
-        og_img.paste(patch, (80, 65))
-        # Generate lockup to fit in (455, 96)
-        og_lockup = make_horizontal_lockup(lockup_dark, canvas_size=(455, 96), target_h=68, gap=20)
-        og_img.paste(og_lockup, (82, 71), og_lockup)
-        og_img.convert("RGB").save(og_share_path)
-        print("Updated og-share.png with new logo")
+    # 7. og-share.png is no longer patched here. Since the v21 design system
+    #    (8 Oct 2026) it is light, and pasting the on-dark lock-up over a
+    #    sampled background would put a white logo on white. It is rendered
+    #    from scripts/og-share.html instead; the recipe is at the top of it.
 
     # 8. Server assets (repo/server/assets/)
     # logo.png: horizontal lockup for letterhead (400x96)
