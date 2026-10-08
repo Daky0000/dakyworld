@@ -82,6 +82,7 @@ export function PaystackPanel({ settings }: { settings: AppSettings }) {
   const [publicKey, setPublicKey] = useState("");
   const [callbackUrl, setCallbackUrl] = useState(paystack.callbackCustom ? paystack.callbackUrl : "");
   const modes = ["live", "test"] as const;
+  const [missing, setMissing] = useState<"live" | "test" | null>(null);
 
   const connect = useMutation({
     mutationFn: () =>
@@ -127,12 +128,16 @@ export function PaystackPanel({ settings }: { settings: AppSettings }) {
                     key={mode}
                     type="button"
                     aria-pressed={paystack.mode === mode}
-                    disabled={paystack.modeEnvManaged || !paystack.keys[mode] || switchMode.isPending || paystack.mode === mode}
-                    title={!paystack.keys[mode] ? `Add a ${mode} key first` : undefined}
+                    disabled={paystack.modeEnvManaged || switchMode.isPending || paystack.mode === mode}
                     className={`px-3 py-1 font-sans text-[11px] uppercase tracking-[.06em] transition disabled:cursor-not-allowed ${
                       paystack.mode === mode ? "bg-ink text-white" : "text-muted hover:text-ink disabled:opacity-40"
                     }`}
                     onClick={() => {
+                      if (!paystack.keys[mode]) {
+                        setMissing(mode);
+                        return;
+                      }
+                      setMissing(null);
                       if (mode === "live" && !window.confirm("Switch Paystack to live mode? New payment links will take real money.")) return;
                       switchMode.mutate(mode);
                     }}
@@ -168,6 +173,11 @@ export function PaystackPanel({ settings }: { settings: AppSettings }) {
                 )}
               </div>
             ))}
+            {missing && (
+              <p className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-xs text-warn-text">
+                There is no {missing} key yet. Paste your <code className="font-mono">sk_{missing}_…</code> secret key below and save, then switch.
+              </p>
+            )}
             {paystack.modeEnvManaged && <EnvNote variable="PAYSTACK_MODE" />}
             <ErrorNote error={switchMode.error ?? remove.error} />
           </div>
