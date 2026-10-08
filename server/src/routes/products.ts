@@ -11,6 +11,9 @@ import { subscriptionManagementLink } from "../lib/paystack.js";
 import { reconcilePurchaseSubscription } from "../services/paystackEvents.js";
 import { countryForIp } from "../lib/geoCountry.js";
 import { resolveCurrency } from "../services/websitePricing.js";
+import { settleFromProvider } from "../services/payments.js";
+import { issueToken } from "../services/accountAccess.js";
+import { customerAppUrl } from "../services/emailSender.js";
 
 /**
  * The product catalogue: one door for the public website, one for the office.
@@ -61,6 +64,7 @@ export const purchaseInput = z.object({
    */
   currency: z.enum(["GHS", "USD"]).optional(),
   country: z.string().trim().max(60).optional(),
+  callbackUrl: z.string().trim().url().max(1000).optional(),
 });
 
 /**
@@ -122,10 +126,85 @@ publicProductsRouter.get("/website-payment-quote", paymentStatusRateLimit, async
 publicProductsRouter.post("/website-payment-status", paymentStatusRateLimit, async (req, res, next) => {
   try {
     publicCors(req, res); res.set("Cache-Control", "no-store");
-    const { checkoutKey } = z.object({ checkoutKey: z.string().uuid() }).parse(req.body);
-    const purchase = await prisma.websitePurchase.findUnique({ where: { checkoutKey }, select: { setupPaidAt: true, status: true, billingState: true } });
+    const input = z.object({
+      checkoutKey: z.string().uuid().optional(),
+      reference: z.string().trim().max(120).optional(),
+    }).refine(data => Boolean(data.checkoutKey || data.reference), {
+      message: "Either checkoutKey or reference is required.",
+    }).parse(req.body ?? {});
+
+    const ref = input.reference?.trim();
+    if (ref) {
+      try {
+        await settleFromProvider(ref, "paystack");
+      } catch {
+        // Already settled or provider check pending; continue checking database
+      }
+    }
+
+    let purchase = null;
+    if (input.checkoutKey) {
+      purchase = await prisma.websitePurchase.findUnique({
+        where: { checkoutKey: input.checkoutKey },
+        select: { id: true, setupPaidAt: true, status: true, billingState: true, email: true, contactName: true, userId: true, invoiceId: true },
+      });
+    }
+
+    if (!purchase && ref) {
+      const attempt = await prisma.paymentAttempt.findUnique({ where: { reference: ref } });
+      const invoice = attempt
+        ? await prisma.invoice.findUnique({ where: { id: attempt.invoiceId } })
+        : await prisma.invoice.findFirst({ where: { paymentRef: ref } });
+      if (invoice) {
+        purchase = await prisma.websitePurchase.findFirst({
+          where: { invoiceId: invoice.id },
+          select: { id: true, setupPaidAt: true, status: true, billingState: true, email: true, contactName: true, userId: true, invoiceId: true },
+        });
+      }
+    }
+
     if (!purchase) return res.status(404).json({ error: "Checkout not found." });
-    res.json({ paid: Boolean(purchase.setupPaidAt), status: purchase.status, billingState: purchase.billingState });
+
+    const isPaid = Boolean(purchase.setupPaidAt);
+    if (!isPaid) {
+      return res.json({ paid: false, status: purchase.status, billingState: purchase.billingState });
+    }
+
+    // A set-password token, straight to the browser, is only safe for the
+    // account this purchase itself created and only while it has no password.
+    // Never look a user up by the purchase email: anybody can type any email
+    // into checkout, and that would hand them a token for the owner's account.
+    // Everyone else gets the emailed link, which proves they own the inbox.
+    const account = purchase.userId
+      ? await prisma.user.findUnique({ where: { id: purchase.userId }, select: { id: true, passwordHash: true } })
+      : null;
+    const token = account && !account.passwordHash ? await issueToken(account.id, "SET_PASSWORD") : null;
+
+    const origin = (req.headers.origin || req.get("origin") || req.get("referer") || "").toString();
+    const isLocal = origin.includes("localhost") || origin.includes("127.0.0.1");
+    let base = customerAppUrl();
+    if (isLocal) {
+      try {
+        const parsed = new URL(origin);
+        base = `${parsed.protocol}//${parsed.host}`;
+      } catch {
+        // Keep default base
+      }
+    }
+
+    const setPasswordUrl = token
+      ? `${base}/set-password?token=${encodeURIComponent(token)}&email=${encodeURIComponent(purchase.email)}&onboarding=true`
+      : null;
+
+    res.json({
+      paid: true,
+      status: purchase.status,
+      billingState: purchase.billingState,
+      email: purchase.email,
+      name: purchase.contactName,
+      token,
+      setPasswordUrl,
+    });
   } catch (error) { next(error); }
 });
 

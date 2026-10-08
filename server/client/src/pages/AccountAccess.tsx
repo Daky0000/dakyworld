@@ -30,11 +30,30 @@ function tokenFromUrl(): string {
 
 /** Sets a first password (after a purchase or an invite) or a replacement one. */
 export function SetPassword({ kind }: { kind: "SET_PASSWORD" | "PASSWORD_RESET" }) {
+  const [token, setToken] = useState(() => tokenFromUrl());
+  const [email, setEmail] = useState(() => new URLSearchParams(window.location.search).get("email") ?? "");
+  const [verifying, setVerifying] = useState(false);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const token = tokenFromUrl();
+
+  const reference = new URLSearchParams(window.location.search).get("reference") || new URLSearchParams(window.location.search).get("trxref") || "";
+  const isOnboarding = new URLSearchParams(window.location.search).get("onboarding") === "true" || kind === "SET_PASSWORD";
+
+  useEffect(() => {
+    if (!token && reference) {
+      setVerifying(true);
+      api
+        .post<{ paid: boolean; token?: string; email?: string }>("/public/website-payment-status", { reference })
+        .then((res) => {
+          if (res.token) setToken(res.token);
+          if (res.email) setEmail(res.email);
+        })
+        .catch((err) => setError((err as Error).message))
+        .finally(() => setVerifying(false));
+    }
+  }, [token, reference]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -46,13 +65,22 @@ export function SetPassword({ kind }: { kind: "SET_PASSWORD" | "PASSWORD_RESET" 
     setBusy(true);
     try {
       await api.post("/auth/password/token", { token, password, kind });
-      // Signed in by the same request, so go straight to the product rather
-      // than asking for the password that was just chosen.
-      window.location.href = "/";
+      // Signed in by the same request, so go straight to the onboarding or home.
+      window.location.href = isOnboarding ? "/website/onboarding" : "/";
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);
     }
+  }
+
+  if (verifying) {
+    return (
+      <Shell title="Verifying payment…">
+        <p className="text-sm text-muted">
+          Confirming your purchase with Paystack and preparing your account setup…
+        </p>
+      </Shell>
+    );
   }
 
   if (!token) {
@@ -66,8 +94,21 @@ export function SetPassword({ kind }: { kind: "SET_PASSWORD" | "PASSWORD_RESET" 
     );
   }
 
+  const title = kind === "PASSWORD_RESET" ? "Choose a new password" : "Create your password";
+
   return (
-    <Shell title={kind === "PASSWORD_RESET" ? "Choose a new password" : "Choose your password"}>
+    <Shell title={title}>
+      {isOnboarding && (
+        <p className="text-xs leading-relaxed text-muted">
+          Create a secure password for your account to access the website editor and complete your onboarding.
+        </p>
+      )}
+      {email && (
+        <div className="rounded-xl border border-line bg-cream p-3 text-xs text-ink">
+          <span className="block text-[11px] font-medium uppercase tracking-wide text-muted">Account email</span>
+          <span className="mt-0.5 block text-sm font-semibold text-ink">{email}</span>
+        </div>
+      )}
       <form className="space-y-4" onSubmit={submit}>
         <label className="block">
           <span className="text-xs font-medium uppercase tracking-wide text-muted">New password</span>
@@ -76,19 +117,19 @@ export function SetPassword({ kind }: { kind: "SET_PASSWORD" | "PASSWORD_RESET" 
             autoComplete="new-password"
             required
             minLength={10}
-            className="mt-1 w-full rounded-xl border border-line bg-cream px-3 py-2"
+            className="mt-1 w-full rounded-xl border border-line bg-cream px-3 py-2 text-ink"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
           />
         </label>
         <label className="block">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted">And again</span>
+          <span className="text-xs font-medium uppercase tracking-wide text-muted">Confirm password</span>
           <input
             type="password"
             autoComplete="new-password"
             required
             minLength={10}
-            className="mt-1 w-full rounded-xl border border-line bg-cream px-3 py-2"
+            className="mt-1 w-full rounded-xl border border-line bg-cream px-3 py-2 text-ink"
             value={confirm}
             onChange={(event) => setConfirm(event.target.value)}
           />
@@ -98,9 +139,9 @@ export function SetPassword({ kind }: { kind: "SET_PASSWORD" | "PASSWORD_RESET" 
         <button
           type="submit"
           disabled={busy}
-          className="w-full rounded-xl bg-ink px-4 py-2.5 font-medium text-white disabled:opacity-60"
+          className="w-full cursor-pointer rounded-xl bg-ink px-4 py-2.5 font-medium text-white transition hover:bg-ink/90 disabled:opacity-60"
         >
-          {busy ? "Saving…" : "Save and sign in"}
+          {busy ? "Saving…" : isOnboarding ? "Create password & Continue to Onboarding →" : "Save and sign in"}
         </button>
       </form>
     </Shell>

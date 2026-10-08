@@ -129,6 +129,7 @@ type PurchaseInput = {
   country?: string | null;
   /** An explicit choice on the pricing page wins over the country. */
   currency?: string | null;
+  callbackUrl?: string | null;
 };
 
 export async function startWebsitePurchase(input: PurchaseInput) {
@@ -201,7 +202,28 @@ export async function startWebsitePurchase(input: PurchaseInput) {
     throw error;
   }
   const { invoice, purchase } = records;
-  const payment = await raisePayment(invoice.id, "paystack", { recurring: true, callbackUrl: "https://dakyx.com/website-builder?payment=returned#price" });
+  let returnCallbackUrl = "https://dakyx.com/website-builder?payment=returned#price";
+  if (input.callbackUrl) {
+    try {
+      const parsed = new URL(input.callbackUrl);
+      const host = parsed.hostname.toLowerCase();
+      if (
+        host === "dakyx.com" ||
+        host === "www.dakyx.com" ||
+        host === "dakyworld.com" ||
+        host === "www.dakyworld.com" ||
+        host === "editor.dakyx.com" ||
+        host === "os.dakyx.com" ||
+        host === "localhost" ||
+        host === "127.0.0.1"
+      ) {
+        returnCallbackUrl = input.callbackUrl;
+      }
+    } catch {
+      // Keep default
+    }
+  }
+  const payment = await raisePayment(invoice.id, "paystack", { recurring: true, callbackUrl: returnCallbackUrl });
   if (account.created) {
     // Logged rather than thrown: the customer has a payment link in front of
     // them, and a missing welcome email is recoverable from the Purchases

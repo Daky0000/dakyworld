@@ -31,7 +31,7 @@ function Gate() {
   // just paid and has no password yet, or somebody who has forgotten theirs —
   // so they are answered from the path before the session is even considered.
   const path = window.location.pathname.replace(/\/+$/, "");
-  if (path === "/set-password") return <SetPassword kind="SET_PASSWORD" />;
+  if (path === "/set-password" || path === "/payment-return" || path === "/payment/callback") return <SetPassword kind="SET_PASSWORD" />;
   if (path === "/reset-password") return <SetPassword kind="PASSWORD_RESET" />;
   if (path === "/forgot-password") return <ForgotPassword />;
   if (path === "/verify-email") return <VerifyEmail />;

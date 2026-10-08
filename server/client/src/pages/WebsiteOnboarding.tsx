@@ -50,6 +50,14 @@ export function WebsiteOnboarding() {
   const [note, setNote] = useState("");
   const [handedOver, setHandedOver] = useState(false);
 
+  if (sites.isLoading) {
+    return (
+      <div className="mx-auto max-w-4xl p-12 text-center text-sm text-muted">
+        Loading subscriber onboarding…
+      </div>
+    );
+  }
+
   if (sites.isSuccess && (!sites.data || sites.data.length === 0)) {
     return (
       <div className="space-y-6">

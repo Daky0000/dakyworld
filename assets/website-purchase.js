@@ -349,31 +349,126 @@
 
   // Handle post-purchase return from Paystack
   var searchParams = new URLSearchParams(window.location.search);
-  if (searchParams.get('payment') === 'returned') {
+  var isPaymentReturn = searchParams.get('payment') === 'returned' || searchParams.has('reference') || searchParams.has('trxref');
+  if (isPaymentReturn) {
+    var ref = searchParams.get('reference') || searchParams.get('trxref') || '';
+    var savedKey;
+    try { savedKey = sessionStorage.getItem('dakyworld.checkoutKey'); } catch (_) {}
+
     var priceSection = document.getElementById('price');
+    var checkoutFormCol = document.querySelector('.checkout-form-col');
+
     var note = document.createElement('p');
     note.className = 'builder-payment-return';
     note.setAttribute('role', 'status');
     note.textContent = 'Payment confirmation pending. Do not pay again while confirmation is pending.';
     if (priceSection) priceSection.prepend(note);
-    var savedKey;
-    try { savedKey = sessionStorage.getItem('dakyworld.checkoutKey'); } catch (_) {}
+
+    var checkoutBox = null;
+    if (checkoutFormCol) {
+      if (form) form.style.display = 'none';
+      var checkoutSub = document.querySelector('.checkout-sub');
+      if (checkoutSub) checkoutSub.style.display = 'none';
+      var checkoutTitle = document.getElementById('builderCheckoutTitle');
+      if (checkoutTitle) checkoutTitle.textContent = 'Verifying your payment';
+
+      checkoutBox = document.createElement('div');
+      checkoutBox.className = 'checkout-return-box';
+      checkoutBox.style.cssText = 'background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 28px; margin-top: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);';
+      checkoutBox.innerHTML =
+        '<div style="display:flex;align-items:center;gap:12px;">' +
+        '<span class="builder-btn-spinner" style="display:inline-block;width:24px;height:24px;border:3px solid #cbd5e1;border-top-color:#3157ff;border-radius:50%;animation:dw-spin 0.8s linear infinite;" aria-hidden="true"></span>' +
+        '<h2 style="font-size:18px;font-weight:600;margin:0;color:#0f172a;">Confirming payment with Paystack…</h2>' +
+        '</div>' +
+        '<p style="margin:12px 0 0;color:#64748b;font-size:14px;line-height:1.5;">Please wait a moment while we verify your transaction and prepare your account.</p>';
+      checkoutFormCol.appendChild(checkoutBox);
+    }
+
     var polls = 0;
     function checkReturnedPayment() {
-      if (!savedKey) { note.textContent = 'Payment must be verified by DakyXTech. Contact support with your Paystack reference before paying again.'; return; }
-      fetch(API + '/website-payment-status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checkoutKey: savedKey }), signal: AbortSignal.timeout(15000) })
+      if (!savedKey && !ref) {
+        var msg = 'Payment must be verified by DakyXTech. Contact support with your Paystack reference before paying again.';
+        note.textContent = msg;
+        if (checkoutBox) {
+          checkoutBox.innerHTML =
+            '<h2 style="font-size:18px;font-weight:600;color:#dc2626;margin:0;">Verification incomplete</h2>' +
+            '<p style="margin:10px 0 0;color:#64748b;font-size:14px;">' + msg + '</p>';
+        }
+        return;
+      }
+      fetch(API + '/website-payment-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ checkoutKey: savedKey || undefined, reference: ref || undefined }),
+        signal: AbortSignal.timeout(15000)
+      })
         .then(function (response) { if (!response.ok) throw new Error('pending'); return response.json(); })
         .then(function (body) {
           if (body.paid) {
             note.textContent = 'Payment verified. Website setup is pending; subscription status will be confirmed separately.';
+            var emailDisplay = body.email || 'your email';
+            var setPassUrl = body.setPasswordUrl || ('https://editor.dakyx.com/set-password?email=' + encodeURIComponent(emailDisplay) + '&onboarding=true');
+
+            var successHtml =
+              '<div style="text-align:left;">' +
+              '<div style="display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:50%;background:#dcfce7;color:#16a34a;font-size:22px;font-weight:bold;margin-bottom:16px;">✓</div>' +
+              '<h2 style="font-size:22px;font-weight:700;color:#0f172a;margin:0 0 8px;">Payment verified!</h2>' +
+              '<p style="margin:0 0 16px;color:#475569;font-size:15px;line-height:1.5;">' +
+              'Your website builder subscription is active. Create a password for <strong>' + emailDisplay + '</strong> to continue to onboarding.' +
+              '</p>' +
+              '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:14px 18px;margin-bottom:20px;">' +
+              '<span style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;">Account Email</span>' +
+              '<span style="display:block;font-size:15px;font-weight:600;color:#0f172a;margin-top:2px;">' + emailDisplay + '</span>' +
+              '</div>' +
+              '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px;">' +
+              '<a href="' + setPassUrl + '" id="builderSetPasswordBtn" style="display:inline-flex;align-items:center;justify-content:center;background:#08101f;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:12px 24px;border-radius:12px;transition:opacity 0.2s;">' +
+              'Create your password &rarr;' +
+              '</a>' +
+              '<span style="font-size:13px;color:#64748b;" id="builderRedirectCountdown">Redirecting automatically…</span>' +
+              '</div>' +
+              '</div>';
+
+            if (checkoutBox) {
+              checkoutBox.innerHTML = successHtml;
+            } else if (priceSection) {
+              var container = document.createElement('div');
+              container.className = 'checkout-return-box';
+              container.style.cssText = 'background: #ffffff; border: 1px solid #86efac; border-radius: 16px; padding: 24px; margin: 20px auto; max-width: 600px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);';
+              container.innerHTML = successHtml;
+              priceSection.prepend(container);
+            }
+
+            try {
+              sessionStorage.removeItem('dakyworld.checkoutKey');
+              sessionStorage.removeItem('dakyworld.checkoutDetails');
+            } catch (_) {}
+
+            setTimeout(function () {
+              window.location.assign(setPassUrl);
+            }, 2500);
             return;
           }
-          if (++polls < 12) setTimeout(checkReturnedPayment, 5000);
-          else note.textContent = 'Payment is still pending. Contact support before paying again if your card was debited.';
-        }).catch(function () { note.textContent = 'Confirmation is temporarily unavailable. Contact support before paying again if your card was debited.'; });
+          if (++polls < 12) setTimeout(checkReturnedPayment, 3500);
+          else {
+            var timeoutMsg = 'Payment is still pending. Contact support before paying again if your card was debited.';
+            note.textContent = timeoutMsg;
+            if (checkoutBox) {
+              checkoutBox.innerHTML =
+                '<h2 style="font-size:18px;font-weight:600;color:#b45309;margin:0;">Payment pending confirmation</h2>' +
+                '<p style="margin:10px 0 0;color:#64748b;font-size:14px;">' + timeoutMsg + '</p>';
+            }
+          }
+        }).catch(function () {
+          var errText = 'Confirmation is temporarily unavailable. Contact support before paying again if your card was debited.';
+          note.textContent = errText;
+          if (checkoutBox) {
+            checkoutBox.innerHTML =
+              '<h2 style="font-size:18px;font-weight:600;color:#dc2626;margin:0;">Temporary issue</h2>' +
+              '<p style="margin:10px 0 0;color:#64748b;font-size:14px;">' + errText + '</p>';
+          }
+        });
     }
     checkReturnedPayment();
-    if (window.history && window.history.replaceState) window.history.replaceState(null, '', window.location.pathname + (window.location.hash || ''));
   }
 
   if (successCloseBtn && successDialog) {
@@ -598,6 +693,7 @@
           sessionStorage.setItem('dakyworld.checkoutDetails', details);
         }
         payload.checkoutKey = sessionStorage.getItem('dakyworld.checkoutKey');
+        payload.callbackUrl = window.location.origin + window.location.pathname + '?payment=returned';
       } catch (_) { setStatus('Allow session storage to keep payment retries safe, then try again.', 'error'); return; }
       submitting = true;
 
