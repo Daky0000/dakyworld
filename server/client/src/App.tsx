@@ -48,6 +48,8 @@ const WebsiteTeam = lazy(() => import("./pages/WebsiteTeam").then((module) => ({
 const WebsiteAudit = lazy(() => import("./pages/WebsiteAudit").then((module) => ({ default: module.WebsiteAudit })));
 const WebsiteSettings = lazy(() => import("./pages/WebsiteSettings").then((module) => ({ default: module.WebsiteSettings })));
 const WebsiteBilling = lazy(() => import("./pages/WebsiteBilling").then((module) => ({ default: module.WebsiteBilling })));
+const Orders = lazy(() => import("./pages/Orders").then((module) => ({ default: module.Orders })));
+const Customers = lazy(() => import("./pages/Customers").then((module) => ({ default: module.Customers })));
 const WebsiteBalance = lazy(() => import("./pages/WebsiteBalance").then((module) => ({ default: module.WebsiteBalance })));
 const FreelancerWorkspace = lazy(() => import("./pages/FreelancerWorkspace").then((module) => ({ default: module.FreelancerWorkspace })));
 const CustomerWorkspace = lazy(() => import("./pages/CustomerWorkspace").then((module) => ({ default: module.CustomerWorkspace })));
@@ -114,6 +116,8 @@ export default function App() {
           <Route path="billing" element={<Guard needs="website.manage"><WebsiteBilling /></Guard>} />
         </Route>
         <Route path="/products/pricing" element={<Guard needs="website.view"><ProductPricing /></Guard>} />
+        <Route path="/orders" element={<Guard needs="website.manage"><Orders /></Guard>} />
+        <Route path="/customers" element={<Guard needs="website.manage"><Customers /></Guard>} />
         <Route path="/demos" element={<Guard needs="demos.view"><Demos /></Guard>} />
         {/* Outside WebsiteGuard: an account with no website left must still reach this page. */}
         <Route path="/website/account" element={<WebsiteAccount />} />
@@ -173,6 +177,8 @@ export default function App() {
           <Route path="billing" element={<Guard needs="website.manage"><WebsiteBilling /></Guard>} />
         </Route>
         <Route path="/products/pricing" element={<Guard needs="website.view"><ProductPricing /></Guard>} />
+        <Route path="/orders" element={<Guard needs="website.manage"><Orders /></Guard>} />
+        <Route path="/customers" element={<Guard needs="website.manage"><Customers /></Guard>} />
         {/* Outside WebsiteGuard: an account with no website left must still reach this page. */}
         <Route path="/website/account" element={<WebsiteAccount />} />
         <Route path="/website/welcome" element={<WebsiteWelcome />} />

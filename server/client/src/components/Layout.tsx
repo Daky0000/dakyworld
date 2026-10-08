@@ -34,6 +34,8 @@ const SCREEN_NAMES: Array<[RegExp, string]> = [
   [/^\/website\/inbox/, "Form inbox"],
   [/^\/website\/analytics/, "Visitors"],
   [/^\/products\/pricing/, "Product pricing"],
+  [/^\/orders/, "Orders"],
+  [/^\/customers/, "Customers"],
   [/^\/demos/, "Demos"],
 ];
 type NavGroup = { title: string; items: NavEntry[] };
@@ -65,6 +67,13 @@ const navGroups: NavGroup[] = [
       { to: "/projects", label: "Projects", needs: "projects.view" },
       { to: "/invoices", label: "Invoices", needs: "invoices.view" },
       { to: "/care-plans", label: "Care plans", needs: "retainers.view" },
+    ],
+  },
+  {
+    title: "Sales",
+    items: [
+      { to: "/orders", label: "Orders", needs: "website.manage" },
+      { to: "/customers", label: "Customers", needs: "website.manage" },
     ],
   },
   {

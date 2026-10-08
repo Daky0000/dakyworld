@@ -18,6 +18,7 @@ import { attachUser, bootstrapOwner, requireAuth, scopeExternal, DEV_NO_AUTH, DE
 import { DEV_MODE, DEV_MODE_REFUSED } from "./services/tools/devMode.js";
 import { ensureStarterRoles, ensureSystemRoles } from "./lib/accessRoles.js";
 import { productsRouter, publicProductsRouter } from "./routes/products.js";
+import { commerceRouter } from "./routes/commerce.js";
 import { ensureProducts } from "./services/products.js";
 import { authRouter } from "./routes/auth.js";
 import { clientsRouter } from "./routes/clients.js";
@@ -299,6 +300,7 @@ app.get("/api/operations/performance", (req, res) => {
 app.use("/api/operations", operationsRouter);
 
 app.use("/api/products", productsRouter);
+app.use("/api/commerce", commerceRouter);
 app.use("/api/clients", clientsRouter);
 app.use("/api/leads", leadsRouter);
 app.use("/api/imports", importsRouter);
