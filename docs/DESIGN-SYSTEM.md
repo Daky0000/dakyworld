@@ -183,10 +183,32 @@ space equal to the height of the X on every side.
 | Surface | Where the tokens live | Notes |
 |---|---|---|
 | Website | `assets/site.css` (`:root`) | the reference implementation |
-| OS / editor UI | `server/client/tailwind.config.js` | primitives above + the semantic status tier |
-| Emails | `server/src/services/emailRender.ts` (and the templates that call it) | tables and inline styles; Outfit declared, Segoe UI / Arial fallback; navy header strip, white card on canvas, blue button 10px |
-| PDFs | `server/src/services/letterhead.ts` → every PDF | navy corners, blue accent, caps labels, hairline rules; Outfit embedded from `server/assets/fonts/` via `useBrandFonts()` |
-| Word documents | `server/src/services/proposalDocx.ts` | same colours as PDFs; set in **Arial**, because a .docx names one family with no fallback and Word substitutes a serif when Outfit is missing |
+| OS / editor UI | `server/client/tailwind.config.js`, `server/client/src/index.css` (`.os-*`) | primitives above + the semantic status tier; the v22 frame below |
+| Emails | `server/src/services/emailLetterhead.ts` | tables and inline styles, no webfont request; the navy header band is one embedded picture (`server/assets/email-band.png`), white card on canvas, soft footer |
+| PDFs | `server/src/services/letterhead.ts` → every PDF | navy band across the top of every page with the dot field drawn as vectors, white lock-up, contact lines in light text; plain footer rule; balance due in the pale panel; Outfit embedded via `useBrandFonts()` |
+| Word documents | `server/src/services/proposalDocx.ts` | the same band, as a floating picture behind the header (`server/assets/doc-band.png`); set in **Arial**, because a .docx names one family with no fallback and Word substitutes a serif when Outfit is missing |
+
+### The v22 furniture (8 Oct 2026)
+
+Approved from `website-drafts/system-v22.html`. Colours and type are unchanged
+from v21. This is how the homepage's frame is carried into the products.
+
+- **Apps.** The sidebar, top bar and page are white panels on the canvas,
+  12px apart, with 22px corners (16px and 8px gaps on a phone). Navy appears as
+  a band carrying the dot field, never as a wall: the old full-height dark
+  sidebar is gone. The active nav item is pale blue, and table headers use the
+  spaced caps on the soft grey.
+- **Signed-out screens.** One frame (`AuthFrame` in `Login.tsx`): a navy panel
+  with the dot field, the product's promise and three tiles saying what it
+  does, beside a white panel with the task. The tiles carry no numbers, because
+  nothing about the visitor is known before sign-in.
+- **Passwords.** Every password field can be revealed. Choosing one shows a
+  four-step meter and the server's own rules as a ticked guide (see
+  `lib/passwordStrength.ts`).
+- **Email and documents.** A navy band across the top carries the white
+  lock-up and the dot field. A workspace that uploaded its own logo keeps a
+  white header, because uploads are on-light artwork. The corner ribbons and
+  the watermark are retired.
 
 When a value changes, it changes in all of these in the same piece of work.
 `docs/claude/14-brand-and-metadata.md` records the traps.

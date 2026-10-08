@@ -10,6 +10,7 @@ import {
   ACCENT_DEEP,
   CREAM,
   MARK,
+  PALE,
   MARGIN_X,
   INK,
   PAGE_H,
@@ -432,11 +433,9 @@ function statusPill(doc: PDFDoc, status: InvoiceStamp, y: number) {
 }
 
 /**
- * The balance, in an ink band with a lime edge.
- *
- * This is the only place lime type appears in the app's documents — on ink it
- * is legible and it is the brand's own accent, which is exactly the rule the
- * design system sets out.
+ * The balance, in the pale-blue panel (v22): the one figure a client looks
+ * for, on the one tinted surface on the page. An overdue date is set in red,
+ * which is the only red in the document.
  */
 function balanceBand(doc: PDFDoc, data: InvoicePdfData, balance: string) {
   const height = 56;
@@ -444,8 +443,7 @@ function balanceBand(doc: PDFDoc, data: InvoicePdfData, balance: string) {
   const settled = data.status === "PAID";
 
   doc.save();
-  doc.fillColor(INK).roundedRect(MARGIN_X, y, CONTENT_W, height, 5).fill();
-  doc.fillColor(MARK).rect(MARGIN_X, y + 5, 3.5, height - 10).fill();
+  doc.fillColor(PALE).roundedRect(MARGIN_X, y, CONTENT_W, height, 9).fill();
 
   // On a settled invoice the balance is nil, and a band reading "AMOUNT PAID —
   // GHS 0.00" says the opposite of what happened. What the client wants to see
@@ -454,15 +452,14 @@ function balanceBand(doc: PDFDoc, data: InvoicePdfData, balance: string) {
 
   const padLeft = MARGIN_X + 20;
   doc
-    .fillOpacity(0.62)
-    .fillColor(CREAM)
+    .fillColor(ACCENT_DEEP)
     .font("Helvetica-Bold")
     .fontSize(7)
     .text(settled ? "AMOUNT PAID" : "BALANCE DUE", padLeft, y + 14, {
       characterSpacing: 1.6,
       lineBreak: false,
     });
-  doc.fillOpacity(1).fillColor(CREAM).font("Helvetica-Bold").fontSize(20).text(figure, padLeft, y + 26, {
+  doc.fillColor(INK).font("Helvetica").fontSize(21).text(figure, padLeft, y + 25, {
     lineBreak: false,
   });
 
@@ -484,8 +481,7 @@ function balanceBand(doc: PDFDoc, data: InvoicePdfData, balance: string) {
   }
 
   doc
-    .fillOpacity(0.62)
-    .fillColor(CREAM)
+    .fillColor(ACCENT_DEEP)
     .font("Helvetica-Bold")
     .fontSize(7)
     .text(settled ? "SETTLED" : "PAYABLE BY", rightX, y + 14, {
@@ -494,15 +490,13 @@ function balanceBand(doc: PDFDoc, data: InvoicePdfData, balance: string) {
       characterSpacing: 1.6,
     });
   doc
-    .fillOpacity(1)
-    .fillColor(chase ? MARK : CREAM)
+    .fillColor(chase ? OVERDUE : INK)
     .font("Helvetica-Bold")
     .fontSize(11)
     .text(longDate(rightDate), rightX, y + 28, { width: rightWidth, align: "right" });
   if (chase) {
     doc
-      .fillOpacity(0.75)
-      .fillColor(MARK)
+      .fillColor(OVERDUE)
       .font("Helvetica")
       .fontSize(7.5)
       .text(`${overdueBy} day${overdueBy === 1 ? "" : "s"} overdue`, rightX, y + 42, {
@@ -515,6 +509,9 @@ function balanceBand(doc: PDFDoc, data: InvoicePdfData, balance: string) {
   doc.x = MARGIN_X;
   doc.y = y + height + 16;
 }
+
+/** An overdue date — the only red in an invoice. */
+const OVERDUE = "#B42318";
 
 /** The gap between one fact and the next in the right-hand column. */
 const FACT_GAP = 4;

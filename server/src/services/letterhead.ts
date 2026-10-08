@@ -13,8 +13,13 @@ type PDFDoc = InstanceType<typeof PDFDocument>;
  * A proposal and an invoice are the two things a client actually keeps. Until
  * now they came out as plain typed pages with a wordmark on top, which reads
  * as a document somebody generated rather than one a company sent. This is the
- * printed identity from the letterhead template: the corner ribbons, the
- * wordmark lock-up, the contact block, the footer rule and the watermark.
+ * printed identity: since v22 (8 Oct 2026) a navy band across the top of every
+ * page carrying the website's dot field, the white lock-up and the contact
+ * block, then the page, then a plain footer rule. The corner ribbons and the
+ * watermark went with it — see website-drafts/system-v22.html.
+ *
+ * A workspace that uploaded its own logo gets a white band with that logo
+ * instead, because uploads are on-light artwork (the email shell does the same).
  *
  * Colours and type follow the website design system (`DakyXTech Website/
  * assets/site.css`) so a proposal and the site read as one company. Accent is
@@ -47,14 +52,12 @@ export const ACCENT = "#2563EB";
 export const ACCENT_DEEP = "#1D4ED8";
 export const MUTED = "#5B6374";
 export const LINE = "#E3E6EB";
-/** Solid mark colour for the corner wedges. Shapes only, never type. */
+/** Solid mark colour, for shapes only, never type. */
 export const MARK = "#2563EB";
-/**
- * The watermark only — a tint of cream, never an extra brand colour. Kept very
- * close to white on purpose: body text runs over it, and a watermark you can
- * read through is decoration, while one you can't is a legibility problem.
- */
-const WATERMARK = "#F1F4F9";
+/** The pale-blue panel (§2 pale) — a balance due, a summary box. */
+export const PALE = "#EAF1FF";
+/** The soft grey of a table header row (§2 soft). */
+export const SOFT = "#F6F7F9";
 
 // --- Page geometry ---------------------------------------------------------
 
@@ -62,7 +65,9 @@ export const PAGE_W = 595.28;
 export const PAGE_H = 841.89;
 export const MARGIN_X = 56;
 /** Content starts below the letterhead block and ends above the footer rule. */
-export const CONTENT_TOP = 168;
+export const CONTENT_TOP = 150;
+/** The navy band across the top of every page. */
+export const BAND_H = 104;
 export const CONTENT_BOTTOM = 96;
 export const CONTENT_W = PAGE_W - MARGIN_X * 2;
 
@@ -87,6 +92,15 @@ function assetCandidates(names: string[]): string[] {
 }
 
 const LOGO_CANDIDATES = assetCandidates(["logo.png", "logo.jpg", "logo.jpeg"]);
+/** The white lock-up for the navy band. Shipped only — there is no upload slot for it. */
+const LOGO_ON_DARK_CANDIDATES = assetCandidates(["logo-on-dark.png"]);
+/** The band as a picture, for Word, which cannot draw it (scripts/generate_email_band.py). */
+const DOC_BAND_CANDIDATES = assetCandidates(["doc-band.png"]);
+
+/** The A4 navy band with the dot field, or null when the file is missing. */
+export function docBandAsset(): Buffer | null {
+  return findAsset("docBand", DOC_BAND_CANDIDATES);
+}
 /** The square mark on its own, for the watermark. Optional. */
 const MARK_CANDIDATES = assetCandidates(["mark.png", "mark.jpg", "mark.jpeg"]);
 
@@ -160,8 +174,10 @@ export interface LetterheadIdentity {
   profile: CompanyProfile;
   /** The lock-up: uploaded first, the file in `server/assets/` second, null when neither. */
   logo: Buffer | null;
-  /** The square mark, for the watermark. Same order. */
+  /** The square mark. Same order. */
   mark: Buffer | null;
+  /** The white lock-up for the navy band, or null when an uploaded logo should be used on white instead. */
+  logoOnDark: Buffer | null;
 }
 
 export async function letterheadIdentity(): Promise<LetterheadIdentity> {
@@ -174,48 +190,46 @@ export async function letterheadIdentity(): Promise<LetterheadIdentity> {
     profile,
     logo: (uploadedLogo ? decodeDataUrl(uploadedLogo)?.buffer : null) ?? findAsset("logo", LOGO_CANDIDATES),
     mark: (uploadedMark ? decodeDataUrl(uploadedMark)?.buffer : null) ?? findAsset("mark", MARK_CANDIDATES),
+    logoOnDark: uploadedLogo ? null : findAsset("logoOnDark", LOGO_ON_DARK_CANDIDATES),
   };
 }
 
-// --- Corner ribbons --------------------------------------------------------
+// --- The band --------------------------------------------------------------
 
 /**
- * The diagonal wedges at top-right and bottom-left. Two shapes per corner: an
- * ink triangle in the corner itself and a lime band running parallel just
- * inside it, with a paper gap between so neither muddies the other. Lime is a
- * shape here, never type, which is the only place it is legible on white.
+ * The navy band and the website's dot field (DESIGN-SYSTEM.md, the dot
+ * pattern): an 11px grid of dots seen through soft patches, kept to the right
+ * so the lock-up and the contact lines sit on clean navy. Drawn as vectors, so
+ * it prints sharp at any size and costs a few kilobytes.
  */
-function cornerRibbons(doc: PDFDoc) {
-  const wedge = 74;
-  const bandOuter = 112;
-  const bandInner = 90;
+const BAND_DOT = "#4A639B";
+const DOT_PATCHES: [number, number, number, number][] = [
+  [0.6, 0.42, 0.16, 0.85],
+  [0.79, 0.72, 0.13, 0.7],
+  [0.5, 0.15, 0.1, 0.55],
+];
 
-  // Top right.
+function band(doc: PDFDoc, onDark: boolean) {
   doc.save();
-  doc.fillColor(NAVY);
-  doc.moveTo(PAGE_W - wedge, 0).lineTo(PAGE_W, 0).lineTo(PAGE_W, wedge).closePath().fill();
-  doc.fillColor(MARK);
-  doc
-    .moveTo(PAGE_W - bandOuter, 0)
-    .lineTo(PAGE_W - bandInner, 0)
-    .lineTo(PAGE_W, bandInner)
-    .lineTo(PAGE_W, bandOuter)
-    .closePath()
-    .fill();
-  doc.restore();
-
-  // Bottom left, mirrored.
-  doc.save();
-  doc.fillColor(NAVY);
-  doc.moveTo(0, PAGE_H - wedge).lineTo(0, PAGE_H).lineTo(wedge, PAGE_H).closePath().fill();
-  doc.fillColor(MARK);
-  doc
-    .moveTo(0, PAGE_H - bandOuter)
-    .lineTo(0, PAGE_H - bandInner)
-    .lineTo(bandInner, PAGE_H)
-    .lineTo(bandOuter, PAGE_H)
-    .closePath()
-    .fill();
+  doc.rect(0, 0, PAGE_W, BAND_H).fill(onDark ? NAVY : "#FFFFFF");
+  if (onDark) {
+    const step = 7.5;
+    doc.fillColor(BAND_DOT);
+    for (let y = step / 2; y < BAND_H; y += step) {
+      for (let x = step / 2; x < PAGE_W; x += step) {
+        let strength = 0;
+        for (const [cx, cy, rx, ry] of DOT_PATCHES) {
+          const d = Math.hypot((x / PAGE_W - cx) / rx, (y / BAND_H - cy) / ry);
+          strength = Math.max(strength, d < 0.55 ? 1 : Math.max(0, (1 - d) / 0.45));
+        }
+        if (strength < 0.08) continue;
+        doc.fillOpacity(0.55 * strength).circle(x, y, 0.8).fill();
+      }
+    }
+    doc.fillOpacity(1);
+  } else {
+    doc.strokeColor(LINE).lineWidth(1).moveTo(MARGIN_X, BAND_H).lineTo(PAGE_W - MARGIN_X, BAND_H).stroke();
+  }
   doc.restore();
 }
 
@@ -226,14 +240,14 @@ function cornerRibbons(doc: PDFDoc) {
  * than imported so the documents carry no icon-font dependency, and kept to
  * four shapes that read at 8pt.
  */
-function icon(doc: PDFDoc, kind: "pin" | "mail" | "phone" | "globe", x: number, y: number) {
+function icon(doc: PDFDoc, kind: "pin" | "mail" | "phone" | "globe", x: number, y: number, colour: string = ACCENT) {
   const s = 8;
   doc.save();
-  doc.strokeColor(ACCENT).lineWidth(0.7);
+  doc.strokeColor(colour).lineWidth(0.7);
 
   if (kind === "pin") {
     doc.circle(x + s / 2, y + s / 2 - 0.6, s / 2 - 1).stroke();
-    doc.circle(x + s / 2, y + s / 2 - 0.6, 0.9).fillColor(ACCENT).fill();
+    doc.circle(x + s / 2, y + s / 2 - 0.6, 0.9).fillColor(colour).fill();
     doc
       .moveTo(x + s / 2 - 1.8, y + s / 2 + 1.4)
       .lineTo(x + s / 2, y + s)
@@ -268,13 +282,15 @@ function icon(doc: PDFDoc, kind: "pin" | "mail" | "phone" | "globe", x: number, 
 // --- The lock-up -----------------------------------------------------------
 
 function wordmark(doc: PDFDoc, identity: LetterheadIdentity) {
-  const { logo, profile } = identity;
-  const top = 46;
+  const { logo, logoOnDark, profile } = identity;
+  const art = logoOnDark ?? logo;
+  // Vertically centred in the band.
+  const top = (BAND_H - LOGO_BOX.height) / 2;
 
-  if (logo) {
+  if (art) {
     // Fitted into a fixed box so a logo of any exported size lands identically.
     try {
-      doc.image(logo, MARGIN_X, top, { fit: [LOGO_BOX.width, LOGO_BOX.height] });
+      doc.image(art, MARGIN_X, top, { fit: [LOGO_BOX.width, LOGO_BOX.height], valign: "center" });
       return;
     } catch {
       // A corrupt file must not take the whole document down; fall through.
@@ -283,54 +299,35 @@ function wordmark(doc: PDFDoc, identity: LetterheadIdentity) {
 
   doc.save();
   doc
-    .fillColor(INK)
+    .fillColor(logoOnDark !== null ? "#FFFFFF" : INK)
     .font("Helvetica-Bold")
     .fontSize(21)
-    .text(profile.name, MARGIN_X, top, { characterSpacing: 1.4, lineBreak: false });
-
-  const markWidth = doc.widthOfString(profile.name, { characterSpacing: 1.4 });
-  doc.fillColor(INK).font("Helvetica").fontSize(7).text("®", MARGIN_X + markWidth + 2, top + 1, { lineBreak: false });
-
-  // The swoosh: one gold stroke under the wordmark, thickening left to right.
-  // It is the only decorative element on the page, which is what lets it work.
-  doc
-    .save()
-    .strokeColor(ACCENT)
-    .lineWidth(1.6)
-    .moveTo(MARGIN_X, top + 27)
-    .bezierCurveTo(MARGIN_X + markWidth * 0.3, top + 31, MARGIN_X + markWidth * 0.7, top + 24.5, MARGIN_X + markWidth + 6, top + 27.5)
-    .stroke()
-    .restore();
-
-  doc
-    .fillColor(ACCENT_DEEP)
-    .font("Helvetica-Bold")
-    .fontSize(5.6)
-    .text(profile.tagline, MARGIN_X, top + 34, { characterSpacing: 0.85, lineBreak: false });
+    .text(profile.name, MARGIN_X, BAND_H / 2 - 12, { lineBreak: false });
   doc.restore();
 }
 
-function contactBlock(doc: PDFDoc, profile: CompanyProfile) {
-  const dividerX = 372;
-  const textX = 396;
-  const iconX = 380;
-  const top = 44;
-  const step = 17;
-
-  doc.save();
-  doc.strokeColor(LINE).lineWidth(1).moveTo(dividerX, top).lineTo(dividerX, top + step * 3 + 12).stroke();
-
+/** Contact lines on the right of the band, light on navy (or muted on white). */
+function contactBlock(doc: PDFDoc, profile: CompanyProfile, onDark: boolean) {
   const rows: { kind: "pin" | "mail" | "phone" | "globe"; text: string }[] = [
     { kind: "pin", text: profile.location },
     { kind: "mail", text: profile.email },
     { kind: "phone", text: profile.phone },
     { kind: "globe", text: profile.web },
   ];
+  const step = 14;
+  const top = (BAND_H - step * rows.length) / 2 + 2;
+  const right = PAGE_W - MARGIN_X;
+  const textColour = onDark ? "#B4BFD3" : MUTED;
+  const iconColour = onDark ? "#8FB2FF" : ACCENT;
 
+  doc.save();
+  doc.font("Helvetica").fontSize(8.5);
+  const widest = Math.max(...rows.map((row) => doc.widthOfString(row.text)));
+  const textX = right - widest;
   rows.forEach((row, index) => {
     const y = top + index * step;
-    icon(doc, row.kind, iconX, y);
-    doc.fillColor(MUTED).font("Helvetica").fontSize(8.5).text(row.text, textX, y, { lineBreak: false });
+    icon(doc, row.kind, textX - 14, y + 0.5, iconColour);
+    doc.fillColor(textColour).font("Helvetica").fontSize(8.5).text(row.text, textX, y, { lineBreak: false });
   });
   doc.restore();
 }
@@ -338,60 +335,17 @@ function contactBlock(doc: PDFDoc, profile: CompanyProfile) {
 // --- Footer ----------------------------------------------------------------
 
 function footerBar(doc: PDFDoc, profile: CompanyProfile) {
-  const y = PAGE_H - 64;
+  const y = PAGE_H - 56;
   doc.save();
   doc.strokeColor(LINE).lineWidth(1).moveTo(MARGIN_X, y).lineTo(PAGE_W - MARGIN_X, y).stroke();
-
   doc
-    .fillColor(INK)
-    .font("Helvetica-Bold")
+    .fillColor("#8A91A0")
+    .font("Helvetica")
     .fontSize(7.5)
-    .text(profile.footerLine, MARGIN_X, y + 12, { characterSpacing: 2.1, lineBreak: false });
-
-  // Right-aligned: the site, then the social handles as plain letterforms.
-  const socials = "f    X    ig    in";
-  const socialWidth = doc.font("Helvetica-Bold").fontSize(7.5).widthOfString(socials, { characterSpacing: 1.2 });
-  doc.fillColor(MUTED).font("Helvetica-Bold").fontSize(7.5).text(socials, PAGE_W - MARGIN_X - socialWidth, y + 12, {
-    characterSpacing: 1.2,
-    lineBreak: false,
-  });
-
+    .text(`${profile.name.toUpperCase()}  ·  ${profile.footerLine.toUpperCase()}`, MARGIN_X, y + 12, { characterSpacing: 1.1, lineBreak: false });
   const web = profile.web;
   const webWidth = doc.font("Helvetica").fontSize(8).widthOfString(web);
-  const webX = PAGE_W - MARGIN_X - socialWidth - 18 - webWidth;
-  doc.fillColor(MUTED).font("Helvetica").fontSize(8).text(web, webX, y + 11.5, { lineBreak: false });
-  icon(doc, "globe", webX - 12, y + 10.5);
-  doc.restore();
-}
-
-// --- Watermark -------------------------------------------------------------
-
-/**
- * The oversized D behind the content. Stamped first, so everything sits over
- * it, and placed low-right where a page's last third is usually the emptiest —
- * a watermark centred in the text column fights every line that crosses it.
- */
-function watermark(doc: PDFDoc, mark: Buffer | null) {
-
-  if (mark) {
-    // The real mark, dropped to a tint. Opacity rather than a pale copy of the
-    // artwork, so one file serves both this and any full-strength use.
-    doc.save();
-    try {
-      doc.opacity(0.05).image(mark, PAGE_W - 258, PAGE_H - 392, { fit: [232, 232] });
-      doc.restore();
-      return;
-    } catch {
-      // Fall through to the typographic watermark rather than lose the page.
-    }
-    doc.restore();
-  }
-
-  doc.save();
-  doc.fillColor(WATERMARK).font("Helvetica-Bold").fontSize(270).text("D", PAGE_W - 245, PAGE_H - 395, {
-    lineBreak: false,
-    characterSpacing: 0,
-  });
+  doc.fillColor(MUTED).font("Helvetica").fontSize(8).text(web, PAGE_W - MARGIN_X - webWidth, y + 11.5, { lineBreak: false });
   doc.restore();
 }
 
@@ -404,10 +358,10 @@ function watermark(doc: PDFDoc, mark: Buffer | null) {
  * wherever the last footer glyph landed.
  */
 export function stampLetterhead(doc: PDFDoc, identity: LetterheadIdentity) {
-  watermark(doc, identity.mark);
-  cornerRibbons(doc);
+  const onDark = identity.logoOnDark !== null;
+  band(doc, onDark);
   wordmark(doc, identity);
-  contactBlock(doc, identity.profile);
+  contactBlock(doc, identity.profile, onDark);
   footerBar(doc, identity.profile);
 
   doc.fillColor(INK).font("Helvetica").fontSize(10);
@@ -470,8 +424,8 @@ function pngSize(data: Buffer): { width: number; height: number } | null {
  * needs the final points. Null when no artwork is present, which is the
  * caller's cue to fall back to the typographic wordmark, exactly as the PDF does.
  */
-export function readLogoAsset(identity: LetterheadIdentity): { data: Buffer; width: number; height: number } | null {
-  const data = identity.logo;
+export function readLogoAsset(identity: LetterheadIdentity, onDark = false): { data: Buffer; width: number; height: number } | null {
+  const data = onDark ? identity.logoOnDark : identity.logo;
   if (!data) return null;
   const size = pngSize(data);
   if (!size) return { data, ...LOGO_BOX };

@@ -21,8 +21,7 @@ import {
   VerticalPositionRelativeFrom,
   WidthType,
 } from "docx";
-import { ribbon, RIBBON_PT } from "./png.js";
-import { letterheadIdentity, readLogoAsset, type LetterheadIdentity } from "./letterhead.js";
+import { BAND_H, docBandAsset, letterheadIdentity, readLogoAsset, type LetterheadIdentity } from "./letterhead.js";
 import type { CompanyProfile } from "./systemProfile.js";
 import type { ProposalPdfData } from "./pdf.js";
 
@@ -35,8 +34,11 @@ import type { ProposalPdfData } from "./pdf.js";
  * else's document.
  *
  * Word builds a letterhead the way a printer does — the identity lives in the
- * page's header and footer, so it repeats on every page for free, and the
- * corner ribbons are floating images anchored to the page behind the text.
+ * page's header and footer, so it repeats on every page for free. Since v22 the
+ * navy band is one floating picture anchored to the top of the page behind the
+ * header, with the white lock-up and the contact lines set over it; Word cannot
+ * draw the dot field, so the picture carries it (scripts/generate_email_band.py).
+ * A workspace that uploaded its own logo gets a white header instead, as the PDF does.
  * Everything positional is stated in points and converted here, so the numbers
  * are the ones in services/letterhead.ts rather than a second set that drifts.
  */
@@ -72,7 +74,7 @@ const FONT = "Arial";
 // A4, and the same content area the PDF leaves itself.
 const PAGE = { width: twip(595.28), height: twip(841.89) };
 const MARGIN = {
-  top: twip(168),
+  top: twip(150),
   bottom: twip(96),
   left: twip(56),
   right: twip(56),
@@ -83,6 +85,8 @@ const CONTENT_W_PT = 595.28 - 56 * 2;
 
 const NO_BORDER = { style: BorderStyle.NONE, size: 0, color: "auto" } as const;
 const CELL_BORDERS = { top: NO_BORDER, bottom: NO_BORDER, left: NO_BORDER, right: NO_BORDER };
+/** A table with no lines at all. Without the two inside edges Word draws its default black ones. */
+const TABLE_BORDERS = { ...CELL_BORDERS, insideHorizontal: NO_BORDER, insideVertical: NO_BORDER };
 
 // --- Small builders --------------------------------------------------------
 
@@ -135,20 +139,14 @@ function sectionHeading(label: string) {
 
 // --- The letterhead --------------------------------------------------------
 
-function ribbonImage(corner: "top-right" | "bottom-left") {
+function bandImage(data: Buffer) {
   return new ImageRun({
     type: "png",
-    data: ribbon(corner),
-    transformation: { width: px(RIBBON_PT), height: px(RIBBON_PT) },
+    data,
+    transformation: { width: px(595.28), height: px(BAND_H) },
     floating: {
-      horizontalPosition: {
-        relative: HorizontalPositionRelativeFrom.PAGE,
-        align: corner === "top-right" ? HorizontalPositionAlign.RIGHT : HorizontalPositionAlign.LEFT,
-      },
-      verticalPosition: {
-        relative: VerticalPositionRelativeFrom.PAGE,
-        align: corner === "top-right" ? VerticalPositionAlign.TOP : VerticalPositionAlign.BOTTOM,
-      },
+      horizontalPosition: { relative: HorizontalPositionRelativeFrom.PAGE, align: HorizontalPositionAlign.LEFT },
+      verticalPosition: { relative: VerticalPositionRelativeFrom.PAGE, align: VerticalPositionAlign.TOP },
       behindDocument: true,
       allowOverlap: true,
     },
@@ -161,9 +159,9 @@ function ribbonImage(corner: "top-right" | "bottom-left") {
  * wordmark drawn from type — the same choice, and the same fallback, that
  * services/letterhead.ts makes for the PDF.
  */
-function wordmarkBlock(identity: LetterheadIdentity): Paragraph[] {
+function wordmarkBlock(identity: LetterheadIdentity, onDark: boolean): Paragraph[] {
   const { profile } = identity;
-  const logo = readLogoAsset(identity);
+  const logo = readLogoAsset(identity, onDark);
 
   if (logo) {
     return [
@@ -197,41 +195,40 @@ function wordmarkBlock(identity: LetterheadIdentity): Paragraph[] {
 }
 
 function letterheadHeader(identity: LetterheadIdentity): Header {
+  const band = identity.logoOnDark ? docBandAsset() : null;
+  const onDark = Boolean(band);
   return new Header({
     children: [
-      // Both ribbons hang off one carrier paragraph. In a header they repeat on
+      // The band hangs off one carrier paragraph. In a header it repeats on
       // every page, which is exactly what a letterhead is. The paragraph itself
-      // is collapsed to a hairline: the images are anchored to the page and
-      // take no space, but the paragraph holding them would otherwise push the
+      // is collapsed to a hairline: the image is anchored to the page and takes
+      // no space, but the paragraph holding it would otherwise push the
       // wordmark down by a full line.
       new Paragraph({
-        children: [ribbonImage("top-right"), ribbonImage("bottom-left")],
+        children: band ? [bandImage(band)] : [],
         spacing: { before: 0, after: 0, line: 20, lineRule: LineRuleType.EXACT },
       }),
 
       new Table({
         width: { size: 100, type: WidthType.PERCENTAGE },
-        borders: CELL_BORDERS,
+        borders: TABLE_BORDERS,
         rows: [
           new TableRow({
             children: [
               new TableCell({
                 borders: CELL_BORDERS,
                 width: { size: 58, type: WidthType.PERCENTAGE },
-                children: wordmarkBlock(identity),
+                children: wordmarkBlock(identity, onDark),
               }),
               new TableCell({
-                borders: {
-                  ...CELL_BORDERS,
-                  left: { style: BorderStyle.SINGLE, size: eighth(0.75), color: LINE, space: 8 },
-                },
+                borders: CELL_BORDERS,
                 width: { size: 42, type: WidthType.PERCENTAGE },
                 children: [identity.profile.location, identity.profile.email, identity.profile.phone, identity.profile.web].map(
                   (line) =>
                     new Paragraph({
-                      children: [text(line, { size: 8.5, color: MUTED })],
+                      children: [text(line, { size: 8.5, color: onDark ? "B4BFD3" : MUTED })],
                       spacing: { after: twip(2.5) },
-                      indent: { left: twip(10) },
+                      alignment: AlignmentType.RIGHT,
                     }),
                 ),
               }),
@@ -248,11 +245,10 @@ function letterheadFooter(profile: CompanyProfile): Footer {
     children: [
       new Paragraph({
         children: [
-          text(profile.footerLine, { size: 7.5, bold: true, spacing: 2.1 }),
+          text(`${profile.name.toUpperCase()}  ·  ${profile.footerLine.toUpperCase()}`, { size: 7.5, color: "8A91A0", spacing: 1.1 }),
           new TextRun({ children: [], font: FONT }),
           text("\t", { size: 7.5 }),
           text(profile.web, { size: 8, color: MUTED }),
-          text("     f     X     ig     in", { size: 7.5, bold: true, color: MUTED, spacing: 1.2 }),
         ],
         tabStops: [{ type: TabStopType.RIGHT, position: twip(CONTENT_W_PT) }],
         border: { top: { style: BorderStyle.SINGLE, size: eighth(0.75), color: LINE, space: 8 } },
@@ -369,7 +365,7 @@ function investmentTable(data: ProposalPdfData): Table | null {
   rows.push(row("Total", money(doc.investment.total), { bold: true, top: true }));
   if (doc.investment.recurring > 0) rows.push(row("Then, monthly", `${money(doc.investment.recurring)}/mo`));
 
-  return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, borders: CELL_BORDERS, rows });
+  return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, borders: TABLE_BORDERS, rows });
 }
 
 function tail(data: ProposalPdfData): Paragraph[] {

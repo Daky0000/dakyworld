@@ -79,3 +79,14 @@ cell is plain navy and the alt text is set in white.
 A workspace that has uploaded its own logo (the `logoLight` slot) does not get
 the band. Uploads are on-light artwork, so the shell falls back to the white
 header with that logo (`emailRender.logoSources`).
+
+## `logo-on-dark.png` and `doc-band.png` — the document band (v22)
+
+`logo-on-dark.png` is `assets/brand/header-lockup-on-dark.png` copied here. The
+PDF letterhead sets it on its navy band (`letterhead.ts`), and the Word proposal
+sets it on its band too.
+
+`doc-band.png` is the A4-wide navy band with the dot field and no lock-up. The
+Word proposal floats it behind its header, because Word cannot draw the dots.
+The PDFs draw theirs as vectors and do not use this file. It is made by the
+same script as the email band, `scripts/generate_email_band.py`.
