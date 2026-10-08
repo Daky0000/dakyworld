@@ -268,9 +268,10 @@
           <p class="spec-lead">For: a website already deployed from GitHub &mdash; Pages, Netlify, Vercel, Cloudflare Pages. Needs somebody who can install an app on the repository.</p>
           <p>Publishing commits to your repository, on your branch, exactly as a developer would. Your existing deployment then does what it always does. Nothing about how your site is hosted changes, and every edit is an ordinary commit in your history.</p>
           <ol>
-            <li><strong>Connect the website</strong> with <em>I have a GitHub repository</em>, and enter it as <code>owner/name</code> with the branch your live site is built from.</li>
-            <li><strong>Install the GitHub app</strong> &mdash; the six steps below cover this, and step 3 explains exactly what it is granting and how to take it back.</li>
-            <li><strong>Publish once</strong> and watch the commit appear in your repository.</li>
+            <li><strong>Choose <em>Connect a GitHub repository</em></strong> when your setup asks how you want to start, and enter the repository as <code>owner/name</code> &mdash; or paste its address from your browser.</li>
+            <li><strong>Press <em>Install the DakyX app on GitHub</em>.</strong> GitHub opens in a new tab: choose <em>Only select repositories</em>, pick that one, and confirm. GitHub then asks you to sign in to the app, which is how we know the repository is yours to connect. Step 3 below explains exactly what you are granting and how to take it back.</li>
+            <li><strong>Come back to the first tab.</strong> It shows the repository as connected by itself. Carry on, and the Builder reads your pages and opens your homepage in the editor.</li>
+            <li><strong>Publish once</strong> and watch the commit appear in your repository, on its default branch.</li>
           </ol>
           <p>The rest of this page &mdash; the six steps, the first edit, and what to check before going live &mdash; is written for this route. If we are hosting for you, skip step 3 and step 4; everything else is the same.</p>
         </div>
@@ -332,7 +333,7 @@
           </ul>
           <p class="spec-deliverable"><strong>What this is not:</strong> you are not creating a password or a token, and you are not giving DakyXTech access to anything else you own. The access is limited to the repository you picked, GitHub enforces that rather than us, and the credentials it lends expire every hour.</p>
           <p class="spec-deliverable"><strong>Taking it back:</strong> at any time, in your GitHub settings under <em>Applications</em> &rarr; <em>Installed GitHub Apps</em>. You can remove a repository or uninstall it entirely without telling us &mdash; the Builder notices within seconds and says the access was withdrawn.</p>
-          <p>After you confirm, GitHub returns you to a page whose address ends in <code>installation_id=</code> followed by a number. Send us that number, or read it out on the call.</p>
+          <p>If you started from your setup in the Builder, there is nothing to send: GitHub brings you back signed in and the setup picks the repository up by itself. If you installed it from the link above while we set you up, the page GitHub returns you to shows a number &mdash; send us that, or read it out on the call.</p>
         </div>
       </article>
 

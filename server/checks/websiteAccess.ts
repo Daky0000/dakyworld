@@ -105,6 +105,13 @@ async function httpGateChecks() {
     await status("authenticated customer can access escalations", "VIEWER", "/escalations", "GET", 200);
     await status("viewer cannot file site escalation", "VIEWER", "/sites/own/escalations", "POST", 403);
     await status("editor can file site escalation", "EDITOR", "/sites/own/escalations", "POST", 200);
+    // Connecting their own repository: the two routes that prove it through
+    // GitHub are the customer's, the one that takes an installation id on
+    // trust is still staff-only.
+    await status("customer can see their GitHub connection", "VIEWER", "/github/connect", "GET", 200);
+    await status("customer can come back from GitHub", "VIEWER", "/github/callback", "GET", 200);
+    await status("unauthenticated GitHub callback is refused", null, "/github/callback", "GET", 401);
+    await status("customer cannot list an installation's repositories by id", "MANAGER", "/github-app/installations/1/repositories", "GET", 403);
     roles.delete("VIEWER");
     await status("membership revocation takes effect on the next request", "VIEWER", "/pages/ownpage", "GET", 404);
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }

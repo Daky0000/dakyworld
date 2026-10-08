@@ -15,13 +15,21 @@ import { notifyTierStatusChanged, useWebsiteTierStatus } from "./WebsiteTierStat
  * gets built: what the site is for chooses the starter template, how they want
  * to start chooses the route, and the one marketing question is skippable.
  *
- * GitHub is not a way to create the site. A customer's site is created hosted
- * first and their repository is attached from Settings through the DakyXTech
- * GitHub App, because that is the only route the server accepts for them.
+ * Choosing GitHub adds a screen: the repository, and the link to install the
+ * DakyXTech app on it. The install happens on GitHub in another tab, and GitHub
+ * signs the person in on the way back, which is what proves the repository is
+ * theirs to connect (see "Proving who installed it" in services/githubApp.ts).
+ * This screen only watches for that proof to arrive. The site is then created
+ * from the repository itself — no starter page — and the flow ends on its
+ * homepage in the editor.
  */
 
 type Method = "template" | "upload" | "github" | "team";
 type Purpose = WebsitePurpose;
+type View = "details" | "method" | "github" | "heard" | "build";
+type GithubRepository = { id: string; fullName: string; defaultBranch: string; private: boolean };
+type GithubConnect = { ready: boolean; installUrl: string | null; login: string | null; repositories: GithubRepository[] };
+type PageRow = { id: string; path: string; filePath: string; status: string };
 
 const PURPOSES: { key: Purpose; title: string; sub: string; icon: ReactNode }[] = [
   { key: "business", title: "Business", sub: "Show what we offer", icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="7" width="18" height="13" rx="2" /><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18" /></svg> },
@@ -77,6 +85,24 @@ export function WebsiteWelcomeFlow() {
   const [heard, setHeard] = useState<HeardFrom | null>(null);
   const [created, setCreated] = useState<Created | null>(null);
   const [help, setHelp] = useState<{ message: string; paymentUrl: string | null } | null>(null);
+  const [repoInput, setRepoInput] = useState("");
+  const [waitingForGithub, setWaitingForGithub] = useState(false);
+
+  const views: View[] = ["details", "method", ...(method === "github" ? (["github"] as const) : []), "heard", "build"];
+  const view = views[Math.min(step, views.length - 1)];
+  const goTo = (target: View) => setStep(views.indexOf(target));
+
+  const wantedRepo = normaliseRepo(repoInput);
+  const githubConnect = useQuery({
+    queryKey: ["website", "github-connect"],
+    enabled: method === "github",
+    queryFn: ({ signal }) => api.get<GithubConnect>("/website/github/connect", signal),
+    // Watching for the install to finish in the other tab. Stops once the
+    // repository they typed has arrived.
+    refetchInterval: (query) => (waitingForGithub && !findRepo(query.state.data?.repositories, wantedRepo) ? 3000 : false),
+    refetchOnWindowFocus: true,
+  });
+  const connectedRepo = findRepo(githubConnect.data?.repositories, wantedRepo);
 
   const templateKey = useMemo(() => {
     if (!purpose) return "business";
@@ -102,7 +128,8 @@ export function WebsiteWelcomeFlow() {
         ...(hasSite === "yes" && trimmedAddress ? { publicUrl: /^https?:\/\//i.test(trimmedAddress) ? trimmedAddress : `https://${trimmedAddress}` } : {}),
         ...(method === "upload" && upload?.html ? { html: upload.html } : {}),
         ...(method === "upload" && upload?.zip ? { packageData: upload.zip, packageFilename: upload.name } : {}),
-        ...(method !== "upload" ? { templateKey } : {}),
+        ...(method === "github" && connectedRepo ? { githubRepositoryId: connectedRepo.id } : {}),
+        ...(method !== "upload" && method !== "github" ? { templateKey } : {}),
       }),
     onSuccess: async (result) => {
       setCreated(result);
@@ -110,8 +137,21 @@ export function WebsiteWelcomeFlow() {
       notifyTierStatusChanged();
       updateUiState({ welcome: { status: "done", at: new Date().toISOString(), purpose: purpose ?? undefined, heardFrom: heard ?? undefined } });
       if (method === "team") requestHelp.mutate(result.id);
+      if (method === "github") readRepository.mutate(result.id);
     },
   });
+
+  // A repository's pages are found by the same scan the Pages screen runs;
+  // the homepage is then the page at "/", or the shallowest index file.
+  const readRepository = useMutation({
+    mutationFn: async (siteId: string) => {
+      await api.post(`/website/sites/${siteId}/scan`, {});
+      const list = await api.get<{ pages: PageRow[] }>(`/website/sites/${siteId}/pages?limit=100`);
+      return homepageOf(list.pages);
+    },
+    onSettled: () => void qc.invalidateQueries({ queryKey: ["website"] }),
+  });
+  const homepageId = readRepository.data ?? null;
 
   const requestHelp = useMutation({
     mutationFn: (siteId: string) =>
@@ -126,28 +166,53 @@ export function WebsiteWelcomeFlow() {
 
   // Starting the build is entering the last step; it runs once.
   useEffect(() => {
-    if (step === 3 && !created && !createSite.isPending && !createSite.isError) createSite.mutate();
+    if (view === "build" && !created && !createSite.isPending && !createSite.isError) createSite.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step]);
+  }, [view]);
 
-  const failure = createSite.error ?? requestHelp.error;
+  const failure = createSite.error ?? requestHelp.error ?? readRepository.error;
   const failureText = failure ? (failure instanceof ApiError ? failure.message : (failure as Error).message) : null;
 
+  const pageTask: Task =
+    method === "github"
+      ? {
+          label: `Reading the pages in ${connectedRepo?.fullName ?? "your repository"}`,
+          state: readRepository.isSuccess ? (homepageId ? "done" : "failed") : readRepository.isError || createSite.isError ? "failed" : created ? "working" : "waiting",
+        }
+      : {
+          label: method === "upload" ? `Importing ${upload?.name ?? "your file"}` : `Building your first page from the ${templateLabel(templateKey)} starter`,
+          state: created ? (created.pageId ? "done" : "failed") : createSite.isError ? "failed" : "waiting",
+        };
   const tasks: Task[] = [
     { label: "Creating your website", state: created ? "done" : createSite.isError ? "failed" : "working" },
-    {
-      label: method === "upload" ? `Importing ${upload?.name ?? "your file"}` : `Building your first page from the ${templateLabel(templateKey)} starter`,
-      state: created ? (created.pageId ? "done" : "failed") : createSite.isError ? "failed" : "waiting",
-    },
+    pageTask,
     ...(method === "team"
       ? [{ label: "Sending your request to our team", state: (help ? "done" : requestHelp.isError ? "failed" : created ? "working" : "waiting") as Task["state"] }]
       : []),
   ];
-  const finished = Boolean(created) && (method !== "team" || Boolean(help) || requestHelp.isError);
+  const finished =
+    Boolean(created) &&
+    (method === "team" ? Boolean(help) || requestHelp.isError : method === "github" ? readRepository.isSuccess || readRepository.isError : true);
 
+  const firstPageId = method === "github" ? homepageId : created?.pageId ?? null;
   const openEditor = () => {
-    if (created?.pageId) navigate(`/website/pages/${created.pageId}?walkthrough=interactive`);
+    if (firstPageId) navigate(`/website/pages/${firstPageId}?walkthrough=interactive`);
     else navigate("/website/sites");
+  };
+
+  // A repository ends where the request said it should: on its homepage, in
+  // the editor. A moment's pause so the finished list is seen, not flashed.
+  useEffect(() => {
+    if (method !== "github" || !homepageId) return;
+    const timer = window.setTimeout(() => navigate(`/website/pages/${homepageId}?walkthrough=interactive`), 1200);
+    return () => window.clearTimeout(timer);
+  }, [method, homepageId, navigate]);
+
+  const installApp = () => {
+    const url = githubConnect.data?.installUrl;
+    if (!url) return;
+    setWaitingForGithub(true);
+    window.open(url, "_blank", "noopener");
   };
 
   const readFile = async (file: File) => {
@@ -170,26 +235,26 @@ export function WebsiteWelcomeFlow() {
   };
 
   const shownName = name.trim() || "Your website";
-  const previewFilled = step === 3 ? Boolean(created) : Boolean(name.trim() || purpose);
-  const cams = ["", "ob-cam-1", "ob-cam-2", "ob-cam-3"];
+  const previewFilled = view === "build" ? Boolean(created) : Boolean(name.trim() || purpose);
+  const cam: Record<View, string> = { details: "", method: "ob-cam-1", github: "ob-cam-1", heard: "ob-cam-2", build: "ob-cam-3" };
 
   return (
     <div className="ob">
       <div className="ob-shell">
         <div className="ob-left">
           <div className="ob-bar">
-            <button type="button" className="ob-back" aria-label="Back" disabled={step === 0 || step === 3} onClick={() => setStep((value) => value - 1)}>
+            <button type="button" className="ob-back" aria-label="Back" disabled={step === 0 || view === "build"} onClick={() => setStep((value) => value - 1)}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5m6-6-6 6 6 6" /></svg>
             </button>
-            <div className="ob-dots" aria-label={`Step ${step + 1} of 4`}>
-              {[0, 1, 2, 3].map((index) => <i key={index} className={index <= step ? "on" : ""} />)}
+            <div className="ob-dots" aria-label={`Step ${step + 1} of ${views.length}`}>
+              {views.map((key, index) => <i key={key} className={index <= step ? "on" : ""} />)}
             </div>
-            <button type="button" className="ob-skip" style={{ visibility: step === 2 ? "visible" : "hidden" }} onClick={() => { setHeard(null); setStep(3); }}>
+            <button type="button" className="ob-skip" style={{ visibility: view === "heard" ? "visible" : "hidden" }} onClick={() => { setHeard(null); goTo("build"); }}>
               Skip
             </button>
           </div>
 
-          {step === 0 && (
+          {view === "details" && (
             <section className="ob-view">
               {tier && (
                 <span className="ob-plan"><i />Payment confirmed · <b>{tier.tierName} plan</b>{tier.pricing?.priceDisplay ? ` · ${tier.pricing.priceDisplay}/mo` : ""}</span>
@@ -233,11 +298,11 @@ export function WebsiteWelcomeFlow() {
                   {hasSite === "no" && <p className="ob-hint">That's fine. You can connect your own domain from Settings whenever you're ready.</p>}
                 </div>
               )}
-              <div className="ob-foot"><button type="button" className="ob-cta" disabled={!step0Ok} onClick={() => setStep(1)}>Continue</button></div>
+              <div className="ob-foot"><button type="button" className="ob-cta" disabled={!step0Ok} onClick={() => goTo("method")}>Continue</button></div>
             </section>
           )}
 
-          {step === 1 && (
+          {view === "method" && (
             <section className="ob-view">
               <h2>How would you like to start?</h2>
               <p className="ob-lead">You can change any of it later in the editor.</p>
@@ -267,9 +332,7 @@ export function WebsiteWelcomeFlow() {
                 </div>
               )}
               {method === "github" && (
-                <p className="ob-note">
-                  We create your website now, then you install the DakyX app on GitHub and choose the repository — only that one. Your edits are then committed to it. It takes about two minutes, from Settings.
-                </p>
+                <p className="ob-note">Next you'll name the repository and install the DakyX app on it. Your edits are committed to that repository and nowhere else.</p>
               )}
               {method === "team" && (
                 <div className="ob-fld">
@@ -282,11 +345,69 @@ export function WebsiteWelcomeFlow() {
                   </p>
                 </div>
               )}
-              <div className="ob-foot"><button type="button" className="ob-cta" disabled={!step1Ok} onClick={() => setStep(2)}>Continue</button></div>
+              <div className="ob-foot"><button type="button" className="ob-cta" disabled={!step1Ok} onClick={() => setStep(step + 1)}>Continue</button></div>
             </section>
           )}
 
-          {step === 2 && (
+          {view === "github" && (
+            <section className="ob-view">
+              <h2>Connect your repository</h2>
+              <p className="ob-lead">We read your pages from it, and every change you publish is committed back to it.</p>
+              {githubConnect.isLoading ? (
+                <p className="ob-hint" role="status">Checking GitHub…</p>
+              ) : githubConnect.isError ? (
+                <p className="ob-err" role="alert">{githubConnect.error instanceof ApiError ? githubConnect.error.message : "GitHub could not be reached. Try again in a moment."}</p>
+              ) : !githubConnect.data?.ready ? (
+                <p className="ob-note">
+                  Connecting your own repository isn't switched on yet. Go back and start from a ready-made page, or have our team set it up and we'll connect the repository for you.
+                </p>
+              ) : (
+                <>
+                  <div className="ob-fld">
+                    <label htmlFor="ob-repo">Repository</label>
+                    <input id="ob-repo" className="ob-inp" placeholder="your-name/your-website" autoComplete="off" spellCheck={false} value={repoInput} onChange={(event) => setRepoInput(event.target.value)} />
+                    <p className="ob-hint">The owner and name, or the address from your browser: github.com/your-name/your-website.</p>
+                  </div>
+                  {githubConnect.data.repositories.length > 0 && !connectedRepo && (
+                    <div className="ob-fld">
+                      <div className="ob-q">Or pick one the app already reaches</div>
+                      <div className="ob-chips">
+                        {githubConnect.data.repositories.slice(0, 12).map((repo) => (
+                          <button key={repo.id} type="button" className="ob-chip" onClick={() => setRepoInput(repo.fullName)}>{repo.fullName}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="ob-fld">
+                    <div className="ob-q">Install the DakyX app on it<small>On GitHub, choose “Only select repositories” and pick this one.</small></div>
+                    {connectedRepo ? (
+                      <p className="ob-ok" role="status">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="m8 12 3 3 5-6" /></svg>
+                        <span>Connected to <b>{connectedRepo.fullName}</b> · {connectedRepo.private ? "private" : "public"} · {connectedRepo.defaultBranch}</span>
+                      </p>
+                    ) : (
+                      <>
+                        <button type="button" className="ob-gh" disabled={!githubConnect.data.installUrl} onClick={installApp}>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z" /></svg>
+                          Install the DakyX app on GitHub
+                        </button>
+                        {waitingForGithub && (
+                          <p className="ob-hint" role="status" aria-live="polite">
+                            {githubConnect.data.repositories.length > 0 && wantedRepo
+                              ? `The app reaches ${githubConnect.data.repositories.length} repositor${githubConnect.data.repositories.length === 1 ? "y" : "ies"} on ${githubConnect.data.login ?? "your account"}, but not ${wantedRepo}. Add it on GitHub under the app's repository access, then come back here.`
+                              : "Waiting for GitHub… finish the install in the other tab and come back here. This updates by itself."}
+                          </p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
+              <div className="ob-foot"><button type="button" className="ob-cta" disabled={!connectedRepo} onClick={() => goTo("heard")}>Continue</button></div>
+            </section>
+          )}
+
+          {view === "heard" && (
             <section className="ob-view">
               <h2>How did you hear about us?</h2>
               <p className="ob-lead">One answer. It helps us know where to spend our time.</p>
@@ -299,16 +420,16 @@ export function WebsiteWelcomeFlow() {
                   ))}
                 </div>
               </div>
-              <div className="ob-foot"><button type="button" className="ob-cta" disabled={!heard} onClick={() => setStep(3)}>Build my website</button></div>
+              <div className="ob-foot"><button type="button" className="ob-cta" disabled={!heard} onClick={() => goTo("build")}>Build my website</button></div>
             </section>
           )}
 
-          {step === 3 && (
+          {view === "build" && (
             <section className="ob-view">
               <div className="ob-scroll">
                 <div className="ob-you">
                   {shownName} — {PURPOSES.find((option) => option.key === purpose)?.title.toLowerCase()} ({follow.toLowerCase()}),{" "}
-                  {method === "upload" ? `from ${upload?.name}` : method === "github" ? "to connect to GitHub" : method === "team" ? "set up with the DakyX team" : "from a ready-made page"}.
+                  {method === "upload" ? `from ${upload?.name}` : method === "github" ? `from ${connectedRepo?.fullName ?? "your GitHub repository"}` : method === "team" ? "set up with the DakyX team" : "from a ready-made page"}.
                 </div>
                 <div className="ob-work" aria-live="polite">
                   <div className={`ob-h${finished ? " done" : ""}`}><i /><span>{finished ? `Finished ${tasks.filter((task) => task.state === "done").length} of ${tasks.length}` : "Working…"}</span></div>
@@ -332,7 +453,11 @@ export function WebsiteWelcomeFlow() {
                 {finished && created && (
                   <div className="ob-msg">
                     {method === "github" ? (
-                      <p>Your website is ready. Next, connect the repository it publishes to — open <b>Settings</b>, install the DakyX app on GitHub and choose the repository.</p>
+                      homepageId ? (
+                        <p>Your website is connected to {connectedRepo?.fullName}. Opening your homepage in the editor — publishing commits your changes to the repository.</p>
+                      ) : (
+                        <p>Your website is connected to {connectedRepo?.fullName}, but no pages were found in it yet. Open your website to scan it again once the repository has an index.html.</p>
+                      )
                     ) : method === "team" && help ? (
                       <p>{help.message} Meanwhile there's a starter page to explore — nothing is public until you publish.</p>
                     ) : (
@@ -351,12 +476,11 @@ export function WebsiteWelcomeFlow() {
               </div>
               {finished && created && (
                 <div className="ob-explore">
-                  <b>{method === "github" ? "Connect your repository" : "Your website is ready"}</b>
+                  <b>Your website is ready</b>
                   <div className="ob-row">
-                    {method === "github" && <button type="button" className="ob-ghost" onClick={openEditor}>Look at the page first</button>}
                     {method === "team" && help?.paymentUrl && <a className="ob-ghost" href={help.paymentUrl} target="_blank" rel="noreferrer">Pay {price.data?.display ?? "now"}</a>}
-                    <button type="button" className="ob-small-cta" onClick={method === "github" ? () => navigate("/website/settings") : openEditor}>
-                      {method === "github" ? "Open Settings" : "Open the editor"}
+                    <button type="button" className="ob-small-cta" onClick={openEditor}>
+                      {method === "github" ? (homepageId ? "Open your homepage" : "Open your website") : "Open the editor"}
                     </button>
                   </div>
                 </div>
@@ -367,7 +491,7 @@ export function WebsiteWelcomeFlow() {
 
         {/* A picture of the editor that fills in as the answers do. Decorative. */}
         <div className="ob-right" aria-hidden="true">
-          <div className={`ob-stage ${cams[step]}`}>
+          <div className={`ob-stage ${cam[view]}`}>
             <div className="ob-app">
               <div className="ob-pside">
                 <div className="ob-plogo">Daky<b>X</b></div>
@@ -395,7 +519,7 @@ export function WebsiteWelcomeFlow() {
       </div>
       <p className="ob-out">
         Want to read first? The <a href="https://dakyx.com/website-builder-setup" target="_blank" rel="noreferrer">setup guide</a> covers every route.{" "}
-        {step < 3 && (
+        {view !== "build" && (
           <button
             type="button"
             onClick={() => {
@@ -409,6 +533,28 @@ export function WebsiteWelcomeFlow() {
       </p>
     </div>
   );
+}
+
+/** "owner/name" from whatever was pasted: a name, a URL, a clone address. */
+function normaliseRepo(input: string): string {
+  const cleaned = input.trim().replace(/^git@github\.com:/i, "");
+  const match = /^(?:https?:\/\/)?(?:www\.)?(?:github\.com\/)?([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?(?:[?#].*)?$/i.exec(cleaned);
+  return match ? `${match[1]}/${match[2]}`.toLowerCase() : "";
+}
+
+function findRepo(repositories: GithubRepository[] | undefined, wanted: string): GithubRepository | null {
+  if (!wanted) return null;
+  return repositories?.find((repo) => repo.fullName.toLowerCase() === wanted) ?? null;
+}
+
+/** The page at "/", else the shallowest index file, else the first listed page. */
+function homepageOf(pages: PageRow[]): string | null {
+  const root = pages.find((page) => page.path === "/" || page.path === "");
+  if (root) return root.id;
+  const index = pages
+    .filter((page) => /(^|\/)index\.html?$/i.test(page.filePath))
+    .sort((a, b) => a.filePath.split("/").length - b.filePath.split("/").length)[0];
+  return index?.id ?? pages.find((page) => page.status === "LIVE")?.id ?? pages[0]?.id ?? null;
 }
 
 function templateLabel(key: string) {

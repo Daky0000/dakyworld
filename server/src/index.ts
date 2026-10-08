@@ -68,7 +68,7 @@ import { demosRouter, demoPagesRouter } from "./routes/demos.js";
 import { auditsRouter } from "./routes/audits.js";
 import { conceptsRouter } from "./routes/concepts.js";
 import { startScheduler } from "./services/scheduler.js";
-import { githubWebhookHandler } from "./services/githubAppRoutes.js";
+import { githubCallbackSignedOut, githubWebhookHandler } from "./services/githubAppRoutes.js";
 import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
 import { ensureTheses } from "./services/hunt/theses.js";
 import { COMMISSIONED_AUTONOMY, activateWorkforce, applyColdEmailPlaybook, applyOutreachDoctrine, commissionWorkforce, ensureAgents, narrowSeededAgents, reconcileSeedToolkits, refreshUneditedSeedPrompts, surplusToolkits } from "./services/agentRegistry.js";
@@ -289,6 +289,9 @@ app.use("/api", requestAdmission);
 // Resolves the session cookie but never rejects — /api/auth/login has to stay
 // reachable without one. requireAuth below is what actually closes the door.
 app.use(attachUser);
+// GitHub sends the browser back after an install, sometimes to somebody not
+// signed in here; they get a page saying what happened instead of a 401.
+app.get("/api/website/github/callback", githubCallbackSignedOut());
 app.use("/api/auth", authRouter);
 app.use("/api", requireAuth);
 // Signed in is not the same as "belongs in here" — see scopeExternal.

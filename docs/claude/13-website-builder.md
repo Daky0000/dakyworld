@@ -445,10 +445,24 @@ reach the page title, a picture's description, or a heading three screens down.
   remembered (`dw-structure-floating`).
 - **`/website/welcome` is `WebsiteWelcomeFlow`**: name, purpose (chooses the
   starter template), address-or-not, how to start, how they heard, then a build
-  log whose every line is a request that actually resolved. GitHub is *not* a
-  way to create a customer's site — the server refuses a repo on create for
-  external accounts — so that route creates the hosted site and sends them to
-  Settings to install the app. The team route is the paid setup assistance and
+  log whose every line is a request that actually resolved. **Choosing GitHub
+  adds a screen** (8 Oct 2026): the repository, and an install button that
+  opens the app's install page in a new tab with a signed `state`. With the
+  app's *Request user authorization (OAuth) during installation* box ticked,
+  GitHub comes back to `GET /api/website/github/callback` with a code; that
+  becomes a user token, `/user/installations` (+ each one's repositories) says
+  what *this person* reaches, those rows replace their `GithubRepoClaim`s, and
+  the token is revoked. The screen polls `GET /website/github/connect` until the
+  typed repo appears, then `POST /sites` takes `githubRepositoryId` — refused
+  without a claim, re-checked against the installation now — creates the site
+  with no starter, the client runs `/scan`, and the flow lands on the page at
+  `/`. **An installation id from a customer is never trusted**: they are
+  sequential and sit in a URL anybody can edit. Until this, `PUT
+  /sites/:id/github-app` let a site manager send just an installation id and a
+  repository id, which `assertWebsiteConnectionChange` read as "no change";
+  non-staff now need a claim there too. Needs `GITHUB_APP_CLIENT_SECRET` (the
+  client id is read from `GET /app`), and every host people sign in on listed
+  as a callback URL on the app. The team route is the paid setup assistance and
   shows its real price. Answers go on `User.uiState.welcome` (`heardFrom`,
   `purpose`, enums only). With no address, `POST /website/sites` now defaults
   `publicUrl` to `<slug>.<WEBSITE_HOST_DOMAIN || sites.dakyx.com>` instead of

@@ -25,7 +25,7 @@ import { registerWebsiteShared, saveSharedEdits, sharedOnPage } from "../service
 import { registerWebsiteReadiness } from "../services/websiteReadiness.js";
 import { registerWebsiteSurvey } from "../services/websiteSiteSurvey.js";
 import { registerWebsiteOnboarding } from "../services/websiteOnboarding.js";
-import { registerGithubAppRoutes } from "../services/githubAppRoutes.js";
+import { registerGithubAppRoutes, registerGithubConnectRoutes } from "../services/githubAppRoutes.js";
 import { assertEditAllowance, assertTierFeatureAccess, recordAiPromptUsed, recordEditUsed, registerWebsiteTierRoutes, websiteTierFeature } from "../services/websiteTierPlans.js";
 import { registerWebsitePublishJobs } from "../services/websitePublishJobs.js";
 import { hostedUrlFor, registerWebsiteHosting } from "../services/websiteHosting.js";
@@ -134,6 +134,7 @@ registerWebsiteSurvey(websiteRouter, { loadSite });
 registerWebsitePublishJobs(websiteRouter, { loadSite });
 registerWebsiteOnboarding(websiteRouter, { loadSite });
 registerGithubAppRoutes(websiteRouter, { loadSite });
+registerGithubConnectRoutes(websiteRouter);
 
 /**
  * Do two values read the same to a person?

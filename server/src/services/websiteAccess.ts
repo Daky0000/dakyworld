@@ -184,7 +184,7 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
 }
 
 /** Routes about the signed-in account rather than one website. Their handlers scope themselves. */
-const ACCOUNT_ROUTES = /^\/(?:subscription(?:\/(?:cancel|manage))?|setup-assistance|help|starter-templates|balance(?:\/.*)?|activity(?:\/.*)?|escalations(?:\/[^/]+)?)\/?$/;
+const ACCOUNT_ROUTES = /^\/(?:subscription(?:\/(?:cancel|manage))?|setup-assistance|help|starter-templates|balance(?:\/.*)?|activity(?:\/.*)?|escalations(?:\/[^/]+)?|github\/(?:connect|callback))\/?$/;
 
 /**
  * Whether the gate answers a path without classifying it — account routes, the

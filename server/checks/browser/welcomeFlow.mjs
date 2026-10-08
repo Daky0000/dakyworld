@@ -10,6 +10,12 @@ import { mkdir } from "node:fs/promises";
  * request actually returned (a failure is said, never ticked); the answers are
  * recorded on the account; and Open the editor lands in the editor with the
  * tour asked for.
+ *
+ * The GitHub route adds a screen: Continue stays off until the repository the
+ * person typed (as a URL, in any case) is one GitHub says they reached with the
+ * app installed; the site is created from that repository with no starter; and
+ * the flow ends on the repository's homepage — the page at "/", not the first
+ * page listed.
  */
 const { chromium } = await import(process.env.PLAYWRIGHT_URL ?? "playwright");
 const browser = await chromium.launch({ headless: true });
@@ -21,6 +27,8 @@ async function run({ method, failCreate = false }) {
   const created = [];
   const uiState = [];
   const help = [];
+  let installed = false;
+  page.context().on("page", (popup) => { installed = true; void popup.close(); });
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     const method_ = route.request().method();
@@ -29,11 +37,18 @@ async function run({ method, failCreate = false }) {
     if (url.pathname.endsWith("/tier-status") || url.pathname.includes("/tier")) return route.fulfill({ json: null });
     if (url.pathname.endsWith("/setup-assistance") && method_ === "GET") return route.fulfill({ json: { display: "GHS 600", amount: 600, currency: "GHS" } });
     if (url.pathname.endsWith("/setup-assistance")) { help.push(route.request().postDataJSON()); return route.fulfill({ status: 201, json: { message: "Your request is logged.", paymentUrl: null } }); }
+    if (url.pathname.endsWith("/website/github/connect")) {
+      return route.fulfill({ json: { ready: true, installUrl: "about:blank", login: installed ? "amamensah" : null, repositories: installed ? [{ id: "777", fullName: "amamensah/notes", defaultBranch: "main", private: false }, { id: "901", fullName: "amamensah/bakery-site", defaultBranch: "main", private: true }] : [] } });
+    }
+    if (url.pathname.endsWith("/website/sites/site1/scan")) return route.fulfill({ json: { found: 2, added: 2 } });
+    if (url.pathname.endsWith("/website/sites/site1/pages")) {
+      return route.fulfill({ json: { pages: [{ id: "about1", path: "/about", filePath: "about.html", status: "LIVE" }, { id: "home1", path: "/", filePath: "index.html", status: "LIVE" }], nextCursor: null } });
+    }
     if (url.pathname.endsWith("/website/sites") && method_ === "POST") {
       created.push(route.request().postDataJSON());
       if (failCreate) return route.fulfill({ status: 402, json: { error: "Payment must be verified before connecting a website." } });
       await new Promise((resolve) => setTimeout(resolve, 300));
-      return route.fulfill({ status: 201, json: { id: "site1", pageId: "page1" } });
+      return route.fulfill({ status: 201, json: { id: "site1", pageId: method === "github" ? null : "page1" } });
     }
     return route.fulfill({ json: [] });
   });
@@ -50,7 +65,7 @@ async function run({ method, failCreate = false }) {
   await cont.click();
 
   // Step 2.
-  const methodName = { template: /ready-made page/, team: /our team set it up/ }[method];
+  const methodName = { template: /ready-made page/, team: /our team set it up/, github: /GitHub repository/ }[method];
   await page.getByRole("radio", { name: methodName }).click();
   if (method === "team") {
     assert.equal(await cont.isDisabled(), true, "The team route needs a number to call");
@@ -58,6 +73,15 @@ async function run({ method, failCreate = false }) {
     await page.getByText(/one-off GHS 600/).waitFor();
   }
   await cont.click();
+
+  if (method === "github") {
+    await page.getByLabel("Repository").fill("https://github.com/AmaMensah/Bakery-Site.git");
+    assert.equal(await cont.isDisabled(), true, "Continue waits until GitHub says the app reaches the repository");
+    await page.getByRole("button", { name: "Install the DakyX app on GitHub" }).click();
+    await page.getByText("Connected to").waitFor({ timeout: 10_000 });
+    assert.match(await page.getByRole("status").filter({ hasText: "Connected to" }).innerText(), /amamensah\/bakery-site/);
+    await cont.click();
+  }
 
   // Step 3.
   const build = page.getByRole("button", { name: "Build my website", exact: true });
@@ -69,6 +93,16 @@ async function run({ method, failCreate = false }) {
     await page.getByRole("alert").getByText("Payment must be verified").waitFor();
     assert.equal(await page.getByRole("button", { name: "Open the editor" }).count(), 0, "A failed build offers no editor");
     assert.equal(created.length, 1, "Created once, not retried behind somebody's back");
+    await page.close();
+    return;
+  }
+
+  if (method === "github") {
+    await page.getByTestId("landed").filter({ hasText: "/website/pages/" }).waitFor({ timeout: 10_000 });
+    assert.equal(created.length, 1, "The site is created exactly once");
+    assert.equal(created[0].githubRepositoryId, "901", "Created from the repository GitHub vouched for");
+    assert.equal(created[0].templateKey, undefined, "A repository's site starts from its own pages, not a starter");
+    assert.equal(await page.getByTestId("landed").innerText(), "/website/pages/home1?walkthrough=interactive", "Lands on the homepage, not the first page listed");
     await page.close();
     return;
   }
@@ -93,9 +127,10 @@ async function run({ method, failCreate = false }) {
 try {
   await run({ method: "template" });
   await run({ method: "team" });
+  await run({ method: "github" });
   await run({ method: "template", failCreate: true });
   assert.deepEqual(errors, []);
-  console.log("welcomeFlow: answers gate each step, one create with the chosen starter and no invented address, failure said not ticked, answers recorded, team request sent, lands in the editor with the tour.");
+  console.log("welcomeFlow: answers gate each step, one create with the chosen starter and no invented address, failure said not ticked, answers recorded, team request sent, GitHub waits for the proven repository and lands on its homepage, lands in the editor with the tour.");
 } finally {
   await browser.close();
 }

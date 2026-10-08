@@ -172,7 +172,7 @@ export function Layout() {
   const screenName = current?.label ?? SCREEN_NAMES.find(([pattern]) => pattern.test(location.pathname))?.[1] ?? null;
   // The editor takes the whole window, and so does the first-visit welcome:
   // it is a single focused task, drawn as its own screen (WebsiteWelcome).
-  const fullBleed = /^\/website\/pages\//.test(location.pathname) || /^\/website\/welcome\/?$/.test(location.pathname);
+  const fullBleed = /^\/website\/pages\//.test(location.pathname) || /^\/website\/(?:welcome|github\/connected)\/?$/.test(location.pathname);
   // The editor names its own tab after the page being edited.
   useEffect(() => { if (!fullBleed) setPageTitle(screenName); }, [screenName, fullBleed]);
   if (fullBleed) return <main className="os-app flex h-screen flex-col overflow-hidden bg-cream text-ink"><Suspense fallback={<Loading />}><Outlet /></Suspense></main>;

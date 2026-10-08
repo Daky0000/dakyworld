@@ -84,6 +84,7 @@ model AccessRole {
 
 model User {
   siteMemberships     SiteMember[]
+  githubRepoClaims    GithubRepoClaim[]
   id                  String       @id @default(cuid())
   email               String       @unique
   // scrypt hash, see server/src/lib/password.ts. Null for members an Owner
@@ -5230,3 +5231,27 @@ model WebsiteEscalation {
   @@index([status, createdAt])
 }
 
+/// A repository somebody has proved, through GitHub, that they can reach with
+/// the DakyXTech app installed on it.
+///
+/// An installation id comes back in a redirect anybody can edit, and they are
+/// sequential numbers, so "here is my installation" proves nothing on its own.
+/// These rows are written only from GitHub's own answer to the signed-in
+/// person's OAuth token (`/user/installations`), and that token is thrown away
+/// afterwards. Connecting a website to a repository then needs a row here for
+/// that person and that repository — which is what lets a customer do it at all.
+model GithubRepoClaim {
+  id             String   @id @default(cuid())
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         String
+  installationId String
+  repositoryId   String
+  fullName       String
+  defaultBranch  String
+  private        Boolean
+  githubLogin    String
+  verifiedAt     DateTime @default(now())
+
+  @@unique([userId, repositoryId])
+  @@index([userId])
+}

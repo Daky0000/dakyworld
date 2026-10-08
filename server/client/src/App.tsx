@@ -55,6 +55,7 @@ const FreelancerWorkspace = lazy(() => import("./pages/FreelancerWorkspace").the
 const CustomerWorkspace = lazy(() => import("./pages/CustomerWorkspace").then((module) => ({ default: module.CustomerWorkspace })));
 const WebsiteAccount = lazy(() => import("./pages/WebsiteAccount").then((module) => ({ default: module.WebsiteAccount })));
 const WebsiteWelcome = lazy(() => import("./pages/WebsiteWelcome").then((module) => ({ default: module.WebsiteWelcome })));
+const WebsiteGithubConnected = lazy(() => import("./pages/WebsiteGithubConnected").then((module) => ({ default: module.WebsiteGithubConnected })));
 const WebsiteInbox = lazy(() => import("./pages/WebsiteInbox").then((module) => ({ default: module.WebsiteInbox })));
 const WebsiteVisits = lazy(() => import("./pages/WebsiteVisits").then((module) => ({ default: module.WebsiteVisits })));
 
@@ -122,6 +123,7 @@ export default function App() {
         {/* Outside WebsiteGuard: an account with no website left must still reach this page. */}
         <Route path="/website/account" element={<WebsiteAccount />} />
         <Route path="/website/welcome" element={<WebsiteWelcome />} />
+        <Route path="/website/github/connected" element={<WebsiteGithubConnected />} />
         <Route path="/website/pages/:pageId" element={<WebsiteGuard><ErrorBoundary label="website editor"><WebsiteEditor /></ErrorBoundary></WebsiteGuard>} />
         <Route path="/website/pages/:pageId/source" element={<WebsiteGuard needs="source"><ErrorBoundary label="source editor"><WebsiteFrameworkEditor /></ErrorBoundary></WebsiteGuard>} />
         <Route path="*" element={<Navigate to="/website/sites" replace />} />
@@ -182,6 +184,7 @@ export default function App() {
         {/* Outside WebsiteGuard: an account with no website left must still reach this page. */}
         <Route path="/website/account" element={<WebsiteAccount />} />
         <Route path="/website/welcome" element={<WebsiteWelcome />} />
+        <Route path="/website/github/connected" element={<WebsiteGithubConnected />} />
         <Route path="/website/pages/:pageId" element={<WebsiteGuard><ErrorBoundary label="website editor"><WebsiteEditor /></ErrorBoundary></WebsiteGuard>} />
         <Route path="/website/pages/:pageId/source" element={<WebsiteGuard needs="source"><ErrorBoundary label="source editor"><WebsiteFrameworkEditor /></ErrorBoundary></WebsiteGuard>} />
         <Route path="/team" element={<Guard needs="team.view"><Team /></Guard>} />

@@ -458,6 +458,16 @@ export const SETTING = {
   GITHUB_APP_PRIVATE_KEY: "github.app.privateKey",
   /** Signs every webhook delivery. Without it, deliveries are dropped unread. */
   GITHUB_APP_WEBHOOK_SECRET: "github.app.webhookSecret",
+  /**
+   * The app's OAuth pair, used for one thing: proving that the person who
+   * installed the app is the person signed in here. An installation id arrives
+   * in a redirect anybody can type, so on its own it proves nothing — the
+   * customer signs in to GitHub during the install and GitHub says which
+   * installations and repositories *they* can reach. The client id is optional:
+   * without it, it is read from GitHub with the app's own key.
+   */
+  GITHUB_APP_CLIENT_ID: "github.app.clientId",
+  GITHUB_APP_CLIENT_SECRET: "github.app.clientSecret",
 
   /**
    * Which calendar bookings land in. Blank means the connected account's own.
@@ -817,6 +827,8 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   // across every customer installation should not be pasteable into a screen.
   [SETTING.GITHUB_APP_PRIVATE_KEY]: "GITHUB_APP_PRIVATE_KEY",
   [SETTING.GITHUB_APP_WEBHOOK_SECRET]: "GITHUB_APP_WEBHOOK_SECRET",
+  [SETTING.GITHUB_APP_CLIENT_ID]: "GITHUB_APP_CLIENT_ID",
+  [SETTING.GITHUB_APP_CLIENT_SECRET]: "GITHUB_APP_CLIENT_SECRET",
   [SETTING.GOOGLE_CALENDAR_ID]: "GOOGLE_CALENDAR_ID",
   // Pinning this one from the deploy is the difference between rotating the
   // secret in the UI and having every sender break on the next restart.

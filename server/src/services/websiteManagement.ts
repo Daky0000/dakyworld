@@ -24,6 +24,7 @@ import {
   WEBSITE_TIER_PLANS,
 } from "./websiteTierPlans.js";
 import { resolveEntitlement } from "./websiteEntitlement.js";
+import { installationRepositories } from "./githubApp.js";
 import { autoPopulateSitePaletteFromHtml, extractColorsFromHtml } from "./website/pageColors.js";
 import { generateStarterSiteHtml, STARTER_TEMPLATES } from "./websiteSectionTemplates.js";
 import { prepareImportedHtml } from "./htmlCompiler.js";
@@ -265,6 +266,12 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       templateKey: z.string().max(60).optional(),
       packageData: z.string().min(1).max(35_000_000).optional(),
       packageFilename: z.string().max(200).optional(),
+      /**
+       * A repository the signed-in person proved they reach, through GitHub,
+       * with the app installed (`GithubRepoClaim`). The only way somebody
+       * outside the company can start a website from their own repository.
+       */
+      githubRepositoryId: z.string().regex(/^\d{1,20}$/).optional(),
     }).parse(req.body);
     if (!!input.repoOwner !== !!input.repoName) throw new WebsiteError(400, "Enter both the repository owner and name.");
     if (!input.publicUrl && input.repoOwner) throw new WebsiteError(400, "Enter the address the repository's website is published at.");
@@ -272,8 +279,18 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     // A hosted site with no address of its own is given the one it will be
     // served at: <slug>.<WEBSITE_HOST_DOMAIN>, the same rule hostedUrlFor uses.
     const fallbackPublicUrl = `https://${slug}.${HOST_DOMAIN || "sites.dakyx.com"}`;
-    let { html, templateKey, packageData, packageFilename, publicUrl: givenPublicUrl, ...rest } = input;
-    const data = { ...rest, publicUrl: givenPublicUrl ?? fallbackPublicUrl };
+    let { html, templateKey, packageData, packageFilename, publicUrl: givenPublicUrl, githubRepositoryId, ...rest } = input;
+    if (githubRepositoryId && (html || templateKey || packageData || rest.repoOwner || rest.repoName)) {
+      throw new WebsiteError(400, "A website from a GitHub repository takes its pages from the repository, so it cannot also start from a template or an upload.");
+    }
+    const github = githubRepositoryId ? await verifiedRepositoryFor(req, githubRepositoryId) : null;
+    const data = {
+      ...rest,
+      ...(github ? { repoOwner: github.owner, repoName: github.name, repoBranch: github.branch, githubInstallationId: github.installationId, githubRepositoryId: github.repositoryId } : {}),
+      // A repository's site with no address given is most often its GitHub
+      // Pages one; better than a hosted address that will never serve it.
+      publicUrl: givenPublicUrl ?? (github ? githubPagesUrl(github.owner, github.name) : fallbackPublicUrl),
+    };
     if (html) {
       html = prepareImportedHtml(html);
     }
@@ -284,7 +301,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       if (!entitlement.purchaseId || !entitlement.userId) throw new WebsiteError(402, "Buy a Website Builder plan before connecting a website.");
       const purchase = await prisma.websitePurchase.findUnique({ where: { id: entitlement.purchaseId }, select: { clientId: true, setupPaidAt: true, status: true } });
       if (!purchase?.setupPaidAt || !["ACTIVE", "READY", "SETUP_PAID", "SETUP_IN_PROGRESS"].includes(purchase.status)) throw new WebsiteError(402, "Payment must be verified before connecting a website.");
-      if (data.repoOwner || data.repoName || data.clientId) throw new WebsiteError(403, "Connect a hosted website first. Attach your own GitHub installation from its settings.");
+      if (((data.repoOwner || data.repoName) && !github) || data.clientId) throw new WebsiteError(403, "Start a hosted website, or connect your own repository by installing the DakyXTech app on GitHub.");
       owner = { clientId: purchase.clientId, userId: entitlement.userId, siteLimit: WEBSITE_TIER_PLANS[entitlement.tier].websiteLimit };
     }
 
@@ -320,7 +337,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
         ...(extractedColours.length ? { settings: { colours: extractedColours } } : {}),
         slug,
         ...(finalHtml ? { pages: { create: { title: data.name, path: "/", filePath: "index.html", sourceHtml: finalHtml } } } : {}),
-        auditEvents: { create: { kind: "SITE_CONNECTED", summary: `Connected ${data.name}${packageAnalysis ? " with an imported package" : html ? " with an imported page" : finalHtml ? " with a starter template" : ""}`, ...actor(req), detail: { importedPage: Boolean(html), importedPackage: Boolean(packageAnalysis), starterTemplate: templateKey || (!html && !packageAnalysis && !data.repoOwner ? "business" : null) } } },
+        auditEvents: { create: { kind: "SITE_CONNECTED", summary: `Connected ${data.name}${github ? ` to ${github.owner}/${github.name} through the owner's own GitHub installation` : packageAnalysis ? " with an imported package" : html ? " with an imported page" : finalHtml ? " with a starter template" : ""}`, ...actor(req), detail: { importedPage: Boolean(html), importedPackage: Boolean(packageAnalysis), starterTemplate: templateKey || (!html && !packageAnalysis && !data.repoOwner ? "business" : null) } } },
       }, include: { pages: { select: { id: true } } } });
     });
 
@@ -590,4 +607,27 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     res.setHeader("Content-Disposition", `attachment; filename="${page.filePath.split("/").pop()?.replace(/[^a-zA-Z0-9_.-]/g,"_") || "page.html"}"`);
     res.type("text/html").send(await embedWebsiteAssets(site, plan?.html ?? source.html));
   }));
+}
+
+/**
+ * The repository behind `githubRepositoryId`, if this person proved they reach
+ * it — and only if the app still reaches it now, not merely when they proved it.
+ */
+async function verifiedRepositoryFor(req: Request, repositoryId: string) {
+  const userId = req.dbUser?.id;
+  const claim = userId ? await prisma.githubRepoClaim.findUnique({ where: { userId_repositoryId: { userId, repositoryId } } }) : null;
+  if (!claim) throw new WebsiteError(403, "Install the DakyXTech app on that repository first, signed in to GitHub as somebody who can reach it.");
+  const reachable = await installationRepositories(claim.installationId).catch((error) => {
+    throw new WebsiteError(502, error instanceof Error ? error.message : "GitHub could not be reached.");
+  });
+  const repository = reachable.find((repo) => repo.id === claim.repositoryId);
+  if (!repository) throw new WebsiteError(409, `The DakyXTech app no longer reaches ${claim.fullName}. Add it back to the app's repository access on GitHub, then try again.`);
+  const [owner, name] = repository.fullName.split("/");
+  return { owner, name, branch: repository.defaultBranch, installationId: claim.installationId, repositoryId: repository.id };
+}
+
+/** `owner.github.io` serves from the root; every other repository from `/name`. */
+function githubPagesUrl(owner: string, name: string): string {
+  const host = `${owner.toLowerCase()}.github.io`;
+  return name.toLowerCase() === host ? `https://${host}` : `https://${host}/${name}`;
 }

@@ -151,3 +151,143 @@ export async function verifyGithubWebhook(signature: string | undefined, body: s
   const right = Buffer.from(expected);
   return left.length === right.length && timingSafeEqual(left, right);
 }
+
+// --- Proving who installed it --------------------------------------------------
+//
+// An installation id is a number GitHub puts in a redirect URL. They are
+// sequential, anybody can type one, and an installation token reaches whatever
+// that installation was given — so "connect installation 51234 to my website"
+// cannot be taken on trust from somebody outside the company. That is why the
+// connect screen was staff-only.
+//
+// The way a customer can do it themselves: during the install, GitHub signs them
+// in to the app (the app's "Request user authorization (OAuth) during
+// installation" box) and hands back a code. That code becomes a short-lived
+// token that speaks for *them*, and `/user/installations` answers with only the
+// installations and repositories they can actually reach. That answer is what
+// gets stored; the token is revoked straight afterwards and never kept.
+
+const GITHUB_HEADERS = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "dakyworld-os" } as const;
+/** How long an install may take between leaving here and coming back. */
+const STATE_TTL_MS = 30 * 60_000;
+
+let cachedClientId: string | null = null;
+
+/** The app's OAuth client id: from settings, or read from GitHub with the app's key. */
+export async function githubAppClientId(): Promise<string | null> {
+  const configured = await getSetting(SETTING.GITHUB_APP_CLIENT_ID);
+  if (configured) return configured;
+  if (cachedClientId) return cachedClientId;
+  if (!(await githubAppConfigured())) return null;
+  const response = await fetch(`${API_BASE}/app`, { headers: { ...GITHUB_HEADERS, Authorization: `Bearer ${await appJwt()}` } }).catch(() => null);
+  if (!response?.ok) return null;
+  const body = (await response.json().catch(() => ({}))) as { client_id?: string };
+  cachedClientId = body.client_id ?? null;
+  return cachedClientId;
+}
+
+/** Whether somebody outside the company can connect their own repository yet. */
+export async function githubSignInReady(): Promise<boolean> {
+  return Boolean((await githubAppConfigured()) && (await getSetting(SETTING.GITHUB_APP_CLIENT_SECRET)) && (await githubAppClientId()));
+}
+
+async function stateKey(): Promise<string> {
+  const secret = await getSetting(SETTING.GITHUB_APP_CLIENT_SECRET);
+  if (!secret) throw new GitHubError(503, "Connecting your own GitHub repository is not switched on yet.");
+  return secret;
+}
+
+/**
+ * Ties the trip to GitHub to the person who started it, so a callback URL that
+ * somebody else opens — or one forwarded to a customer — does nothing.
+ */
+export async function githubConnectState(userId: string): Promise<string> {
+  const issued = Date.now().toString(36);
+  const mac = createHmac("sha256", await stateKey()).update(`${userId}.${issued}`).digest("base64url");
+  return `${issued}.${mac}`;
+}
+
+export async function githubConnectStateValid(state: string | undefined, userId: string): Promise<boolean> {
+  const [issued, mac] = (state ?? "").split(".");
+  if (!issued || !mac) return false;
+  const at = parseInt(issued, 36);
+  if (!Number.isFinite(at) || Date.now() - at > STATE_TTL_MS || at > Date.now() + 60_000) return false;
+  const expected = createHmac("sha256", await stateKey()).update(`${userId}.${issued}`).digest("base64url");
+  const left = Buffer.from(mac);
+  const right = Buffer.from(expected);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+/** Where to install the app, carrying the state back with it. */
+export async function githubInstallUrlWithState(state: string): Promise<string | null> {
+  const base = await githubAppInstallUrl();
+  return base ? `${base}?state=${encodeURIComponent(state)}` : null;
+}
+
+/** Sign-in only, for an install that came back without a code. */
+export async function githubAuthorizeUrl(redirectUri: string, state: string): Promise<string> {
+  const clientId = await githubAppClientId();
+  if (!clientId) throw new GitHubError(503, "The DakyXTech GitHub App is not set up.");
+  const query = new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri, state });
+  return `https://github.com/login/oauth/authorize?${query}`;
+}
+
+export type VerifiedRepository = { installationId: string; id: string; fullName: string; defaultBranch: string; private: boolean };
+
+async function userGet<T>(token: string, path: string): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, { headers: { ...GITHUB_HEADERS, Authorization: `Bearer ${token}` } }).catch((error: Error) => {
+    throw new GitHubError(502, `Could not reach GitHub: ${error.message}`);
+  });
+  if (!response.ok) throw new GitHubError(response.status, `GitHub refused ${path.split("?")[0]} (${response.status}).`);
+  return (await response.json()) as T;
+}
+
+/**
+ * Turns the code GitHub sent back into the repositories this person can reach
+ * through this app — and nothing else. The token is revoked before returning.
+ */
+export async function verifiedRepositoriesFor(code: string, redirectUri: string): Promise<{ login: string; repositories: VerifiedRepository[] }> {
+  const clientId = await githubAppClientId();
+  const clientSecret = await getSetting(SETTING.GITHUB_APP_CLIENT_SECRET);
+  const appId = await getSetting(SETTING.GITHUB_APP_ID);
+  if (!clientId || !clientSecret || !appId) throw new GitHubError(503, "Connecting your own GitHub repository is not switched on yet.");
+
+  const exchanged = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": "dakyworld-os" },
+    body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code, redirect_uri: redirectUri }),
+  }).catch((error: Error) => {
+    throw new GitHubError(502, `Could not reach GitHub: ${error.message}`);
+  });
+  const grant = (await exchanged.json().catch(() => ({}))) as { access_token?: string; error_description?: string };
+  if (!grant.access_token) throw new GitHubError(400, `GitHub did not sign you in${grant.error_description ? `: ${grant.error_description}` : "."}`);
+  const token = grant.access_token;
+
+  try {
+    const user = await userGet<{ login: string }>(token, "/user");
+    const installations = await userGet<{ installations?: Array<{ id: number; app_id: number }> }>(token, "/user/installations?per_page=100");
+    const repositories: VerifiedRepository[] = [];
+    for (const installation of installations.installations ?? []) {
+      // The endpoint is already limited to this app's installations. Checked
+      // anyway, because this list is what grants publishing rights.
+      if (String(installation.app_id) !== String(appId)) continue;
+      for (let page = 1; page <= 10; page += 1) {
+        const batch = await userGet<{ repositories?: Array<{ id: number; full_name: string; default_branch: string; private: boolean }> }>(
+          token,
+          `/user/installations/${installation.id}/repositories?per_page=100&page=${page}`,
+        );
+        const found = batch.repositories ?? [];
+        repositories.push(...found.map((repo) => ({ installationId: String(installation.id), id: String(repo.id), fullName: repo.full_name, defaultBranch: repo.default_branch, private: repo.private })));
+        if (found.length < 100) break;
+      }
+    }
+    return { login: user.login, repositories };
+  } finally {
+    // Not kept, and not left alive either.
+    void fetch(`${API_BASE}/applications/${encodeURIComponent(clientId)}/token`, {
+      method: "DELETE",
+      headers: { ...GITHUB_HEADERS, Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ access_token: token }),
+    }).catch(() => undefined);
+  }
+}
