@@ -1,6 +1,6 @@
 import { LOGO_CID, LOGO_DARK_CID } from "../lib/brandAssets.js";
 import { DEFAULT_PROFILE, type CompanyProfile } from "./systemProfile.js";
-import { ACCENT, INK, LINE, MARK, MUTED } from "./letterhead.js";
+import { ACCENT, INK, LINE, MUTED } from "./letterhead.js";
 
 /**
  * The DakyXTech letterhead, for screens.
@@ -10,41 +10,38 @@ import { ACCENT, INK, LINE, MARK, MUTED } from "./letterhead.js";
  * styles rather than classes, hex rather than anything with an alpha channel,
  * and one 600px column because that is what fits an Outlook reading pane.
  *
- * **What a client sees.** A white sheet on a cream ground: the lock-up at the
- * top left, the contact line small and quiet on the right, a hairline rule
- * with one lime segment holding it down. Then the letter itself, the
- * signature, and an ink footer band carrying the on-dark lock-up, the
+ * **What a client sees** (docs/DESIGN-SYSTEM.md v21). A white card on the
+ * website's grey canvas: the lock-up at the top left, the contact line small
+ * and quiet on the right, a hairline rule. Then the letter itself, the
+ * signature, and a soft grey footer panel carrying the lock-up, the
  * positioning line, the contact details and the legal line — the website's
  * own footer, compressed to the width of a letter.
  *
- * **On fonts.** The brand faces are Space Grotesk and DM Sans, and email is
- * the one medium where you cannot insist. Apple Mail, iOS Mail and Samsung
+ * **On fonts.** The brand face is Outfit, and email is the one medium where
+ * you cannot insist. Apple Mail, iOS Mail and Samsung
  * Mail load the linked webfonts and show the real thing; Gmail and Outlook
  * strip the link and fall to the stack behind it, which is why every stack
  * ends in a system sans that keeps the same proportions rather than a serif.
  * Outlook gets an explicit Arial through an mso block, because the Word engine
  * renders an unknown family as Times.
- *
- * **On lime.** The design system allows it as a mark and never as type on
- * white — so here it is exactly two things: the 44px segment under the
- * lock-up, and the full stop that is already part of the artwork.
  */
 
 // --- Palette, resolved for email --------------------------------------------
 
-/** The site's own footer ground — deeper than ink, so the band reads as a base. */
-const FOOTER_INK = "#050A14";
-/** White at 58% over FOOTER_INK, pre-blended: email has no reliable alpha. */
-const ON_INK = "#96989C";
-/** White at 35%, for the legal line. */
-const ON_INK_QUIET = "#5D6066";
-/** Links on the dark band. Blue-light from the design system. */
-const ON_INK_LINK = "#6490FF";
+/** The footer panel: the website's soft grey, as on dakyx.com. */
+const FOOTER_GROUND = "#F6F7F9";
+/** Secondary text on the footer panel (§2 muted). */
+const ON_FOOTER = MUTED;
+/** The legal line: the faint grey, which is only ever used this small. */
+const ON_FOOTER_QUIET = "#8A91A0";
+/** Links in the footer: the one accent. */
+const ON_FOOTER_LINK = ACCENT;
 const PAPER = "#FFFFFF";
-const PAGE = "#F4F5F0";
+/** The canvas behind the card — the website's page ground. */
+const PAGE = "#ECEEF1";
 
-const BODY_FONT = "'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
-const DISPLAY_FONT = "'Space Grotesk','DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+const BODY_FONT = "'Outfit',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+const DISPLAY_FONT = BODY_FONT;
 
 const WIDTH = 600;
 
@@ -76,14 +73,14 @@ function logo(src: string | null, profile: CompanyProfile): string {
   if (src) {
     return `<img src="${src}" width="168" height="31" alt="${escapeHtml(profile.displayName)}" style="display:block;border:0;outline:none;text-decoration:none;height:auto;width:168px;max-width:168px">`;
   }
-  return `<span style="font-family:${DISPLAY_FONT};font-size:22px;font-weight:700;letter-spacing:-.02em;color:${INK}">${escapeHtml(profile.displayName)}<span style="color:${MARK}">.</span></span>`;
+  return `<span style="font-family:${DISPLAY_FONT};font-size:22px;font-weight:600;letter-spacing:-.02em;color:${INK}">${escapeHtml(profile.displayName)}</span>`;
 }
 
 function footerLogo(src: string | null, profile: CompanyProfile): string {
   if (src) {
     return `<img src="${src}" width="132" height="24" alt="${escapeHtml(profile.displayName)}" style="display:block;border:0;outline:none;text-decoration:none;height:auto;width:132px;max-width:132px">`;
   }
-  return `<span style="font-family:${DISPLAY_FONT};font-size:18px;font-weight:700;letter-spacing:-.02em;color:${PAPER}">${escapeHtml(profile.displayName)}<span style="color:${MARK}">.</span></span>`;
+  return `<span style="font-family:${DISPLAY_FONT};font-size:18px;font-weight:600;letter-spacing:-.02em;color:${INK}">${escapeHtml(profile.displayName)}</span>`;
 }
 
 function link(href: string, text: string, color: string): string {
@@ -111,8 +108,7 @@ ${escapeHtml(profile.location)}<br>${link(`mailto:${profile.email}`, profile.ema
 <tr>
 <td class="pad" style="padding:22px 32px 0">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-<td width="44" style="width:44px;height:3px;line-height:3px;font-size:0;background:${MARK}">&nbsp;</td>
-<td style="height:3px;line-height:3px;font-size:0;background:${LINE}">&nbsp;</td>
+<td style="height:1px;line-height:1px;font-size:0;background:${LINE}">&nbsp;</td>
 </tr></table>
 </td>
 </tr>`;
@@ -159,26 +155,32 @@ ${sourceNotice}
 </tr>`;
 }
 
-/** The website's footer, compressed: lock-up, positioning, contact, legal. */
+/**
+ * The website's footer, compressed: lock-up, positioning, contact, legal.
+ *
+ * A light panel since v21, like the site's own footer. Its lock-up is the
+ * on-light artwork flattened onto the panel's own grey (server/assets/README.md
+ * says why every email cut is flattened rather than transparent).
+ */
 function footer(profile: CompanyProfile, logoSrc: string | null): string {
   // A blank second phone line or an absent handle is simply not printed —
   // separators are joined across what exists, not around gaps.
   const contact = [
-    link(`mailto:${profile.email}`, profile.email, ON_INK_LINK),
-    link(`tel:${profile.phone.replace(/\s/g, "")}`, profile.phone, ON_INK_LINK),
-    profile.phoneAlt ? link(`tel:${profile.phoneAlt.replace(/\s/g, "")}`, profile.phoneAlt, ON_INK_LINK) : "",
-    link(`https://${profile.web}`, profile.web, ON_INK_LINK),
+    link(`mailto:${profile.email}`, profile.email, ON_FOOTER_LINK),
+    link(`tel:${profile.phone.replace(/\s/g, "")}`, profile.phone, ON_FOOTER_LINK),
+    profile.phoneAlt ? link(`tel:${profile.phoneAlt.replace(/\s/g, "")}`, profile.phoneAlt, ON_FOOTER_LINK) : "",
+    link(`https://${profile.web}`, profile.web, ON_FOOTER_LINK),
   ]
     .filter(Boolean)
-    .join(`<span style="color:${ON_INK_QUIET}"> &nbsp;·&nbsp; </span>`);
+    .join(`<span style="color:${ON_FOOTER_QUIET}"> &nbsp;·&nbsp; </span>`);
 
   const socials = Object.entries(profile.social)
     .filter(([, url]) => url)
-    .map(([name, url]) => link(url, SOCIAL_LABEL[name] ?? name, ON_INK_LINK))
-    .join(`<span style="color:${ON_INK_QUIET}"> &nbsp;·&nbsp; </span>`);
+    .map(([name, url]) => link(url, SOCIAL_LABEL[name] ?? name, ON_FOOTER_LINK))
+    .join(`<span style="color:${ON_FOOTER_QUIET}"> &nbsp;·&nbsp; </span>`);
 
   const socialRow = socials
-    ? `<tr><td style="font-family:${BODY_FONT};font-size:12px;line-height:20px;color:${ON_INK};padding:0 0 14px">${socials}</td></tr>`
+    ? `<tr><td style="font-family:${BODY_FONT};font-size:12px;line-height:20px;color:${ON_FOOTER};padding:0 0 14px">${socials}</td></tr>`
     : "";
 
   const legal = [
@@ -191,17 +193,17 @@ function footer(profile: CompanyProfile, logoSrc: string | null): string {
     .join(" &nbsp;·&nbsp; ");
 
   // bgcolor as well as the CSS: Outlook's Word engine honours the attribute
-  // and drops the declaration, which is how a dark band arrives white.
+  // and drops the declaration.
   return `<tr>
-<td bgcolor="${FOOTER_INK}" class="pad" style="padding:26px 32px 24px;background:${FOOTER_INK}">
+<td bgcolor="${FOOTER_GROUND}" class="pad" style="padding:26px 32px 24px;background:${FOOTER_GROUND}">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
 <tr><td style="padding:0 0 14px">${footerLogo(logoSrc, profile)}</td></tr>
-<tr><td style="font-family:${BODY_FONT};font-size:12px;line-height:20px;color:${ON_INK};padding:0 0 12px">${escapeHtml(
+<tr><td style="font-family:${BODY_FONT};font-size:12px;line-height:20px;color:${ON_FOOTER};padding:0 0 12px">${escapeHtml(
     profile.positioning,
   )}</td></tr>
-<tr><td style="font-family:${BODY_FONT};font-size:12px;line-height:20px;color:${ON_INK};padding:0 0 14px">${contact}</td></tr>
+<tr><td style="font-family:${BODY_FONT};font-size:12px;line-height:20px;color:${ON_FOOTER};padding:0 0 14px">${contact}</td></tr>
 ${socialRow}
-<tr><td style="border-top:1px solid #171F2C;padding:12px 0 0;font-family:${BODY_FONT};font-size:10px;line-height:17px;letter-spacing:.07em;color:${ON_INK_QUIET}">
+<tr><td style="border-top:1px solid ${LINE};padding:12px 0 0;font-family:${BODY_FONT};font-size:10px;line-height:17px;letter-spacing:.07em;color:${ON_FOOTER_QUIET}">
 ${legal}
 </td></tr>
 </table>
@@ -300,7 +302,7 @@ a{color:${ACCENT}}
 ${preheader(bodyText)}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${PAGE}" style="background:${PAGE}">
 <tr><td align="center" style="padding:28px 12px 34px">
-<table role="presentation" class="sheet" width="${WIDTH}" cellpadding="0" cellspacing="0" border="0" bgcolor="${PAPER}" style="width:${WIDTH}px;max-width:${WIDTH}px;background:${PAPER};border:1px solid ${LINE};border-radius:4px">
+<table role="presentation" class="sheet" width="${WIDTH}" cellpadding="0" cellspacing="0" border="0" bgcolor="${PAPER}" style="width:${WIDTH}px;max-width:${WIDTH}px;background:${PAPER};border:1px solid ${LINE};border-radius:14px;overflow:hidden">
 ${header(profile, logoSrc)}
 ${letter(bodyHtml, signature, unsubscribeUrl, sourceNoticeHtml)}
 ${footer(profile, footerLogoSrc)}

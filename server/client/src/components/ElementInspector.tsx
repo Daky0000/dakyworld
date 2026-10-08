@@ -1235,7 +1235,7 @@ export function ElementInspector({
                 type="button"
                 disabled={disabled}
                 onClick={() => {
-                  set("border", "1px solid #08101F");
+                  set("border", "1px solid #0D1526");
                   onCommit?.();
                 }}
                 className="w-full rounded-xl border border-dashed border-line py-2 text-[11px] font-semibold text-muted transition hover:border-blue hover:text-blue"

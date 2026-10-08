@@ -415,7 +415,7 @@ export function WebsiteBalance() {
                 >
                   <div>
                     <div className="flex items-center justify-between">
-                      <span className="rounded-md bg-lime/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-ink">
+                      <span className="rounded-md bg-positive-surface px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-ink">
                         {addon.badge}
                       </span>
                       <span className="font-mono text-sm font-bold text-ink">

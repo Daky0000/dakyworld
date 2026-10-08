@@ -1670,7 +1670,7 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
 
 function expiredDemoPage(title: string, businessName: string, expiresAt: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Demo Expired</title><link rel="icon" href="https://os.dakyx.com/brand/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="https://os.dakyx.com/brand/favicon-180.png">
-<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#08101F;color:#F4F5F0;font:400 16px/1.6 system-ui,-apple-system,sans-serif;padding:2rem}
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#091833;color:#FFFFFF;font:400 16px/1.6 system-ui,-apple-system,sans-serif;padding:2rem}
 main{max-width:32rem;text-align:center;background:#0F1B2E;padding:2.5rem;border-radius:1rem;border:1px solid #1E293B;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5)}
 .badge{display:inline-block;padding:0.25rem 0.75rem;background:#F59E0B20;color:#FBBF24;border-radius:9999px;font-size:0.75rem;font-weight:600;margin-bottom:1rem}
 h1{font-size:1.5rem;margin:0 0 0.75rem;color:#FFFFFF}p{margin:0 0 1.5rem;color:#94A3B8;font-size:0.95rem}
@@ -1685,7 +1685,7 @@ h1{font-size:1.5rem;margin:0 0 0.75rem;color:#FFFFFF}p{margin:0 0 1.5rem;color:#
 
 function passwordUnlockPage(slug: string, businessName: string, error?: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Protected Proposal Demo</title><link rel="icon" href="https://os.dakyx.com/brand/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="https://os.dakyx.com/brand/favicon-180.png">
-<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#08101F;color:#F4F5F0;font:400 16px/1.6 system-ui,-apple-system,sans-serif;padding:2rem}
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#091833;color:#FFFFFF;font:400 16px/1.6 system-ui,-apple-system,sans-serif;padding:2rem}
 main{width:100%;max-width:26rem;background:#0F1B2E;padding:2.5rem;border-radius:1rem;border:1px solid #1E293B;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5)}
 .icon{width:48px;height:48px;margin:0 auto 1.25rem;background:#0B66C320;color:#38BDF8;border-radius:0.75rem;display:flex;align-items:center;justify-content:center;font-size:1.5rem}
 h1{font-size:1.35rem;margin:0 0 0.5rem;text-align:center;color:#FFFFFF}
@@ -1710,7 +1710,7 @@ ${error ? `<div class="err">${error}</div>` : ""}
 
 function missingPage(company: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Not here</title><link rel="icon" href="https://os.dakyx.com/brand/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="https://os.dakyx.com/brand/favicon-180.png">
-<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#F4F5F0;color:#08101F;font:400 16px/1.6 ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;padding:2rem}
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#ECEEF1;color:#0D1526;font:400 16px/1.6 ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;padding:2rem}
 main{max-width:34rem;text-align:center}h1{font-size:1.4rem;margin:0 0 .75rem}p{margin:0;color:#69758A}</style>
 </head><body><main><h1>This page is not here any more</h1>
 <p>The demo you are looking for has been taken down or never existed. If somebody at ${company} sent you the link, ask them for a new one.</p>

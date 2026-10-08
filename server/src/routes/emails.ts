@@ -1317,9 +1317,9 @@ unsubscribeRouter.post("/unsubscribe", async (req, res, next) => {
 
 function page(profile: CompanyProfile, message: string, ok: boolean): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${profile.displayName}</title>
-<style>body{font-family:"DM Sans",-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#08101F;color:#F4F5F0;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px}
+<style>body{font-family:Outfit,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#091833;color:#FFFFFF;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px}
 .card{border:1px solid rgba(255,255,255,.10);padding:40px;max-width:440px;text-align:center}
-h1{font-size:.8rem;letter-spacing:.18em;text-transform:uppercase;margin:0 0 18px;color:#B8FF3D}
-p{margin:0;line-height:1.6;font-size:15px;color:${ok ? "#F4F5F0" : "rgba(244,245,240,.7)"}}</style></head>
+h1{font-size:.8rem;letter-spacing:.18em;text-transform:uppercase;margin:0 0 18px;color:#8FB2FF}
+p{margin:0;line-height:1.6;font-size:15px;color:${ok ? "#FFFFFF" : "rgba(255,255,255,.72)"}}</style></head>
 <body><div class="card"><h1>${profile.displayName}</h1><p>${message}</p></div></body></html>`;
 }

@@ -73,7 +73,7 @@ export function PlannedScreen({
               <ul className="space-y-2">
                 {decided.map((item) => (
                   <li key={item} className="flex gap-2.5 text-sm text-muted">
-                    {/* Blue rather than lime: these are structure, not actions. */}
+                    {/* Ink rather than the blue accent: these are structure, not actions. */}
                     <span aria-hidden className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-blue" />
                     <span>{item}</span>
                   </li>

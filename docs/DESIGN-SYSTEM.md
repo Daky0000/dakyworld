@@ -79,8 +79,8 @@ Rules:
   typographic flourish.
 - Card titles in a services grid may be set as labels (caps, 15px, +0.12em).
 - No italics for emphasis, no serif, no outlined or gradient text.
-- Emails and Word documents cannot be relied on to have Outfit: they declare
-  it first and fall back to Segoe UI / Arial (§11).
+- Emails cannot rely on Outfit: they name it first and fall back to Segoe UI /
+  Arial. Word documents are set in Arial outright (§11). PDFs embed Outfit.
 
 ## 4. Shape and space
 
@@ -185,8 +185,8 @@ space equal to the height of the X on every side.
 | Website | `assets/site.css` (`:root`) | the reference implementation |
 | OS / editor UI | `server/client/tailwind.config.js` | primitives above + the semantic status tier |
 | Emails | `server/src/services/emailRender.ts` (and the templates that call it) | tables and inline styles; Outfit declared, Segoe UI / Arial fallback; navy header strip, white card on canvas, blue button 10px |
-| PDFs | `server/src/services/letterhead.ts` → `pdf.ts` | navy and blue only; caps labels; hairline rules |
-| Word documents | `server/src/services/proposalDocx.ts` | same as PDFs; Outfit declared with Segoe UI fallback |
+| PDFs | `server/src/services/letterhead.ts` → every PDF | navy corners, blue accent, caps labels, hairline rules; Outfit embedded from `server/assets/fonts/` via `useBrandFonts()` |
+| Word documents | `server/src/services/proposalDocx.ts` | same colours as PDFs; set in **Arial**, because a .docx names one family with no fallback and Word substitutes a serif when Outfit is missing |
 
 When a value changes, it changes in all of these in the same piece of work.
 `docs/claude/14-brand-and-metadata.md` records the traps.

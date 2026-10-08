@@ -32,8 +32,10 @@ as `cid:dakyworld-logo` and `cid:dakyworld-logo-dark`. See
   264 × 47 shown at 132 — double, so they stay sharp on a phone.
 - **Palette-reduced to about 3 KB each.** They ride along on every single
   email, including every step of every sequence.
-- **Flattened onto their backgrounds** — white for the header cut, `#050A14`
-  for the footer cut — rather than left transparent. A mail client in dark
+- **Flattened onto their backgrounds** — white for the header cut, `#F6F7F9`
+  (the footer panel's grey, since the v21 design system) for the footer cut —
+  rather than left transparent. Both are the on-light lock-up now; the file
+  keeps its `-dark` name so the cid and the upload slot do not change. A mail client in dark
   mode inverts the background behind an image and never the image itself, so a
   transparent ink wordmark becomes an invisible logo.
 
@@ -48,8 +50,8 @@ def cut(src, dst, width, matte, colors=96):
     flat.paste(im, mask=im.split()[3])
     flat.quantize(colors=colors, method=Image.FASTOCTREE).save(dst, 'PNG', optimize=True)
 
-cut('assets/brand/dakyworld-lockup-on-light.png', 'server/assets/logo-email.png', 336, '#FFFFFF')
-cut('assets/brand/footer-lockup-on-dark.png', 'server/assets/logo-email-dark.png', 264, '#050A14')
+cut('assets/brand/dakyxtech-lockup-on-light.png', 'server/assets/logo-email.png', 336, '#FFFFFF')
+cut('assets/brand/dakyxtech-lockup-on-light.png', 'server/assets/logo-email-dark.png', 264, '#F6F7F9')
 ```
 
 ## Replacing any of them

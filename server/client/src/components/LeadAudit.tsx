@@ -357,7 +357,7 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
   const [copied, setCopied] = useState(false);
   const decision = normaliseRedesignCall(call.call);
 
-  // Ink for a rebuild, blue for work in between, lime for a page that is fine.
+  // Ink for a rebuild, blue for work in between, green (positive) for a page that is fine.
   // The same weight-not-hue rule the PDF follows — the palette has no red.
   const tone =
     decision === "REBUILD"
@@ -366,7 +366,7 @@ function RedesignCard({ call }: { call: RedesignVerdict }) {
         ? { chip: "bg-ink text-cream", label: "Needs redesigning" }
         : decision === "REFINE"
           ? { chip: "bg-blue text-cream", label: "Needs sharpening" }
-          : { chip: "bg-lime text-ink", label: "No redesign needed" };
+          : { chip: "bg-positive-surface text-positive-text", label: "No redesign needed" };
 
   return (
     <div className="rounded-2xl border border-line bg-white p-4">

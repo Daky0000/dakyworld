@@ -33,7 +33,7 @@ export function WebsiteInteractionStyles({ element, style, readOnly, onChange }:
           <ColorCodeInput
             label={`${state} ${property}`}
             value={declarations[`--dw-${state}-${property}`] ?? ""}
-            placeholder="#3157FF"
+            placeholder="#2563EB"
             disabled={readOnly}
             onChange={(nextVal) => set(property, nextVal)}
           />

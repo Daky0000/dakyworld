@@ -18,6 +18,7 @@ import {
   stampLetterhead,
   letterheadIdentity,
   type LetterheadIdentity,
+  useBrandFonts,
 } from "./letterhead.js";
 
 type PDFDoc = InstanceType<typeof PDFDocument>;
@@ -32,10 +33,10 @@ const RIGHT_EDGE = PAGE_W - MARGIN_X;
  * three-page proposal is branded all the way through rather than only on top.
  */
 function newDoc(identity: LetterheadIdentity): PDFDoc {
-  const doc = new PDFDocument({
+  const doc = useBrandFonts(new PDFDocument({
     size: "A4",
     margins: { top: CONTENT_TOP, bottom: CONTENT_BOTTOM, left: MARGIN_X, right: MARGIN_X },
-  });
+  }));
   doc.on("pageAdded", () => stampLetterhead(doc, identity));
   stampLetterhead(doc, identity);
   return doc;

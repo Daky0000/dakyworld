@@ -1027,8 +1027,8 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
 <style nonce="${nonce}">
   [data-dw-field] { cursor: pointer; }
   [data-dw-field]:hover { outline: 2px dashed rgba(49,87,255,.55); outline-offset: 2px; }
-  [data-dw-selected] { outline: 2px solid #3157FF !important; outline-offset: 2px; background: rgba(49,87,255,.06); }
-  [data-dw-editing] { cursor: text !important; outline: 2px solid #3157FF !important; outline-offset: 2px; background: rgba(49,87,255,.10); }
+  [data-dw-selected] { outline: 2px solid #2563EB !important; outline-offset: 2px; background: rgba(37,99,235,.06); }
+  [data-dw-editing] { cursor: text !important; outline: 2px solid #2563EB !important; outline-offset: 2px; background: rgba(37,99,235,.10); }
   [data-dw-editing]:hover { outline-style: solid !important; }
   [data-dw-shown] { opacity: 1 !important; transform: none !important; filter: none !important; }
   [data-dw-field]:hover, [data-dw-field]:hover *,

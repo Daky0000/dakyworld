@@ -81,7 +81,7 @@ export function WebsiteSubscriberOnboarding({
   // Form states
   const [siteName, setSiteName] = useState("");
   const [publicUrl, setPublicUrl] = useState("");
-  const [primaryColor, setPrimaryColor] = useState("#3157ff");
+  const [primaryColor, setPrimaryColor] = useState("#2563EB");
   const [githubRepo, setGithubRepo] = useState("");
   const [githubBranch, setGithubBranch] = useState("main");
   const [importedHtml, setImportedHtml] = useState<string | undefined>();

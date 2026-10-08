@@ -68,7 +68,7 @@ export function WebsiteSettings() {
   };
   const colours = colourText.split(/[,\s]+/).filter(Boolean);
   const fonts = fontText.split("\n").map(font => font.trim()).filter(Boolean);
-  const paletteError = colours.length > 16 ? "Use up to 16 colours." : colours.some(colour => !/^#[\da-f]{6}$/i.test(colour)) ? "Enter each colour as a six-digit hex code, such as #3157FF." : null;
+  const paletteError = colours.length > 16 ? "Use up to 16 colours." : colours.some(colour => !/^#[\da-f]{6}$/i.test(colour)) ? "Enter each colour as a six-digit hex code, such as #2563EB." : null;
   const presetError = draft?.options.presets?.some(preset => Object.entries(preset.styles).some(([property, value]) => !CSS.supports(property, value))) ? "One of the brand styles has an invalid colour, font or size. Correct it before saving." : null;
   const fontsError = fonts.length > 12 ? "Use up to 12 font families." : fonts.some(font => font.length > 80 || !/^[a-zA-Z0-9 ,.-]+$/.test(font)) ? "Use font family names containing letters, numbers, spaces, commas, periods or hyphens." : null;
 
@@ -98,7 +98,7 @@ export function WebsiteSettings() {
         </section>
         <section className="rounded-2xl border border-line bg-white p-5">
           <h2 className="mb-4 font-display text-lg">Design system</h2>
-          <label className="block text-xs text-muted">Colour palette<input className={INPUT} placeholder="#3157FF, #08101F, #FFFFFF" value={colourText} aria-invalid={Boolean(paletteError)} onChange={event => { setColourText(event.target.value); changed(); }} /></label>
+          <label className="block text-xs text-muted">Colour palette<input className={INPUT} placeholder="#2563EB, #08101F, #FFFFFF" value={colourText} aria-invalid={Boolean(paletteError)} onChange={event => { setColourText(event.target.value); changed(); }} /></label>
           <div className="my-3 flex flex-wrap items-center gap-2">
             {colours.map((colour, index) => (
               <div key={index} className="flex items-center gap-1">
@@ -120,7 +120,7 @@ export function WebsiteSettings() {
                 type="button"
                 className="h-8 rounded-lg border border-dashed border-line px-2.5 text-xs text-muted hover:border-ink hover:text-ink"
                 onClick={() => {
-                  const nextColours = [...colours, "#3157FF"];
+                  const nextColours = [...colours, "#2563EB"];
                   setColourText(nextColours.join(", "));
                   changed();
                 }}

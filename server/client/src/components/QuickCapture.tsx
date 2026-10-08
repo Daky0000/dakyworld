@@ -206,7 +206,7 @@ export function QuickCapture() {
               {estimate && <CostNote estimate={estimate} />}
 
               <div className="mt-4 flex items-center gap-2">
-                {/* The one lime action on this screen: it's what spends money. */}
+                {/* The one accent action on this screen: it's what spends money. */}
                 <Button variant="accent" onClick={() => run.mutate(intent.targets)} disabled={busy}>
                   {run.isPending ? "Starting…" : `Capture ${intent.targets.length}`}
                 </Button>

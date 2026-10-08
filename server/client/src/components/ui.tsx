@@ -138,9 +138,8 @@ export function Button({
   children: ReactNode;
   onClick?: () => void;
   /**
-   * `accent` is the lime pill. It is the loudest thing on a screen, so a screen
-   * gets at most one — the system keeps lime at a few percent of the surface
-   * precisely so it still means something. Everything else is `primary`.
+   * `accent` is the blue button (DESIGN-SYSTEM.md §5). It is the loudest thing
+   * on a screen, so a screen gets at most one. Everything else is `primary`.
    */
   variant?: "primary" | "accent" | "secondary" | "ghost" | "danger";
   type?: "button" | "submit";
@@ -150,15 +149,15 @@ export function Button({
   className?: string;
 }) {
   const base =
-    "os-button group inline-flex items-center justify-center gap-2 rounded-xl font-medium transition-colors duration-150 disabled:pointer-events-none disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue";
+    "os-button group inline-flex items-center justify-center gap-2 rounded-[10px] font-medium transition-colors duration-150 disabled:pointer-events-none disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue";
   const sizing = size === "sm" ? "px-3.5 py-2 text-xs" : "px-4 py-2.5 text-[13px]";
   const styles = {
-    primary: "bg-ink text-white hover:bg-blue",
-    accent: "bg-lime text-ink hover:bg-lime/80",
+    primary: "bg-ink text-white hover:bg-[#1E2A44]",
+    accent: "bg-blue text-white hover:bg-blue-d",
     secondary: "border border-line text-ink hover:border-ink/40 hover:bg-sunken",
     ghost: "text-muted hover:text-ink",
     // Quiet until pointed at, then unmistakable. A red-outlined pill sitting
-    // permanently among ink and lime ones read as a fifth brand colour; a
+    // permanently among ink and blue ones read as a fifth brand colour; a
     // destructive action does not need to shout while nobody is touching it.
     danger: "border border-danger-line text-danger-text hover:border-transparent hover:bg-danger hover:text-white",
   }[variant];

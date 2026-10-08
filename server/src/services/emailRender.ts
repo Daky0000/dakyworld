@@ -39,7 +39,7 @@ function escapeHtml(value: string): string {
 
 /** Bare URLs become links; nothing else in the body is interpreted as markup. */
 function linkify(value: string): string {
-  return value.replace(/\b(https?:\/\/[^\s<>"]+)/g, (url) => `<a href="${url}" style="color:#3157FF">${url}</a>`);
+  return value.replace(/\b(https?:\/\/[^\s<>"]+)/g, (url) => `<a href="${url}" style="color:#2563EB">${url}</a>`);
 }
 
 /**

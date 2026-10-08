@@ -30,7 +30,7 @@ import { brandImage, decodeDataUrl, type BrandSlot } from "../services/systemPro
 
 /** Referenced from the HTML as `<img src="cid:dakyworld-logo">`. */
 export const LOGO_CID = "dakyworld-logo";
-/** The on-dark cut, for the footer band. */
+/** The footer cut: the on-light lock-up flattened onto the footer panel grey. */
 export const LOGO_DARK_CID = "dakyworld-logo-dark";
 
 const here = path.dirname(fileURLToPath(import.meta.url));

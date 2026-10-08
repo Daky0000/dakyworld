@@ -164,7 +164,7 @@ export function Login() {
           )}
 
           {/* Sign in is the one action on this screen, so it is the one place
-              the lime pill belongs. */}
+              the blue accent belongs. */}
           <Button type="submit" variant="accent" disabled={submitting} className="mt-7 w-full justify-center py-3">
             {submitting ? "Signing in…" : challenge ? "Verify" : "Sign in"}
           </Button>

@@ -35,16 +35,20 @@ type PDFDoc = InstanceType<typeof PDFDocument>;
 
 // --- The palette, and nothing else -----------------------------------------
 
-export const INK = "#08101F";
-export const CREAM = "#F4F5F0";
+/* docs/DESIGN-SYSTEM.md v21 (8 Oct 2026). Lime is retired: the corner wedges
+   that carried it are blue now, the one accent everywhere. */
+export const INK = "#0D1526";
+export const NAVY = "#091833";
+/** The canvas the website's panels sit on. The old name stays for callers. */
+export const CREAM = "#ECEEF1";
 /** Legible accent: rules, hairline icons, small bold type. */
-export const ACCENT = "#3157FF";
+export const ACCENT = "#2563EB";
 /** The same blue, darkened, for accent type that sits under 8pt. */
-export const ACCENT_DEEP = "#2440C4";
-export const MUTED = "#69758A";
-export const LINE = "#DFE4EB";
-/** Solid mark colour. Shapes on ink only — never type, never on white. */
-export const MARK = "#B8FF3D";
+export const ACCENT_DEEP = "#1D4ED8";
+export const MUTED = "#5B6374";
+export const LINE = "#E3E6EB";
+/** Solid mark colour for the corner wedges. Shapes only, never type. */
+export const MARK = "#2563EB";
 /**
  * The watermark only — a tint of cream, never an extra brand colour. Kept very
  * close to white on purpose: body text runs over it, and a watermark you can
@@ -85,6 +89,45 @@ function assetCandidates(names: string[]): string[] {
 const LOGO_CANDIDATES = assetCandidates(["logo.png", "logo.jpg", "logo.jpeg"]);
 /** The square mark on its own, for the watermark. Optional. */
 const MARK_CANDIDATES = assetCandidates(["mark.png", "mark.jpg", "mark.jpeg"]);
+
+/**
+ * Outfit, the one brand typeface (DESIGN-SYSTEM.md §3), for every PDF.
+ *
+ * Every document in the app sets its type with pdfkit's built-in names —
+ * "Helvetica", "Helvetica-Bold", "Helvetica-Oblique" — in some three hundred
+ * calls. pdfkit looks a name up among registered fonts before its standard
+ * fourteen, so registering Outfit under those four names changes the face of
+ * every document at once and leaves the calls alone. Outfit has no italic, so
+ * the oblique cuts map to its light weight, which keeps the distinction.
+ * If the files are missing the documents fall back to Helvetica, unchanged.
+ */
+const FONT_FILES: Record<string, string> = {
+  Helvetica: "Outfit-Regular.ttf",
+  "Helvetica-Bold": "Outfit-SemiBold.ttf",
+  "Helvetica-Oblique": "Outfit-Light.ttf",
+  "Helvetica-BoldOblique": "Outfit-Medium.ttf",
+};
+const fontPaths = new Map<string, string | null>();
+export function useBrandFonts(doc: PDFDoc): PDFDoc {
+  for (const [name, file] of Object.entries(FONT_FILES)) {
+    if (!fontPaths.has(file)) fontPaths.set(file, assetCandidates([`fonts/${file}`]).find((p) => fs.existsSync(p)) ?? null);
+    const hit = fontPaths.get(file);
+    if (hit) {
+      try {
+        doc.registerFont(name, hit);
+      } catch {
+        // A damaged file leaves this one name on Helvetica; the document still renders.
+      }
+    }
+  }
+  // pdfkit loads Helvetica when the document is constructed and caches it by
+  // name, and the cache is consulted before the registered fonts — so without
+  // this every plain-text run stayed Helvetica while the bold ones changed.
+  const cache = (doc as unknown as { _fontFamilies?: Record<string, unknown> })._fontFamilies;
+  if (cache) for (const name of Object.keys(FONT_FILES)) delete cache[name];
+  doc.font("Helvetica");
+  return doc;
+}
 
 const found = new Map<string, Buffer | null>();
 
@@ -149,7 +192,7 @@ function cornerRibbons(doc: PDFDoc) {
 
   // Top right.
   doc.save();
-  doc.fillColor(INK);
+  doc.fillColor(NAVY);
   doc.moveTo(PAGE_W - wedge, 0).lineTo(PAGE_W, 0).lineTo(PAGE_W, wedge).closePath().fill();
   doc.fillColor(MARK);
   doc
@@ -163,7 +206,7 @@ function cornerRibbons(doc: PDFDoc) {
 
   // Bottom left, mirrored.
   doc.save();
-  doc.fillColor(INK);
+  doc.fillColor(NAVY);
   doc.moveTo(0, PAGE_H - wedge).lineTo(0, PAGE_H).lineTo(wedge, PAGE_H).closePath().fill();
   doc.fillColor(MARK);
   doc

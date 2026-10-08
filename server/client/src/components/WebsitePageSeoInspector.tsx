@@ -113,9 +113,9 @@ export function WebsitePageSeoInspector({
 
   // Global Font & Brand Theme (#4)
   const [fontPairId, setFontPairId] = useState<"space-dm" | "playfair-inter" | "jakarta-inter" | "instrument-jakarta" | "outfit-work" | "reset">("space-dm");
-  const [brandPrimary, setBrandPrimary] = useState("#3157FF");
+  const [brandPrimary, setBrandPrimary] = useState("#2563EB");
   const [brandSurface, setBrandSurface] = useState("#FFFFFF");
-  const [brandInk, setBrandInk] = useState("#08101F");
+  const [brandInk, setBrandInk] = useState("#0D1526");
   const [applyBrandColors, setApplyBrandColors] = useState(false);
 
   // Page Speed & Link Security Score (#3)

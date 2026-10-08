@@ -1,3 +1,4 @@
+import { useBrandFonts } from "./letterhead.js";
 import { capacity } from "../lib/capacity.js";
 import { withCapacityLease } from "../lib/leases.js";
 /**
@@ -14,8 +15,8 @@ import PDFDocument from "pdfkit";
 import type { Lead } from "@prisma/client";
 import type { ResolvedField } from "./leadFields.js";
 
-const INK = "#08101F";
-const ACCENT = "#3157FF";
+const INK = "#0D1526";
+const ACCENT = "#2563EB";
 const MUTED = "#69758A";
 const LINE = "#DFE4EB";
 
@@ -122,7 +123,7 @@ export async function renderLeadsPdf(groups: ExportGroup[], title: string, subti
   return capacity.admission ? withCapacityLease("render", 1, () => renderLeadsPdfUnbounded(groups, title, subtitle)) : renderLeadsPdfUnbounded(groups, title, subtitle);
 }
 async function renderLeadsPdfUnbounded(groups: ExportGroup[], title: string, subtitle: string): Promise<Buffer> {
-  const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 36 });
+  const doc = useBrandFonts(new PDFDocument({ size: "A4", layout: "landscape", margin: 36 }));
   const chunks: Buffer[] = [];
   const done = new Promise<Buffer>((resolve, reject) => {
     doc.on("data", (chunk: Buffer) => chunks.push(chunk));

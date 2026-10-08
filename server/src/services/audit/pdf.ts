@@ -18,6 +18,7 @@ import {
   pdfText,
   stampLetterhead,
   type LetterheadIdentity,
+  useBrandFonts,
 } from "../letterhead.js";
 import {
   ERA_NAMES,
@@ -61,10 +62,10 @@ const RIGHT_EDGE = PAGE_W - MARGIN_X;
 const CONTENT_LIMIT = PAGE_H - CONTENT_BOTTOM;
 
 function newDoc(identity: LetterheadIdentity): PDFDoc {
-  const doc = new PDFDocument({
+  const doc = useBrandFonts(new PDFDocument({
     size: "A4",
     margins: { top: CONTENT_TOP, bottom: CONTENT_BOTTOM, left: MARGIN_X, right: MARGIN_X },
-  });
+  }));
   doc.on("pageAdded", () => stampLetterhead(doc, identity));
   stampLetterhead(doc, identity);
   return doc;

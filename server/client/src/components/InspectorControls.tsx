@@ -39,24 +39,23 @@ import { createPortal } from "react-dom";
  * translucent overlay is as reachable as a brand colour.
  */
 
-/** Ink, blue, lime and the neutrals — the design system, as swatches. */
+/** The DakyXTech palette (docs/DESIGN-SYSTEM.md v21), as swatches. */
 export const PaletteContext = createContext<{ label: string; value: string }[] | null>(null);
 export const COLOURS = [
-  { label: "Ink", value: "#08101F" },
-  { label: "Muted", value: "#69758A" },
-  { label: "Blue", value: "#3157FF" },
-  { label: "Blue light", value: "#6490FF" },
-  { label: "Cyan", value: "#6FE4FF" },
-  { label: "Lime", value: "#B8FF3D" },
-  { label: "Cream", value: "#F4F5F0" },
+  { label: "Navy", value: "#091833" },
+  { label: "Ink", value: "#0D1526" },
+  { label: "Muted", value: "#5B6374" },
+  { label: "Blue", value: "#2563EB" },
+  { label: "Blue light", value: "#8FB2FF" },
+  { label: "Pale blue", value: "#EAF1FF" },
+  { label: "Canvas", value: "#ECEEF1" },
   { label: "White", value: "#FFFFFF" },
 ];
 
 /** The faces the site actually uses, plus the two obvious fallbacks. */
 export const FONTS = [
   { label: "As designed", value: "" },
-  { label: "Space Grotesk", value: '"Space Grotesk", sans-serif' },
-  { label: "DM Sans", value: '"DM Sans", sans-serif' },
+  { label: "Outfit", value: '"Outfit", sans-serif' },
   { label: "Georgia", value: "Georgia, serif" },
   { label: "System sans", value: "system-ui, -apple-system, sans-serif" },
   { label: "Mono", value: "ui-monospace, SFMono-Regular, Menlo, monospace" },
@@ -179,7 +178,7 @@ export function toNumber(value: string | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-/** `#3157FF` + 40% → `rgba(49, 87, 255, .4)`, and back. */
+/** `#2563EB` + 40% → `rgba(37, 99, 235, .4)`, and back. */
 function hexToRgb(hex: string): [number, number, number] | null {
   let value = hex.replace("#", "").trim();
   if (value.length === 3) value = value[0]! + value[0] + value[1] + value[1] + value[2] + value[2];
@@ -196,7 +195,7 @@ export type Colour = { hex: string; alpha: number };
 
 export function readColour(value: string | undefined): Colour {
   const raw = (value ?? "").trim();
-  if (!raw) return { hex: "#08101F", alpha: 1 };
+  if (!raw) return { hex: "#0D1526", alpha: 1 };
   const rgba = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:[\s,/]+([\d.%]+))?\s*\)$/i.exec(raw);
   if (rgba) {
     const alphaRaw = rgba[4];
@@ -207,7 +206,7 @@ export function readColour(value: string | undefined): Colour {
   if (hex8) return { hex: `#${hex8[1]!.toUpperCase()}`, alpha: parseInt(hex8[2]!, 16) / 255 };
   const rgb = hexToRgb(raw);
   if (rgb) return { hex: rgbToHex(...rgb), alpha: 1 };
-  return { hex: "#08101F", alpha: 1 };
+  return { hex: "#0D1526", alpha: 1 };
 }
 
 export function writeColour({ hex, alpha }: Colour): string {

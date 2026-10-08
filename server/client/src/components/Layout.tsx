@@ -190,7 +190,7 @@ export function Layout() {
             onClick={() => handleSetMode("client")}
             className={`flex-1 rounded-lg py-1.5 text-center text-[11px] font-semibold transition ${
               workspaceMode === "client"
-                ? "bg-lime text-ink font-bold shadow-xs"
+                ? "bg-blue text-white font-medium shadow-xs"
                 : "text-[#A9B3C5] hover:text-white"
             }`}
           >
@@ -253,7 +253,7 @@ export function Layout() {
                 type="button"
                 onClick={() => handleSetMode("client")}
                 className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
-                  workspaceMode === "client" ? "bg-lime text-ink font-bold" : "text-muted hover:text-ink"
+                  workspaceMode === "client" ? "bg-blue text-white font-medium" : "text-muted hover:text-ink"
                 }`}
               >
                 Client Portal

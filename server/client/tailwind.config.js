@@ -1,14 +1,18 @@
 /** @type {import('tailwindcss').Config} */
 
-/* The canonical DakyXTech palette — same values as the website's
-   assets/site.css and services/letterhead.ts. The admin UI is internal, but it
+/* The canonical DakyXTech palette (docs/DESIGN-SYSTEM.md, version 21, 8 Oct
+   2026) — same values as the website's assets/site.css and
+   services/letterhead.ts. The admin UI is internal, but it
    is still DakyXTech, so it draws from the one system.
    The gold/bronze/ivory identity this replaced is dead; do not reintroduce it.
 
    Two layers live here, and the distinction matters:
 
-   PRIMITIVES are the brand's own colours, fixed by
-   DAKYXTECH-BRAND-DESIGN-SYSTEM.md §03. They never change.
+   PRIMITIVES are the brand's own colours, fixed by DESIGN-SYSTEM.md §2.
+   v21 moved them to the logo navy and blue on a cool grey canvas and retired
+   lime and cyan. Both names still exist so no class breaks: `cyan` is the
+   light blue, and `lime` is the positive status colour — a mark (a bar, a
+   live dot), never a button and never a surface for text.
 
    SEMANTICS say what a colour is *for*. They exist because the design system
    defines a brand and not an operations tool: it has nothing to say about what
@@ -25,44 +29,49 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        display: ['"Space Grotesk"', '"DM Sans"', "sans-serif"],
-        sans: ['"DM Sans"', "sans-serif"],
+        display: ['"Outfit"', '"Segoe UI"', "sans-serif"],
+        sans: ['"Outfit"', '"Segoe UI"', "sans-serif"],
         mono: ['"JetBrains Mono"', "monospace"],
       },
       colors: {
         // --- Primitives: §03, unchangeable ------------------------------
-        ink: "#08101F",
-        navy: "#0B0A16",
-        blue: "#3157FF",
-        "blue-light": "#6490FF",
-        cyan: "#6FE4FF",
-        lime: "#B8FF3D",
-        cream: "#F4F5F0",
-        muted: "#69758A",
-        line: "#DFE4EB",
+        ink: "#0D1526",
+        navy: "#091833",
+        blue: "#2563EB",
+        "blue-d": "#1D4ED8",
+        "blue-light": "#8FB2FF",
+        pale: "#EAF1FF",
+        cyan: "#8FB2FF",
+        lime: "#2F8F5B",
+        /* `cream` is the canvas the panels sit on; the name stays because
+           174 screens use it. */
+        cream: "#ECEEF1",
+        canvas: "#ECEEF1",
+        muted: "#5B6374",
+        line: "#E3E6EB",
 
         // --- Semantics: surfaces and edges ------------------------------
         /* The one inset surface. Replaces bg-ink/[.02], [.03], [.04], [.05],
            [.06] and bg-ink/5 — six ways of writing the same faint grey, two of
            which were the identical value spelled differently. */
-        sunken: "#F5F6F8",
+        sunken: "#F6F7F9",
         /* A divider that has to be seen rather than felt: table rules inside a
            card, the edge of a selected row. Replaces border-ink/15, /20, /25. */
-        "line-strong": "#C6CDD8",
+        "line-strong": "#D2D7DF",
         /* Text that is deliberately not for reading — placeholders, disabled
            controls, the em dash in an empty cell. Never a label, never a value.
            WCAG exempts these; everything a person actually reads is `ink` or
            `muted`, which is the whole of §05's light-surface text system. */
-        faint: "#98A1B0",
+        faint: "#8A91A0",
 
         // --- Semantics: status ------------------------------------------
         /* Each family is surface / line / text / solid. `solid` is for marks
            that carry no text — dots, bars, meters. */
         positive: {
-          DEFAULT: "#5C8C14",
-          surface: "#F1F7E2",
-          line: "#DCE9BF",
-          text: "#3A5A0C",
+          DEFAULT: "#2F8F5B",
+          surface: "#EAF6EF",
+          line: "#CBE7D6",
+          text: "#1D6B41",
         },
         warn: {
           DEFAULT: "#C8871B",
@@ -81,27 +90,27 @@ export default {
           light: "#F2A9A0",
         },
         info: {
-          DEFAULT: "#3157FF",
-          surface: "#EDF1FF",
-          line: "#CFD9FF",
-          text: "#1E3AAE",
+          DEFAULT: "#2563EB",
+          surface: "#EAF1FF",
+          line: "#CBDAFB",
+          text: "#1D4ED8",
         },
       },
 
       /* §34: one easing for the whole product. Overriding DEFAULT means every
          bare `transition` in the app picks it up, rather than Tailwind's. */
       transitionTimingFunction: {
-        DEFAULT: "cubic-bezier(.16, 1, .3, 1)",
+        DEFAULT: "cubic-bezier(.2, .7, .2, 1)",
       },
 
       /* §24 and §19. Named so a hover state is a decision made once, not an
          arbitrary shadow retyped per component. */
       boxShadow: {
-        lift: "0 10px 24px rgba(8,16,31,.18)",
-        accent: "0 10px 28px rgba(184,255,61,.32)",
-        card: "0 25px 65px rgba(8,16,31,.08)",
-        menu: "0 18px 40px rgba(8,16,31,.14)",
-        shell: "0 10px 30px rgba(8,16,31,.22)",
+        lift: "0 20px 40px -20px rgba(13,21,38,.4)",
+        accent: "0 10px 24px -10px rgba(37,99,235,.5)",
+        card: "0 24px 50px -30px rgba(13,21,38,.3)",
+        menu: "0 24px 50px -24px rgba(13,21,38,.3)",
+        shell: "0 14px 34px -22px rgba(13,21,38,.35)",
       },
 
       /* Radius is not tokenised on purpose: Tailwind's own xl (12px), 2xl

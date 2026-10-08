@@ -742,7 +742,7 @@ export function WebsiteAgentChat({
             }
             aria-expanded={isOpen}
             onClick={() => setIsOpen((prev) => !prev)}
-            className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-[#08101F] text-white shadow-2xl transition-all duration-200 hover:scale-105 active:scale-95 focus:outline-none focus:ring-4 focus:ring-blue/40"
+            className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-ink text-white shadow-2xl transition-all duration-200 hover:scale-105 active:scale-95 focus:outline-none focus:ring-4 focus:ring-blue/40"
           >
             {isOpen ? (
               <svg
@@ -758,7 +758,7 @@ export function WebsiteAgentChat({
                 <SparkIcon className="h-7 w-7 text-white fill-white" />
                 <span className="absolute -top-1.5 -right-1.5 flex h-3 w-3">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border-2 border-[#08101F]"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border-2 border-ink"></span>
                 </span>
               </div>
             )}

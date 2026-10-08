@@ -4,7 +4,7 @@ import { clearTextFormatter, rememberTextFormatter, editableInnerHtml, formatTex
 export function WebsiteTextFormatting({ element, readOnly, onChange, hideWhenEmpty = false }: { hideWhenEmpty?: boolean; element: HTMLElement | null; readOnly?: boolean; onChange: (html: string) => void }) {
   const range = useRef<Range | null>(null);
   const [selected, setSelected] = useState("");
-  const [colour, setColour] = useState("#3157ff");
+  const [colour, setColour] = useState("#2563EB");
   const [highlight, setHighlight] = useState("#fff2a8");
   const applyRef = useRef<(styles: Partial<Record<InlineFormat, string>>) => void>(() => {});
   useEffect(() => {

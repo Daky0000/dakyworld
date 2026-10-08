@@ -1813,7 +1813,7 @@ function BulkBar({
         type="button"
         onClick={() => setTagging((open) => !open)}
         disabled={pending}
-        className={`font-sans text-[11px] uppercase tracking-[.06em] transition ${tagging ? "text-lime" : "text-cream/70 hover:text-cream"}`}
+        className={`font-sans text-[11px] uppercase tracking-[.06em] transition ${tagging ? "text-blue-light" : "text-cream/70 hover:text-cream"}`}
       >
         Tags…
       </button>
@@ -1826,7 +1826,7 @@ function BulkBar({
         // the ones you mean.
         disabled={pending || looking || allMatching}
         title={allMatching ? "Tick the leads you want looked at — this one spends money per business." : undefined}
-        className="font-sans text-[11px] uppercase tracking-[.06em] text-lime transition hover:text-lime/80 disabled:text-cream/40"
+        className="font-sans text-[11px] uppercase tracking-[.06em] text-blue-light transition hover:text-white disabled:text-cream/40"
       >
         {looking ? "Looking…" : "Look at them"}
       </button>

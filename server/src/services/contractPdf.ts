@@ -18,6 +18,7 @@ import {
   letterheadIdentity,
   stampLetterhead,
   type LetterheadIdentity,
+  useBrandFonts,
 } from "./letterhead.js";
 import { companyProfile, type CompanyProfile } from "./systemProfile.js";
 
@@ -262,10 +263,10 @@ export const DEFAULT_CLAUSES: ContractClause[] = [
 // ---------------------------------------------------------------------------
 
 function newDoc(identity: LetterheadIdentity): PDFDoc {
-  const doc = new PDFDocument({
+  const doc = useBrandFonts(new PDFDocument({
     size: "A4",
     margins: { top: CONTENT_TOP, bottom: CONTENT_BOTTOM, left: MARGIN_X, right: MARGIN_X },
-  });
+  }));
   doc.on("pageAdded", () => stampLetterhead(doc, identity));
   stampLetterhead(doc, identity);
   return doc;

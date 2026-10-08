@@ -52,13 +52,18 @@ const px = (pt: number) => Math.round((pt * 96) / 72);
 /** Border widths are eighths of a point. */
 const eighth = (pt: number) => Math.round(pt * 8);
 
-const INK = "08101F";
-/** Legible accent: rules and small bold type. Lime is a mark colour, not type. */
-const ACCENT = "3157FF";
-const ACCENT_DEEP = "2440C4";
-const MUTED = "69758A";
-const LINE = "DFE4EB";
+/* docs/DESIGN-SYSTEM.md v21: the same values as letterhead.ts. */
+const INK = "0D1526";
+/** Legible accent: rules and small bold type. */
+const ACCENT = "2563EB";
+const ACCENT_DEEP = "1D4ED8";
+const MUTED = "5B6374";
+const LINE = "E3E6EB";
 
+/* Not Outfit, on purpose. A .docx can name one family and no fallback stack,
+   and Word on a machine without the named face substitutes a serif — so the
+   brand face would arrive as Times for most recipients. Arial is on every
+   machine a client opens this on; the PDF cut is the one that carries Outfit. */
 const FONT = "Arial";
 
 // The identity comes from services/systemProfile.ts: one address block for the PDF letterhead,

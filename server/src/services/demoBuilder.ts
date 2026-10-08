@@ -333,9 +333,9 @@ export function withNoIndex(html: string): string {
  * gets forwarded to. A model that forgets it once has produced that page.
  */
 function demoBanner(businessName: string, senderName: string, senderSite: string): string {
-  return `<div id="dw-demo-bar" role="note" style="position:sticky;top:0;z-index:2147483647;display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:center;justify-content:center;padding:.6rem 1rem;background:#08101F;color:#F4F5F0;font:500 13px/1.4 ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;text-align:center">
+  return `<div id="dw-demo-bar" role="note" style="position:sticky;top:0;z-index:2147483647;display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:center;justify-content:center;padding:.6rem 1rem;background:#091833;color:#FFFFFF;font:500 13px/1.4 ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;text-align:center">
 <span>A concept design for <strong>${escapeHtml(businessName)}</strong> — not their website, and not affiliated with them.</span>
-<a href="https://${escapeHtml(senderSite)}" style="color:#B8FF3D;text-decoration:underline;text-underline-offset:2px">Built by ${escapeHtml(senderName)}</a>
+<a href="https://${escapeHtml(senderSite)}" style="color:#8FB2FF;text-decoration:underline;text-underline-offset:2px">Built by ${escapeHtml(senderName)}</a>
 </div>`;
 }
 
