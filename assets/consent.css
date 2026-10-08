@@ -40,7 +40,7 @@
   bottom: 0;
   z-index: 2147483000; /* above the header, the mobile nav and any overlay */
   padding: 16px;
-  font-family: "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family:var(--font-body);
   animation: dw-consent-rise .38s cubic-bezier(.16, 1, .3, 1) both;
 }
 
@@ -53,7 +53,7 @@
   max-width: 1180px;
   margin: 0 auto;
   background: #ffffff;
-  color: #08101f;
+  color: #0D1526;
   border: 1px solid #dfe4eb;
   border-radius: 18px;
   box-shadow: 0 24px 60px rgba(8, 16, 31, .22);
@@ -71,7 +71,7 @@
 
 .dw-consent__title {
   margin: 0 0 6px;
-  font-family: "Space Grotesk", "DM Sans", system-ui, sans-serif;
+  font-family:var(--font-display);
   font-size: 1.05rem;
   font-weight: 600;
   letter-spacing: -.01em;
@@ -85,7 +85,7 @@
 }
 
 .dw-consent__text a {
-  color: #3157ff;
+  color: #2563EB;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -108,7 +108,7 @@
   font-weight: 600;
   line-height: 1;
   padding: 13px 22px;
-  border-radius: 999px;
+  border-radius: 10px;
   border: 1.5px solid transparent;
   cursor: pointer;
   white-space: nowrap;
@@ -119,23 +119,23 @@
 .dw-consent__btn:active { transform: none; }
 
 .dw-consent__btn:focus-visible {
-  outline: 3px solid #3157ff;
+  outline: 3px solid #2563EB;
   outline-offset: 3px;
 }
 
 .dw-consent__btn--accept {
-  background: #3157ff;
-  border-color: #3157ff;
+  background: #2563EB;
+  border-color: #2563EB;
   color: #ffffff;
 }
 .dw-consent__btn--accept:hover { background: #2545e0; border-color: #2545e0; }
 
 .dw-consent__btn--reject {
   background: #ffffff;
-  border-color: #08101f;
-  color: #08101f;
+  border-color: #0D1526;
+  color: #0D1526;
 }
-.dw-consent__btn--reject:hover { background: #08101f; color: #ffffff; }
+.dw-consent__btn--reject:hover { background: #0D1526; color: #ffffff; }
 
 /* The third action is genuinely secondary — it opens a panel, it does not
    record a decision — so it is allowed to look quieter than the other two. */
@@ -147,7 +147,7 @@
   text-underline-offset: 3px;
   padding-inline: 8px;
 }
-.dw-consent__btn--settings:hover { color: #08101f; }
+.dw-consent__btn--settings:hover { color: #0D1526; }
 
 /* --- the preferences dialog ----------------------------------------------- */
 
@@ -170,7 +170,7 @@
   max-height: min(86vh, 760px);
   overflow-y: auto;
   background: #ffffff;
-  color: #08101f;
+  color: #0D1526;
   border-radius: 24px;
   box-shadow: 0 32px 80px rgba(8, 16, 31, .4);
   /* No bottom padding: the pinned action bar supplies it instead, so that its
@@ -178,7 +178,7 @@
      30px below the bar is scrollable area, and the text of the last category
      rides up into the gaps between the buttons. */
   padding: 30px 30px 0;
-  font-family: "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family:var(--font-body);
 }
 
 .dw-consent-modal__head {
@@ -191,7 +191,7 @@
 
 .dw-consent-modal__title {
   margin: 0;
-  font-family: "Space Grotesk", "DM Sans", system-ui, sans-serif;
+  font-family:var(--font-display);
   font-size: 1.4rem;
   font-weight: 600;
   letter-spacing: -.02em;
@@ -208,8 +208,8 @@
   padding: 4px 8px;
   border-radius: 8px;
 }
-.dw-consent-modal__close:hover { color: #08101f; }
-.dw-consent-modal__close:focus-visible { outline: 3px solid #3157ff; outline-offset: 2px; }
+.dw-consent-modal__close:hover { color: #0D1526; }
+.dw-consent-modal__close:focus-visible { outline: 3px solid #2563EB; outline-offset: 2px; }
 
 .dw-consent-modal__intro {
   margin: 0 0 20px;
@@ -217,7 +217,7 @@
   line-height: 1.6;
   color: #636f82;
 }
-.dw-consent-modal__intro a { color: #3157ff; text-decoration: underline; text-underline-offset: 2px; }
+.dw-consent-modal__intro a { color: #2563EB; text-decoration: underline; text-underline-offset: 2px; }
 
 /* --- one category --------------------------------------------------------- */
 
@@ -257,7 +257,7 @@
   border-top: 1px dashed #dfe4eb;
   padding-top: 12px;
 }
-.dw-consent-cat__detail dt { font-weight: 600; color: #08101f; }
+.dw-consent-cat__detail dt { font-weight: 600; color: #0D1526; }
 .dw-consent-cat__detail dd { margin: 0 0 8px; }
 .dw-consent-cat__detail dd:last-child { margin-bottom: 0; }
 
@@ -304,9 +304,9 @@
   transition: transform .2s cubic-bezier(.16, 1, .3, 1);
 }
 
-.dw-consent-switch input:checked ~ .dw-consent-switch__track { background: #3157ff; }
+.dw-consent-switch input:checked ~ .dw-consent-switch__track { background: #2563EB; }
 .dw-consent-switch input:checked ~ .dw-consent-switch__track::after { transform: translateX(22px); }
-.dw-consent-switch input:focus-visible ~ .dw-consent-switch__track { outline: 3px solid #3157ff; outline-offset: 3px; }
+.dw-consent-switch input:focus-visible ~ .dw-consent-switch__track { outline: 3px solid #2563EB; outline-offset: 3px; }
 
 /* A category that cannot be switched off says so and looks locked, rather than
    offering a switch that silently refuses to move. */
@@ -375,7 +375,7 @@
   text-align: left;
 }
 .dw-consent-reopen:hover { text-decoration: underline; }
-.dw-consent-reopen:focus-visible { outline: 2px solid #3157ff; outline-offset: 3px; }
+.dw-consent-reopen:focus-visible { outline: 2px solid #2563EB; outline-offset: 3px; }
 
 /* In the footer it sits in a list beside seven links and has to read as the
    eighth, so it borrows their behaviour rather than announcing itself as the

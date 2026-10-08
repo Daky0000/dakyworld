@@ -19,38 +19,45 @@ npm run links:fix   # rewrite any .html internal link to the canonical form
 
 ## The brand design system is canonical
 
-`DAKYWORLD-BRAND-DESIGN-SYSTEM.md` (69 numbered sections, held by the owner)
-governs every surface: the website, the OS admin UI, and every generated
-document. Reuse existing components and tokens before inventing anything.
+**[docs/DESIGN-SYSTEM.md](../DESIGN-SYSTEM.md) (version 21, 8 Oct 2026)**
+governs every surface: the website, the OS and editor UI, every email and
+every generated document. Its reference page is the approved homepage draft,
+`website-drafts/home-v21.html`, which is now `index.html` + `assets/home.css`.
+It replaced the August 2026 system (Space Grotesk / DM Sans, ink `#08101F`,
+electric blue `#3157FF`, lime `#B8FF3D`, cream `#F4F5F0`); any of those
+values outside `website-drafts/` is a leftover.
 
 ```
-Ink #08101F   Navy #0B0A16   Blue #3157FF   Blue-light #6490FF
-Cyan #6FE4FF  Lime #B8FF3D   Cream #F4F5F0  Muted #69758A  Line #DFE4EB
-Space Grotesk (display) · DM Sans (body)
+navy #091833  ink #0D1526  blue #2563EB  blue-d #1D4ED8  blue-light #8FB2FF
+pale #EAF1FF  canvas #ECEEF1  soft #F6F7F9  line #E3E6EB  line-2 #D2D7DF
+muted #5B6374  faint #8A91A0   ·  Outfit only, self-hosted, weights 300-600
+radius 22 panel / 14 card / 10 control  ·  the dot pattern is the one ornament
 ```
 
-Three rules that are repeatedly got wrong:
+Rules that are easy to get wrong:
 
-1. **Lime is action and positive status only** — roughly 1–5% of a surface. It
-   is a mark colour and never type on white. On light surfaces the accent is
-   blue. Generators that touch both light and dark carry two accent constants
-   for exactly this reason.
-2. **Blue is structure, selection and emphasis.** When something needs an
-   accent and isn't an action, it is blue.
-3. **A gold/bronze/ivory identity was retired in Aug 2026.** If you find
-   `#C7A24C`, `#8A6A2F`, `#F7F4EE`, `#0B0B0C`, `#6E6A63`, Playfair Display or
-   Inter, it is a leftover, not a choice. `website-drafts/` still contains
-   them, deliberately, as history.
+1. **Blue is the only accent.** Lime is retired; in the OS it survives only as
+   the `positive` status colour. `--lime` and `--cyan` in `site.css` are now
+   aliases of blue so a forgotten rule cannot bring them back.
+2. **A headline's second half is grey (`muted`), not blue.** Headlines are
+   regular weight (400). Bold is 600 at most.
+3. **The dot pattern never sits under body copy.** It goes on panel edges,
+   behind photographs and product shots, and across navy/blue bands; it is
+   removed from one-column hero layouts.
+4. **Everything is a panel in the frame**: sections are white or `soft`
+   panels with a 22px radius, 12px apart on the `canvas`. `.section` and every
+   top-level `main > section` get this from `site.css` / `pages.css`.
+5. Photos are self-hosted in `assets/img/`. The current ones are Unsplash stock
+   and must never be captioned or implied to be our team or our clients.
 
-Token values live in three places that must agree: `assets/site.css` (website),
-`server/client/tailwind.config.js` (OS UI), and
-`server/src/services/letterhead.ts` (documents, which re-exports to `pdf.ts`).
-Near-miss values (`#F5F7F2`, `#68738A`, `#DFE4EC`, `#0B1630`) were swept out in
-Aug 2026 — reintroducing one is new drift.
+Token values live in the places listed in DESIGN-SYSTEM.md §11 and must agree:
+`assets/site.css` (website), `server/client/tailwind.config.js` (OS UI), the
+email renderer, and `server/src/services/letterhead.ts` (documents).
 
 Real logo artwork exists as of Aug 2026 in `assets/brand/`, in an `-on-light`
 and an `-on-dark` cut. The wordmark has its own typeface — **never re-set it in
-Space Grotesk**. `server/assets/logo.png` and `mark.png` are picked up
+Outfit**. The website header and footer use the `-on-light` cuts
+(`header-lockup-on-light.png`, `footer-lockup-on-light.png`) since v21. `server/assets/logo.png` and `mark.png` are picked up
 automatically by the letterhead at render time; the typographic fallbacks in
 `letterhead.ts` and `proposalDocx.ts` exist for when the files are absent and
 should stay.

@@ -196,7 +196,7 @@ function page(existing, meta, body, minutes, parts) {
     "<head>",
     '<meta charset="UTF-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
-    '<meta name="theme-color" content="#08101f">',
+    '<meta name="theme-color" content="#ECEEF1">',
     `<meta name="description" content="${escape(meta.description)}">`,
     /* The brand suffix only if it fits. Every other page on the site ends
        "| DakyXTech®", but a post's headline is already 50-odd characters and

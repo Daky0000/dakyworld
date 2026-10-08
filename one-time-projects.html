@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="theme-color" content="#08101f">
+<meta name="theme-color" content="#ECEEF1">
 <title>One-Time Projects has moved to Pricing | DakyXTech&reg;</title>
 <meta name="description" content="DakyXTech now works on monthly partnerships only. See the plans on the pricing page.">
 <meta name="robots" content="noindex, follow">
@@ -14,34 +14,33 @@
 <!-- Typefaces are served from this origin, not from Google. See assets/fonts.css. -->
 <link rel="stylesheet" href="/assets/fonts.css">
 <style>
-  html{color-scheme:dark}
+  /* docs/DESIGN-SYSTEM.md v21: a white panel on the canvas, Outfit, one blue button. */
+  html{color-scheme:light}
   body{
-    margin:0;min-height:100vh;display:grid;place-items:center;padding:32px;
-    background:#08101f;color:#fff;
-    font-family:"DM Sans","Segoe UI",system-ui,-apple-system,sans-serif;
-    -webkit-font-smoothing:antialiased;text-align:center;
+    margin:0;min-height:100vh;display:grid;place-items:center;padding:12px;
+    background:#ECEEF1;color:#0D1526;
+    font-family:"Outfit","Segoe UI",system-ui,-apple-system,sans-serif;
+    -webkit-font-smoothing:antialiased;text-align:left;
   }
-  .card{max-width:520px}
-  img{height:38px;width:auto;margin-bottom:34px}
+  .card{max-width:560px;background:#fff;border-radius:22px;padding:44px}
+  img{height:32px;width:auto;margin-bottom:34px}
   h1{
-    font-family:"Space Grotesk","DM Sans",system-ui,sans-serif;
-    font-size:clamp(28px,5vw,40px);line-height:1.05;letter-spacing:-.055em;margin:0 0 16px;
+    font-family:inherit;font-weight:400;
+    font-size:clamp(28px,5vw,40px);line-height:1.08;letter-spacing:-.035em;margin:0 0 16px;
   }
-  p{margin:0 0 28px;line-height:1.7;color:rgba(255,255,255,.62);font-size:15px}
+  p{margin:0 0 28px;line-height:1.6;color:#5B6374;font-size:16.5px}
   a.go{
-    display:inline-flex;align-items:center;gap:10px;
-    padding:13px 15px 13px 22px;border-radius:999px;
-    background:#B8FF3D;color:#08101f;font-weight:700;font-size:15px;text-decoration:none;
+    display:inline-flex;align-items:center;gap:9px;
+    padding:13px 20px;border-radius:10px;
+    background:#2563EB;color:#fff;font-weight:500;font-size:15px;text-decoration:none;
   }
-  a.go span{
-    width:26px;height:26px;display:grid;place-items:center;border-radius:50%;
-    background:#08101f;color:#B8FF3D;font-size:13px;line-height:1;
-  }
+  a.go:hover{background:#1D4ED8}
+  a.go span{display:inline-block}
 </style>
 </head>
 <body>
   <div class="card">
-    <img src="/assets/brand/header-lockup-on-dark.png" alt="DakyXTech" width="283" height="68">
+    <img src="/assets/brand/header-lockup-on-light.png" alt="DakyXTech" width="283" height="68">
     <h1>DakyXTech now works on monthly partnerships.</h1>
     <p>One-time projects are no longer sold separately. A website build, an integration or an automation is delivered as the early priorities of a monthly partnership, so the work keeps improving after launch. Taking you to the plans.</p>
     <a class="go" href="/pricing">Go to Pricing <span aria-hidden="true">&#8594;</span></a>

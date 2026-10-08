@@ -69,6 +69,12 @@ def run():
     footer_lockup.save(os.path.join(brand_dir, "footer-lockup-on-dark.png"))
     print("Saved footer-lockup-on-dark.png (800x192)")
 
+    # The website's header and footer are white panels since the v21 design
+    # system (docs/DESIGN-SYSTEM.md, 8 Oct 2026), so they carry the colour cut.
+    make_horizontal_lockup(lockup_color, canvas_size=(566, 136)).save(os.path.join(brand_dir, "header-lockup-on-light.png"))
+    make_horizontal_lockup(lockup_color, canvas_size=(800, 192)).save(os.path.join(brand_dir, "footer-lockup-on-light.png"))
+    print("Saved header-lockup-on-light.png and footer-lockup-on-light.png")
+
     # 4. Standalone marks
     # dakyxtech-mark-on-light.png & dakyxtech-mark-on-dark.png (326 x 182)
     def make_mark_card(mark, canvas_size=(326, 182), target_h=150):
