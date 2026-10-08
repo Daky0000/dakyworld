@@ -32,6 +32,13 @@ import { brandImage, decodeDataUrl, type BrandSlot } from "../services/systemPro
 export const LOGO_CID = "dakyworld-logo";
 /** The footer cut: the on-light lock-up flattened onto the footer panel grey. */
 export const LOGO_DARK_CID = "dakyworld-logo-dark";
+/**
+ * The email header band (v22): navy, the dot field and the white lock-up in
+ * one picture, made by scripts/generate_email_band.py. It has no upload slot —
+ * an uploaded logo is on-light artwork, so a workspace that has one keeps the
+ * white header with that logo instead (emailRender.logoSources).
+ */
+export const BAND_CID = "dakyworld-band";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -43,6 +50,7 @@ function candidates(name: string): string[] {
 const FILES: Record<string, string> = {
   [LOGO_CID]: "logo-email.png",
   [LOGO_DARK_CID]: "logo-email-dark.png",
+  [BAND_CID]: "email-band.png",
 };
 
 /** Which uploaded slot stands in for each cid. */

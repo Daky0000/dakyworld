@@ -63,3 +63,19 @@ the lookup is by filename, not by content.
 The masters these were cut from live in
 `DakyXTech Website/assets/brand/`, alongside the on-dark cuts and the tagline
 lock-up, which the website uses.
+
+## `email-band.png` — the email header band (v22, 8 Oct 2026)
+
+The navy strip at the top of every email: navy `#091833`, the website's dot
+field in soft patches on the right, and the white lock-up on the left, as one
+600×84 picture drawn at 2x. It goes out as an inline part (`cid:dakyworld-band`)
+for the same reason the lock-ups do. Email clients cannot draw the CSS dots, and
+a remote image would tell our server every time a message was opened.
+
+Regenerate it with `python scripts/generate_email_band.py`. It is flattened, so
+dark mode cannot invert a transparent edge into a halo. With images blocked, the
+cell is plain navy and the alt text is set in white.
+
+A workspace that has uploaded its own logo (the `logoLight` slot) does not get
+the band. Uploads are on-light artwork, so the shell falls back to the white
+header with that logo (`emailRender.logoSources`).

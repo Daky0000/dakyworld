@@ -26,7 +26,7 @@ import { enrol, nextSendSlot, runDueSequences, stopEnrollment, stopOnReply } fro
 import { appUrl } from "../services/emailSender.js";
 import { companyProfile, type CompanyProfile } from "../services/systemProfile.js";
 import { FileStoreError, MAX_UPLOAD_BODY, deleteFile, fileSummary, readFile, storeFile } from "../services/fileStore.js";
-import { LOGO_CID, LOGO_DARK_CID, brandDataUrl } from "../lib/brandAssets.js";
+import { BAND_CID, LOGO_CID, LOGO_DARK_CID, brandDataUrl } from "../lib/brandAssets.js";
 import { SETTING, getSetting } from "../lib/settings.js";
 import { gateBy } from "../middleware/permissionGate.js";
 import { outreachGate } from "../services/concept/gate.js";
@@ -817,7 +817,7 @@ function unresolvedPlaceholders(text: string, variables: Record<string, string>)
 /** Turns `cid:` references in stored HTML into data URLs an iframe can show. */
 async function inlineCids(html: string): Promise<string> {
   let out = html;
-  for (const cid of [LOGO_CID, LOGO_DARK_CID]) {
+  for (const cid of [LOGO_CID, LOGO_DARK_CID, BAND_CID]) {
     if (!out.includes(`cid:${cid}`)) continue;
     const dataUrl = await brandDataUrl(cid);
     // Nothing to swap in: strip the tag rather than leave a broken image.

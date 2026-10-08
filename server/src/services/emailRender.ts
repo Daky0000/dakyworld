@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { SETTING, getSetting } from "../lib/settings.js";
-import { LOGO_CID, LOGO_DARK_CID, brandDataUrl, hasBrandImage } from "../lib/brandAssets.js";
+import { BAND_CID, LOGO_CID, LOGO_DARK_CID, brandDataUrl, hasBrandImage } from "../lib/brandAssets.js";
+import { brandImage } from "./systemProfile.js";
 import { textFooter, wrapEmail } from "./emailLetterhead.js";
 import { privacyPolicyUrl, sourceNotice, type SourceNotice } from "./dataSourceNotice.js";
 import { companyProfile, type CompanyProfile } from "./systemProfile.js";
@@ -59,6 +60,7 @@ export function toHtml(
     profile?: CompanyProfile;
     logoSrc?: string | null;
     footerLogoSrc?: string | null;
+    bandSrc?: string | null;
     sourceNoticeHtml?: string | null;
   } = {},
 ): string {
@@ -235,11 +237,15 @@ function carriesOptOut(body: string): boolean {
  * that slot at all, and the shell sets the wordmark in type instead — which is
  * better than a broken image icon at the top of a client's inbox.
  */
-export async function logoSources(forPreview: boolean): Promise<{ logoSrc: string | null; footerLogoSrc: string | null }> {
+export async function logoSources(forPreview: boolean): Promise<{ logoSrc: string | null; footerLogoSrc: string | null; bandSrc: string | null }> {
+  // The navy band carries the shipped white lock-up. A workspace that uploaded
+  // its own logo gets the white header with that logo instead: uploads are
+  // on-light artwork, and an on-light logo on navy cannot be read.
+  const ownLogo = Boolean(await brandImage("logoLight"));
   if (forPreview) {
-    const [logoSrc, footerLogoSrc] = await Promise.all([brandDataUrl(LOGO_CID), brandDataUrl(LOGO_DARK_CID)]);
-    return { logoSrc, footerLogoSrc };
+    const [logoSrc, footerLogoSrc, bandSrc] = await Promise.all([brandDataUrl(LOGO_CID), brandDataUrl(LOGO_DARK_CID), ownLogo ? null : brandDataUrl(BAND_CID)]);
+    return { logoSrc, footerLogoSrc, bandSrc };
   }
-  const [light, dark] = await Promise.all([hasBrandImage(LOGO_CID), hasBrandImage(LOGO_DARK_CID)]);
-  return { logoSrc: light ? `cid:${LOGO_CID}` : null, footerLogoSrc: dark ? `cid:${LOGO_DARK_CID}` : null };
+  const [light, dark, band] = await Promise.all([hasBrandImage(LOGO_CID), hasBrandImage(LOGO_DARK_CID), ownLogo ? false : hasBrandImage(BAND_CID)]);
+  return { logoSrc: light ? `cid:${LOGO_CID}` : null, footerLogoSrc: dark ? `cid:${LOGO_DARK_CID}` : null, bandSrc: band ? `cid:${BAND_CID}` : null };
 }

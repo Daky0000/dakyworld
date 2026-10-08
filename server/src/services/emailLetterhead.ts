@@ -1,4 +1,4 @@
-import { LOGO_CID, LOGO_DARK_CID } from "../lib/brandAssets.js";
+import { BAND_CID, LOGO_CID, LOGO_DARK_CID } from "../lib/brandAssets.js";
 import { DEFAULT_PROFILE, type CompanyProfile } from "./systemProfile.js";
 import { ACCENT, INK, LINE, MUTED } from "./letterhead.js";
 
@@ -10,9 +10,13 @@ import { ACCENT, INK, LINE, MUTED } from "./letterhead.js";
  * styles rather than classes, hex rather than anything with an alpha channel,
  * and one 600px column because that is what fits an Outlook reading pane.
  *
- * **What a client sees** (docs/DESIGN-SYSTEM.md v21). A white card on the
- * website's grey canvas: the lock-up at the top left, the contact line small
- * and quiet on the right, a hairline rule. Then the letter itself, the
+ * **What a client sees** (docs/DESIGN-SYSTEM.md, v22 furniture). A white card
+ * on the website's grey canvas, headed by the navy band with the dot field and
+ * the white lock-up — one embedded picture, because no email client can draw
+ * the website's CSS dots and a remote image would report every open. With
+ * images off it is a plain navy strip with the name in white. A workspace that
+ * uploaded its own logo keeps the older white header with that logo. Then the
+ * letter itself, the
  * signature, and a soft grey footer panel carrying the lock-up, the
  * positioning line, the contact details and the legal line — the website's
  * own footer, compressed to the width of a letter.
@@ -37,6 +41,8 @@ const ON_FOOTER_QUIET = "#8A91A0";
 /** Links in the footer: the one accent. */
 const ON_FOOTER_LINK = ACCENT;
 const PAPER = "#FFFFFF";
+/** The header band's ground (§2 navy). */
+const NAVY = "#091833";
 /** The canvas behind the card — the website's page ground. */
 const PAGE = "#ECEEF1";
 
@@ -94,7 +100,16 @@ function link(href: string, text: string, color: string): string {
  * thing on the sheet: it is there so a reply-all or a printed copy still knows
  * who sent it, not to be read.
  */
-function header(profile: CompanyProfile, logoSrc: string | null): string {
+function header(profile: CompanyProfile, logoSrc: string | null, bandSrc: string | null): string {
+  if (bandSrc) {
+    // bgcolor as well as the style, for Outlook; the alt text is set white so
+    // that with images blocked it still reads on the navy.
+    return `<tr>
+<td bgcolor="${NAVY}" style="background:${NAVY};padding:0;line-height:0;font-size:0">
+<img src="${bandSrc}" width="${WIDTH}" height="84" alt="${escapeHtml(profile.displayName)}" style="display:block;border:0;outline:none;text-decoration:none;width:100%;max-width:${WIDTH}px;height:auto;color:#FFFFFF;font-family:${BODY_FONT};font-size:20px;line-height:84px;text-align:left;background:${NAVY}">
+</td>
+</tr>`;
+  }
   return `<tr>
 <td class="pad" style="padding:28px 32px 0">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
@@ -144,9 +159,9 @@ function letter(
     : "";
 
   return `<tr>
-<td class="pad" style="padding:30px 32px 34px">
+<td class="pad" style="padding:34px 36px 34px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-<tr><td style="font-family:${BODY_FONT};font-size:15px;line-height:26px;color:${INK}">${bodyHtml}</td></tr>
+<tr><td style="font-family:${BODY_FONT};font-size:15.5px;line-height:27px;color:${INK}">${bodyHtml}</td></tr>
 ${signatureBlock}
 ${optOut}
 ${sourceNotice}
@@ -244,6 +259,8 @@ export interface ShellArgs {
    */
   logoSrc?: string | null;
   footerLogoSrc?: string | null;
+  /** The navy header band; null keeps the white header with `logoSrc`. */
+  bandSrc?: string | null;
 }
 
 /**
@@ -271,6 +288,7 @@ export function wrapEmail({
   profile = DEFAULT_PROFILE,
   logoSrc = `cid:${LOGO_CID}`,
   footerLogoSrc = `cid:${LOGO_DARK_CID}`,
+  bandSrc = `cid:${BAND_CID}`,
 }: ShellArgs): string {
   return `<!doctype html>
 <html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
@@ -303,7 +321,7 @@ ${preheader(bodyText)}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${PAGE}" style="background:${PAGE}">
 <tr><td align="center" style="padding:28px 12px 34px">
 <table role="presentation" class="sheet" width="${WIDTH}" cellpadding="0" cellspacing="0" border="0" bgcolor="${PAPER}" style="width:${WIDTH}px;max-width:${WIDTH}px;background:${PAPER};border:1px solid ${LINE};border-radius:14px;overflow:hidden">
-${header(profile, logoSrc)}
+${header(profile, logoSrc, bandSrc)}
 ${letter(bodyHtml, signature, unsubscribeUrl, sourceNoticeHtml)}
 ${footer(profile, footerLogoSrc)}
 </table>
