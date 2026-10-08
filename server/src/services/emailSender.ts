@@ -254,6 +254,7 @@ export async function sendMessage(id: string): Promise<SendResult> {
       replyTo: message.replyTo,
       inReplyTo: message.inReplyTo,
       attachments,
+      category: `email:${message.purpose.toLowerCase()}`,
       unsubscribeUrl: COLD_PURPOSES.has(message.purpose)
         ? `${await appUrl()}/api/emails/unsubscribe?email=${encodeURIComponent(message.toEmail)}`
         : null,

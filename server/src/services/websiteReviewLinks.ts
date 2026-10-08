@@ -36,6 +36,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { mailerConfigured, sendMail } from "../lib/mailer.js";
 import { customerAppUrl } from "./emailSender.js";
+import { brandedNotice } from "./transactionalEmail.js";
 import { signInBaseFor } from "./accountAccess.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
 import { embedWebsiteAssets } from "./websiteAssets.js";
@@ -149,8 +150,8 @@ async function notifyDecision(link: ReviewLink & { page: SitePage; site: Site })
     link.feedback ? `They wrote: “${link.feedback}”` : "",
     "Open the page in the editor to see their comments and carry on.",
   ].filter(Boolean);
-  const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.6;color:#1b2029">${lines.map((line) => `<p>${escapeHtml(line)}</p>`).join("")}<p style="margin:24px 0"><a href="${editorLink}" style="background:#1b2029;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;display:inline-block">Open the page</a></p><p>DakyX</p></div>`;
-  await sendMail({ to: creator.email, toName: creator.name, subject, html, text: `${lines.join("\n\n")}\n\n${editorLink}\n\nDakyX` }).catch((error) =>
+  const { html, text } = await brandedNotice({ paragraphs: lines, action: { label: "Open the page", url: editorLink }, signOff: "DakyX" });
+  await sendMail({ to: creator.email, toName: creator.name, subject, html, text, category: "website:review-decision" }).catch((error) =>
     console.warn(`[review] could not email ${creator.email} about a decision: ${(error as Error).message}`),
   );
 }
@@ -207,8 +208,14 @@ export function registerWebsiteReviewLinkRoutes(router: Router) {
     let emailed = false;
     if (input.reviewerEmail && (await mailerConfigured())) {
       const sender = req.dbUser?.name ?? "Your website team";
-      const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.6;color:#1b2029"><p>Hello${input.reviewerName ? ` ${escapeHtml(input.reviewerName.split(" ")[0] ?? "")}` : ""},</p><p>${escapeHtml(sender)} has changes to <strong>${escapeHtml(page.title)}</strong> on ${escapeHtml(page.site.name)} ready for you to look at. You can approve them or ask for changes — no account needed.</p><p style="margin:24px 0"><a href="${url}" style="background:#1b2029;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;display:inline-block">Review the changes</a></p><p style="color:#5b6572;font-size:13px">The link works until ${link.expiresAt.toDateString()}.</p></div>`;
-      emailed = await sendMail({ to: input.reviewerEmail, toName: input.reviewerName ?? input.reviewerEmail, subject: `Please review the changes to ${page.title}`, html, text: `${sender} has changes to ${page.title} ready for you to review:\n\n${url}\n\nThe link works until ${link.expiresAt.toDateString()}.` })
+      const { html, text } = await brandedNotice({
+        greeting: input.reviewerName?.split(" ")[0] ?? "there",
+        paragraphs: [`${sender} has changes to ${page.title} on ${page.site.name} ready for you to look at. You can approve them or ask for changes — no account needed.`],
+        action: { label: "Review the changes", url },
+        footnotes: [`The link works until ${link.expiresAt.toDateString()}.`],
+        signOff: sender,
+      });
+      emailed = await sendMail({ to: input.reviewerEmail, toName: input.reviewerName ?? input.reviewerEmail, subject: `Please review the changes to ${page.title}`, html, text, category: "website:review-request" })
         .then(() => true)
         .catch((error) => { console.warn(`[review] could not email the review link: ${(error as Error).message}`); return false; });
     }

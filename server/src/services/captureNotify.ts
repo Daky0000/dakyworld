@@ -89,6 +89,7 @@ export async function reportRun(run: ScraperRun, source: ScraperSource): Promise
     subject,
     html: toHtml(body, sign, null, { profile, ...shell }),
     text: toText(body, sign, null, profile),
+    category: "system:capture-report",
   });
 
   // Slack second, and never allowed to undo the email: the report has already

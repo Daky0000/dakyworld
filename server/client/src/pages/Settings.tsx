@@ -858,7 +858,56 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
           {testResult && <p className="mt-2 text-sm text-muted">{testResult}</p>}
         </div>
       )}
+      {email.configured && <RecentDeliveries />}
     </Panel>
+  );
+}
+
+type Delivery = { id: string; toEmail: string; subject: string; category: string | null; status: "SENT" | "FAILED"; attempts: number; error: string | null; createdAt: string };
+
+/**
+ * Every email the server tried to send, newest first, and whether the mail
+ * server took it. "Did the customer get their link?" is answered here rather
+ * than in a deploy log. Accepted by the mail server is as far as anyone can
+ * see from here — whether it then reached an inbox is the receiving side's.
+ */
+function RecentDeliveries() {
+  const deliveries = useQuery({
+    queryKey: ["settings", "email", "deliveries"],
+    queryFn: ({ signal }) => api.get<{ recent: Delivery[]; lastWeek: { sent: number; failed: number } }>("/settings/email/deliveries", signal),
+    refetchInterval: 60_000,
+  });
+  if (!deliveries.data) return null;
+  const { recent, lastWeek } = deliveries.data;
+  return (
+    <div className="mt-6 border-t border-line pt-4">
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+        <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">Recent deliveries</span>
+        <span className="text-xs text-muted">
+          Last 7 days: {lastWeek.sent} sent{lastWeek.failed ? <b className="ml-1 font-medium text-danger-text">· {lastWeek.failed} failed</b> : " · none failed"}
+        </span>
+      </div>
+      {recent.length === 0 ? (
+        <p className="text-sm text-muted">Nothing sent since this log began. The next email the system sends will appear here.</p>
+      ) : (
+        <ul className="divide-y divide-line rounded-xl border border-line">
+          {recent.map((row) => (
+            <li key={row.id} className="flex flex-wrap items-start gap-x-3 gap-y-1 px-3 py-2.5 text-sm">
+              <Badge tone={row.status === "SENT" ? "positive" : "danger"}>{row.status === "SENT" ? "Sent" : "Failed"}</Badge>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-ink">{row.subject}</div>
+                <div className="truncate text-xs text-muted">
+                  {row.toEmail} · {new Date(row.createdAt).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  {row.category ? ` · ${row.category}` : ""}
+                  {row.attempts > 1 ? ` · ${row.attempts} tries` : ""}
+                </div>
+                {row.error && <div className="mt-1 text-xs text-danger-text">{row.error}</div>}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

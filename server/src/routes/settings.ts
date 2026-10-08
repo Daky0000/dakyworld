@@ -1745,6 +1745,28 @@ settingsRouter.delete("/email/hostinger", async (req, res, next) => {
   }
 });
 
+/**
+ * What the server has tried to send lately, and whether the mail server took
+ * each one (MailDelivery, written by lib/mailer.ts on every send).
+ */
+settingsRouter.get("/email/deliveries", async (_req, res, next) => {
+  try {
+    const since = new Date(Date.now() - 7 * 86_400_000);
+    const [recent, sent, failed] = await Promise.all([
+      prisma.mailDelivery.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 25,
+        select: { id: true, toEmail: true, subject: true, category: true, status: true, attempts: true, error: true, createdAt: true },
+      }),
+      prisma.mailDelivery.count({ where: { status: "SENT", createdAt: { gte: since } } }),
+      prisma.mailDelivery.count({ where: { status: "FAILED", createdAt: { gte: since } } }),
+    ]);
+    res.json({ recent, lastWeek: { sent, failed } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 /** Proves the whole path works, end to end, by sending one real email. */
 settingsRouter.post("/email/test", async (req, res, next) => {
   try {
@@ -1758,6 +1780,7 @@ settingsRouter.post("/email/test", async (req, res, next) => {
       subject: `${profile.displayName} OS — mail is working`,
       html: toHtml(body, sign, null, { profile, ...shell }),
       text: toText(body, sign, null, profile),
+      category: "settings:test",
     });
     res.json({ ok: true, to });
   } catch (err) {

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { mailerConfigured, sendMail } from "../lib/mailer.js";
+import { brandedNotice } from "./transactionalEmail.js";
 import { attr, parseHtml, walk, type ElementNode } from "./website/parse.js";
 import { WebsiteError } from "./website/site.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
@@ -184,16 +185,24 @@ async function notifyManagers(site: { id: string; name: string }, submissionId: 
     console.warn(`[forms] no mailer configured — a message for ${site.name} is in the inbox: ${link}`);
     return;
   }
-  const rows = Object.entries(fields).map(([key, value]) => `<tr><td style="padding:6px 12px 6px 0;color:#5b6572;vertical-align:top">${escapeHtml(key)}</td><td style="padding:6px 0;white-space:pre-wrap">${escapeHtml(value)}</td></tr>`).join("");
-  const text = Object.entries(fields).map(([key, value]) => `${key}: ${value}`).join("\n");
+  const rows = Object.entries(fields).map(([key, value]) => `<tr><td style="padding:8px 14px 8px 0;color:#5B6374;vertical-align:top;border-top:1px solid #E3E6EB;font-size:13px">${escapeHtml(key)}</td><td style="padding:8px 0;white-space:pre-wrap;border-top:1px solid #E3E6EB">${escapeHtml(value)}</td></tr>`).join("");
+  const { html, text } = await brandedNotice({
+    paragraphs: [`Somebody sent a message through a form on ${site.name}.`],
+    extraHtml: `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin:0 0 6px">${rows}</table>`,
+    extraText: Object.entries(fields).map(([key, value]) => `${key}: ${value}`).join("\n"),
+    action: { label: "Open it in your inbox", url: link },
+    after: email ? ["Or simply reply to this email to answer them."] : [],
+    signOff: "DakyX",
+  });
   for (const { user } of managers) {
     await sendMail({
       to: user.email,
       toName: user.name,
       subject: `New message from your website — ${site.name}`,
       replyTo: email,
-      html: `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.6;color:#1b2029"><p>Somebody sent a message through a form on ${escapeHtml(site.name)}.</p><table style="border-collapse:collapse">${rows}</table><p style="margin-top:20px"><a href="${link}">Open it in your inbox</a>${email ? " — or simply reply to this email to answer them." : "."}</p></div>`,
-      text: `Somebody sent a message through a form on ${site.name}.\n\n${text}\n\nOpen it in your inbox: ${link}`,
+      html,
+      text,
+      category: "website:form-message",
     });
   }
 }

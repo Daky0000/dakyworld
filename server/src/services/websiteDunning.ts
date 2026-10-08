@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma.js";
 import { sendMail, mailerConfigured } from "../lib/mailer.js";
+import { brandedNotice } from "./transactionalEmail.js";
 import { priceFor } from "./websitePricing.js";
 import { WEBSITE_TIER_PLANS } from "./websiteTierPlans.js";
 import { subscriptionManagementLink } from "../lib/paystack.js";
@@ -104,16 +105,14 @@ export async function sendDunningNotice(purchaseId: string): Promise<void> {
   }
 
   const first = purchase.contactName.split(" ")[0] ?? "there";
-  const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.6;color:#1b2029">
-  <p>Hello ${escapeHtml(first)},</p>
-  <p>${escapeHtml(notice.body)}</p>
-  <p style="margin:26px 0"><a href="${updateUrl}" style="background:#1b2029;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;display:inline-block">Update payment details</a></p>
-  <p>${escapeHtml(notice.closing)}</p>
-  <p>DakyXTech</p>
-</div>`;
-  const text = `Hello ${first},\n\n${notice.body}\n\nUpdate payment details: ${updateUrl}\n\n${notice.closing}\n\nDakyXTech`;
+  const { html, text } = await brandedNotice({
+    greeting: first,
+    paragraphs: [notice.body],
+    action: { label: "Update payment details", url: updateUrl },
+    after: [notice.closing],
+  });
 
-  await sendMail({ to: purchase.email, toName: purchase.contactName, subject: notice.subject, html, text }).catch((error) =>
+  await sendMail({ to: purchase.email, toName: purchase.contactName, subject: notice.subject, html, text, category: `billing:past-due-${stage}` }).catch((error) =>
     console.error(`[dunning] could not write to ${purchase.email}:`, (error as Error).message),
   );
 }

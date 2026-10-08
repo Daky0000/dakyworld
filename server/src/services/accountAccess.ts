@@ -3,6 +3,7 @@ import type { AuthTokenKind, User } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { hashPassword } from "../lib/password.js";
 import { sendMail, mailerConfigured } from "../lib/mailer.js";
+import { brandedNotice } from "./transactionalEmail.js";
 import { appUrl, customerAppUrl } from "./emailSender.js";
 import { WebsiteError } from "./website/site.js";
 
@@ -101,16 +102,15 @@ async function deliver(to: string, toName: string, subject: string, heading: str
     console.warn(`[account] no mailer configured — ${subject} for ${to}: ${link}`);
     return;
   }
-  const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.6;color:#1b2029">
-  <p>Hello ${escapeHtml(toName.split(" ")[0] ?? "there")},</p>
-  <p>${escapeHtml(body)}</p>
-  <p style="margin:26px 0"><a href="${link}" style="background:#1b2029;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;display:inline-block">${escapeHtml(action)}</a></p>
-  <p style="color:#5b6572;font-size:13px">If the button does not work, paste this into your browser:<br>${escapeHtml(link)}</p>
-  <p style="color:#5b6572;font-size:13px">If you were not expecting this, you can ignore it and nothing will change.</p>
-  <p>DakyXTech</p>
-</div>`;
-  const text = `Hello ${toName.split(" ")[0] ?? "there"},\n\n${body}\n\n${action}: ${link}\n\nIf you were not expecting this, you can ignore it and nothing will change.\n\nDakyXTech`;
-  await sendMail({ to, toName, subject: heading, html, text });
+  const { html, text } = await brandedNotice({
+    greeting: toName.split(" ")[0] ?? "there",
+    paragraphs: [body],
+    action: { label: action, url: link },
+    footnotes: ["If you were not expecting this, you can ignore it and nothing will change."],
+  });
+  // The category is what the delivery log shows; the link itself (it carries
+  // a token) is never recorded anywhere.
+  await sendMail({ to, toName, subject: heading, html, text, category: `account:${subject}` });
 }
 
 function escapeHtml(value: string): string {

@@ -5255,3 +5255,29 @@ model GithubRepoClaim {
   @@unique([userId, repositoryId])
   @@index([userId])
 }
+
+/// One row per email the server tried to send, by any path: an account link, a
+/// form message, a reminder, an outreach letter. Who it was to, what it was,
+/// and whether the mail server took it, so "did they get the email?" has an
+/// answer that is not a log line from a deploy that has since been replaced.
+///
+/// The body is deliberately not kept: an account email carries a sign-in token,
+/// and this table is for delivery, not for reading mail. Rows older than 90 days
+/// are deleted as new ones arrive (lib/mailer.ts).
+model MailDelivery {
+  id        String   @id @default(cuid())
+  toEmail   String
+  subject   String
+  /// What kind of email — "account:Set your password", "website:form-message".
+  category  String?
+  transport String
+  /// SENT once the mail server accepted it; FAILED after the last attempt.
+  status    String
+  attempts  Int
+  error     String?
+  messageId String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([status, createdAt])
+}
