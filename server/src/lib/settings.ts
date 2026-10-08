@@ -227,6 +227,10 @@ export const SETTING = {
   // commonly have one and not the other.
   /** Secret key, `sk_live_…` or `sk_test_…`. Paystack signs webhooks with this same key. */
   PAYSTACK_SECRET_KEY: "paystack.secretKey",
+  /** The `sk_test_…` key, kept beside the live one so the two can be swapped without re-pasting. */
+  PAYSTACK_TEST_SECRET_KEY: "paystack.testSecretKey",
+  /** "live" or "test": which of the two keys every Paystack call uses. */
+  PAYSTACK_MODE: "paystack.mode",
   /** Hubtel Merchant Account number — the one the money lands in. */
   HUBTEL_MERCHANT_ID: "hubtel.merchantId",
   /** Basic-auth pair from the Hubtel dashboard, used for checkout and receive-money. */
@@ -745,6 +749,8 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.STRIPE_SECRET_KEY]: "STRIPE_SECRET_KEY",
   [SETTING.STRIPE_WEBHOOK_SECRET]: "STRIPE_WEBHOOK_SECRET",
   [SETTING.PAYSTACK_SECRET_KEY]: "PAYSTACK_SECRET_KEY",
+  [SETTING.PAYSTACK_TEST_SECRET_KEY]: "PAYSTACK_TEST_SECRET_KEY",
+  [SETTING.PAYSTACK_MODE]: "PAYSTACK_MODE",
   [SETTING.HUBTEL_MERCHANT_ID]: "HUBTEL_MERCHANT_ID",
   [SETTING.HUBTEL_CLIENT_ID]: "HUBTEL_CLIENT_ID",
   [SETTING.HUBTEL_CLIENT_SECRET]: "HUBTEL_CLIENT_SECRET",

@@ -743,9 +743,13 @@ export interface AppSettings {
   /** Paystack — the hosted payment page. The Ghanaian rail Stripe cannot serve. */
   paystack: {
     configured: boolean;
-    envManaged: boolean;
-    key: string | null;
+    /** Which key every call uses; null when neither is set. */
+    mode: "live" | "test" | null;
+    modeEnvManaged: boolean;
     livemode: boolean | null;
+    /** Masked; null where that mode has no key. */
+    keys: { live: string | null; test: string | null };
+    envManaged: { live: boolean; test: boolean };
     /** Paste this into Paystack's dashboard, or an invoice is never marked paid. */
     webhookUrl: string;
   };

@@ -33,14 +33,43 @@ export class PaystackError extends Error {
   }
 }
 
+export type PaystackMode = "live" | "test";
+
+/**
+ * The live and test keys, sorted by their prefix rather than by which slot they
+ * sit in. Before the mode switch there was one slot, and it may hold either, so
+ * a lone `sk_test_…` in the original slot still reads as the test key.
+ */
+export async function paystackKeys(): Promise<Record<PaystackMode, string | null>> {
+  const stored = [await getSetting(SETTING.PAYSTACK_SECRET_KEY), await getSetting(SETTING.PAYSTACK_TEST_SECRET_KEY)];
+  const pick = (mode: PaystackMode) => stored.find((key) => key?.startsWith(`sk_${mode}_`)) ?? null;
+  return { live: pick("live"), test: pick("test") };
+}
+
+/**
+ * Which key every call uses. The chosen mode when its key exists; otherwise
+ * whichever key there is, live first. Null when neither is set.
+ */
+export async function paystackMode(): Promise<PaystackMode | null> {
+  const keys = await paystackKeys();
+  const chosen = (await getSetting(SETTING.PAYSTACK_MODE))?.trim().toLowerCase();
+  if ((chosen === "live" || chosen === "test") && keys[chosen]) return chosen;
+  return keys.live ? "live" : keys.test ? "test" : null;
+}
+
 export async function paystackConfigured(): Promise<boolean> {
-  return Boolean(await getSetting(SETTING.PAYSTACK_SECRET_KEY));
+  return (await paystackMode()) !== null;
 }
 
 async function secretKey(): Promise<string> {
-  const key = await getSetting(SETTING.PAYSTACK_SECRET_KEY);
+  const mode = await paystackMode();
+  const key = mode ? (await paystackKeys())[mode] : null;
   if (!key) throw new PaystackError("Paystack isn't connected. Add a secret key under Settings → Payments.", 503);
   return key;
+}
+
+async function expectedDomain(): Promise<PaystackMode> {
+  return (await secretKey()).startsWith("sk_live_") ? "live" : "test";
 }
 
 /** GHS 45.50 → 4550. Paystack works entirely in the minor unit. */
@@ -174,8 +203,7 @@ export async function verifyTransaction(reference: string): Promise<PaystackStat
   }>(`/transaction/verify/${encodeURIComponent(reference)}`);
 
   if (data?.reference !== reference || !Number.isSafeInteger(data.amount) || data.amount < 0 || typeof data.currency !== "string") throw new PaystackError("Paystack returned an invalid verification response.");
-  const expectedDomain = (await secretKey()).startsWith("sk_live_") ? "live" : "test";
-  if (data.domain !== expectedDomain) throw new PaystackError("Payment mode does not match the configured Paystack account.", 409);
+  if (data.domain !== await expectedDomain()) throw new PaystackError("Payment mode does not match the configured Paystack account.", 409);
   return {
     domain: data.domain,
     reference: data.reference,
@@ -227,7 +255,10 @@ export async function verifyPaystackKey(key: string): Promise<{ livemode: boolea
  */
 export async function verifyPaystackSignature(rawBody: Buffer, signature: string | undefined): Promise<boolean> {
   if (typeof signature !== "string" || !/^[a-f0-9]{128}$/i.test(signature)) return false;
-  const key = await getSetting(SETTING.PAYSTACK_SECRET_KEY);
+  // Only the active mode's key: a test event arriving while live is selected
+  // must not be able to mark a real invoice paid.
+  const mode = await paystackMode();
+  const key = mode ? (await paystackKeys())[mode] : null;
   if (!key) return false;
 
   const expected = crypto.createHmac("sha512", key).update(rawBody).digest("hex");
@@ -248,7 +279,7 @@ export interface PaystackSubscription {
 export async function fetchSubscription(code: string): Promise<PaystackSubscription> {
   const data = await call<PaystackSubscription>(`/subscription/${encodeURIComponent(code)}`);
   if (data?.subscription_code !== code || !data.customer?.email || !data.plan?.plan_code) throw new PaystackError("Invalid subscription response.");
-  if (data.domain !== ((await secretKey()).startsWith("sk_live_") ? "live" : "test")) throw new PaystackError("Subscription payment mode mismatch.", 409);
+  if (data.domain !== await expectedDomain()) throw new PaystackError("Subscription payment mode mismatch.", 409);
   return data;
 }
 

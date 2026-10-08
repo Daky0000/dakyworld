@@ -22,7 +22,7 @@ import { JOBS, MODEL_JOBS, FREE_LADDER_MAX, PROVIDERS, describeProviders, descri
 import { listNvidiaModels, verifyProviderKey, type NvidiaModel } from "../lib/models/call.js";
 import { GoogleError, buildAuthUrl, clearGoogleTokenCache, googleConfigured, googleConnected, redirectUri, rememberState } from "../lib/google.js";
 import { verifyStripeKey } from "../lib/stripe.js";
-import { verifyPaystackKey } from "../lib/paystack.js";
+import { paystackKeys, paystackMode, verifyPaystackKey, type PaystackMode } from "../lib/paystack.js";
 import { verifyHubtelKeys } from "../lib/hubtel.js";
 import { MailerError, activeTransport, readMailerConfig, sendMail, verifySmtp } from "../lib/mailer.js";
 import { HostingerMailError, clearHostingerSession, fetchMailboxes, probeMcp, type HostingerMailbox, type McpProbe } from "../lib/hostingerMail.js";
@@ -62,7 +62,7 @@ settingsRouter.use(
       // Order matters here: /hubtel-sms is the SMS provider and /hubtel is the
       // payment one, so both are anchored rather than left as prefixes.
       { path: /^\/hubtel-sms$/, permission: "messages.settings" },
-      { path: /^\/(paystack|stripe|hubtel)$/, permission: "settings.payments" },
+      { path: /^\/(paystack|paystack\/mode|stripe|hubtel)$/, permission: "settings.payments" },
       { path: /^\/(whatsapp|sms-callback-token)$/, permission: "messages.settings" },
       { path: /^\/messaging\//, permission: "messages.settings" },
       { path: /^\/system\/brand\//, permission: "settings.templates" },
@@ -162,7 +162,7 @@ async function describeAll(req: Request) {
       getSetting(SETTING.CLOUDINARY_API_SECRET),
       getSetting(SETTING.APP_URL),
       getSetting(SETTING.DEFAULT_TIMEZONE),
-      getSetting(SETTING.PAYSTACK_SECRET_KEY),
+      paystackKeys(),
       getSetting(SETTING.HUBTEL_CLIENT_ID),
       getSetting(SETTING.HUBTEL_MERCHANT_ID),
       getSetting(SETTING.HUBTEL_SMS_ID),
@@ -204,13 +204,26 @@ async function describeAll(req: Request) {
     // the provider's dashboard, because that is the step most likely to be
     // missed — a key with no webhook takes money and never marks an invoice
     // paid, which looks like the integration not working at all.
-    paystack: {
-      configured: Boolean(paystackKey),
-      envManaged: isEnvManaged(SETTING.PAYSTACK_SECRET_KEY),
-      key: paystackKey ? maskSecret(paystackKey) : null,
-      livemode: paystackKey ? paystackKey.startsWith("sk_live_") : null,
-      webhookUrl: `${origin(req, appUrl)}/api/webhooks/paystack`,
-    },
+    // Live and test keys are held side by side; `mode` says which one every
+    // call uses, and can be flipped without re-pasting either.
+    paystack: await (async () => {
+      const mode = await paystackMode();
+      return {
+        configured: mode !== null,
+        mode,
+        modeEnvManaged: isEnvManaged(SETTING.PAYSTACK_MODE),
+        livemode: mode === null ? null : mode === "live",
+        keys: {
+          live: paystackKey.live ? maskSecret(paystackKey.live) : null,
+          test: paystackKey.test ? maskSecret(paystackKey.test) : null,
+        },
+        envManaged: {
+          live: isEnvManaged(SETTING.PAYSTACK_SECRET_KEY),
+          test: isEnvManaged(SETTING.PAYSTACK_TEST_SECRET_KEY),
+        },
+        webhookUrl: `${origin(req, appUrl)}/api/webhooks/paystack`,
+      };
+    })(),
     hubtel: {
       configured: Boolean(hubtelClientId && hubtelMerchant),
       envManaged: isEnvManaged(SETTING.HUBTEL_CLIENT_ID),
@@ -2203,18 +2216,54 @@ settingsRouter.delete("/system/brand/:slot", async (req, res, next) => {
 // for somebody comfortable paying on the web, a prompt on the handset for
 // somebody who is not.
 
+/** The slot each mode's key lives in. The original slot is the live one. */
+const PAYSTACK_SLOT: Record<PaystackMode, string> = {
+  live: SETTING.PAYSTACK_SECRET_KEY,
+  test: SETTING.PAYSTACK_TEST_SECRET_KEY,
+};
+
+// The key's own prefix decides which slot it goes in, so there is nothing to
+// pick and no way to file a live key as the test one.
 settingsRouter.put("/paystack", async (req, res, next) => {
   try {
-    if (guardEnv(SETTING.PAYSTACK_SECRET_KEY, "The Paystack secret key", res)) return;
     const { secretKey } = z.object({ secretKey: z.string().min(10, "That doesn't look like a Paystack secret key") }).parse(req.body);
+    const key = secretKey.trim();
+    const mode: PaystackMode = key.startsWith("sk_live_") ? "live" : "test";
+    if (guardEnv(PAYSTACK_SLOT[mode], `The Paystack ${mode} key`, res)) return;
 
     try {
-      await verifyPaystackKey(secretKey.trim());
+      await verifyPaystackKey(key);
     } catch (err) {
       return res.status(400).json({ error: `Paystack rejected that key: ${(err as Error).message}` });
     }
 
-    await setSetting(SETTING.PAYSTACK_SECRET_KEY, secretKey.trim(), { secret: true });
+    // Before the switch there was one slot, and it may hold a test key. Move
+    // that out of the way rather than overwrite it or leave a second copy.
+    const legacy = await getSetting(SETTING.PAYSTACK_SECRET_KEY);
+    if (legacy?.startsWith("sk_test_") && !isEnvManaged(SETTING.PAYSTACK_SECRET_KEY)) {
+      if (mode === "live" && !(await getSetting(SETTING.PAYSTACK_TEST_SECRET_KEY))) {
+        await setSetting(SETTING.PAYSTACK_TEST_SECRET_KEY, legacy, { secret: true });
+      }
+      await deleteSetting(SETTING.PAYSTACK_SECRET_KEY);
+    }
+
+    await setSetting(PAYSTACK_SLOT[mode], key, { secret: true });
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Flip between the two stored keys. Refused when the chosen one isn't there,
+// rather than quietly staying on the other mode.
+settingsRouter.put("/paystack/mode", async (req, res, next) => {
+  try {
+    if (guardEnv(SETTING.PAYSTACK_MODE, "The Paystack mode", res)) return;
+    const { mode } = z.object({ mode: z.enum(["live", "test"]) }).parse(req.body);
+    if (!(await paystackKeys())[mode]) {
+      return res.status(400).json({ error: `Add a Paystack ${mode} key before switching to ${mode} mode.` });
+    }
+    await setSetting(SETTING.PAYSTACK_MODE, mode);
     res.json(await describeAll(req));
   } catch (err) {
     next(err);
@@ -2223,8 +2272,11 @@ settingsRouter.put("/paystack", async (req, res, next) => {
 
 settingsRouter.delete("/paystack", async (req, res, next) => {
   try {
-    if (guardEnv(SETTING.PAYSTACK_SECRET_KEY, "The Paystack secret key", res)) return;
-    await deleteSetting(SETTING.PAYSTACK_SECRET_KEY);
+    const mode = z.enum(["live", "test"]).parse(req.query.mode ?? "live");
+    const target = await getSetting(PAYSTACK_SLOT[mode]) ? PAYSTACK_SLOT[mode] : SETTING.PAYSTACK_SECRET_KEY;
+    if (!(await getSetting(target))?.startsWith(`sk_${mode}_`)) return res.json(await describeAll(req));
+    if (guardEnv(target, `The Paystack ${mode} key`, res)) return;
+    await deleteSetting(target);
     res.json(await describeAll(req));
   } catch (err) {
     next(err);

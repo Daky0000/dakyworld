@@ -79,6 +79,7 @@ export function PaystackPanel({ settings }: { settings: AppSettings }) {
   const save = useSave();
   const [secretKey, setSecretKey] = useState("");
   const paystack = settings.paystack;
+  const modes = ["live", "test"] as const;
 
   const connect = useMutation({
     mutationFn: () => api.put<AppSettings>("/settings/paystack", { secretKey }),
@@ -87,7 +88,14 @@ export function PaystackPanel({ settings }: { settings: AppSettings }) {
       save(result);
     },
   });
-  const remove = useMutation({ mutationFn: () => api.delete<AppSettings>("/settings/paystack"), onSuccess: save });
+  const remove = useMutation({
+    mutationFn: (mode: "live" | "test") => api.delete<AppSettings>(`/settings/paystack?mode=${mode}`),
+    onSuccess: save,
+  });
+  const switchMode = useMutation({
+    mutationFn: (mode: "live" | "test") => api.put<AppSettings>("/settings/paystack/mode", { mode }),
+    onSuccess: save,
+  });
 
   return (
     <Shell
@@ -95,48 +103,89 @@ export function PaystackPanel({ settings }: { settings: AppSettings }) {
       what={
         <>
           A payment page for an invoice — card, mobile money or bank transfer, on one link you can put in an email. Stripe does not
-          acquire in Ghana, so this is what makes a GHS invoice payable at all.
+          acquire in Ghana, so this is what makes a GHS invoice payable at all. Keep a test key and a live key here and switch between
+          them.
         </>
       }
       state={
         paystack.configured ? (
-          <div className="flex flex-wrap items-center gap-3 text-sm">
-            <Badge tone="positive">connected</Badge>
-            <code className="font-mono text-xs">{paystack.key}</code>
-            <Badge tone={paystack.livemode ? "warn" : "muted"}>{paystack.livemode ? "live — real money" : "test mode"}</Badge>
-            {!paystack.envManaged && (
-              <button
-                type="button"
-                className="font-sans text-[11px] uppercase tracking-[.06em] text-danger-text/70 transition hover:text-danger-text"
-                onClick={() => remove.mutate()}
-              >
-                disconnect
-              </button>
-            )}
+          <div className="space-y-3 text-sm">
+            <div className="flex flex-wrap items-center gap-3">
+              <Badge tone="positive">connected</Badge>
+              <Badge tone={paystack.livemode ? "warn" : "muted"}>{paystack.livemode ? "live — real money" : "test mode"}</Badge>
+              <div className="inline-flex overflow-hidden rounded-full border border-line" role="group" aria-label="Paystack mode">
+                {modes.map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    aria-pressed={paystack.mode === mode}
+                    disabled={paystack.modeEnvManaged || !paystack.keys[mode] || switchMode.isPending || paystack.mode === mode}
+                    title={!paystack.keys[mode] ? `Add a ${mode} key first` : undefined}
+                    className={`px-3 py-1 font-sans text-[11px] uppercase tracking-[.06em] transition disabled:cursor-not-allowed ${
+                      paystack.mode === mode ? "bg-ink text-white" : "text-muted hover:text-ink disabled:opacity-40"
+                    }`}
+                    onClick={() => {
+                      if (mode === "live" && !window.confirm("Switch Paystack to live mode? New payment links will take real money.")) return;
+                      switchMode.mutate(mode);
+                    }}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {modes.map((mode) => (
+              <div key={mode} className="flex flex-wrap items-center gap-3">
+                <span className="w-10 font-sans text-[11px] uppercase tracking-[.06em] text-muted">{mode}</span>
+                {paystack.keys[mode] ? (
+                  <>
+                    <code className="font-mono text-xs">{paystack.keys[mode]}</code>
+                    {!paystack.envManaged[mode] && (
+                      <button
+                        type="button"
+                        className="font-sans text-[11px] uppercase tracking-[.06em] text-danger-text/70 transition hover:text-danger-text"
+                        onClick={() => remove.mutate(mode)}
+                      >
+                        remove
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-xs text-muted">no key</span>
+                )}
+              </div>
+            ))}
+            {paystack.modeEnvManaged && <EnvNote variable="PAYSTACK_MODE" />}
+            <ErrorNote error={switchMode.error ?? remove.error} />
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
             <Badge tone="muted">not set up</Badge>
             <span>
-              Secret key from{" "}
+              Secret keys from{" "}
               <a className="text-blue hover:underline" href="https://dashboard.paystack.com/#/settings/developers" target="_blank" rel="noreferrer">
                 dashboard.paystack.com → Settings → API Keys
               </a>
-              . Use a <code className="font-mono text-xs">sk_test_…</code> key until you are ready to take real money.
+              . Add a <code className="font-mono text-xs">sk_test_…</code> key and a <code className="font-mono text-xs">sk_live_…</code> key, then
+              switch between them here.
             </span>
           </div>
         )
       }
     >
-      {paystack.envManaged ? (
-        <EnvNote variable="PAYSTACK_SECRET_KEY" />
+      {paystack.envManaged.live && paystack.envManaged.test ? (
+        <EnvNote variable="PAYSTACK_SECRET_KEY / PAYSTACK_TEST_SECRET_KEY" />
       ) : (
         <div className="mt-4 max-w-xl space-y-3">
-          <Field label="Secret key" full hint="Checked against Paystack before it is stored, so a typo is caught here rather than at the first invoice.">
-            <input className="input" type="password" value={secretKey} placeholder="sk_test_…" onChange={(event) => setSecretKey(event.target.value)} />
+          <Field
+            label="Secret key"
+            full
+            hint="Test or live — the key's prefix decides which slot it fills. Checked against Paystack before it is stored."
+          >
+            <input className="input" type="password" value={secretKey} placeholder="sk_test_… or sk_live_…" onChange={(event) => setSecretKey(event.target.value)} />
           </Field>
           <Button disabled={connect.isPending || secretKey.trim().length < 10} onClick={() => connect.mutate()}>
-            {connect.isPending ? "Checking…" : paystack.configured ? "Replace the key" : "Connect Paystack"}
+            {connect.isPending ? "Checking…" : "Save key"}
           </Button>
           <ErrorNote error={connect.error} />
         </div>

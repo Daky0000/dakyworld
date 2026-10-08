@@ -12,6 +12,8 @@ import { decryptSecret, encryptSecret } from "../src/lib/secrets.js";
 import { updatePurchaseStatus, publicPurchase } from "../src/services/websiteCommerce.js";
 
 process.env.PAYSTACK_SECRET_KEY = "sk_test_offlinechecks";
+process.env.PAYSTACK_TEST_SECRET_KEY = "sk_test_offlinechecks";
+process.env.PAYSTACK_MODE = "test";
 process.env.APP_SECRET = "offline-paystack-checks-only";
 process.env.PAYSTACK_USD_GHS_RATE = "12";
 const db = prisma as any;
