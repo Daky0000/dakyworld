@@ -750,6 +750,11 @@ export interface AppSettings {
     /** Masked; null where that mode has no key. */
     keys: { live: string | null; test: string | null };
     envManaged: { live: boolean; test: boolean };
+    publicKeys: { live: string | null; test: string | null };
+    /** Where the payer lands after paying, unless a payment names its own page. */
+    callbackUrl: string;
+    callbackCustom: boolean;
+    callbackEnvManaged: boolean;
     /** Paste this into Paystack's dashboard, or an invoice is never marked paid. */
     webhookUrl: string;
   };

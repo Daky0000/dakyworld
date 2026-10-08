@@ -231,6 +231,11 @@ export const SETTING = {
   PAYSTACK_TEST_SECRET_KEY: "paystack.testSecretKey",
   /** "live" or "test": which of the two keys every Paystack call uses. */
   PAYSTACK_MODE: "paystack.mode",
+  /** Public keys, `pk_live_…` / `pk_test_…`. Not secret; for Paystack's inline checkout. */
+  PAYSTACK_LIVE_PUBLIC_KEY: "paystack.livePublicKey",
+  PAYSTACK_TEST_PUBLIC_KEY: "paystack.testPublicKey",
+  /** Where Paystack sends the payer back when a payment doesn't name its own page. */
+  PAYSTACK_CALLBACK_URL: "paystack.callbackUrl",
   /** Hubtel Merchant Account number — the one the money lands in. */
   HUBTEL_MERCHANT_ID: "hubtel.merchantId",
   /** Basic-auth pair from the Hubtel dashboard, used for checkout and receive-money. */
@@ -751,6 +756,9 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.PAYSTACK_SECRET_KEY]: "PAYSTACK_SECRET_KEY",
   [SETTING.PAYSTACK_TEST_SECRET_KEY]: "PAYSTACK_TEST_SECRET_KEY",
   [SETTING.PAYSTACK_MODE]: "PAYSTACK_MODE",
+  [SETTING.PAYSTACK_LIVE_PUBLIC_KEY]: "PAYSTACK_LIVE_PUBLIC_KEY",
+  [SETTING.PAYSTACK_TEST_PUBLIC_KEY]: "PAYSTACK_TEST_PUBLIC_KEY",
+  [SETTING.PAYSTACK_CALLBACK_URL]: "PAYSTACK_CALLBACK_URL",
   [SETTING.HUBTEL_MERCHANT_ID]: "HUBTEL_MERCHANT_ID",
   [SETTING.HUBTEL_CLIENT_ID]: "HUBTEL_CLIENT_ID",
   [SETTING.HUBTEL_CLIENT_SECRET]: "HUBTEL_CLIENT_SECRET",

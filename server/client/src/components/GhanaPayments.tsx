@@ -77,14 +77,22 @@ function EnvNote({ variable }: { variable: string }) {
 
 export function PaystackPanel({ settings }: { settings: AppSettings }) {
   const save = useSave();
-  const [secretKey, setSecretKey] = useState("");
   const paystack = settings.paystack;
+  const [secretKey, setSecretKey] = useState("");
+  const [publicKey, setPublicKey] = useState("");
+  const [callbackUrl, setCallbackUrl] = useState(paystack.callbackCustom ? paystack.callbackUrl : "");
   const modes = ["live", "test"] as const;
 
   const connect = useMutation({
-    mutationFn: () => api.put<AppSettings>("/settings/paystack", { secretKey }),
+    mutationFn: () =>
+      api.put<AppSettings>("/settings/paystack", {
+        ...(secretKey.trim() ? { secretKey } : {}),
+        ...(publicKey.trim() ? { publicKey } : {}),
+        ...(paystack.callbackEnvManaged ? {} : { callbackUrl }),
+      }),
     onSuccess: (result) => {
       setSecretKey("");
+      setPublicKey("");
       save(result);
     },
   });
@@ -140,6 +148,11 @@ export function PaystackPanel({ settings }: { settings: AppSettings }) {
                 {paystack.keys[mode] ? (
                   <>
                     <code className="font-mono text-xs">{paystack.keys[mode]}</code>
+                    {paystack.publicKeys[mode] ? (
+                      <code className="font-mono text-xs text-muted">{paystack.publicKeys[mode]}</code>
+                    ) : (
+                      <span className="text-xs text-muted">no public key</span>
+                    )}
                     {!paystack.envManaged[mode] && (
                       <button
                         type="button"
@@ -173,31 +186,51 @@ export function PaystackPanel({ settings }: { settings: AppSettings }) {
         )
       }
     >
-      {paystack.envManaged.live && paystack.envManaged.test ? (
-        <EnvNote variable="PAYSTACK_SECRET_KEY / PAYSTACK_TEST_SECRET_KEY" />
-      ) : (
-        <div className="mt-4 max-w-xl space-y-3">
-          <Field
-            label="Secret key"
-            full
-            hint="Test or live — the key's prefix decides which slot it fills. Checked against Paystack before it is stored."
-          >
-            <input className="input" type="password" value={secretKey} placeholder="sk_test_… or sk_live_…" onChange={(event) => setSecretKey(event.target.value)} />
+      <div className="mt-4 max-w-xl space-y-3">
+        {!(paystack.envManaged.live && paystack.envManaged.test) && (
+          <>
+            <Field label="Secret key" full hint="Test or live — the prefix decides which slot it fills. Checked against Paystack before it is stored.">
+              <input className="input" type="password" value={secretKey} placeholder="sk_test_… or sk_live_…" onChange={(event) => setSecretKey(event.target.value)} />
+            </Field>
+            <Field label="Public key" full hint="From the same tab as the secret key. Not secret; used by Paystack's inline checkout.">
+              <input className="input" value={publicKey} placeholder="pk_test_… or pk_live_…" onChange={(event) => setPublicKey(event.target.value)} />
+            </Field>
+          </>
+        )}
+        {paystack.callbackEnvManaged ? (
+          <EnvNote variable="PAYSTACK_CALLBACK_URL" />
+        ) : (
+          <Field label="Callback URL" full hint="Where the payer lands after paying, when a payment doesn't name its own page. Blank uses this app's /invoices page.">
+            <input className="input" value={callbackUrl} placeholder="https://…" onChange={(event) => setCallbackUrl(event.target.value)} />
           </Field>
-          <Button disabled={connect.isPending || secretKey.trim().length < 10} onClick={() => connect.mutate()}>
-            {connect.isPending ? "Checking…" : "Save key"}
-          </Button>
-          <ErrorNote error={connect.error} />
-        </div>
-      )}
+        )}
+        <Button
+          disabled={connect.isPending || (secretKey.trim().length > 0 && secretKey.trim().length < 10)}
+          onClick={() => connect.mutate()}
+        >
+          {connect.isPending ? "Checking…" : "Save"}
+        </Button>
+        <ErrorNote error={connect.error} />
+      </div>
 
+      <CopyRow
+        label="Callback URL"
+        value={paystack.callbackUrl}
+        hint={
+          <>
+            Optional in <span className="text-ink">Paystack → Settings → API Keys &amp; Webhooks</span>; each payment link already sends its
+            own. Set it for both test and live.
+          </>
+        }
+      />
       <CopyRow
         label="Webhook URL"
         value={paystack.webhookUrl}
         hint={
           <>
             Paste this into <span className="text-ink">Paystack → Settings → API Keys &amp; Webhooks</span>. Without it money is
-            taken and the invoice is never marked paid — which looks exactly like the integration not working.
+            taken and the invoice is never marked paid — which looks exactly like the integration not working. Set it for both test
+            and live.
           </>
         }
       />

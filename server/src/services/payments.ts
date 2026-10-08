@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { encryptSecret } from "../lib/secrets.js";
+import { SETTING, getSetting } from "../lib/settings.js";
 import type { Invoice } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { createPaymentLink, paystackConfigured, verifyTransaction, toMinor } from "../lib/paystack.js";
@@ -110,7 +111,7 @@ export async function raisePayment(invoiceId: string, rail: Rail, options: { cal
       amount,
       currency: invoice.currency,
       reference,
-      callbackUrl: options.callbackUrl ?? `${base}/invoices`,
+      callbackUrl: options.callbackUrl ?? (await getSetting(SETTING.PAYSTACK_CALLBACK_URL)) ?? `${base}/invoices`,
       metadata: { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber },
     });
     url = link.url;

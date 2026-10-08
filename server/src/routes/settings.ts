@@ -221,6 +221,15 @@ async function describeAll(req: Request) {
           live: isEnvManaged(SETTING.PAYSTACK_SECRET_KEY),
           test: isEnvManaged(SETTING.PAYSTACK_TEST_SECRET_KEY),
         },
+        // Public keys are not secret, so they are shown whole.
+        publicKeys: {
+          live: await getSetting(SETTING.PAYSTACK_LIVE_PUBLIC_KEY),
+          test: await getSetting(SETTING.PAYSTACK_TEST_PUBLIC_KEY),
+        },
+        // A payment that names its own return page uses that; this is the rest.
+        callbackUrl: (await getSetting(SETTING.PAYSTACK_CALLBACK_URL)) ?? `${origin(req, appUrl)}/invoices`,
+        callbackCustom: Boolean(await getSetting(SETTING.PAYSTACK_CALLBACK_URL)),
+        callbackEnvManaged: isEnvManaged(SETTING.PAYSTACK_CALLBACK_URL),
         webhookUrl: `${origin(req, appUrl)}/api/webhooks/paystack`,
       };
     })(),
@@ -2221,13 +2230,50 @@ const PAYSTACK_SLOT: Record<PaystackMode, string> = {
   live: SETTING.PAYSTACK_SECRET_KEY,
   test: SETTING.PAYSTACK_TEST_SECRET_KEY,
 };
+const PAYSTACK_PUBLIC_SLOT: Record<PaystackMode, string> = {
+  live: SETTING.PAYSTACK_LIVE_PUBLIC_KEY,
+  test: SETTING.PAYSTACK_TEST_PUBLIC_KEY,
+};
 
 // The key's own prefix decides which slot it goes in, so there is nothing to
 // pick and no way to file a live key as the test one.
 settingsRouter.put("/paystack", async (req, res, next) => {
   try {
-    const { secretKey } = z.object({ secretKey: z.string().min(10, "That doesn't look like a Paystack secret key") }).parse(req.body);
-    const key = secretKey.trim();
+    // Any of the three may be sent alone: a secret key, a public key, the
+    // default callback URL. Each is checked before anything is stored.
+    const body = z.object({
+      secretKey: z.string().trim().optional(),
+      publicKey: z.string().trim().optional(),
+      callbackUrl: z.string().trim().optional(),
+    }).parse(req.body);
+    const publicKey = body.publicKey || null;
+    if (publicKey && !/^pk_(test|live)_[A-Za-z0-9]+$/.test(publicKey)) {
+      return res.status(400).json({ error: "A Paystack public key starts with pk_test_ or pk_live_." });
+    }
+    const publicMode: PaystackMode | null = publicKey ? (publicKey.startsWith("pk_live_") ? "live" : "test") : null;
+    if (body.secretKey && publicMode && !body.secretKey.startsWith(`sk_${publicMode}_`)) {
+      return res.status(400).json({ error: "The secret and public keys are from different modes. Paste both from the same tab of the Paystack dashboard." });
+    }
+    if (body.callbackUrl !== undefined && body.callbackUrl !== "") {
+      let parsed: URL;
+      try { parsed = new URL(body.callbackUrl); } catch { return res.status(400).json({ error: "The callback URL isn't a valid address." }); }
+      if (parsed.protocol !== "https:" && process.env.NODE_ENV === "production") return res.status(400).json({ error: "The callback URL must use https." });
+    }
+    if (publicMode && guardEnv(PAYSTACK_PUBLIC_SLOT[publicMode], `The Paystack ${publicMode} public key`, res)) return;
+    if (body.callbackUrl !== undefined && guardEnv(SETTING.PAYSTACK_CALLBACK_URL, "The Paystack callback URL", res)) return;
+
+    if (!body.secretKey) {
+      if (!publicKey && body.callbackUrl === undefined) return res.status(400).json({ error: "Nothing to save." });
+      if (publicMode && publicKey) await setSetting(PAYSTACK_PUBLIC_SLOT[publicMode], publicKey);
+      if (body.callbackUrl !== undefined) {
+        if (body.callbackUrl) await setSetting(SETTING.PAYSTACK_CALLBACK_URL, body.callbackUrl);
+        else await deleteSetting(SETTING.PAYSTACK_CALLBACK_URL);
+      }
+      return res.json(await describeAll(req));
+    }
+
+    const key = body.secretKey;
+    if (key.length < 10) return res.status(400).json({ error: "That doesn't look like a Paystack secret key" });
     const mode: PaystackMode = key.startsWith("sk_live_") ? "live" : "test";
     if (guardEnv(PAYSTACK_SLOT[mode], `The Paystack ${mode} key`, res)) return;
 
@@ -2248,6 +2294,11 @@ settingsRouter.put("/paystack", async (req, res, next) => {
     }
 
     await setSetting(PAYSTACK_SLOT[mode], key, { secret: true });
+    if (publicKey) await setSetting(PAYSTACK_PUBLIC_SLOT[mode], publicKey);
+    if (body.callbackUrl !== undefined) {
+      if (body.callbackUrl) await setSetting(SETTING.PAYSTACK_CALLBACK_URL, body.callbackUrl);
+      else await deleteSetting(SETTING.PAYSTACK_CALLBACK_URL);
+    }
     res.json(await describeAll(req));
   } catch (err) {
     next(err);
@@ -2277,6 +2328,7 @@ settingsRouter.delete("/paystack", async (req, res, next) => {
     if (!(await getSetting(target))?.startsWith(`sk_${mode}_`)) return res.json(await describeAll(req));
     if (guardEnv(target, `The Paystack ${mode} key`, res)) return;
     await deleteSetting(target);
+    if (!isEnvManaged(PAYSTACK_PUBLIC_SLOT[mode])) await deleteSetting(PAYSTACK_PUBLIC_SLOT[mode]);
     res.json(await describeAll(req));
   } catch (err) {
     next(err);

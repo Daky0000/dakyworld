@@ -57,6 +57,13 @@ export async function paystackMode(): Promise<PaystackMode | null> {
   return keys.live ? "live" : keys.test ? "test" : null;
 }
 
+/** The public key for the active mode, or null. Safe to hand to a browser. */
+export async function paystackPublicKey(): Promise<string | null> {
+  const mode = await paystackMode();
+  if (!mode) return null;
+  return getSetting(mode === "live" ? SETTING.PAYSTACK_LIVE_PUBLIC_KEY : SETTING.PAYSTACK_TEST_PUBLIC_KEY);
+}
+
 export async function paystackConfigured(): Promise<boolean> {
   return (await paystackMode()) !== null;
 }
