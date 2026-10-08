@@ -648,8 +648,11 @@
           acceptedQuote = null;
           if (consent) consent.checked = false;
           var msg = error.message || 'An unexpected error occurred.';
+          var isSslError = /ssl|tlsv1|eproto|alert number|routines/i.test(msg);
           var unavailable = /unauthor|not found|answered 404|answered 401|offline|fetch/i.test(msg);
-          if (unavailable) {
+          if (isSslError) {
+            setStatus('We could not securely reach that website address. Check that the domain is typed correctly, or continue with setup after payment.', 'error');
+          } else if (unavailable) {
             setStatus('Online checkout is temporarily unavailable. Contact info@dakyx.com or call +233 545 950 611 for direct setup.', 'error');
           } else {
             setStatus(msg, 'error');

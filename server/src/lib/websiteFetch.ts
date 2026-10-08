@@ -25,8 +25,25 @@ export async function resolveWebsiteAddress(url: URL, allowLoopback = false, res
   return addresses[0]!;
 }
 
-/** Pin DNS for each request and revalidate every redirect; never forward a session. */
-export async function fetchWebsiteText(address: string): Promise<string> {
+function createPinnedLookup(pinned: Address) {
+  return (_hostname: string, optionsOrCallback: unknown, maybeDone?: unknown) => {
+    const done = (typeof optionsOrCallback === "function" ? optionsOrCallback : maybeDone) as (err: Error | null, ...args: any[]) => void;
+    const isAll = typeof optionsOrCallback === "object" && optionsOrCallback !== null && Boolean((optionsOrCallback as { all?: boolean }).all);
+    if (isAll) done(null, [pinned]);
+    else done(null, pinned.address, pinned.family);
+  };
+}
+
+export function isTlsOrConnectionError(error: unknown): boolean {
+  const msg = ((error as Error)?.message || "").toLowerCase();
+  const code = ((error as { code?: string })?.code || "").toLowerCase();
+  return (
+    /ssl|tls|eproto|cert|handshake|alert number|routines|wrong version number/i.test(msg) ||
+    /err_ssl|eproto|econnreset|econnrefused|etimedout/i.test(code)
+  );
+}
+
+async function executeFetchWebsiteText(address: string): Promise<string> {
   const allowLoopback = process.env.NODE_ENV === "development" && process.env.DEV_NO_AUTH === "true";
   const signal = AbortSignal.timeout(20_000);
   let url = new URL(address);
@@ -37,10 +54,7 @@ export async function fetchWebsiteText(address: string): Promise<string> {
       const request = (url.protocol === "https:" ? https : http).request(url, {
         signal, method: "GET", headers: { "User-Agent": "DakyXTech-OS-Editor", "Accept-Encoding": "identity" },
         // Keep the original hostname for Host/TLS, but connect only to the vetted IP.
-        lookup: (_hostname, options, done) => {
-          if ((options as { all?: boolean }).all) (done as any)(null, [pinned]);
-          else done(null, pinned.address, pinned.family);
-        },
+        lookup: createPinnedLookup(pinned),
       }, response => {
         const status = response.statusCode ?? 0;
         if ([301, 302, 303, 307, 308].includes(status) && response.headers.location) {
@@ -66,8 +80,23 @@ export async function fetchWebsiteText(address: string): Promise<string> {
   throw new Error("The website redirected too many times.");
 }
 
-/** A bounded, DNS-pinned availability probe. Redirects are vetted anew. */
-export async function probeWebsiteUrl(address: string): Promise<{ statusCode: number; finalUrl: string }> {
+/** Pin DNS for each request and revalidate every redirect; never forward a session. Falls back to HTTP if HTTPS TLS handshake fails. */
+export async function fetchWebsiteText(address: string): Promise<string> {
+  try {
+    return await executeFetchWebsiteText(address);
+  } catch (error) {
+    if (/^https:\/\//i.test(address) && isTlsOrConnectionError(error)) {
+      try {
+        return await executeFetchWebsiteText(address.replace(/^https:\/\//i, "http://"));
+      } catch {
+        throw error;
+      }
+    }
+    throw error;
+  }
+}
+
+async function executeProbeWebsiteUrl(address: string): Promise<{ statusCode: number; finalUrl: string }> {
   const signal = AbortSignal.timeout(8_000);
   let url = new URL(address);
   for (let hop = 0; hop <= 5; hop++) {
@@ -77,10 +106,7 @@ export async function probeWebsiteUrl(address: string): Promise<{ statusCode: nu
         signal,
         method: "GET",
         headers: { "User-Agent": "DakyXTech-OS-UptimeMonitor/1.0", "Accept-Encoding": "identity" },
-        lookup: (_hostname, options, done) => {
-          if ((options as { all?: boolean }).all) (done as any)(null, [pinned]);
-          else done(null, pinned.address, pinned.family);
-        },
+        lookup: createPinnedLookup(pinned),
       }, response => {
         const statusCode = response.statusCode ?? 0;
         const location = response.headers.location;
@@ -99,6 +125,22 @@ export async function probeWebsiteUrl(address: string): Promise<{ statusCode: nu
   throw new Error("The website redirected too many times.");
 }
 
+/** A bounded, DNS-pinned availability probe. Redirects are vetted anew. Falls back to HTTP if HTTPS fails TLS. */
+export async function probeWebsiteUrl(address: string): Promise<{ statusCode: number; finalUrl: string }> {
+  try {
+    return await executeProbeWebsiteUrl(address);
+  } catch (error) {
+    if (/^https:\/\//i.test(address) && isTlsOrConnectionError(error)) {
+      try {
+        return await executeProbeWebsiteUrl(address.replace(/^https:\/\//i, "http://"));
+      } catch {
+        throw error;
+      }
+    }
+    throw error;
+  }
+}
+
 /** Download a public image without allowing DNS rebinding, private redirects or unbounded bodies. */
 export async function fetchWebsiteBytes(address: string, maxBytes: number): Promise<Buffer> {
   const signal = AbortSignal.timeout(20_000);
@@ -108,10 +150,7 @@ export async function fetchWebsiteBytes(address: string, maxBytes: number): Prom
     const result = await new Promise<{ location?: string; bytes?: Buffer }>((resolve, reject) => {
       const request = (url.protocol === "https:" ? https : http).request(url, {
         signal, method: "GET", headers: { "User-Agent": "DakyXTech-OS-Editor", "Accept-Encoding": "identity" },
-        lookup: (_hostname, options, done) => {
-          if ((options as { all?: boolean }).all) (done as any)(null, [pinned]);
-          else done(null, pinned.address, pinned.family);
-        },
+        lookup: createPinnedLookup(pinned),
       }, response => {
         const status = response.statusCode ?? 0;
         if ([301, 302, 303, 307, 308].includes(status) && response.headers.location) {

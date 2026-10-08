@@ -19,7 +19,17 @@ export const WEBSITE_TIERS = {
 } as const;
 
 export async function assessPurchaseCompatibility(websiteUrl: string) {
-  const html = await fetchWebsiteText(websiteUrl).catch(error => { throw new WebsiteError(422, `We could not read that website before payment. ${(error as Error).message}`); });
+  let html = "";
+  try {
+    html = await fetchWebsiteText(websiteUrl);
+  } catch (_error) {
+    // If the public page cannot be read before payment (site down, new domain, SSL misconfigured, etc.),
+    // do not block the purchase. Our team and setup wizard connect the domain and repository during setup.
+    return {
+      status: "COMPATIBLE_WITH_LIMITATIONS",
+      notes: "The website could not be previewed right now. Our setup wizard and team will help connect your site and repository after payment.",
+    };
+  }
   const lower = html.toLowerCase();
   if (/wp-content|wp-includes|name=["']generator["'][^>]+wordpress/.test(lower)) return { status: "NOT_SUPPORTED", notes: "WordPress uses its own editing and publishing model." };
   if (/cdn\.shopify\.com|shopify\.theme|myshopify\.com/.test(lower)) return { status: "NOT_SUPPORTED", notes: "Shopify themes use Shopify's own editing and publishing model." };
@@ -35,7 +45,11 @@ export async function inspectPublicWebsite(rawUrl: string) {
     normalizedUrl = `https://${normalizedUrl}`;
   }
   const html = await fetchWebsiteText(normalizedUrl).catch((error) => {
-    throw new WebsiteError(422, `Could not reach ${normalizedUrl}: ${(error as Error).message}`);
+    const detail = (error as Error).message || "";
+    const cleanMsg = /ssl|tls|alert number|eproto/i.test(detail)
+      ? "The website's SSL certificate or HTTPS connection could not be established."
+      : detail;
+    throw new WebsiteError(422, `Could not reach ${normalizedUrl}: ${cleanMsg}`);
   });
   const lower = html.toLowerCase();
   let status: "COMPATIBLE" | "COMPATIBLE_WITH_LIMITATIONS" | "NOT_SUPPORTED" = "COMPATIBLE";
