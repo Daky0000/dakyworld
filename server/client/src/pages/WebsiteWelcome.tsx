@@ -14,7 +14,17 @@ export function WebsiteWelcome() {
   const sites = useWebsiteSites();
   useEffect(() => setPageTitle("Welcome"), []);
 
-  if (sites.isLoading) return <p className="text-sm text-muted" role="status">Loading…</p>;
+  if (sites.isLoading) return <p className="p-12 text-center text-sm text-muted" role="status">Loading…</p>;
   if ((sites.data?.length ?? 0) > 0) return <Navigate to="/website/sites" replace />;
-  return <WebsiteWelcomeFlow />;
+  // The layout gives this screen the whole window (no sidebar), so it brings
+  // its own scrolling and centres the flow in it.
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="flex min-h-full items-center justify-center px-4 py-8">
+        <div className="w-full">
+          <WebsiteWelcomeFlow />
+        </div>
+      </div>
+    </div>
+  );
 }

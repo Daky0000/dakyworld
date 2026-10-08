@@ -1,11 +1,10 @@
 import { useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { Badge, Button } from "../components/ui";
 import { useWebsiteSites } from "../components/WebsiteGuard";
-import { WebsiteSubscriberOnboarding } from "../components/WebsiteSubscriberOnboarding";
 
 /**
  * Getting a client's website ready, in the order it has to happen.
@@ -50,29 +49,9 @@ export function WebsiteOnboarding() {
   const [note, setNote] = useState("");
   const [handedOver, setHandedOver] = useState(false);
 
-  if (sites.isLoading) {
-    return (
-      <div className="mx-auto max-w-4xl p-12 text-center text-sm text-muted">
-        Loading subscriber onboarding…
-      </div>
-    );
-  }
-
-  if (sites.isSuccess && (!sites.data || sites.data.length === 0)) {
-    return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="font-display text-xl tracking-[-.02em]">Subscriber Onboarding</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted">
-            Connect your website and jump directly into the visual website builder.
-          </p>
-        </div>
-        <WebsiteSubscriberOnboarding />
-      </div>
-    );
-  }
-
   const siteId = params.get("site") ?? sites.data?.[0]?.id ?? "";
+  // Hooks first, every render: they used to sit below the two early returns,
+  // which is a different number of hooks once the site list arrives.
   const onboarding = useQuery({
     queryKey: ["website", "onboarding", siteId],
     enabled: Boolean(siteId),
@@ -83,6 +62,16 @@ export function WebsiteOnboarding() {
     mutationFn: () => api.post(`/website/sites/${siteId}/onboarding/handover`, { note }),
     onSuccess: () => setHandedOver(true),
   });
+
+  if (sites.isLoading) {
+    return <p className="p-12 text-center text-sm text-muted" role="status">Loading…</p>;
+  }
+
+  // Nobody has a website to get ready yet: that is the first-visit welcome,
+  // not this checklist.
+  if (sites.isSuccess && (!sites.data || sites.data.length === 0)) {
+    return <Navigate to="/website/welcome" replace />;
+  }
 
   const done = onboarding.data?.steps.filter((step) => step.state === "done").length ?? 0;
   const total = onboarding.data?.steps.length ?? 0;

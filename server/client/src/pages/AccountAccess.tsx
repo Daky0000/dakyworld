@@ -65,8 +65,10 @@ export function SetPassword({ kind }: { kind: "SET_PASSWORD" | "PASSWORD_RESET" 
     setBusy(true);
     try {
       await api.post("/auth/password/token", { token, password, kind });
-      // Signed in by the same request, so go straight to the onboarding or home.
-      window.location.href = isOnboarding ? "/website/onboarding" : "/";
+      // Signed in by the same request, so go straight on. A new customer lands
+      // on the welcome flow (/website/welcome), which sends anybody who already
+      // has a website to their pages; /website/onboarding is the staff checklist.
+      window.location.href = isOnboarding ? "/website/welcome" : "/";
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);

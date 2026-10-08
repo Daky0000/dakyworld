@@ -170,7 +170,9 @@ export function Layout() {
   const visibleGroups = groups.map(group => ({ ...group, items: group.items.filter(item => `${group.title} ${item.label}`.toLowerCase().includes(filter.toLowerCase())) })).filter(group => group.items.length);
   const current = groups.flatMap(group => group.items).filter(item => item.to === "/" ? location.pathname === "/" : location.pathname.startsWith(item.to)).sort((a, b) => b.to.length - a.to.length)[0];
   const screenName = current?.label ?? SCREEN_NAMES.find(([pattern]) => pattern.test(location.pathname))?.[1] ?? null;
-  const fullBleed = /^\/website\/pages\//.test(location.pathname);
+  // The editor takes the whole window, and so does the first-visit welcome:
+  // it is a single focused task, drawn as its own screen (WebsiteWelcome).
+  const fullBleed = /^\/website\/pages\//.test(location.pathname) || /^\/website\/welcome\/?$/.test(location.pathname);
   // The editor names its own tab after the page being edited.
   useEffect(() => { if (!fullBleed) setPageTitle(screenName); }, [screenName, fullBleed]);
   if (fullBleed) return <main className="os-app flex h-screen flex-col overflow-hidden bg-cream text-ink"><Suspense fallback={<Loading />}><Outlet /></Suspense></main>;
