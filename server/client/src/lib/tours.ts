@@ -120,7 +120,7 @@ export const TOURS: Record<TourId, Tour> = {
         target: '[data-tour="more"]',
         side: "right",
         title: "Your tools live here",
-        body: "Add sections, browse layers, set the page's colours and fonts, swap pictures, tune SEO and growth tools, leave notes, open History, and find the other tours under Help.",
+        body: "Browse layers, set the page's colours and fonts, swap pictures, tune SEO and growth tools, leave notes, open History, and find the other tours under Help.",
       },
       {
         id: "rightclick",

@@ -34,7 +34,7 @@ import { extractColorsFromMarkup } from "../lib/pageColors";
 import { INSPECTED_PROPERTIES, toHex, type ElementFacts } from "../lib/elementInspector";
 import { WebsiteLayers, WebsiteBreadcrumbs } from "../components/WebsiteLayers";
 import { WebsiteVersions } from "../components/WebsiteVersions";
-import { WebsiteNotesPanel, WebsiteSectionsPanel } from "../components/WebsiteDrawerPanels";
+import { WebsiteNotesPanel } from "../components/WebsiteDrawerPanels";
 
 import { WebsiteAssistant } from "../components/WebsiteAssistant";
 import { WebsiteAgentChat } from "../components/WebsiteAgentChat";
@@ -129,7 +129,6 @@ const WebsiteFindReplaceModal = lazy(() => import("../components/WebsiteFindRepl
 const WebsiteClientReportModal = lazy(() => import("../components/WebsiteCommandAndSections").then(module => ({ default: module.WebsiteClientReportModal })));
 const WebsiteCommandPaletteModal = lazy(() => import("../components/WebsiteCommandAndSections").then(module => ({ default: module.WebsiteCommandPaletteModal })));
 const WebsiteRevisionCommentsModal = lazy(() => import("../components/WebsiteCommandAndSections").then(module => ({ default: module.WebsiteRevisionCommentsModal })));
-const WebsiteSectionLibraryModal = lazy(() => import("../components/WebsiteCommandAndSections").then(module => ({ default: module.WebsiteSectionLibraryModal })));
 
 const DEVICES = [
   { key: "desktop", label: "Desktop", width: "1280px" },
@@ -156,9 +155,9 @@ const MODES: { key: Mode; label: string }[] = [
 ];
 
 /** The drawers the tool rail opens. One at a time: the page is what matters. */
-type EditorPanel = "add" | "layers" | "theme" | "media" | "seo" | "grow" | "notes" | "history" | "help";
+type EditorPanel = "layers" | "theme" | "media" | "seo" | "grow" | "notes" | "history" | "help";
 
-const RAIL: { key: Exclude<EditorPanel, "help" | "add" | "notes" | "history">; label: string; title: string; icon: typeof IconLayers }[] = [
+const RAIL: { key: Exclude<EditorPanel, "help" | "notes" | "history">; label: string; title: string; icon: typeof IconLayers }[] = [
   { key: "layers", label: "Layers", title: "Everything on this page, in order", icon: IconLayers },
   { key: "theme", label: "Theme", title: "Colours and fonts for the whole page", icon: IconPalette },
   { key: "media", label: "Media", title: "Pictures and files", icon: IconImage },
@@ -167,7 +166,6 @@ const RAIL: { key: Exclude<EditorPanel, "help" | "add" | "notes" | "history">; l
 ];
 
 const RAIL_TITLES: Record<EditorPanel, { title: string; sub: string }> = {
-  add: { title: "Add", sub: "Drop in a ready-made section" },
   notes: { title: "Notes", sub: "Revision notes for this page" },
   history: { title: "History", sub: "Restore any earlier version" },
   layers: { title: "Layers", sub: "Everything on this page, in order. Click one to select it." },
@@ -225,7 +223,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   });
   const uiState = useUiState();
   const [helpOpen, setHelpOpen] = useState(false);
-  const [sectionLibraryOpen, setSectionLibraryOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commentsModalOpen, setCommentsModalOpen] = useState(false);
   const [clientReportOpen, setClientReportOpen] = useState(false);
@@ -2410,17 +2407,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} context={page.data?.page.title} />
       {site && (
         <>
-          <DeferredPanel active={sectionLibraryOpen}><WebsiteSectionLibraryModal
-            open={sectionLibraryOpen}
-            onClose={() => setSectionLibraryOpen(false)}
-            siteId={site.id}
-            pageId={pageId}
-            onInserted={(label) => {
-              dirty.current = false;
-              setPreviewToken((token) => token + 1);
-              showQuickToast(`Inserted section: ${label}`);
-            }}
-          /></DeferredPanel>
           <DeferredPanel active={commentsModalOpen}><WebsiteRevisionCommentsModal
             open={commentsModalOpen}
             onClose={() => setCommentsModalOpen(false)}
@@ -2462,7 +2448,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           setMode("visual");
           setPanel("seo");
         }}
-        onOpenSectionLibrary={() => openPanel("add")}
         onOpenAiAssistant={() => setShowAI(true)}
         onSetDevice={(dev) => setDevice(dev)}
         onToggleTheme={() => {
@@ -2932,11 +2917,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       <div className={`dx-body${mode === "preview" ? " is-preview" : ""}`}>
         {mode !== "preview" && (
           <nav className="dx-rail" aria-label="Tools" data-tour="more">
-            {canEdit && !readOnly && (
-              <button type="button" title="Add a ready-made section" aria-label="Add a section" aria-pressed={panel === "add"} onClick={() => openPanel("add")}>
-                <IconPlusSquare size={18} />Add
-              </button>
-            )}
             {RAIL.map((item) => (
               <button
                 key={item.key}
@@ -3024,18 +3004,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               {(panel === "seo" || panel === "grow") && (tierStatus?.features && !tierStatus.features.seoInspector
                 ? lockedNotice(panel === "seo" ? "Page SEO and structured data" : "Speed, uptime and lead tools", tierStatus)
                 : seoPanel(panel))}
-              {panel === "add" && (
-                <WebsiteSectionsPanel
-                  siteId={site.id}
-                  pageId={pageId}
-                  disabled={readOnly}
-                  onInserted={(label) => {
-                    dirty.current = false;
-                    setPreviewToken((token) => token + 1);
-                    showQuickToast(`${label} inserted`);
-                  }}
-                />
-              )}
               {panel === "notes" && (
                 <WebsiteNotesPanel
                   siteId={site.id}
@@ -3891,7 +3859,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           return (
             <div role="menu" aria-label="Page actions" style={{ top: contextMenu.y, left: contextMenu.x }} onClick={(e) => e.stopPropagation()} className="dx-pop dx-ctx" >
               <div className="dx-pop-pad"><b>Page</b></div>
-              {!readOnly && <button type="button" role="menuitem" className="dx-row" onClick={() => { close(); setPanel("add"); }}><IconPlusSquare size={15} /><span>Add a section</span></button>}
               <button type="button" role="menuitem" className="dx-row" onClick={() => { close(); setPanel("notes"); }}><IconMessageSquare size={15} /><span>Add a note</span></button>
               <button type="button" role="menuitem" className="dx-row" onClick={() => { close(); setPanel("seo"); }}><IconTarget size={15} /><span>Page SEO</span></button>
             </div>

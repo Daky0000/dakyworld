@@ -240,7 +240,6 @@ export function WebsiteCommandPaletteModal({
   fields,
   onSelectField,
   onOpenSeoTab,
-  onOpenSectionLibrary,
   onOpenAiAssistant,
   onSetDevice,
   onToggleTheme,
@@ -251,7 +250,6 @@ export function WebsiteCommandPaletteModal({
   fields: CommandPaletteFieldItem[];
   onSelectField: (fieldId: string) => void;
   onOpenSeoTab: () => void;
-  onOpenSectionLibrary: () => void;
   onOpenAiAssistant: () => void;
   onSetDevice: (device: "desktop" | "tablet" | "mobile") => void;
   onToggleTheme: () => void;
@@ -269,16 +267,6 @@ export function WebsiteCommandPaletteModal({
 
   const actions = useMemo(
     () => [
-      {
-        id: "act-insert-section",
-        title: "Insert Pre-Built Section (Hero, Pricing, FAQ, CTA…)",
-        category: "Builder",
-        icon: IconPlusSquare,
-        run: () => {
-          onClose();
-          onOpenSectionLibrary();
-        },
-      },
       {
         id: "act-open-seo",
         title: "Open Page SEO, Google/Social Previews & Schema",
@@ -352,7 +340,6 @@ export function WebsiteCommandPaletteModal({
     ],
     [
       onClose,
-      onOpenSectionLibrary,
       onOpenSeoTab,
       onOpenAiAssistant,
       onOpenPublishReview,
