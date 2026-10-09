@@ -170,10 +170,13 @@ prompts, the synthesis and the audit Markdown.
 
 **Effort is a quality decision and it was set wrong.** The cold email — the
 shortest, most-read thing the company produces — was drafted at `medium` while a
-proposal and a demo page were at `high`. Both email stages are `high` now, and
-the agent runner picks by *what the work is* rather than by tier alone
-(`WRITES_FOR_OUTSIDE` in `agents/runner.ts`): a judgement or a piece of writing
-that leaves the building gets high, reading a record and filing a task does not.
+proposal and a demo page were at `high`. Both email stages are `high` now. The
+agent runner used to hold every agent in `WRITES_FOR_OUTSIDE` at high as a
+**floor**; on 9 Oct 2026 the founder chose to let task sizing decide instead, so
+the list is now one signal in `scoreTask()` (`agents/complexity.ts`) and a short
+follow-up can run on a small model. **If cold email starts reading generic
+again, set `OUTSIDE_WRITING_FLOOR = "standard"` in complexity.ts** — that one
+line puts the floor back.
 
 **The playbook guides; it does not dictate.** The scenarios say what a letter
 must establish and how small the ask should be. `subjectExamples` and

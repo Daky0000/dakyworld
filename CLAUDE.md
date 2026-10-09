@@ -107,7 +107,7 @@ one is dense and every paragraph in it was paid for by a defect.
 | IMAP, the mailbox, demo landing pages, the four-reviewer audit team | [06-mailroom-demos-audits.md](docs/claude/06-mailroom-demos-audits.md) |
 | Agent tasks, the loop, workflow tools, hiring, Slack, escalations, memory, prompt structure, state | [07-agent-runtime.md](docs/claude/07-agent-runtime.md) |
 | Rehearsals | [08-rehearsal-room.md](docs/claude/08-rehearsal-room.md) |
-| Spend, ceilings, `warn → downgrade → approve → pause`, effort, model tiers | [09-costs-effort-and-tiers.md](docs/claude/09-costs-effort-and-tiers.md) |
+| Spend, ceilings, `warn → downgrade → approve → pause`, effort, model tiers, agent task levels (simple/standard/complex) | [09-costs-effort-and-tiers.md](docs/claude/09-costs-effort-and-tiers.md) |
 | Lead sheets, plans, `repairPlan`, worksheets, tags on import, workbooks | [10-lead-sheets-and-imports.md](docs/claude/10-lead-sheets-and-imports.md) |
 | The React client, Prisma, encrypted keys, company details, lead tags, lists, actor choice | [11-client-data-and-actors.md](docs/claude/11-client-data-and-actors.md) |
 | `DEV_NO_AUTH`, permissions as data, access roles, SECURITY.md | [12-auth-and-access.md](docs/claude/12-auth-and-access.md) |

@@ -105,3 +105,44 @@ which is the safe direction for a ceiling and a terrible place to find a typo.
 added later and not thought about costs too much rather than quietly being done
 badly.
 
+**An agent task has a level as well** — `services/agents/complexity.ts`, 9 Oct
+2026. The router sits between a claimed task and `runAgentLoop` and sizes it
+simple, standard or complex; the level picks the paid model on every vendor of
+the floor (`TIER_MODELS` in registry.ts) and the effort with it. Free NVIDIA
+rungs still serve first. Four stages, first answer wins:
+
+1. **Fixed answers.** `AgentTask.levelOverride` (the Owner's call, per task, from
+   the give-task form or the task drawer — `POST /agents/tasks/:id/level`). A
+   **resume reuses the stored `level`** — one conversation is not split across two
+   judgements, and a model change is a cache miss. A run claimed from **FAILED**
+   comes back **one level up** (`claim.from` in the runner); a pause for a busy
+   vendor does not, because that was never the model's fault.
+2. **`scoreTask()`**, pure: agent tier, origin (schedule and delegated −1), the
+   tools the brief points at (`likelyTools` — a build or judgement tool +2,
+   reading only −1), brief length, wording cues (capped ±2; "care plan" is a
+   product and never counts as "plan"), `WRITES_FOR_OUTSIDE` +1, linked
+   proposal/project +1. Below zero simple, 0–3 standard, 4+ complex. **A task
+   with nothing to say about it is standard** — the same rule as a job with no
+   tier.
+3. **A free look**, only on a boundary score (−1, 0, 3, 4) and only in mode
+   `full`: one `callModel({ job: "routing", provider: "nvidia" })`, answer
+   clamped to one step from the rules, 15 s timeout, any failure keeps the rules'
+   answer. **Pinned to NVIDIA and declared by NVIDIA alone** — sizing on a paid
+   model would be paying to decide how much to pay, and an unpinned call would
+   also land on the turn-scripted Claude fakes in `checks/commissionedRun.ts`.
+   No NVIDIA key, no look.
+4. **The budget.** Downgrade or approve band ⇒ at most standard, over the
+   Owner's override too (the ceiling is theirs as well). `easeOff` still lowers
+   one level, once, between turns.
+
+Resolution of a slot (`tierSlot`): `models.tierModels` (priced ids only, like
+`models.jobModels`) → the model the Owner had already set for that vendor
+(`anthropic.model` = complex, `anthropic.model.economy` = standard,
+`<vendor>.model` = standard) → `TIER_MODELS`. **`agents.routing`** is the mode:
+`full` (unset), `rules`, or `off` — off is the rollback with no deploy and puts
+every model back on `legacyEffort(agent)`, the old rank-based answer, and writes
+no level. The runner writes `level`/`levelReason`/`levelSource` and a `ROUTED`
+step; the Costs screen splits agent spend by level (`levelSpend`). Settings → AI
+models → Task levels edits the 3×3 grid and the mode. Held by
+`checks/taskRouting.ts`, which asserts each vendor's request body on its own.
+

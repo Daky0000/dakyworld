@@ -344,16 +344,19 @@ spent it.
   reducing the *constant weight* of a prompt — see the tool pruning under the
   agent runtime — is the only lever that helps there.
 
-**An agent turn is priced by what the work is, not by what an agent is.**
-`modelForEffort()` sends `low` and `medium` to `MODEL_ECONOMY` (Sonnet 5,
-overridable at `anthropic.model.economy`) and everything above it to the
-headline model. The split follows `effortFor()` in the runner: whoever writes to
-somebody outside the company, and whoever sits on the board, keeps the expensive
-model; a sub-agent reading a record or checking a link does not. Paying Opus
-rates for the second was never a decision anybody made — it was `defaultModel()`
-being the only answer the loop knew. **Named the cheap way round on purpose**: a
-new effort level above `high` defaults to the better model rather than falling
-through to the cheaper one because nobody listed it.
+**An agent turn is priced by what the task is, not by what the agent is** (as
+of 9 Oct 2026). Before a run starts, `services/agents/complexity.ts` sizes the
+task — simple, standard or complex — and the level picks the paid model on
+**all three** vendors of the floor (`TIER_MODELS`: Haiku 4.5 / Sonnet 5 / Opus 5,
+gpt-5.6-luna / terra / sol, Gemini 2.5 Flash / 3.7 Flash / 3.1 Pro) and the
+effort with it (`effortForLevel`: low / medium / high). It used to be
+`effortFor(agent)` — the board and anybody writing to a stranger on Opus,
+everyone else on Sonnet, ChatGPT and Gemini on one model each whatever the task.
+Free NVIDIA rungs still serve first; the level decides who catches the work when
+they cannot. A run started without a level (any caller but the runner, or sizing
+switched off) keeps the old answer exactly: `modelForEffort()` for Claude,
+`providerModel()` for the others. The full story is in
+[09-costs-effort-and-tiers.md](09-costs-effort-and-tiers.md).
 
 **A tool result is not paid for once.** It goes into the conversation and is
 re-sent with every turn after it, so a 16,000-character blob on turn two is
