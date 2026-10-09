@@ -14,13 +14,22 @@ Hosted sites are served at `<hostedSlug>.<WEBSITE_HOST_DOMAIN>`. Until that
 variable is set, a site with no repository still publishes — the HTML is stored
 and the editor works — but there is no address to give the customer.
 
-1. Pick the domain, e.g. `sites.dakyx.com`.
-2. In Cloudflare (or whoever runs DNS for dakyx.com), add a **wildcard**
-   record: `*.sites` → the Railway service. Railway needs the wildcard added as
-   a custom domain on the service so it will answer for it, and it issues the
-   certificate.
-3. Set `WEBSITE_HOST_DOMAIN=sites.dakyx.com` in the Railway service
-   variables.
+1. Pick the domain, and **make it a separate registrable domain, never a
+   subdomain of dakyx.com** (for example `dakyxsites.com`, not
+   `sites.dakyx.com`). Browsers treat every `*.dakyx.com` host as the *same
+   site* as os.dakyx.com. A customer's page there would get the Owner's
+   `SameSite=Lax` session cookie on everything it sends, and could set cookies
+   for the whole of dakyx.com. GitHub hosts user pages on github.io for the
+   same reason. `refuseForeignWrites` (middleware/security.ts, 9 Oct 2026) now
+   blocks the cross-origin writes, but it is a second line of defence, not a
+   reason to share the domain.
+2. In that domain's DNS, add a **wildcard** record: `*` → the Railway
+   service. Railway needs the wildcard added as a custom domain on the service
+   so that it answers for it, and Railway then issues the certificate.
+3. Set `WEBSITE_HOST_DOMAIN=<that domain>` in the Railway service variables.
+4. Sites created before step 3 were given `publicUrl`
+   `https://<slug>.sites.dakyx.com` (the fallback in `websiteManagement.ts`).
+   Rewrite those rows to the chosen domain once it serves.
 
 A customer's own domain then needs, on their side: a `TXT` at
 `_dakyworld.<their domain>` carrying the token the panel shows, and a `CNAME`

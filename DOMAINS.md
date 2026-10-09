@@ -1,5 +1,13 @@
 # Domains
 
+> **Partly out of date.** The company moved to **dakyx.com** on 5 Oct 2026.
+> The current hostnames (dakyx.com on GitHub Pages; os., app. and editor. on
+> Railway) are in [docs/infrastructure/DOMAINS.md](docs/infrastructure/DOMAINS.md).
+> The zone-repair steps below were written for dakyworld.com. The email
+> records and the sender-logo notes still apply, read for dakyx.com. Customer
+> websites must be hosted on a **separate registrable domain**, never under
+> dakyx.com — see `server/docs/website-builder-launch.md`, step 1.
+
 Two domains are served from this one repository, by two different hosts that
 both watch it. They cannot collide, because each host is told its own domain in
 its own place.
