@@ -21,4 +21,30 @@ Disallow: /AGENT_SYSTEM_PLAN.html
 # The checkout. It is a step in a purchase, not a page to arrive at from a search.
 Disallow: /checkout
 
+# AI search and assistant crawlers, named so the welcome is explicit rather
+# than inferred. A crawler that finds a group naming it ignores the * group
+# entirely, which is why the same Disallow lines are repeated here. Being
+# crawled by these is how the site gets cited in ChatGPT search, Claude,
+# Perplexity, Copilot, Gemini and Google AI Overviews. The plain-text brief
+# for them is https://dakyx.com/llms.txt.
+User-agent: OAI-SearchBot
+User-agent: ChatGPT-User
+User-agent: GPTBot
+User-agent: Claude-SearchBot
+User-agent: Claude-User
+User-agent: ClaudeBot
+User-agent: PerplexityBot
+User-agent: Perplexity-User
+User-agent: Google-Extended
+User-agent: Applebot-Extended
+User-agent: Bingbot
+User-agent: DuckAssistBot
+User-agent: MistralAI-User
+User-agent: Meta-ExternalAgent
+Allow: /
+Disallow: /website-drafts/
+Disallow: /admin
+Disallow: /AGENT_SYSTEM_PLAN.html
+Disallow: /checkout
+
 Sitemap: https://dakyx.com/sitemap.xml

@@ -19,7 +19,8 @@
     "links:fix": "node scripts/check-links.mjs --fix",
     "site": "npm run articles && npm run seo && npm run breadcrumbs && npm run links",
     "dev:site": "node scripts/dev-site.mjs",
-    "consent:check": "node scripts/check-consent.mjs"
+    "consent:check": "node scripts/check-consent.mjs",
+    "indexnow": "node scripts/indexnow.mjs"
   },
   "engines": {
     "node": ">=20"

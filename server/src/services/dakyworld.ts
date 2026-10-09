@@ -37,15 +37,15 @@ export const COMPANY = {
   /** The wordmark as it is written in a sentence. */
   displayName: "DakyXTech",
   tagline: "BUILD A BETTER DIGITAL SYSTEM FOR YOUR BUSINESS.",
-  footerLine: "ONE PARTNER. BETTER DIGITAL SYSTEMS.",
+  footerLine: "YOUR TECHNOLOGY TEAM. WITHOUT THE OVERHEAD.",
   /** The same promise where caps would read as shouting — plain-text email. */
-  promise: "One partner. Better digital systems.",
+  promise: "Your technology team. Without the overhead.",
   location: "Kumasi, Ghana",
   email: "info@dakyx.com",
   phone: "+233 545 950 611",
   web: "dakyx.com",
   /** What the company is, in the one sentence the website leads its footer with. */
-  positioning: "Your outsourced digital systems and automation team for growing businesses in Ghana and West Africa.",
+  positioning: "Your external technology team: websites, custom software, automation, AI workflows and integrations, built, managed and improved on clear monthly plans.",
 } as const;
 
 export const VOICE = `How DakyXTech writes:
@@ -140,11 +140,11 @@ export interface BusinessOffer {
 export const SHIPPED_OFFER: BusinessOffer = {
   positioning: COMPANY.positioning,
   summary: [
-    "An outsourced digital systems and automation partner for growing businesses in Ghana and West Africa. Based in Kumasi. The founder is Dan Kwame Ayipah, who writes and signs these himself.",
+    "An external technology team for individuals, small and growing businesses and larger organisations. Based in Kumasi, Ghana, working remotely with clients in Ghana and internationally. The founder is Dan Kwame Ayipah, who writes and signs these himself.",
     "The offer, in one line: one partner for the website, the workflows, the connections between the tools you already pay for, and the people who have to use them.",
-    "Four capabilities, and they are sold as one connected system rather than as four specialisms: websites and web platforms, automation and AI, integrations and business systems, training and consulting.",
+    "Five service families, sold as one coordinated team rather than as five specialisms: websites and digital platforms, software and business systems, business automation and AI, systems integration, technology consulting and training.",
     "Entirely remote, worked through structured communication, calls and screen sharing.",
-    "Most clients arrive through a defined project — usually a website and digital foundation build — and move onto a monthly partnership afterwards when ongoing improvement is worth paying for.",
+    "The main offer is a monthly technology plan with a fixed price and a defined monthly allowance; fixed-scope projects and an Enterprise Technology Partnership (custom quote) are also available.",
   ],
   doesNotDo: [
     "Repair laptops, printers or any physical device.",
@@ -220,24 +220,24 @@ export const SHIPPED_OFFER: BusinessOffer = {
   plans: [
     {
       tier: "Foundation",
-      monthly: 5_000,
-      discountedMonthly: 3_000,
-      discountNote: "GHS 3,000 a month as a Founding Partner rate for the first three months, then GHS 5,000.",
-      for: "Established small businesses that need a stronger digital presence, a clearer enquiry path and steady improvement without hiring an internal team.",
+      monthly: 4_500,
+      discountedMonthly: 3_150,
+      discountNote: "GHS 3,150 a month for a new customer's first three months (30% off), then GHS 4,500.",
+      for: "Essential digital support, one primary website and limited agreed improvements each month.",
     },
     {
       tier: "Growth",
-      monthly: 12_500,
-      discountedMonthly: 7_000,
-      discountNote: "GHS 7,000 a month as a Founding Partner rate for the first three months, then GHS 12,500.",
-      for: "Growing businesses that need the website, customer journey, CRM, automations and internal processes to improve together. The plan most clients choose.",
+      monthly: 12_000,
+      discountedMonthly: 8_400,
+      discountNote: "GHS 8,400 a month for a new customer's first three months (30% off), then GHS 12,000.",
+      for: "Expanded development, automation, integrations and priority support. The plan most clients choose.",
     },
     {
       tier: "Transformation",
-      monthly: 25_000,
-      discountedMonthly: 15_000,
-      discountNote: "From GHS 15,000 a month as a Founding Partner rate for the first three months, then from GHS 25,000.",
-      for: "Larger businesses, institutions and multi-team operations that need a partner to plan, build and keep improving connected systems.",
+      monthly: 28_000,
+      discountedMonthly: 19_600,
+      discountNote: "GHS 19,600 a month for a new customer's first three months (30% off), then GHS 28,000.",
+      for: "Advanced development and integrations, higher capacity and scoped emergency support.",
     },
   ],
   projects: [
@@ -263,9 +263,9 @@ export const SHIPPED_OFFER: BusinessOffer = {
     },
   ],
   offers: [
-    "The Founding Partner programme: the first three suitable businesses get a preferred monthly rate for the first three months of an initial three-month engagement, in return for timely access and feedback. Foundation GHS 3,000 instead of 5,000; Growth GHS 7,000 instead of 12,500; Transformation from GHS 15,000 instead of from 25,000.",
-    "Every engagement gets a written scope, a monthly capacity allocation and agreed priorities. A Founding Partner rate is not an offer of unlimited work.",
-    "Third-party costs — hosting, domains, CRM and automation licences, AI subscriptions, payment fees, advertising — are billed separately unless a written proposal says otherwise.",
+    "Every new customer on a standard plan gets 30% off each of their first three billed months, then pays the regular rate. No minimum term; cancel any time. Foundation GHS 3,150 then 4,500; Growth GHS 8,400 then 12,000; Transformation GHS 19,600 then 28,000. Enterprise Technology Partnership is a custom quote and is not discounted.",
+    "Every plan has a defined monthly allowance that does not roll over. Plans are never unlimited. Extra work is approved before it is charged.",
+    "Hosting and third-party software/API usage are included up to the plan's allowance; advertising spend and payment fees are not.",
   ],
 };
 

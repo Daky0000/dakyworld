@@ -62,7 +62,7 @@
     '    <div class="footer-grid">',
     '      <div>',
     '        <a href="/" class="brand-footer" aria-label="DakyXTech home"><img src="/assets/brand/footer-lockup-on-light.png" alt="DakyXTech" width="400" height="96" loading="lazy" decoding="async"></a>',
-    '        <p class="footer-blurb">DakyXTech is your outsourced digital systems and automation team for growing businesses in Ghana and West Africa. We build, connect and improve the systems that help businesses win customers and operate more efficiently.</p>',
+    '        <p class="footer-blurb">DakyXTech is your external technology team. We build, manage and continuously improve the websites, software, automations, AI workflows and integrations your business depends on.</p>',
     '      </div>',
     '      <div>',
     '        <h3>Explore</h3>',
@@ -95,7 +95,7 @@
     '        <a href="/contact" class="footer-cta">Start a conversation <span aria-hidden="true">&#8594;</span></a>',
     '      </div>',
     '    </div>',
-    '    <div class="footer-bottom"><span>&copy; <span id="year">2026</span> DakyXTech &middot; All rights reserved</span><span>Kumasi &middot; Serving Ghana and West Africa</span><span>One partner. Better digital systems.</span></div>',
+    '    <div class="footer-bottom"><span>&copy; <span id="year">2026</span> DakyXTech &middot; All rights reserved</span><span>Based in Kumasi, Ghana &middot; Working remotely with clients</span><span>Your technology team. Without the overhead.</span></div>',
     '  </div>',
     '</footer>'
   ].join('\n');

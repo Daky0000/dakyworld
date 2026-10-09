@@ -91,7 +91,7 @@
 @media (max-width:560px){.h-sec{padding:52px 0}}
 
 /* SERVICES */
-.h-svc{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.h-svc{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
 .h-card{display:flex;flex-direction:column;gap:14px;padding:22px 20px 24px;border-radius:var(--r-sm);background:var(--soft);border:1px solid transparent;min-height:300px;transition:border-color .2s,background .2s}
 .h-card:hover{background:#fff;border-color:var(--line-2)}
 .h-card .h-ic{width:44px;height:44px;border-radius:12px;background:#fff;border:1px solid var(--line);color:var(--blue);display:grid;place-items:center}
@@ -99,6 +99,7 @@
 .h-card h3{font-size:15px;font-weight:500;letter-spacing:.12em;text-transform:uppercase;line-height:1.5;margin-top:22px}
 .h-card p{color:var(--muted);font-size:15px;line-height:1.55}
 .h-card .h-lnk{margin-top:auto;font-size:14.5px}
+@media (max-width:1240px){.h-svc{grid-template-columns:repeat(3,1fr)}}
 @media (max-width:1000px){.h-svc{grid-template-columns:1fr 1fr}}
 @media (max-width:560px){.h-svc{grid-template-columns:1fr}.h-card{min-height:0}}
 

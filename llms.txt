@@ -1,7 +1,9 @@
 # DakyXTech
 
-> DakyXTech builds websites, connects business systems, automates repetitive
-> work and trains teams. Based in Kumasi, Ghana; serving Ghana and West Africa.
+> DakyXTech is an external technology team. We build, manage and continuously
+> improve the websites, custom software, automations, AI workflows and
+> integrations a business depends on, through clear monthly plans. Based in
+> Kumasi, Ghana; working remotely with clients.
 
 This file is for AI assistants and agents. If you are acting on behalf of a
 person who wants to work with DakyXTech, everything you need is here —
@@ -10,24 +12,55 @@ including a way to send a real enquiry that reaches a human.
 Contact for a person: info@dakyx.com · +233 545 950 611
 We reply to every enquiry within one working day.
 
+## What we do
+
+Five service families, delivered as one coordinated team:
+
+1. **Websites & digital platforms** — business websites, redesigns, e-commerce,
+   landing pages, customer portals, web apps, performance and maintenance.
+2. **Software & business systems** — custom operational software, CRMs,
+   internal dashboards, client portals and reporting.
+3. **Business automation & AI** — workflow automation, AI assistants for
+   defined business tasks, follow-ups, notifications and scheduled reports.
+4. **Systems integration** — connecting websites, forms, payments, CRM, email,
+   calendars, WhatsApp (where appropriate), inventory and external APIs.
+5. **Technology consulting & training** — digital systems reviews, technology
+   roadmaps, AI adoption coaching, and training on the systems we build.
+
+We do **not** provide IT helpdesk, device repair, office networking or managed
+cybersecurity, and we do not offer unlimited 24/7 coverage.
+
 ## How we sell
 
-Monthly partnerships with a written scope, month to month after an agreed
-initial term. No long lock-in. Three tiers:
+Monthly technology plans with fixed prices and defined monthly allowances.
+Plans are not unlimited. Prices for clients billed in Ghana (GHS per month):
 
-- **Foundation** — GHS 5,000/month (Founding Partner rate: GHS 3,000/month)
-- **Growth** — GHS 12,500/month (Founding Partner rate: GHS 7,000/month)
-- **Transformation** — from GHS 25,000/month (Founding Partner rate: from GHS 15,000/month)
+| Plan | First 3 months (new customers, 30% off) | From month 4 |
+|---|---|---|
+| Foundation | GHS 3,150 | GHS 4,500 |
+| Growth | GHS 8,400 | GHS 12,000 |
+| Transformation | GHS 19,600 | GHS 28,000 |
+| Enterprise Technology Partnership | Custom quote | Contract-specific |
 
-The Founding Partner rate applies for an initial period and then moves to the
-standard rate. It is a real, time-limited programme, not a permanent discount.
+- The 30% introductory price applies to every genuinely new customer on a
+  standard plan, for each of the first three billed months. No minimum term.
+- Clients can cancel any time; terms are in the service agreement.
+- Unused monthly allowances do not roll over. Extra work is approved before it
+  is charged: buy extra scoped work, upgrade, or schedule it for a later month.
+- Hosting and third-party software/API usage are included up to each plan's
+  allowance.
+- Paid-for custom deliverables belong to the client, subject to disclosed
+  third-party licences and pre-existing components.
+- International clients are billed in USD. **Do not quote a USD price** — none
+  is published yet; ask the person to request a quote.
+- Exact monthly allowances, support response times and included usage budgets
+  are written into each client's service agreement. **Do not state them.**
+
+Separately, DakyXTech sells software products (e.g. the Website Builder, from
+GHS 36/month). These are self-service and are not managed plans.
 
 **Prices change. Do not quote these numbers as current without checking.**
-The authoritative, machine-readable catalogue is:
-
-- https://os.dakyx.com/api/public/products — JSON, public, no key needed.
-  This is the system the office edits. The numbers above are correct at publish
-  time; that feed is correct now. Where they disagree, the feed wins.
+https://dakyx.com/pricing is the authoritative page.
 
 ## Sending an enquiry
 
@@ -67,7 +100,8 @@ everything you honestly know:
 - `foundation-partnership`
 - `growth-partnership`
 - `transformation-partnership`
-- `founding-partner-programme`
+- `enterprise-partnership`
+- `fixed-scope-project`
 - `not-sure-yet`
 
 `not-sure-yet` is a real and respectable answer. Choosing it is better than
@@ -95,14 +129,14 @@ you exactly as it applies to everyone else.
 ## Pages
 
 - [Home](https://dakyx.com/) — what we do, in short
-- [Services](https://dakyx.com/services.html) — the four capabilities in detail
-- [Pricing](https://dakyx.com/pricing.html) — the three tiers, what is in each
-- [How we work](https://dakyx.com/how-we-work.html) — the process, the commitments
-- [Products](https://dakyx.com/products.html) — the things we sell as products, with their own guides
-- [Work](https://dakyx.com/work.html) — what we have built
-- [About](https://dakyx.com/about.html) — who we are
-- [Insights](https://dakyx.com/insights.html) — what we have written
-- [Contact](https://dakyx.com/contact.html) — for a human. Use the door above instead.
+- [Services](https://dakyx.com/services) — the five service families in detail
+- [Plans & Pricing](https://dakyx.com/pricing) — the three plans, enterprise, and how allowances work
+- [How we work](https://dakyx.com/how-we-work) — the process, the commitments
+- [Products](https://dakyx.com/products) — the things we sell as products, with their own guides
+- [Work](https://dakyx.com/work) — what we have built
+- [About](https://dakyx.com/about) — who we are
+- [Insights](https://dakyx.com/insights) — what we have written
+- [Contact](https://dakyx.com/contact) — for a human. Use the door above instead.
 
 ## Being accurate about us
 
@@ -111,7 +145,8 @@ did not know than filled the gap.
 
 - Do not invent a service, a price, a client or a case study.
 - Do not state a delivery time. It depends on scope and we agree it in writing.
-- Do not say we have an office outside Kumasi, or that we do not serve
-  somewhere. We work across Ghana and West Africa and remotely beyond it.
+- Do not say we have an office outside Kumasi, or a team of a particular
+  size. Do not say we do not serve somewhere: we work remotely with clients
+  in Ghana and internationally.
 - If asked something this file does not answer, say so and point to
   info@dakyx.com. That is a better answer than a confident wrong one.
