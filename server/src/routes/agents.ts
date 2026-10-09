@@ -9,6 +9,8 @@ import { startTheDay } from "../services/agents/startTheDay.js";
 import { authoredInstruction, composePrompt, isBusy, runTask, step } from "../services/agents/runner.js";
 import { historyOf, recordCreated, transition } from "../services/agents/state.js";
 import { isPaused } from "../services/agents/retry.js";
+import { fromStored, toStored } from "../services/agents/complexity.js";
+import { TASK_LEVELS, isTaskLevel } from "../lib/models/registry.js";
 
 import { MAX_ITERATIONS } from "../lib/claudeAgent.js";
 import { clearCheckpoint } from "../services/agents/checkpoint.js";
@@ -80,7 +82,7 @@ agentsRouter.use(
       // Running work is where the money goes, and it is a different decision from
       // rewriting what an agent is told.
       { path: /^\/[^/]+\/tasks$/, method: "POST", permission: "agents.run" },
-      { path: /^\/tasks\/[^/]+\/(run|approve|cancel)$/, permission: "agents.run" },
+      { path: /^\/tasks\/[^/]+\/(run|approve|cancel|level)$/, permission: "agents.run" },
       { path: /^\/memory/, method: ["POST", "PATCH", "DELETE"], permission: "agents.memory" },
       { path: /^\/[^/]+\/memory/, method: ["POST", "PATCH", "DELETE"], permission: "agents.memory" },
       { path: /^\/hiring/, method: ["POST", "PUT"], permission: "agents.hire" },
@@ -1453,6 +1455,10 @@ function taskSummary(task: {
   createdAt: Date;
   retryCount: number;
   retryReason: string | null;
+  level: string | null;
+  levelOverride: string | null;
+  levelReason: string | null;
+  levelSource: string | null;
   agent: { key: string; name: string; title: string; avatar: string | null };
   _count: { steps: number; children: number };
 }) {
@@ -1494,6 +1500,15 @@ function taskSummary(task: {
     pausedUntil: task.scheduledFor,
     pausedBecause: task.retryReason,
     pauses: task.retryCount,
+    /**
+     * How demanding the task was judged to be, which decides the paid model it
+     * runs on — and the Owner's own call, when they made one. Null until the
+     * first run sizes it. See services/agents/complexity.ts.
+     */
+    level: fromStored(task.level),
+    levelOverride: fromStored(task.levelOverride),
+    levelReason: task.levelReason,
+    levelSource: task.levelSource,
     agent: task.agent,
     steps: task._count.steps,
     delegated: task._count.children,
@@ -1566,7 +1581,14 @@ const newTaskInput = z.object({
   invoiceId: z.string().cuid().nullish(),
   /** Starts it now rather than waiting for the next tick. */
   runNow: z.boolean().default(false),
+  /** The Owner's call on how demanding it is. `auto` leaves it to the router. */
+  level: z.enum(["auto", ...TASK_LEVELS] as [string, ...string[]]).default("auto"),
 });
+
+/** `auto` is no override; anything else is the stored spelling of a level. */
+function overrideFrom(level: string): ReturnType<typeof toStored> | null {
+  return isTaskLevel(level) ? toStored(level) : null;
+}
 
 agentsRouter.post("/:key/tasks", async (req, res, next) => {
   try {
@@ -1591,6 +1613,7 @@ agentsRouter.post("/:key/tasks", async (req, res, next) => {
         projectId: input.projectId ?? null,
         proposalId: input.proposalId ?? null,
         invoiceId: input.invoiceId ?? null,
+        levelOverride: overrideFrom(input.level),
       },
       include: taskInclude,
     });
@@ -1821,6 +1844,30 @@ agentsRouter.post("/tasks/:id/run", async (req, res, next) => {
       resuming,
       resumingFrom: resuming ? (task.checkpoint?.iteration ?? 0) : 0,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * The Owner's call on how demanding a task is — or `auto` to hand it back to
+ * the router.
+ *
+ * Takes effect at the next run, including a resume: an override wins over the
+ * stored level, which is the point of having one. Gated with Run rather than
+ * with editing, because choosing the level is choosing what the task costs.
+ */
+agentsRouter.post("/tasks/:id/level", async (req, res, next) => {
+  try {
+    const { level } = z.object({ level: z.enum(["auto", ...TASK_LEVELS] as [string, ...string[]]) }).parse(req.body ?? {});
+    const task = await prisma.agentTask.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!task) return res.status(404).json({ error: "No such task." });
+    const updated = await prisma.agentTask.update({
+      where: { id: task.id },
+      data: { levelOverride: overrideFrom(level) },
+      include: taskInclude,
+    });
+    res.json({ task: taskSummary(updated) });
   } catch (err) {
     next(err);
   }

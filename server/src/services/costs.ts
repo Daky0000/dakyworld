@@ -189,6 +189,41 @@ export async function modelSpendBy(dimension: ModelDimension, window: Window, li
     .slice(0, limit);
 }
 
+/**
+ * Agent model spend grouped by the level each task was sized at.
+ *
+ * The instrument for the task router: if sizing works, simple tasks are many
+ * and cheap, complex ones few and dear, and the total falls month on month
+ * without the complex row thinning out. Only calls made inside a task are
+ * counted — a writer called from a screen has no level to be grouped under.
+ */
+export async function levelSpend(window: Window): Promise<SpendRow[]> {
+  const where = { createdAt: { gte: window.since, lte: window.until }, taskId: { not: null } };
+
+  const [grouped, failures] = await Promise.all([
+    prisma.llmCall.groupBy({ by: ["taskId"], where, _sum: { costUsd: true, inputTokens: true, outputTokens: true }, _count: true }),
+    prisma.llmCall.groupBy({ by: ["taskId"], where: { ...where, ok: false }, _count: true }),
+  ]);
+  const ids = grouped.map((row) => row.taskId).filter((id): id is string => Boolean(id));
+  const tasks = ids.length > 0 ? await prisma.agentTask.findMany({ where: { id: { in: ids } }, select: { id: true, level: true } }) : [];
+  const levelOf = new Map(tasks.map((task) => [task.id, task.level ? task.level.toLowerCase() : "not sized"]));
+  const failedBy = new Map(failures.map((row) => [row.taskId, row._count]));
+
+  const rows = new Map<string, SpendRow>();
+  for (const row of grouped) {
+    const key = levelOf.get(row.taskId ?? "") ?? "not sized";
+    const into = rows.get(key) ?? { key, calls: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, failed: 0 };
+    into.calls += row._count;
+    into.costUsd += num(row._sum.costUsd);
+    into.inputTokens += row._sum.inputTokens ?? 0;
+    into.outputTokens += row._sum.outputTokens ?? 0;
+    into.failed += failedBy.get(row.taskId) ?? 0;
+    rows.set(key, into);
+  }
+  const order = ["simple", "standard", "complex", "not sized"];
+  return [...rows.values()].sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
+}
+
 function unattributed(dimension: ModelDimension): string {
   if (dimension === "agentKey") return "no agent (a writer or a person)";
   if (dimension === "model") return "model not recorded";
@@ -332,6 +367,8 @@ export interface CostReport {
   byPurpose: SpendRow[];
   byAgent: SpendRow[];
   byModel: SpendRow[];
+  /** Agent task spend by the level each task was sized at. */
+  byLevel: SpendRow[];
   byTool: SpendRow[];
   daily: DaySpend[];
   outcomes: { totalUsd: number; outcomes: Outcome[] };
@@ -340,14 +377,15 @@ export interface CostReport {
 export async function costReport(days: number): Promise<CostReport> {
   const window = lastDays(days);
 
-  const [summary, byPurpose, byAgent, byModel, byTool, daily] = await Promise.all([
+  const [summary, byPurpose, byAgent, byModel, byLevel, byTool, daily] = await Promise.all([
     spendSummary(window),
     modelSpendBy("purpose", window),
     modelSpendBy("agentKey", window),
     modelSpendBy("model", window),
+    levelSpend(window),
     toolSpendBy(window),
     spendByDay(window),
   ]);
 
-  return { summary, byPurpose, byAgent, byModel, byTool, daily, outcomes: await costPerOutcome(window, summary.totalUsd) };
+  return { summary, byPurpose, byAgent, byModel, byLevel, byTool, daily, outcomes: await costPerOutcome(window, summary.totalUsd) };
 }

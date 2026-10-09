@@ -30,6 +30,7 @@ import { wakeOne } from "../rehearsals/wake.js";
 import { check, scopesForAgent, type BudgetState } from "../budgets.js";
 import { hasPace, paceFor } from "./pace.js";
 import { planFor } from "./retry.js";
+import { routeTask, toStored } from "./complexity.js";
 
 /**
  * What actually runs an agent.
@@ -272,72 +273,6 @@ export async function consultLimitFor(task: Pick<AgentTask, "priority">): Promis
     }
   }
   return limits[task.priority] ?? MAX_CONSULTS;
-}
-
-/**
- * The agents whose entire output is a piece of writing somebody outside the
- * company reads.
- *
- * Effort used to be decided by tier alone — high for the board and the
- * executives, medium for everybody else — on the reasoning that a manager's
- * output is a judgement and a specialist's steps are mostly obvious. Half of
- * that is right and half of it produced the complaint that the drafts read the
- * same. The *steps* of writing a cold email are obvious; the writing is not,
- * and it is the part a stranger judges the company by. A proposal, a first
- * email, a case study and a client report are each one piece of prose that has
- * to be good, and they were all being written at the cheaper setting while a
- * weekly internal brief nobody outside sees got the expensive one.
- *
- * Deliberately a list rather than a flag on the seed: it is a statement about
- * which work is worth paying more for, and that belongs in one place where it
- * can be read and argued with.
- */
-const WRITES_FOR_OUTSIDE = new Set([
-  "outreach.writer",
-  "outreach.followup",
-  "proposal.writer",
-  "content.writer",
-  "content.casestudy",
-  "careplan.reporter",
-  "client.notifier",
-  "billing.collector",
-  "delivery.handover",
-  "review.look",
-  "design.ux",
-  "ads.designer",
-]);
-
-/**
- * How hard the model works on this agent's task.
- *
- * High for a judgement (the management tiers) and high for a piece of writing
- * that leaves the building. Medium for everything else, which is genuinely
- * most of it: reading a record, filing a task, checking a list.
- */
-function effortFor(agent: Agent): "low" | "medium" | "high" {
-  if (agent.tier === "BOARD" || agent.tier === "EXECUTIVE") return "high";
-  return WRITES_FOR_OUTSIDE.has(agent.key) ? "high" : "medium";
-}
-
-/**
- * The same answer, with a spend ceiling allowed to talk it down.
- *
- * At three quarters of a budget the work carries on and pays the economy rate
- * for it, which is the whole reason `downgrade` is a separate action from
- * `pause`: falling off a cliff at the end of the month is worse for this
- * business than a fortnight of slightly cheaper drafting.
- *
- * **Down to `medium`, never to `low`.** `low` is the mail room's setting for
- * classifying a message that has arrived, and giving it to an agent writing to
- * a stranger would be a different and worse kind of saving. `medium` is where
- * the model changes and the thinking budget is still reasonable — which is the
- * point at which the saving is real and the quality cost is not.
- */
-async function effortUnderBudget(agent: Agent): Promise<"low" | "medium" | "high"> {
-  const wanted = effortFor(agent);
-  if (wanted !== "high") return wanted;
-  const budget = await check(scopesForAgent(agent.key));
-  return budget.action === "downgrade" || budget.action === "approve" ? "medium" : wanted;
 }
 
 // --- The timeline -----------------------------------------------------------
@@ -1814,7 +1749,7 @@ export interface PromptRegion {
  * content, and template-driven line items, neither is voice-governed prose).
  *
  * **`review.look` and `design.ux` are deliberately not here**, on the same
- * reasoning `WRITES_FOR_OUTSIDE` above already made about their *effort*: a
+ * reasoning `WRITES_FOR_OUTSIDE` in complexity.ts makes about their work: a
  * reviewer's finding is a paragraph of prose that gets quoted straight into a
  * cold email opener or a branded audit a prospect reads, not a structured fact
  * a separate writer re-drafts the way `seo.specialist`'s or `sec.analyst`'s
@@ -2217,6 +2152,31 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       const hint = likelyToolsLine(granted.likely);
       const brief = hint ? `${described}\n\n${hint}` : described;
 
+      // How demanding this is, which decides the paid model and how hard every
+      // model thinks. See `complexity.ts`. Written down before the run so a
+      // resume finds the same answer, and said on the timeline because it is
+      // the first thing to read when a run cost more or less than expected.
+      const catalogue = await listAllTools();
+      const sized = await routeTask({
+        agent,
+        task,
+        toolkit: catalogue.filter((tool) => agent.toolkit.includes(tool.key)).map((tool) => ({ key: tool.key, scope: tool.scope })),
+        likely: granted.likely.map((tool) => tool.key),
+        resuming: Boolean(saved),
+        previousStatus: claim.from,
+      });
+      if (sized.level && sized.decidedBy !== "stored") {
+        await prisma.agentTask.update({
+          where: { id: task.id },
+          data: { level: toStored(sized.level), levelReason: sized.sentence, levelSource: sized.decidedBy },
+        });
+      }
+      if (sized.sentence) {
+        await step(task.id, "ROUTED", sized.sentence, {
+          data: { level: sized.level, decidedBy: sized.decidedBy, score: sized.score, reasons: sized.reasons, cappedByBudget: sized.cappedByBudget },
+        });
+      }
+
       // Flipped by a checkpoint that finds the row no longer belongs to this run.
       // The only correct response is to stop touching it.
       let lostOwnership = false;
@@ -2232,7 +2192,9 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
           system,
           prompt: brief,
           tools,
-          effort: await effortUnderBudget(agent),
+          // A level when the task was sized, which sets the effort with it; the
+          // old effort-only answer when sizing is switched off.
+          ...(sized.level ? { level: sized.level } : { effort: sized.effort }),
           // The same ceiling `shouldStop` enforces, read one step earlier.
           //
           // A task's budget used to be a cliff: sixteen turns at full effort

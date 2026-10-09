@@ -20,6 +20,8 @@ import { isValidTimezone } from "../services/scheduler.js";
 import { AnalystError, verifyKey } from "../lib/anthropic.js";
 import { JOBS, MODEL_JOBS, FREE_LADDER_MAX, PROVIDERS, describeProviders, describeRouting, IMAGE_MODELS, LADDER_KEYS, freeLadderFor, freeLadderSource, isLadderKey, needsSight, isModelJob, isPricedModel, isProviderKey, providerKey, ladderLabel, readFreeLadders, readJobModels, readRoutes, routeFor, type LadderKey, type ModelJob, type ProviderKey } from "../lib/models/registry.js";
 import { listNvidiaModels, verifyProviderKey, type NvidiaModel } from "../lib/models/call.js";
+import { PAID_AGENT_CHAIN, TASK_LEVELS, TIER_MODELS, describeTierModels, isPaidProvider, isTaskLevel, readTierModels } from "../lib/models/registry.js";
+import { ROUTING_MODES, routingMode, type RoutingMode } from "../services/agents/complexity.js";
 import { GoogleError, buildAuthUrl, clearGoogleTokenCache, googleConfigured, googleConnected, redirectUri, rememberState } from "../lib/google.js";
 import { verifyStripeKey } from "../lib/stripe.js";
 import { paystackKeys, paystackMode, verifyPaystackKey, type PaystackMode } from "../lib/paystack.js";
@@ -345,7 +347,28 @@ async function describeModels() {
     routing,
     /** What each job is, so the screen doesn't have to hold its own copy. */
     jobs: MODEL_JOBS.map((job) => JOBS[job]),
+    taskLevels: await describeTaskLevels(),
   };
+}
+
+/**
+ * How agent tasks are sized, and which model each paid vendor uses at each
+ * level. See `services/agents/complexity.ts`.
+ *
+ * `offered` is each vendor's own list plus every priced model with that
+ * vendor's name on it — a dropdown offering a model this app cannot price
+ * would be offering a save that is then refused.
+ */
+async function describeTaskLevels() {
+  const [mode, slots] = await Promise.all([routingMode(), describeTierModels()]);
+  const offered = Object.fromEntries(
+    PAID_AGENT_CHAIN.map((vendor) => {
+      const listed = PROVIDERS[vendor].models.filter((model) => isPricedModel(model));
+      const shipped = TASK_LEVELS.map((level) => TIER_MODELS[vendor][level]);
+      return [vendor, [...new Set([...shipped, ...listed])]];
+    }),
+  );
+  return { mode, modes: ROUTING_MODES, levels: TASK_LEVELS, slots, offered };
 }
 
 /** Slack: which route is live, where messages land, and whether it can talk back. */
@@ -1320,6 +1343,64 @@ settingsRouter.put("/models/jobs/:job", async (req, res, next) => {
 
     if (Object.keys(chosen).length === 0) await deleteSetting(SETTING.MODEL_JOB_MODELS);
     else await setSetting(SETTING.MODEL_JOB_MODELS, JSON.stringify(chosen));
+
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * How agent tasks are sized: `off`, `rules` or `full`.
+ *
+ * `off` is the rollback that needs no deploy — every model goes back to being
+ * chosen by the agent's rank. Stored even when it is the default, because
+ * somebody who chose `full` on purpose has made a decision a later default
+ * change should not quietly undo.
+ */
+settingsRouter.put("/models/levels/mode", async (req, res, next) => {
+  try {
+    const { mode } = z.object({ mode: z.enum(ROUTING_MODES as [RoutingMode, ...RoutingMode[]]) }).parse(req.body);
+    await setSetting(SETTING.AGENT_ROUTING, mode);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Which model one paid vendor uses at one task level.
+ *
+ * The same rules as the per-job model above: blank or null puts the slot back
+ * on what ships, and a model with no published rate is refused at the moment it
+ * is chosen rather than dropped quietly on read.
+ */
+settingsRouter.put("/models/levels/:vendor/:level", async (req, res, next) => {
+  try {
+    const { vendor, level } = req.params;
+    if (!isPaidProvider(vendor)) return res.status(404).json({ error: "Task levels apply to Claude, ChatGPT and Gemini only." });
+    if (!isTaskLevel(level)) return res.status(404).json({ error: "No such task level." });
+
+    const { model } = z.object({ model: z.string().max(80).nullable() }).parse(req.body);
+    const trimmed = model?.trim();
+
+    const chosen = { ...(await readTierModels()) };
+    const levels = { ...(chosen[vendor] ?? {}) };
+    if (!trimmed) {
+      delete levels[level];
+    } else {
+      if (!isPricedModel(trimmed)) {
+        return res.status(400).json({
+          error: `There is no published rate here for ${trimmed}, so what it costs could not be recorded. Add one under models.pricing first, or choose a listed model.`,
+        });
+      }
+      levels[level] = trimmed;
+    }
+    if (Object.keys(levels).length === 0) delete chosen[vendor];
+    else chosen[vendor] = levels;
+
+    if (Object.keys(chosen).length === 0) await deleteSetting(SETTING.MODEL_TIER_MODELS);
+    else await setSetting(SETTING.MODEL_TIER_MODELS, JSON.stringify(chosen));
 
     res.json(await describeAll(req));
   } catch (err) {

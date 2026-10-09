@@ -8,14 +8,20 @@ import {
   PAID_AGENT_CHAIN,
   PROVIDERS,
   PROVIDER_PRICING,
+  TASK_LEVELS,
+  effortForLevel,
   freeLadderFor,
   freeModel,
+  levelForEffort,
+  modelForLevel,
   providerConfigured,
   providerKey,
   providerModel,
   reasoningEffortFor,
   requestFee,
   vendorBase,
+  type PaidProvider,
+  type TaskLevel,
 } from "./models/registry.js";
 import { forGemini, rateForModel } from "./models/call.js";
 
@@ -972,14 +978,16 @@ async function geminiTurnUnbounded(args: {
 }
 
 /** Which model serves an agent turn on this vendor — the Owner's choice, else the shipped default. */
-async function modelForVendor(vendor: AgentVendor, effort: Effort): Promise<string> {
-  // Claude keeps the effort split: a sub-agent checking a link is not billed
-  // at a director's rate, and Anthropic is the one vendor here with a named
-  // cheap model this loop knows about. The other three answer with whatever
-  // the Owner set for them, which for NVIDIA is beside the point anyway —
-  // the ladder replaces it — and for ChatGPT and Gemini is a single model
-  // choice on the Settings screen rather than an effort split this file would
-  // be guessing at.
+async function modelForVendor(vendor: AgentVendor, effort: Effort, level: TaskLevel | null): Promise<string> {
+  // A run the caller has sized picks its paid model from the task's level, on
+  // all three paid vendors — see `TIER_MODELS`. NVIDIA is never tiered: its
+  // ladder is free whatever the level, and replaces this answer anyway.
+  if (level && vendor !== "nvidia") return modelForLevel(vendor, level);
+  // A run nobody sized keeps the old split. Claude keeps the effort split: a
+  // sub-agent checking a link is not billed at a director's rate. The other
+  // three answer with whatever the Owner set for them, which for NVIDIA is
+  // beside the point — the ladder replaces it — and for ChatGPT and Gemini is
+  // a single model choice on the Settings screen.
   return vendor === "anthropic" ? modelForEffort(effort) : providerModel(vendor);
 }
 
@@ -1054,6 +1062,17 @@ export interface AgentRunRequest {
   tools: AgentTool[];
   effort?: Effort;
   /**
+   * How demanding the task is, judged before the run by
+   * `services/agents/complexity.ts`.
+   *
+   * When given it decides both halves of what a turn costs: the paid model on
+   * every vendor of the floor (`TIER_MODELS`), and the effort, which follows
+   * from it and overrides `effort`. When absent the run keeps the old answer —
+   * Claude's model from the effort word, one model each on ChatGPT and Gemini —
+   * which is what every caller that has not sized its work still gets.
+   */
+  level?: TaskLevel;
+  /**
    * Asked between turns whether this run should carry on more cheaply.
    *
    * Returns the effort to drop to, or null to leave it alone. Checked where
@@ -1115,7 +1134,10 @@ export interface AgentRunRequest {
  * because the first run's tokens were already billed by the first run.
  */
 export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunResult> {
-  let effort = request.effort ?? "medium";
+  // The level, when there is one, and the effort that follows from it. Both
+  // can only go down from here, once — see `easeOffIfAsked`.
+  let level: TaskLevel | null = request.level ?? null;
+  let effort = level ? effortForLevel(level) : (request.effort ?? "medium");
 
   // Who runs this conversation, in the order they will be asked.
   //
@@ -1218,7 +1240,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
   // had opted into and wrong the moment it shipped switched on: a deployment
   // holding a Claude key and no NVIDIA key would open its ledger row with
   // the name of a free model it was never going to call.
-  const model = serving === "nvidia" ? (ladder[0] ?? (await modelForVendor(serving, effort))) : await modelForVendor(serving, effort);
+  const model = serving === "nvidia" ? (ladder[0] ?? (await modelForVendor(serving, effort, level))) : await modelForVendor(serving, effort, level);
 
   let client: Anthropic | null = null;
   const startedAt = Date.now();
@@ -1317,6 +1339,17 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
       return;
     }
     if (!wanted || ORDER.indexOf(wanted) >= ORDER.indexOf(effort)) return;
+    // A sized run eases off a level rather than an effort word, so the model
+    // and the thinking keep moving together.
+    if (level) {
+      const lower = levelForEffort(wanted);
+      if (TASK_LEVELS.indexOf(lower) >= TASK_LEVELS.indexOf(level)) return;
+      const wasLevel = level;
+      level = lower;
+      effort = effortForLevel(lower);
+      await saying(`Carrying on as a ${lower} task rather than ${wasLevel} — this run is close to its ceiling.`);
+      return;
+    }
     const was = effort;
     effort = wanted;
     await saying(`Carrying on at ${wanted} effort rather than ${was} — this run is close to its ceiling.`);
@@ -1382,8 +1415,17 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
   await saying(
     serving === "nvidia" && ladder.length > 0
       ? `${PROVIDERS[serving].name}, starting on the first of ${ladder.length} free model(s): ${ladder[0]}.`
-      : `${PROVIDERS[serving].name}, on ${model}.`,
+      : `${PROVIDERS[serving].name}, on ${model}${level ? ` — the ${level} model` : ""}.`,
   );
+  // What a sized run will cost if the free models cannot finish it, said
+  // before it happens. Without it the first anybody hears of the level is a
+  // handover line naming a model they did not expect.
+  if (level && serving === "nvidia") {
+    const paid = candidates.find((vendor): vendor is PaidProvider => vendor !== "nvidia");
+    if (paid) {
+      await saying(`Sized as a ${level} task, so if the free models cannot finish it, ${PROVIDERS[paid].name} takes over on ${await modelForLevel(paid, level)}.`);
+    }
+  }
 
   while (iteration < MAX_ITERATIONS) {
     if (await stopWanted()) return interrupted();
@@ -1444,7 +1486,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
           // the run" passed while the request said otherwise.
           // `checks/agentLoopNvidia.ts` now reads the model out of the
           // *request body*, which is the only place the truth was.
-          const claudeModel = await modelForVendor("anthropic", effort);
+          const claudeModel = await modelForVendor("anthropic", effort, level);
           const send = (withFallbacks: boolean) => withModelCapacity(async () => {
             await beforeWebsiteExternalAction();
             return anth.beta.messages.create({
@@ -1474,7 +1516,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
         } else if (serving === "gemini") {
           response = await geminiTurn({
             apiKey: (await providerKey("gemini")) ?? "",
-            model: await modelForVendor("gemini", effort),
+            model: await modelForVendor("gemini", effort, level),
             system: request.system,
             messages,
             tools: request.tools,
@@ -1488,8 +1530,8 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
             // model otherwise.
             model:
               serving === "nvidia"
-                ? (ladder[rung] ?? (await modelForVendor("nvidia", effort)))
-                : await modelForVendor(serving, effort),
+                ? (ladder[rung] ?? (await modelForVendor("nvidia", effort, level)))
+                : await modelForVendor(serving, effort, level),
             system: request.system,
             messages,
             tools: request.tools,
@@ -1540,7 +1582,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
           if (serving === "nvidia" && KEY_LEVEL_STATUSES.includes(status)) {
             nvidiaRefusedUntil = Date.now() + NVIDIA_COOLDOWN_MS;
           }
-          refusals.push(`${PROVIDERS[serving].name}: ${describeTurnFailure(serving, status, climbing ? ladder[rung] : await modelForVendor(serving, effort), err)}`);
+          refusals.push(`${PROVIDERS[serving].name}: ${describeTurnFailure(serving, status, climbing ? ladder[rung] : await modelForVendor(serving, effort, level), err)}`);
           await saying(
             climbing
               ? `every free model was tried (last: ${(err as Error).message}) — ${PROVIDERS[next].name} takes the rest of this run.`
@@ -1554,7 +1596,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
         const last = describeTurnFailure(
           serving,
           status,
-          climbing ? ladder[rung] : await modelForVendor(serving, effort),
+          climbing ? ladder[rung] : await modelForVendor(serving, effort, level),
           err,
         );
         // Everybody who was asked, in one sentence, with the skipped free

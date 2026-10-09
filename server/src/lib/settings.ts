@@ -206,6 +206,28 @@ export const SETTING = {
    * reasoning as `anthropic.pricing`.
    */
   MODEL_PRICING: "models.pricing",
+  /**
+   * Which model each paid vendor uses at each task level, as JSON holding only
+   * what has been changed: `{"openai":{"simple":"gpt-5.4-mini"}}`.
+   *
+   * The agent loop's answer to "which Claude" used to be one of two models
+   * picked by who the agent was. It is now one of three, picked by how hard the
+   * task is — see `TIER_MODELS` and `services/agents/complexity.ts`. An id with
+   * no published rate is ignored rather than honoured, for the same reason as
+   * `models.jobModels`.
+   */
+  MODEL_TIER_MODELS: "models.tierModels",
+  /**
+   * How an agent task's level is decided: `off`, `rules` or `full`. Unset is
+   * `full`.
+   *
+   * - `off` — the old behaviour exactly: the agent's rank decides the model,
+   *   whatever the task. The rollback that needs no deploy.
+   * - `rules` — a free scoring function judges every task.
+   * - `full` — the same, plus one quick check on a free model for the tasks
+   *   that score on a boundary.
+   */
+  AGENT_ROUTING: "agents.routing",
 
   GOOGLE_CLIENT_ID: "google.clientId",
   GOOGLE_CLIENT_SECRET: "google.clientSecret",

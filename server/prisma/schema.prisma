@@ -2903,6 +2903,14 @@ enum AgentTaskOrigin {
   AGENT
 }
 
+/// How demanding a task is, and so which of a paid vendor's three models runs
+/// it: the small one, the workhorse or the flagship.
+enum TaskLevel {
+  SIMPLE
+  STANDARD
+  COMPLEX
+}
+
 /// Where a stop-and-ask has got to, once one has happened.
 ///
 /// Null for a task that has never stopped to ask, which is most of them.
@@ -3124,6 +3132,19 @@ model AgentTask {
   /// **zero means no ceiling too**, deliberately, so that a `.positive()` guard
   /// cannot quietly restore a default for the one person who typed 0 on purpose.
   budgetUsd Decimal? @db.Decimal(10, 2)
+
+  /// How demanding this task was judged to be, which decides the paid model
+  /// it runs on. Written when a run starts and reused when it resumes, so one
+  /// conversation is not split across two judgements. Null until the first
+  /// run. See `services/agents/complexity.ts`.
+  level         TaskLevel?
+  /// The Owner's own call on the level. Wins over the judgement; only a
+  /// budget in downgrade can hold it lower.
+  levelOverride TaskLevel?
+  /// Why it was judged that way, in a sentence a person can read.
+  levelReason   String?
+  /// Who decided: owner, stored, retry, rules, model or legacy.
+  levelSource   String?
 
   /// What the run cost in model tokens, and how much of the tool layer it used.
   costUsd     Decimal @default(0) @db.Decimal(10, 6)
@@ -3373,6 +3394,11 @@ enum AgentStepKind {
   /// finished or failed, and the first line anybody read about the vendor was
   /// the error. This is that account, written as it happens.
   SERVING
+  /// How demanding the task was judged to be before the run started, and why.
+  /// The level decides which paid model catches the work when the free ones
+  /// cannot, so it is the first line to read when a run cost more or less
+  /// than expected.
+  ROUTED
 }
 
 /// The timeline of one task, written as it happens.

@@ -57,9 +57,11 @@ export type ModelJob =
   /** Looking at a picture and saying what is in it — a screenshot of a page, mostly. */
   | "vision"
   /** Looking at the same picture and deciding whether the page needs rebuilding. */
-  | "redesign";
+  | "redesign"
+  /** Judging how demanding an agent task is before it starts, so it is paid for at the right level. */
+  | "routing";
 
-export const MODEL_JOBS: ModelJob[] = ["text", "outreach", "spreadsheet", "organise", "triage", "image", "html", "factcheck", "research", "humanise", "vision", "redesign"];
+export const MODEL_JOBS: ModelJob[] = ["text", "outreach", "spreadsheet", "organise", "triage", "image", "html", "factcheck", "research", "humanise", "vision", "redesign", "routing"];
 
 /**
  * The jobs that are handed a picture, and therefore may only ever be served by
@@ -307,6 +309,21 @@ export const JOBS: Record<ModelJob, JobDescription & { defaultProvider: Provider
     // for this job can see — `standInsFor` guarantees it.
     defaultProvider: "perplexity",
     fallback: "nvidia",
+  },
+  routing: {
+    job: "routing",
+    name: "Sizing a task",
+    phrase: "judging how hard a task is",
+    blurb:
+      "Reads an agent task before it starts and says whether it is simple, standard or complex — which decides which paid model takes over if the free ones cannot finish it. Asked only when the scoring rules land on a boundary, and only ever of the free models: with NVIDIA not connected, the rules decide alone.",
+    // **NVIDIA and nobody else**, which is why it is the only vendor that
+    // declares this job. The whole point of sizing is to save money on the
+    // work behind it, and a sizing call paid for at Claude's rates would be a
+    // saving that spends itself. Its answer is one word from three, and the
+    // rules' answer is a perfectly good one when no free model is there.
+    defaultProvider: "nvidia",
+    fallback: "nvidia",
+    tier: "economy",
   },
 };
 
@@ -704,7 +721,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     console: "https://platform.openai.com/api-keys",
     keyHint: "sk-proj-…",
     jobs: ["text", "outreach", "spreadsheet", "organise", "triage", "image", "html", "vision", "redesign"],
-    models: ["gpt-5.4", "gpt-5.5", "gpt-5.4-mini"],
+    models: ["gpt-5.4", "gpt-5.5", "gpt-5.4-mini", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
   },
   gemini: {
     key: "gemini",
@@ -791,7 +808,7 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // that the app now speaks a second image wire. NVIDIA's image models are
     // not on this vendor's chat host at all — they are Cloud Functions on
     // `api.nvcf.nvidia.com`, addressed by function id. See `IMAGE_MODELS`.
-    jobs: ["text", "outreach", "spreadsheet", "organise", "triage", "image", "html", "factcheck", "research", "humanise", "vision", "redesign"],
+    jobs: ["text", "outreach", "spreadsheet", "organise", "triage", "image", "html", "factcheck", "research", "humanise", "vision", "redesign", "routing"],
     // The dropdown offers what this app has actually verified against the
     // endpoint, which is a narrower list than NVIDIA's catalogue on purpose —
     // see `FREE_MODELS`. Anything else can still be typed.
@@ -1100,6 +1117,12 @@ export const FREE_LADDER_BY_JOB: Record<LadderKey, string[]> = {
   // model and ahead of the small omni one.
   redesign: ["meta/llama-3.2-90b-vision-instruct", "moonshotai/kimi-k3", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"],
 
+  // Sizing a task: one word from three and a reason, with a person's task
+  // waiting behind it. The small fast model first, then two more houses, all
+  // three with a schema that is actually enforced — an answer that invents
+  // its own field names here is a task routed on a guess.
+  routing: ["openai/gpt-oss-20b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "moonshotai/kimi-k3"],
+
   // The workforce loop. Every rung has to call tools — a model that cannot
   // fails on turn one, having read the whole system prompt first — and has to
   // hold a long conversation without losing the thread. All three are verified
@@ -1301,6 +1324,170 @@ export async function nvidiaAttempts(job: ModelJob): Promise<(string | undefined
  */
 export type PaidProvider = Extract<ProviderKey, "anthropic" | "openai" | "gemini">;
 export const PAID_AGENT_CHAIN: readonly PaidProvider[] = ["anthropic", "openai", "gemini"];
+
+export function isPaidProvider(value: unknown): value is PaidProvider {
+  return typeof value === "string" && (PAID_AGENT_CHAIN as readonly string[]).includes(value);
+}
+
+// --- How hard the task is ---------------------------------------------------
+
+/**
+ * How demanding one agent task is, judged before it starts.
+ *
+ * The agent loop used to pick its paid model from **who the agent was**: the
+ * board, the executives and anybody writing to a stranger got Claude's
+ * headline model, everyone else the economy one, and ChatGPT and Gemini
+ * answered every task on a single model whatever it was. So a director filing
+ * a one-line reminder paid the top rate, a sub-agent handed a genuinely hard
+ * investigation got the middle one, and nothing ever reached the cheapest model
+ * a vendor sells. The level is **what the task is**, and
+ * `services/agents/complexity.ts` decides it.
+ *
+ * Three, because three is what each paid vendor here actually sells: a small
+ * model, a workhorse and a flagship.
+ */
+export type TaskLevel = "simple" | "standard" | "complex";
+
+export const TASK_LEVELS: TaskLevel[] = ["simple", "standard", "complex"];
+
+export function isTaskLevel(value: unknown): value is TaskLevel {
+  return typeof value === "string" && (TASK_LEVELS as string[]).includes(value);
+}
+
+/**
+ * The model each paid vendor uses at each level, before anybody has said
+ * otherwise.
+ *
+ * **Every id here has a published rate**, in this file or in claudePricing.ts.
+ * A level that resolved to an unpriced model would be billed at `FALLBACK` —
+ * deliberately the dearest rate known — and a day of cheap simple tasks would
+ * read as the most expensive day this company has had.
+ *
+ * Only the paid floor is tiered. NVIDIA's ladder is free whatever the level
+ * and still serves first; the level decides which paid model catches the work
+ * when three free ones could not.
+ */
+export const TIER_MODELS: Record<PaidProvider, Record<TaskLevel, string>> = {
+  anthropic: { simple: "claude-haiku-4-5", standard: MODEL_ECONOMY, complex: MODEL_DEFAULT },
+  openai: { simple: "gpt-5.6-luna", standard: "gpt-5.6-terra", complex: "gpt-5.6-sol" },
+  gemini: { simple: "gemini-2.5-flash", standard: "gemini-3.7-flash", complex: "gemini-3.1-pro-preview" },
+};
+
+/**
+ * How hard the model thinks at each level.
+ *
+ * The model and the thinking move together. A flagship asked for low effort is
+ * paying the top rate for the bottom answer, and a small model asked for high
+ * effort spends its whole budget thinking about a one-line reminder.
+ */
+export function effortForLevel(level: TaskLevel): Effort {
+  if (level === "simple") return "low";
+  if (level === "standard") return "medium";
+  return "high";
+}
+
+/** The same scale the other way round, for the one caller that still speaks effort — a budget easing off. */
+export function levelForEffort(effort: Effort): TaskLevel {
+  if (effort === "low") return "simple";
+  if (effort === "medium") return "standard";
+  return "complex";
+}
+
+/**
+ * The Owner's per-level model choices, holding only what has been changed.
+ *
+ * Validated the same way `readJobModels` is: an unknown vendor or level is
+ * dropped, and so is **a model we cannot price**, with a line in the log.
+ * Dropped rather than honoured because an unpriced id is billed at the dearest
+ * rate known, and a budget ceiling reading a guess is the one place a typo
+ * costs real money.
+ */
+export async function readTierModels(): Promise<Partial<Record<PaidProvider, Partial<Record<TaskLevel, string>>>>> {
+  const raw = await getSetting(SETTING.MODEL_TIER_MODELS);
+  if (!raw?.trim()) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    console.warn("[models] models.tierModels is not valid JSON — using the shipped levels.");
+    return {};
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+
+  const chosen: Partial<Record<PaidProvider, Partial<Record<TaskLevel, string>>>> = {};
+  for (const [vendor, levels] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!isPaidProvider(vendor)) continue;
+    if (!levels || typeof levels !== "object" || Array.isArray(levels)) continue;
+    for (const [level, model] of Object.entries(levels as Record<string, unknown>)) {
+      if (!isTaskLevel(level)) continue;
+      if (typeof model !== "string" || !model.trim()) continue;
+      if (!isPricedModel(model.trim())) {
+        console.warn(`[models] ${model.trim()} is set for ${vendor} ${level} tasks but has no published rate here — using the shipped model instead.`);
+        continue;
+      }
+      chosen[vendor] = { ...(chosen[vendor] ?? {}), [level]: model.trim() };
+    }
+  }
+  return chosen;
+}
+
+/** Where a level's model came from — the Settings screen says which. */
+export type TierSource = "owner" | "vendor-setting" | "shipped";
+
+export interface TierSlot {
+  vendor: PaidProvider;
+  level: TaskLevel;
+  model: string;
+  source: TierSource;
+  /** What ships for this slot, so the screen can offer to go back to it. */
+  shipped: string;
+}
+
+/**
+ * A model the Owner already chose for this vendor before levels existed.
+ *
+ * Honoured so that shipping levels undoes nothing anybody set: Claude's own
+ * model setting was the one every high-effort turn used, its economy setting
+ * the one every other turn used, and ChatGPT's and Gemini's single setting was
+ * every turn on those vendors — which is the middle of the three now.
+ */
+async function vendorChoice(vendor: PaidProvider, level: TaskLevel): Promise<string | null> {
+  if (vendor === "anthropic") {
+    if (level === "complex") return (await getSetting(SETTING.ANTHROPIC_MODEL))?.trim() || null;
+    if (level === "standard") return (await getSetting(SETTING.ANTHROPIC_MODEL_ECONOMY))?.trim() || null;
+    return null;
+  }
+  if (level === "standard") return (await getSetting(PROVIDERS[vendor].modelSetting))?.trim() || null;
+  return null;
+}
+
+/**
+ * Which model this vendor uses at this level, and why.
+ *
+ * Three answers in order: the Owner's choice for this level, then the model
+ * they had already set for this vendor, then `TIER_MODELS`.
+ */
+export async function tierSlot(vendor: PaidProvider, level: TaskLevel): Promise<TierSlot> {
+  const shipped = TIER_MODELS[vendor][level];
+  const chosen = (await readTierModels())[vendor]?.[level];
+  if (chosen) return { vendor, level, model: chosen, source: "owner", shipped };
+  const existing = await vendorChoice(vendor, level);
+  if (existing) return { vendor, level, model: existing, source: "vendor-setting", shipped };
+  return { vendor, level, model: shipped, source: "shipped", shipped };
+}
+
+export async function modelForLevel(vendor: PaidProvider, level: TaskLevel): Promise<string> {
+  return (await tierSlot(vendor, level)).model;
+}
+
+/** Every vendor at every level — what the Settings screen shows. */
+export async function describeTierModels(): Promise<TierSlot[]> {
+  const slots: TierSlot[] = [];
+  for (const vendor of PAID_AGENT_CHAIN) {
+    for (const level of TASK_LEVELS) slots.push(await tierSlot(vendor, level));
+  }
+  return slots;
+}
 
 /**
  * Where a vendor's API lives, honouring the per-vendor base override.
