@@ -1,0 +1,6 @@
+# Found a security problem in dakyx.com or a DakyX product? Thank you. Please
+# write to us before telling anyone else, and give us a reasonable time to fix it.
+Contact: mailto:info@dakyx.com
+Expires: 2027-10-01T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://dakyx.com/.well-known/security.txt

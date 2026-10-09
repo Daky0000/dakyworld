@@ -835,7 +835,9 @@ for (const [file, content] of [
 ]) {
   const current = (() => {
     try {
-      return readFileSync(file, "utf8");
+      // CRLF on a Windows checkout (core.autocrlf), LF from this script: the
+      // same file either way, so compare it as one.
+      return readFileSync(file, "utf8").replace(/\r\n/g, "\n");
     } catch {
       return null;
     }

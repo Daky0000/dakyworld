@@ -264,7 +264,7 @@ async function ensureDefaultDakyworldDemo(): Promise<void> {
         html: htmlContent,
         filename: "dakyworld.html",
         businessName: "DakyXTech",
-        title: "DakyXTech® — Your IT Department, Without the Overhead",
+        title: "DakyXTech® — Your Technology Team, Without the Overhead",
         slug: "dakyworld",
         includeBanner: false,
         makeInert: true,

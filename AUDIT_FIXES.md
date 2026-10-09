@@ -8,7 +8,7 @@ Railway deployment `3cf5e4d7-d065-42fb-9120-ad1155c979ee` serves https://os.daky
 
 Readiness, health, client HTML, owner login, authenticated operations, and rejection of anonymous private API access passed. Hashes of ten critical deployed source modules match this workspace. A readable custom-format PostgreSQL backup was created before migration at `/var/lib/postgresql/data/dakyworld-preaudit-20260929.dump` on the existing Postgres volume (311,867,188 bytes).
 
-The release source and file hashes are preserved in `../audit-release-20260929/RELEASE_MANIFEST.json`. Deployment used that snapshot through the Railway CLI. GitHub `main` has not been updated; deploy this fixed source again when making future releases so a deployment from older GitHub source does not revert the fixes.
+The release source and file hashes are preserved in `../audit-release-20260929/RELEASE_MANIFEST.json`. Deployment used that snapshot through the Railway CLI. GitHub `main` was not updated at the time. **Resolved:** these fixes were committed to `main` as `0557e9f`, so later deployments from GitHub carry them; confirmed during the 9 Oct 2026 go-live audit (the two audit migrations are in the tree).
 
 ## Changes
 

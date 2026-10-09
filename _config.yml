@@ -11,6 +11,10 @@
 # GitHub Pages turns any .md file into a page of its own — blog/*.md would
 # otherwise overwrite the blog/*.html generated from them.
 #
+# Jekyll skips dot-folders unless told otherwise; security.txt lives in one.
+include:
+  - .well-known
+
 # Adding a top-level folder that is not part of the website? Add it here too.
 exclude:
   - server/
