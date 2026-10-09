@@ -44,8 +44,8 @@ const SHARE_IMAGE_ALT =
  * error rather than discovering it in the traffic.
  */
 const VERIFICATION = {
-  google: "",
-  bing: "",
+  google: "__SS79S0Rgb9gDq67YsklFapwqzHdJRuKL0U4Hw6szY",
+  bing: "228757327614DFC34BFD44607745AB46",
   /* Yandex Webmaster: webmaster.yandex.com → Add site → Meta tag. */
   yandex: "",
   /* Naver Search Advisor: searchadvisor.naver.com → HTML tag. */
@@ -107,7 +107,13 @@ const COMPANY = {
    * guessed URL is worse than none: it either 404s or, far worse, points at
    * somebody else's account. Fill these in with the real profile URLs.
    */
-  sameAs: [],
+  sameAs: [
+    "https://www.linkedin.com/company/dakyx/",
+    "https://x.com/DakyXTech",
+    "https://www.tiktok.com/@dakyxtech",
+    "https://www.instagram.com/dakyxtech/",
+    "https://www.threads.com/@dakyxtech",
+  ],
 };
 
 /**
