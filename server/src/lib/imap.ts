@@ -202,9 +202,17 @@ export function describeError(err: unknown): ImapError {
  */
 export async function withImap<T>(config: ImapConfig, work: (client: ImapFlow) => Promise<T>): Promise<T> {
   const client = buildClient(config);
+  // ImapFlow is an EventEmitter, and an `error` with no listener is thrown at
+  // the top level and ends the process. A refused login left its socket open
+  // here, the socket timed out a minute later, and that took the whole worker
+  // down on every tick (9 Oct 2026). Failures still reach the caller through
+  // the awaited calls below; this only stops a late one from being fatal.
+  client.on("error", () => undefined);
   try {
     await client.connect();
   } catch (err) {
+    // A failed connect is not a closed one: the socket can still be open.
+    try { client.close(); } catch { /* already closed */ }
     throw describeError(err);
   }
   try {
