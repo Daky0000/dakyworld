@@ -142,11 +142,12 @@ publicProductsRouter.post("/website-payment-status", paymentStatusRateLimit, asy
       }
     }
 
+    const purchaseFields = { id: true, setupPaidAt: true, status: true, billingState: true, email: true, contactName: true, userId: true, invoiceId: true, accountCreated: true } as const;
     let purchase = null;
     if (input.checkoutKey) {
       purchase = await prisma.websitePurchase.findUnique({
         where: { checkoutKey: input.checkoutKey },
-        select: { id: true, setupPaidAt: true, status: true, billingState: true, email: true, contactName: true, userId: true, invoiceId: true },
+        select: purchaseFields,
       });
     }
 
@@ -158,7 +159,7 @@ publicProductsRouter.post("/website-payment-status", paymentStatusRateLimit, asy
       if (invoice) {
         purchase = await prisma.websitePurchase.findFirst({
           where: { invoiceId: invoice.id },
-          select: { id: true, setupPaidAt: true, status: true, billingState: true, email: true, contactName: true, userId: true, invoiceId: true },
+          select: purchaseFields,
         });
       }
     }
@@ -174,23 +175,21 @@ publicProductsRouter.post("/website-payment-status", paymentStatusRateLimit, asy
     // account this purchase itself created and only while it has no password.
     // Never look a user up by the purchase email: anybody can type any email
     // into checkout, and that would hand them a token for the owner's account.
+    // `userId` is not enough either: checkout attaches the purchase to whatever
+    // account already has the typed address, so a staff member added without a
+    // password, or somebody invited and not yet signed in, would be handed to
+    // whoever paid. `accountCreated` is the purchase saying it made the account.
     // Everyone else gets the emailed link, which proves they own the inbox.
-    const account = purchase.userId
+    const account = purchase.userId && purchase.accountCreated
       ? await prisma.user.findUnique({ where: { id: purchase.userId }, select: { id: true, passwordHash: true } })
       : null;
-    const token = account && !account.passwordHash ? await issueToken(account.id, "SET_PASSWORD") : null;
+    const token = account && !account.passwordHash ? await issueToken(account.id, "SET_PASSWORD", { viaBrowser: true }) : null;
 
-    const origin = (req.headers.origin || req.get("origin") || req.get("referer") || "").toString();
-    const isLocal = origin.includes("localhost") || origin.includes("127.0.0.1");
-    let base = customerAppUrl();
-    if (isLocal) {
-      try {
-        const parsed = new URL(origin);
-        base = `${parsed.protocol}//${parsed.host}`;
-      } catch {
-        // Keep default base
-      }
-    }
+    const base = paymentReturnBase(
+      (req.headers.origin || req.get("origin") || req.get("referer") || "").toString(),
+      process.env.NODE_ENV === "production",
+      customerAppUrl(),
+    );
 
     const setPasswordUrl = token
       ? `${base}/set-password?token=${encodeURIComponent(token)}&email=${encodeURIComponent(purchase.email)}&onboarding=true`
@@ -207,6 +206,23 @@ publicProductsRouter.post("/website-payment-status", paymentStatusRateLimit, asy
     });
   } catch (error) { next(error); }
 });
+
+/**
+ * Where the payment-return link points. A local checkout page is sent back to
+ * itself so the flow can be followed on one machine; in production the link is
+ * always the customer app. `Origin` and `Referer` are whatever the caller wrote,
+ * so in production they must never decide where a set-password link goes.
+ */
+export function paymentReturnBase(origin: string, production: boolean, fallback: string): string {
+  if (production) return fallback;
+  try {
+    const parsed = new URL(origin);
+    if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    // Not a URL: keep the default.
+  }
+  return fallback;
+}
 
 function publicCors(req: { headers: { origin?: string } }, res: { set: (field: string, value: string) => unknown }) {
   const origin = req.headers.origin;

@@ -194,6 +194,10 @@ export async function startWebsitePurchase(input: PurchaseInput) {
         compatibilityStatus: compatibility.status, compatibilityNotes: compatibility.notes, monthlyPrice, setupPrice, currency: quote.currency,
         billingCycle: input.billingCycle ?? "monthly", recurringConsentAt: new Date(), standardRecurringPrice: quote.standard,
         checkoutKey: input.checkoutKey, checkoutFingerprint: fingerprint, userId: account.user.id,
+        // The email was typed by whoever is at checkout, so `userId` may be
+        // somebody else's existing account. Only an account this purchase
+        // made may be handed a password token on the way back from payment.
+        accountCreated: account.created,
       } });
       return { invoice, purchase };
     }));
@@ -224,6 +228,10 @@ export async function startWebsitePurchase(input: PurchaseInput) {
     }
   }
   const payment = await raisePayment(invoice.id, "paystack", { recurring: true, callbackUrl: returnCallbackUrl });
+  // Only a new account is emailed from here. An existing one already has its
+  // own way in (its invitation, or "Forgot password"), and mailing it because
+  // a stranger typed its address into checkout would let anybody send account
+  // emails to anybody.
   if (account.created) {
     // Logged rather than thrown: the customer has a payment link in front of
     // them, and a missing welcome email is recoverable from the Purchases

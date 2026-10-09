@@ -40,6 +40,10 @@ export function SetPassword({ kind }: { kind: "SET_PASSWORD" | "PASSWORD_RESET" 
   const [shown, setShown] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // What the payment check said when it handed back no token: the payment is
+  // in but the account already existed (it signs in as usual), or the payment
+  // has not been confirmed yet.
+  const [outcome, setOutcome] = useState<"paid-no-token" | "unpaid" | null>(null);
 
   const reference = new URLSearchParams(window.location.search).get("reference") || new URLSearchParams(window.location.search).get("trxref") || "";
   const isOnboarding = new URLSearchParams(window.location.search).get("onboarding") === "true" || kind === "SET_PASSWORD";
@@ -48,9 +52,10 @@ export function SetPassword({ kind }: { kind: "SET_PASSWORD" | "PASSWORD_RESET" 
     if (!token && reference) {
       setVerifying(true);
       api
-        .post<{ paid: boolean; token?: string; email?: string }>("/public/website-payment-status", { reference })
+        .post<{ paid: boolean; token?: string | null; email?: string }>("/public/website-payment-status", { reference })
         .then((res) => {
           if (res.token) setToken(res.token);
+          else setOutcome(res.paid ? "paid-no-token" : "unpaid");
           if (res.email) setEmail(res.email);
         })
         .catch((err) => setError((err as Error).message))
@@ -87,6 +92,36 @@ export function SetPassword({ kind }: { kind: "SET_PASSWORD" | "PASSWORD_RESET" 
       <Shell title="Verifying payment…">
         <p className="text-sm text-muted">
           Confirming your purchase with Paystack and preparing your account setup…
+        </p>
+      </Shell>
+    );
+  }
+
+  if (!token && outcome === "paid-no-token") {
+    // A password is only offered here for an account the purchase created.
+    // Anybody else proves the address is theirs by signing in or by email.
+    return (
+      <Shell title="Payment confirmed">
+        <p className="text-muted">
+          Sign in with the password for {email || "your account"}. If you have not chosen one yet, use the link in your
+          email, or ask for a new one.
+        </p>
+        <a className="os-login-submit" href="/">
+          Sign in
+        </a>
+        <p>
+          <a href="/forgot-password">Forgotten your password?</a>
+        </p>
+      </Shell>
+    );
+  }
+
+  if (!token && outcome === "unpaid") {
+    return (
+      <Shell title="Payment not confirmed yet">
+        <p className="text-muted">
+          Paystack has not confirmed this payment yet. Wait a minute and reload this page. If your card was charged, contact
+          us before you pay again.
         </p>
       </Shell>
     );

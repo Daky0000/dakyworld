@@ -5,6 +5,14 @@
   'use strict';
 
   var API = 'https://os.dakyx.com/api/public';
+
+  // Text that came back from the server, made safe to place inside markup.
+  function escapeText(value) {
+    return String(value).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
   // The checkout is its own page now. This script therefore runs in two
   // places and neither has everything: /checkout has the form and no dialog,
   // and the product pages have the purchase buttons and no form. Every lookup
@@ -406,25 +414,33 @@
         .then(function (body) {
           if (body.paid) {
             note.textContent = 'Payment verified. Website setup is pending; subscription status will be confirmed separately.';
-            var emailDisplay = body.email || 'your email';
-            var setPassUrl = body.setPasswordUrl || ('https://editor.dakyx.com/set-password?email=' + encodeURIComponent(emailDisplay) + '&onboarding=true');
+            var emailDisplay = escapeText(body.email || 'your email');
+            // A password link comes back only for an account this purchase
+            // created. An address that already had an account signs in as it
+            // always has, so it is sent to the sign-in page instead.
+            var hasPasswordLink = typeof body.setPasswordUrl === 'string' && body.setPasswordUrl.indexOf('https://') === 0 || /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(body.setPasswordUrl || '');
+            var nextUrl = hasPasswordLink ? body.setPasswordUrl : 'https://editor.dakyx.com/';
+            var nextLabel = hasPasswordLink ? 'Create your password &rarr;' : 'Sign in &rarr;';
+            var lead = hasPasswordLink
+              ? 'Your website builder subscription is active. Create a password for <strong>' + emailDisplay + '</strong> to continue to onboarding.'
+              : 'Your website builder subscription is active. Sign in with the password for <strong>' + emailDisplay + '</strong>. If you have not chosen one yet, use the link in your email, or choose “Forgotten it?” on the sign-in page.';
 
             var successHtml =
               '<div style="text-align:left;">' +
               '<div style="display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:50%;background:#dcfce7;color:#16a34a;font-size:22px;font-weight:bold;margin-bottom:16px;">✓</div>' +
               '<h2 style="font-size:22px;font-weight:700;color:#0f172a;margin:0 0 8px;">Payment verified!</h2>' +
               '<p style="margin:0 0 16px;color:#475569;font-size:15px;line-height:1.5;">' +
-              'Your website builder subscription is active. Create a password for <strong>' + emailDisplay + '</strong> to continue to onboarding.' +
+              lead +
               '</p>' +
               '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:14px 18px;margin-bottom:20px;">' +
               '<span style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;">Account Email</span>' +
               '<span style="display:block;font-size:15px;font-weight:600;color:#0f172a;margin-top:2px;">' + emailDisplay + '</span>' +
               '</div>' +
               '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px;">' +
-              '<a href="' + setPassUrl + '" id="builderSetPasswordBtn" style="display:inline-flex;align-items:center;justify-content:center;background:#08101f;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:12px 24px;border-radius:12px;transition:opacity 0.2s;">' +
-              'Create your password &rarr;' +
+              '<a href="' + escapeText(nextUrl) + '" id="builderSetPasswordBtn" style="display:inline-flex;align-items:center;justify-content:center;background:#08101f;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:12px 24px;border-radius:12px;transition:opacity 0.2s;">' +
+              nextLabel +
               '</a>' +
-              '<span style="font-size:13px;color:#64748b;" id="builderRedirectCountdown">Redirecting automatically…</span>' +
+              (hasPasswordLink ? '<span style="font-size:13px;color:#64748b;" id="builderRedirectCountdown">Redirecting automatically…</span>' : '') +
               '</div>' +
               '</div>';
 
@@ -443,9 +459,13 @@
               sessionStorage.removeItem('dakyworld.checkoutDetails');
             } catch (_) {}
 
-            setTimeout(function () {
-              window.location.assign(setPassUrl);
-            }, 2500);
+            // Straight on to the password screen when there is one to show. The
+            // sign-in case stays put, so the instructions above can be read.
+            if (hasPasswordLink) {
+              setTimeout(function () {
+                window.location.assign(nextUrl);
+              }, 2500);
+            }
             return;
           }
           if (++polls < 12) setTimeout(checkReturnedPayment, 3500);

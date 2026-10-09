@@ -1665,6 +1665,11 @@ model WebsitePurchase {
 
   checkoutKey         String?  @unique
   checkoutFingerprint String?
+  /// True only when this purchase created `user`. Checkout looks an account up
+  /// by the email the buyer typed, so `userId` can point at somebody else's
+  /// existing account; the payment-return page may hand a set-password token to
+  /// the browser only for an account this purchase made itself.
+  accountCreated      Boolean  @default(false)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -5201,6 +5206,10 @@ model AuthToken {
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime      @default(now())
+  /// Shown to a browser (the payment-return page) rather than emailed. Such a
+  /// token proves somebody paid, not that they own the address, so redeeming
+  /// it never marks the email verified.
+  viaBrowser Boolean       @default(false)
 
   @@index([userId, kind])
   @@index([expiresAt])

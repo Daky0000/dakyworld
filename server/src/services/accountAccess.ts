@@ -36,7 +36,12 @@ function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
-export async function issueToken(userId: string, kind: AuthTokenKind): Promise<string> {
+/**
+ * `viaBrowser` marks a token that is shown to a browser instead of being
+ * emailed: the payment-return page's set-password token. Redeeming one sets a
+ * password but proves nothing about the address, so it never verifies it.
+ */
+export async function issueToken(userId: string, kind: AuthTokenKind, options: { viaBrowser?: boolean } = {}): Promise<string> {
   // One live token per purpose per account: issuing a new reset link must
   // silently retire the last one, or an old email keeps working.
   await prisma.authToken.updateMany({
@@ -50,19 +55,20 @@ export async function issueToken(userId: string, kind: AuthTokenKind): Promise<s
       kind,
       tokenHash: hashToken(token),
       expiresAt: new Date(Date.now() + LIFETIME_MS[kind]),
+      viaBrowser: options.viaBrowser === true,
     },
   });
   return token;
 }
 
 /**
- * The account a token belongs to, or null.
+ * The token row and its account, claimed, or null.
  *
  * Deliberately returns null for every failure — unknown, expired, already
  * used — because a caller that could tell them apart would leak whether a
  * token ever existed.
  */
-export async function consumeToken(token: string, kind: AuthTokenKind): Promise<User | null> {
+async function claimToken(token: string, kind: AuthTokenKind): Promise<{ user: User; viaBrowser: boolean } | null> {
   const row = await prisma.authToken.findUnique({
     where: { tokenHash: hashToken(token) },
     include: { user: true },
@@ -75,7 +81,12 @@ export async function consumeToken(token: string, kind: AuthTokenKind): Promise<
     data: { usedAt: new Date() },
   });
   if (claimed.count !== 1) return null;
-  return row.user;
+  return { user: row.user, viaBrowser: row.viaBrowser === true };
+}
+
+/** The account a token belongs to, or null. See `claimToken`. */
+export async function consumeToken(token: string, kind: AuthTokenKind): Promise<User | null> {
+  return (await claimToken(token, kind))?.user ?? null;
 }
 
 /**
@@ -131,9 +142,12 @@ export async function sendSetPasswordLink(user: { id: string; email: string; nam
     user.email,
     user.name,
     "Set your DakyXTech password",
-    reason === "purchase" ? "Your Website Builder account is ready" : "Your DakyXTech account is ready",
+    reason === "purchase" ? "Your Website Builder account" : "Your DakyXTech account is ready",
     reason === "purchase"
-      ? "Thank you for your payment. Choose a password and your website editor is ready to use."
+      ? // Sent when checkout starts, before the payment has gone through (and
+        // again whenever staff resend it), so it must not thank anybody for a
+        // payment they may not have finished.
+        "Choose a password for your Website Builder account. Once your payment is confirmed, your website editor is ready to use."
       : note
         ? `${note} Choose a password to sign in. The link works for seven days.`
         : "An account has been created for you. Choose a password to sign in.",
@@ -190,8 +204,9 @@ export async function sendEmailVerification(user: { id: string; email: string; n
  */
 export async function completePasswordFromToken(token: string, password: string, kind: AuthTokenKind): Promise<User> {
   if (password.length < 10) throw new WebsiteError(400, "Choose a password of at least 10 characters.");
-  const user = await consumeToken(token, kind);
-  if (!user) throw new WebsiteError(400, "That link has expired or has already been used. Ask for a new one.");
+  const claimed = await claimToken(token, kind);
+  if (!claimed) throw new WebsiteError(400, "That link has expired or has already been used. Ask for a new one.");
+  const { user, viaBrowser } = claimed;
   const passwordHash = await hashPassword(password);
   const updated = await prisma.user.update({
     where: { id: user.id },
@@ -199,10 +214,21 @@ export async function completePasswordFromToken(token: string, password: string,
       passwordHash,
       // Following a link sent to the address proves the address, so a first
       // password doubles as verification and the customer is not asked twice.
-      emailVerifiedAt: user.emailVerifiedAt ?? new Date(),
+      // A token the payment-return page showed to the browser proves only that
+      // somebody paid with this address typed in, so that address is confirmed
+      // by email instead.
+      emailVerifiedAt: viaBrowser ? user.emailVerifiedAt : (user.emailVerifiedAt ?? new Date()),
     },
   });
   await prisma.session.deleteMany({ where: { userId: user.id } });
+  if (viaBrowser && !updated.emailVerifiedAt) {
+    // Logged rather than thrown: the password is set and the person is about
+    // to be signed in. The Customers screen shows the address as unconfirmed,
+    // and the account screen can send this again.
+    await sendEmailVerification(updated).catch((error) =>
+      console.error(`[account] could not send the confirmation email to ${updated.email}:`, (error as Error).message),
+    );
+  }
   return updated;
 }
 
