@@ -11,6 +11,7 @@ import type {
   AgentTaskDetail,
   AgentTaskStatus,
   AgentWork as AgentWorkData,
+  TaskLevel,
 } from "../lib/types";
 import { Badge, Button, Drawer, Field, RelativeTime, StatusDot } from "./ui";
 
@@ -72,6 +73,7 @@ export const STEP_STYLE: Record<AgentStepKind, { mark: string; tone: string }> =
   INTERRUPTED: { mark: "‖", tone: "text-muted" },
   RESUMED: { mark: "▸", tone: "text-muted" },
   SERVING: { mark: "◐", tone: "text-muted" },
+  ROUTED: { mark: "◫", tone: "text-blue" },
 };
 
 /** Shared with the rehearsal room, which shows the same kinds interleaved across agents. */
@@ -93,6 +95,7 @@ export const STEP_LABEL: Record<AgentStepKind, string> = {
   INTERRUPTED: "paused, kept its place",
   RESUMED: "carried on",
   SERVING: "model",
+  ROUTED: "sized",
 };
 
 export function AgentWork({ agent }: { agent: AgentDetail }) {
@@ -215,6 +218,7 @@ function Group({
                       back <RelativeTime value={task.pausedUntil} />
                     </span>
                   )}
+                  {(task.levelOverride ?? task.level) && <span title={task.levelReason ?? undefined}>{task.levelOverride ?? task.level}</span>}
                   {task.toolCalls > 0 && <span>{task.toolCalls} tool call{task.toolCalls === 1 ? "" : "s"}</span>}
                   {task.dryRunCalls > 0 && <span className="text-warn-text">{task.dryRunCalls} prepared</span>}
                   {task.delegated > 0 && <span>{task.delegated} delegated</span>}
@@ -378,6 +382,12 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
 
           <RunCost task={task} />
 
+          <TaskLevelControl
+            task={task}
+            onSet={(level) => act.mutate({ what: "level", body: { level } })}
+            pending={act.isPending}
+          />
+
           <section>
             <h4 className="mb-2 font-sans text-[11px] uppercase tracking-[.06em] text-muted">
               What it did{task.status === "RUNNING" && <span className="ml-2 text-blue">· still going</span>}
@@ -517,6 +527,55 @@ function RunCost({ task }: { task: AgentTaskDetail }) {
   );
 }
 
+/** What each level means in a dropdown, in the Owner's words rather than a model's name. */
+const LEVEL_OPTIONS: Array<{ value: "auto" | TaskLevel; label: string }> = [
+  { value: "auto", label: "Decide for me" },
+  { value: "simple", label: "Simple — the small model" },
+  { value: "standard", label: "Standard — the workhorse model" },
+  { value: "complex", label: "Complex — the top model" },
+];
+
+/**
+ * How demanding the task was judged to be, why, and the Owner's way to
+ * overrule it.
+ *
+ * The level decides which paid model takes over when the free ones cannot, so
+ * it is the first thing to look at when a run cost more or less than expected.
+ * An override takes effect at the next run, a resume included.
+ */
+function TaskLevelControl({ task, onSet, pending }: { task: AgentTaskDetail; onSet: (level: "auto" | TaskLevel) => void; pending: boolean }) {
+  const current = task.levelOverride ?? "auto";
+  return (
+    <section>
+      <h4 className="mb-1.5 font-sans text-[11px] uppercase tracking-[.06em] text-muted">How demanding</h4>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        {task.level ? (
+          <Badge tone="muted">{task.level}</Badge>
+        ) : (
+          <span className="text-muted">Not sized yet — it is judged when the run starts.</span>
+        )}
+        <select
+          className="input w-auto"
+          value={current}
+          disabled={pending || task.status === "RUNNING"}
+          onChange={(event) => onSet(event.target.value as "auto" | TaskLevel)}
+          aria-label="Task level"
+        >
+          {LEVEL_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      {task.levelReason && <p className="mt-1.5 text-xs leading-relaxed text-muted">{task.levelReason}</p>}
+      {task.levelOverride && task.level !== task.levelOverride && (
+        <p className="mt-1 text-xs text-muted">Your choice takes effect when it next runs.</p>
+      )}
+    </section>
+  );
+}
+
 /** Giving an agent a job, in the words you would use with a person. */
 function GiveTaskDrawer({
   agent,
@@ -532,6 +591,7 @@ function GiveTaskDrawer({
   const [title, setTitle] = useState("");
   const [brief, setBrief] = useState("");
   const [priority, setPriority] = useState(2);
+  const [level, setLevel] = useState<"auto" | TaskLevel>("auto");
   const [notice, setNotice] = useState<string | null>(null);
 
   const create = useMutation({
@@ -540,6 +600,7 @@ function GiveTaskDrawer({
         title: title.trim(),
         brief: brief.trim(),
         priority,
+        level,
         runNow: agent.status === "ACTIVE",
       }),
     onSuccess: () => {
@@ -591,6 +652,16 @@ function GiveTaskDrawer({
             <option value={1}>Urgent — before anything else</option>
             <option value={2}>Normal</option>
             <option value={3}>Whenever there is room</option>
+          </select>
+        </Field>
+
+        <Field label="How demanding" hint="Decides which paid model takes over if the free ones cannot finish it. Left to itself, it judges from the brief.">
+          <select className="input" value={level} onChange={(event) => setLevel(event.target.value as "auto" | TaskLevel)}>
+            {LEVEL_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </Field>
 

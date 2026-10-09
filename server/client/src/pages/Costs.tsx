@@ -114,6 +114,12 @@ export function Costs() {
               keyHeading="Model"
             />
             <SpendTable
+              heading="By task level"
+              note="Agent work, grouped by how demanding each task was judged to be — simple runs on each vendor's small model, standard on its workhorse, complex on its flagship. If sizing is working, simple is the busiest row and the cheapest per call. “not sized” is work from before sizing, or with it switched off."
+              rows={data.byLevel ?? []}
+              keyHeading="Level"
+            />
+            <SpendTable
               heading="By agent"
               note="Only calls made inside a task carry an agent. The writers, the audit and the mail room run without one."
               rows={data.byAgent}

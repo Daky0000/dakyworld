@@ -15,6 +15,10 @@ import type {
   ModelJobInfo,
   ModelProvider,
   ModelRoute,
+  PaidProvider,
+  RoutingMode,
+  TaskLevel,
+  TaskLevelSettings,
   InboxSuggestion,
 } from "../lib/types";
 import { Badge, Button, Field, PageHeader, StatusDot, Toggle } from "../components/ui";
@@ -1482,6 +1486,8 @@ function ModelsPanel({ settings }: { settings: AppSettings }) {
         </div>
       </Panel>
 
+      <TaskLevelsPanel levels={settings.models.taskLevels} providers={providers} />
+
       <FreeModelsPanel connected={Boolean(byKey.get("nvidia")?.configured)} />
 
       {providers
@@ -1875,6 +1881,137 @@ function FreeModelsPanel({ connected }: { connected: boolean }) {
         {save.data?.note && <span className="text-sm text-muted">{save.data.note}</span>}
       </div>
       <ErrorNote error={save.error ?? report.error} />
+    </Panel>
+  );
+}
+
+const MODE_LABEL: Record<RoutingMode, string> = {
+  full: "Rules, plus a free model for close calls",
+  rules: "Rules only",
+  off: "Off — the agent's rank decides, as before",
+};
+
+const LEVEL_HEADING: Record<TaskLevel, string> = {
+  simple: "Simple",
+  standard: "Standard",
+  complex: "Complex",
+};
+
+/**
+ * How agent tasks are sized, and which model each paid vendor uses at each size.
+ *
+ * Every task is judged simple, standard or complex before it starts, and the
+ * level picks which of a vendor's three models takes over when the free ones
+ * cannot finish it. The mode switch is the rollback: `off` puts every model back
+ * where it was, chosen by the agent's rank, without a deploy.
+ */
+function TaskLevelsPanel({ levels, providers }: { levels?: TaskLevelSettings; providers: ModelProvider[] }) {
+  const save = useSaveSettings();
+  const setMode = useMutation({
+    mutationFn: (mode: RoutingMode) => api.put<AppSettings>(`/settings/models/levels/mode`, { mode }),
+    onSuccess: save,
+  });
+  const setSlot = useMutation({
+    mutationFn: ({ vendor, level, model }: { vendor: PaidProvider; level: TaskLevel; model: string }) =>
+      api.put<AppSettings>(`/settings/models/levels/${vendor}/${level}`, { model: model || null }),
+    onSuccess: save,
+  });
+  if (!levels) return null;
+
+  const names = new Map(providers.map((provider) => [provider.key, provider]));
+  const vendors: PaidProvider[] = ["anthropic", "openai", "gemini"];
+
+  return (
+    <Panel
+      title="Task levels"
+      what={
+        <>
+          Every agent task is sized before it starts — simple, standard or complex — from its brief, the agent and the tools it
+          looks like it needs. Free models still try it first. The size decides which paid model takes over if they cannot finish
+          it: each vendor's small model, its workhorse, or its flagship.
+        </>
+      }
+      state={
+        levels.mode === "off" ? (
+          <NotConnected>Sizing is off. Each agent's rank decides its model, as before.</NotConnected>
+        ) : (
+          <Connected>{MODE_LABEL[levels.mode]}.</Connected>
+        )
+      }
+    >
+      <div className="mt-5 space-y-4">
+        <div>
+          <label className="block font-sans text-[11px] uppercase tracking-[.06em] text-muted">How tasks are sized</label>
+          <select
+            value={levels.mode}
+            onChange={(event) => setMode.mutate(event.target.value as RoutingMode)}
+            disabled={setMode.isPending}
+            className="input mt-1 w-80 max-w-full"
+          >
+            {levels.modes.map((mode) => (
+              <option key={mode} value={mode}>
+                {MODE_LABEL[mode]}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[520px] text-sm">
+            <thead>
+              <tr className="text-left font-sans text-[11px] uppercase tracking-[.06em] text-muted">
+                <th className="py-2 pr-3 font-normal">Vendor</th>
+                {levels.levels.map((level) => (
+                  <th key={level} className="py-2 pr-3 font-normal">
+                    {LEVEL_HEADING[level]}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {vendors.map((vendor) => (
+                <tr key={vendor} className="border-t border-line">
+                  <td className="py-2 pr-3">
+                    {names.get(vendor)?.name ?? vendor}
+                    {names.get(vendor)?.configured ? "" : <span className="ml-1 text-xs text-muted">(no key yet)</span>}
+                  </td>
+                  {levels.levels.map((level) => {
+                    const slot = levels.slots.find((entry) => entry.vendor === vendor && entry.level === level);
+                    const offered = [...new Set([...(levels.offered[vendor] ?? []), ...(slot ? [slot.model] : [])])];
+                    return (
+                      <td key={level} className="py-2 pr-3 align-top">
+                        <select
+                          value={slot?.source === "owner" ? slot.model : ""}
+                          onChange={(event) => setSlot.mutate({ vendor, level, model: event.target.value })}
+                          disabled={setSlot.isPending}
+                          className="input w-48"
+                          aria-label={`${names.get(vendor)?.name ?? vendor} ${level} model`}
+                        >
+                          <option value="">
+                            {slot?.source === "vendor-setting" ? `Your ${names.get(vendor)?.name ?? vendor} model` : "Shipped"} —{" "}
+                            {slot?.source === "owner" ? slot.shipped : slot?.model}
+                          </option>
+                          {offered.map((model) => (
+                            <option key={model} value={model}>
+                              {model}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-muted">
+          A task's own drawer shows the size it was given and why, and lets you overrule it for that task. The Costs screen splits
+          agent spend by size.
+        </p>
+        <ErrorNote error={setMode.error} />
+        <ErrorNote error={setSlot.error} />
+      </div>
     </Panel>
   );
 }

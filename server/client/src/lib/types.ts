@@ -584,6 +584,7 @@ export type ProviderKey = "anthropic" | "openai" | "gemini" | "perplexity" | "nv
 /** What is being asked for, in the app's own words rather than a vendor's. */
 export type ModelJob =
   | "text"
+  | "outreach"
   | "spreadsheet"
   | "organise"
   | "triage"
@@ -593,7 +594,34 @@ export type ModelJob =
   | "research"
   | "humanise"
   | "vision"
-  | "redesign";
+  | "redesign"
+  | "routing";
+
+/** How demanding an agent task is — and so which of a paid vendor's three models runs it. */
+export type TaskLevel = "simple" | "standard" | "complex";
+
+/** How task levels are decided: off (the agent's rank, as before), rules, or rules plus a free model. */
+export type RoutingMode = "off" | "rules" | "full";
+
+export type PaidProvider = "anthropic" | "openai" | "gemini";
+
+export interface TierSlot {
+  vendor: PaidProvider;
+  level: TaskLevel;
+  model: string;
+  /** owner: chosen on this screen; vendor-setting: the vendor's own model setting; shipped: the default. */
+  source: "owner" | "vendor-setting" | "shipped";
+  shipped: string;
+}
+
+export interface TaskLevelSettings {
+  mode: RoutingMode;
+  modes: RoutingMode[];
+  levels: TaskLevel[];
+  slots: TierSlot[];
+  /** The models worth offering per vendor — all priced. */
+  offered: Record<PaidProvider, string[]>;
+}
 
 export interface ModelProvider {
   key: ProviderKey;
@@ -653,6 +681,7 @@ export interface ModelSettings {
   providers: ModelProvider[];
   routing: ModelRoute[];
   jobs: ModelJobInfo[];
+  taskLevels: TaskLevelSettings;
 }
 
 /**
@@ -2267,7 +2296,8 @@ export type AgentStepKind =
   | "FAILED"
   | "INTERRUPTED"
   | "RESUMED"
-  | "SERVING";
+  | "SERVING"
+  | "ROUTED";
 
 /** How much work an agent has on. Shown on its card, so the roster is live. */
 export interface AgentWorkload {
@@ -2308,6 +2338,12 @@ export interface AgentTask {
   pausedBecause: string | null;
   /** How many times this run has been put down for something outside it. */
   pauses: number;
+  /** How demanding it was judged to be. Null until its first run sizes it. */
+  level: TaskLevel | null;
+  /** The Owner's own call, which wins over the judgement. */
+  levelOverride: TaskLevel | null;
+  levelReason: string | null;
+  levelSource: string | null;
   agent: { key: string; name: string; title: string; avatar: string | null };
   steps: number;
   delegated: number;
@@ -3181,6 +3217,8 @@ export interface CostReport {
   byPurpose: SpendRow[];
   byAgent: SpendRow[];
   byModel: SpendRow[];
+  /** Agent task spend by the level each task was sized at. */
+  byLevel: SpendRow[];
   byTool: SpendRow[];
   daily: DaySpend[];
   outcomes: { totalUsd: number; outcomes: Outcome[] };
