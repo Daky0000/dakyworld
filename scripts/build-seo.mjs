@@ -21,6 +21,7 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { execFileSync } from "node:child_process";
 import { articles } from "./build-articles.mjs";
 
 const ORIGIN = "https://dakyx.com";
@@ -812,26 +813,82 @@ Disallow: /admin
 Disallow: /AGENT_SYSTEM_PLAN.html
 ${PAGES.filter((page) => page.noindex).map((page) => `Disallow: ${page.path}`).join("\n")}
 
-Sitemap: ${ORIGIN}/sitemap.xml
+Sitemap: ${ORIGIN}/sitemap_index.xml
 `;
 
+/*
+ * Sitemaps, split the way WordPress SEO plugins split them: one for pages, one
+ * for the journal, and an index that lists both. Search engines read the XML
+ * and ignore the stylesheet; sitemap.xsl only makes the same file readable when
+ * a person opens it in a browser.
+ *
+ * /sitemap.xml is the same index as /sitemap_index.xml rather than a redirect —
+ * GitHub Pages cannot redirect — because it is the address already submitted to
+ * Search Console and the one most tools try first.
+ *
+ * `lastmod` is when the file last changed in git, or today when it has
+ * uncommitted changes (which, after the loop above, includes any page whose
+ * metadata was just rewritten). A date that moves every day for every page
+ * teaches a crawler to ignore it.
+ */
 const today = new Date().toISOString().slice(0, 10);
-const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${PAGES.filter((page) => !page.noindex).map(
-  (page) => `  <url>
+function lastModified(file) {
+  try {
+    if (execFileSync("git", ["status", "--porcelain", "--", file], { encoding: "utf8" }).trim()) return today;
+    return execFileSync("git", ["log", "-1", "--format=%cs", "--", file], { encoding: "utf8" }).trim() || today;
+  } catch {
+    return today;
+  }
+}
+
+/** The photographs on a page (not the logo, which is on every page). */
+function imagesOn(file) {
+  const html = readFileSync(file, "utf8");
+  const found = new Set();
+  for (const match of html.matchAll(/<img\b[^>]*\bsrc="(\/assets\/img\/[^"]+)"/g)) found.add(`${ORIGIN}${match[1]}`);
+  return [...found];
+}
+
+const STYLESHEET = `<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>`;
+const indexable = PAGES.filter((page) => !page.noindex);
+const SITEMAPS = [
+  ["page-sitemap.xml", indexable.filter((page) => !page.article)],
+  ["post-sitemap.xml", indexable.filter((page) => page.article)],
+].map(([file, pages]) => ({ file, pages: pages.map((page) => ({ ...page, lastmod: lastModified(page.file), images: imagesOn(page.file) })) }));
+
+const urlset = (pages) => `<?xml version="1.0" encoding="UTF-8"?>
+${STYLESHEET}
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+${pages
+  .map(
+    (page) => `  <url>
     <loc>${ORIGIN}${page.path}</loc>
-    <lastmod>${today}</lastmod>
+    <lastmod>${page.lastmod}</lastmod>
     <changefreq>${page.changefreq}</changefreq>
     <priority>${page.priority}</priority>
-  </url>`,
-).join("\n")}
+${page.images.map((src) => `    <image:image><image:loc>${src}</image:loc></image:image>\n`).join("")}  </url>`,
+  )
+  .join("\n")}
 </urlset>
+`;
+
+const sitemapIndex = `<?xml version="1.0" encoding="UTF-8"?>
+${STYLESHEET}
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${SITEMAPS.map(
+  ({ file, pages }) => `  <sitemap>
+    <loc>${ORIGIN}/${file}</loc>
+    <lastmod>${pages.map((page) => page.lastmod).sort().at(-1) ?? today}</lastmod>
+  </sitemap>`,
+).join("\n")}
+</sitemapindex>
 `;
 
 for (const [file, content] of [
   ["robots.txt", robots],
-  ["sitemap.xml", sitemap],
+  ...SITEMAPS.map(({ file, pages }) => [file, urlset(pages)]),
+  ["sitemap_index.xml", sitemapIndex],
+  ["sitemap.xml", sitemapIndex],
 ]) {
   const current = (() => {
     try {
@@ -856,6 +913,6 @@ if (check) {
   }
   console.log("SEO metadata is up to date.");
 } else {
-  console.log(`Wrote SEO metadata into ${PAGES.length} pages, plus robots.txt and sitemap.xml.`);
+  console.log(`Wrote SEO metadata into ${PAGES.length} pages, plus robots.txt and the sitemaps (${SITEMAPS.map(({ file }) => file).join(", ")}, sitemap_index.xml).`);
 }
 }

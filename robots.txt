@@ -47,4 +47,4 @@ Disallow: /admin
 Disallow: /AGENT_SYSTEM_PLAN.html
 Disallow: /checkout
 
-Sitemap: https://dakyx.com/sitemap.xml
+Sitemap: https://dakyx.com/sitemap_index.xml

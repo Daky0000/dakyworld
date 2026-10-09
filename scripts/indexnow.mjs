@@ -8,7 +8,7 @@
  * site root (`/<INDEXNOW_KEY>.txt`), which GitHub Pages must be serving before
  * this is run — so run it after a deploy has finished, not before:
  *
- *   node scripts/indexnow.mjs            # every URL in sitemap.xml
+ *   node scripts/indexnow.mjs            # every page in the sitemaps
  *   node scripts/indexnow.mjs /pricing   # just these paths
  *
  * A 200 or 202 means accepted. 403 means the key file is not live yet; 422
@@ -24,7 +24,10 @@ const ORIGIN = `https://${HOST}`;
 const paths = process.argv.slice(2);
 const urls = paths.length
   ? paths.map((path) => `${ORIGIN}${path.startsWith("/") ? path : `/${path}`}`)
-  : [...readFileSync("sitemap.xml", "utf8").matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]);
+  : // sitemap_index.xml lists the page and post sitemaps; their <loc>s are the pages.
+    [...readFileSync("sitemap_index.xml", "utf8").matchAll(/<loc>[^<]*\/([^/<]+\.xml)<\/loc>/g)].flatMap((sitemap) =>
+      [...readFileSync(sitemap[1], "utf8").matchAll(/<url>\s*<loc>([^<]+)<\/loc>/g)].map((match) => match[1]),
+    );
 
 const keyLocation = `${ORIGIN}/${INDEXNOW_KEY}.txt`;
 const live = await fetch(keyLocation).then((res) => (res.ok ? res.text() : null)).catch(() => null);
