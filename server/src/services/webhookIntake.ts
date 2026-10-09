@@ -5,6 +5,7 @@ import { buildDedupeKey, cleanWebsite, scoreLead, type NormalizedLead } from "./
 import { enrolNewLeads } from "./emailSequences.js";
 import { registerTags } from "./leadTags.js";
 import { looksAutomated, looksLikeSpamContent } from "./botCheck.js";
+import { notifyEnquiry } from "./enquiryAlert.js";
 
 /**
  * What to do with an event somebody else sent us.
@@ -207,6 +208,9 @@ export async function intakeFormLead(
         status: existing.status === "NEW" ? "QUALIFYING" : existing.status,
       },
     });
+    // Not awaited: the person at the form gets their answer now, and the email
+    // is the Owner's business. See services/enquiryAlert.ts.
+    void notifyEnquiry({ leadId: updated.id, created: false, name, company, email, phone, website, service, message, viaAgent: options.agentDoor === true });
     return {
       handled: true,
       result: { leadId: updated.id, created: false, note: "Matched an existing lead and added the enquiry to it." },
@@ -217,6 +221,7 @@ export async function intakeFormLead(
   const created = await prisma.lead.create({ data: { ...base, dedupeKey } });
   // Whatever sequence watches for new leads should see this one too.
   await enrolNewLeads([created.id]).catch((err) => console.error("[webhooks] could not enrol the new lead:", (err as Error).message));
+  void notifyEnquiry({ leadId: created.id, created: true, name, company, email, phone, website, service, message, viaAgent: options.agentDoor === true });
 
   return { handled: true, result: { leadId: created.id, created: true, score: base.leadScore }, note: null };
 }

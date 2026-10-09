@@ -10,6 +10,20 @@ import { GitHubError, GitHubNotConfiguredError } from "../lib/github.js";
 import { PaystackError } from "../lib/paystack.js";
 import { PaymentRefused } from "../services/payments.js";
 import { CapacityError } from "../lib/capacity.js";
+import { firstLine, reportServerError } from "../services/opsAlert.js";
+
+/**
+ * The path an error happened on, safe to put in an email: no query string, and
+ * any long random-looking segment (a review link's token, a checkout key)
+ * replaced, because the address of a failing request is not worth a credential.
+ */
+export function redactedRoute(method: string, originalUrl: string): string {
+  const path = (originalUrl.split("?")[0] ?? "")
+    .split("/")
+    .map((segment) => (/^[A-Za-z0-9_-]{24,}$/.test(segment) && !/^c[a-z0-9]{20,}$/.test(segment) ? ":token" : segment))
+    .join("/");
+  return `${method} ${path}`.slice(0, 200);
+}
 
 /**
  * The one place an unhandled error becomes a response.
@@ -116,6 +130,10 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     return res.status(402).json({ error: err.message, budget: err.state, reference });
   }
 
+  // Everything above is a sentence somebody composed. What reaches here is an
+  // accident, and a run of accidents is somebody's problem: five in ten
+  // minutes emails the Owner (at most hourly). See services/opsAlert.ts.
+  reportServerError({ at: Date.now(), reference, route: redactedRoute(req.method, req.originalUrl ?? req.url ?? ""), line: firstLine(err) });
   if (process.env.NODE_ENV === "production") {
     return res.status(500).json({ error: "Something went wrong.", reference });
   }

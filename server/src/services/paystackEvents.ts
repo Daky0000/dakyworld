@@ -110,13 +110,37 @@ export async function reconcilePurchaseSubscription(id: string, code: string) {
   await handle("subscription.create", { subscription_code: code });
 }
 
-export async function reconcilePaystackPayments() {
-  const attempts = await prisma.paymentAttempt.findMany({ where: { provider: "paystack", state: { in: ["INITIALIZING", "PENDING"] }, updatedAt: { lt: new Date(Date.now() - 5 * 60_000) } }, orderBy: { updatedAt: "asc" }, take: 10 });
+/**
+ * How long an unpaid checkout keeps being asked about. Every abandoned checkout
+ * used to be re-checked with Paystack every five minutes for ever, and the ones
+ * Paystack no longer recognised logged "needs reconciliation" on every pass,
+ * which buried any real failure. Past three days nobody is about to pay it. A
+ * late payment still settles: the webhook and "Check payment" both find the
+ * attempt by its reference, whatever its age, and nothing here changes its state.
+ */
+export const RECONCILE_CHECKOUTS_FOR_MS = 72 * 3_600_000;
+
+export async function reconcilePaystackPayments(now = Date.now()) {
+  const attempts = await prisma.paymentAttempt.findMany({
+    where: {
+      provider: "paystack",
+      state: { in: ["INITIALIZING", "PENDING"] },
+      updatedAt: { lt: new Date(now - 5 * 60_000) },
+      createdAt: { gte: new Date(now - RECONCILE_CHECKOUTS_FOR_MS) },
+    },
+    orderBy: { updatedAt: "asc" },
+    take: 10,
+  });
   for (const attempt of attempts) {
     const lease = await prisma.paymentAttempt.updateMany({ where: { id: attempt.id, updatedAt: attempt.updatedAt }, data: { updatedAt: new Date() } });
     if (!lease.count) continue;
     try { await settleFromProvider(attempt.reference, "paystack"); }
-    catch { console.error("[paystack] Pending checkout needs reconciliation", attempt.id); }
+    catch (error) {
+      // The reason, so a wrong key or a test-mode reference under live keys
+      // can be told apart from a payment that genuinely needs a person.
+      const reason = (error instanceof Error ? error.message : String(error)).split("\n")[0]!.slice(0, 200);
+      console.error("[paystack] Pending checkout needs reconciliation", attempt.id, reason);
+    }
   }
 }
 

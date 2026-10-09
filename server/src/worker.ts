@@ -6,8 +6,12 @@ import { prisma } from "./lib/prisma.js";
 import { startBackgroundRuntime } from "./services/backgroundRuntime.js";
 import { startLocalInvalidations } from "./services/cacheInvalidation.js";
 import { drainRunningTasks } from "./services/agents/runner.js";
+import { installCrashReporting } from "./services/opsAlert.js";
 
 if (capacity.role !== "worker") throw new Error("Worker requires SERVICE_ROLE=worker");
+// The worker has no public address, so a crash here is invisible unless it
+// says so itself. It still exits and restarts exactly as before.
+installCrashReporting("worker");
 await prisma.$connect();
 const stopLocal = startLocalInvalidations();
 const stop = startBackgroundRuntime();

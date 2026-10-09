@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "../lib/prisma.js";
 import { acquireLease } from "../lib/leases.js";
-import { sendMail } from "../lib/mailer.js";
-import { brandedNotice } from "./transactionalEmail.js";
+import { emailOwner } from "./opsAlert.js";
 
 /**
  * Notices when the worker stops, from the one process still able to say so.
@@ -58,24 +57,19 @@ export function needsAlert(status: WorkerStatus): boolean {
 }
 
 async function alertOwner(status: WorkerStatus) {
-  const to = process.env.OWNER_EMAIL?.trim();
-  if (!to) {
-    console.error("[worker-watch] The worker has stopped and OWNER_EMAIL is not set, so nobody was emailed.");
-    return;
-  }
   const minutes = Math.round((status.silentMs ?? 0) / 60_000);
   const since = status.lastSeen ? `${status.lastSeen.toISOString().slice(0, 16).replace("T", " ")} UTC` : "an unknown time";
-  const { html, text } = await brandedNotice({
-    greeting: null,
+  const sent = await emailOwner({
+    subject: "The OS worker has stopped",
     paragraphs: [
       `The DakyXTech OS worker has not checked in since ${since}, ${minutes} minutes ago.`,
       "It runs everything scheduled: care plan billing, queued email, agent tasks, lead capture and reading the mailbox. While it is down none of that happens. Websites and the app itself are unaffected.",
       "Open the worker service in Railway and read the end of its latest logs. A crash usually names its cause in the last few lines. Redeploy once it is fixed.",
     ],
     footnotes: ["The API service sent this because it is still running. You will hear again only if the worker recovers and then stops again, or after six hours."],
+    category: "ops:worker-down",
   });
-  await sendMail({ to, subject: "The OS worker has stopped", html, text, category: "ops:worker-down" });
-  console.error(`[worker-watch] The worker has been silent for ${minutes} min. Emailed ${to}.`);
+  if (sent) console.error(`[worker-watch] The worker has been silent for ${minutes} min. Emailed the Owner.`);
 }
 
 async function check() {

@@ -82,6 +82,11 @@ import { ensureWebsiteTierUsersAndPlans } from "./services/websiteTierPlans.js";
 import { publicSiteHosting } from "./services/websiteHosting.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { appSurface, editorPublicSurfaceGate } from "./middleware/appSurface.js";
+import { installCrashReporting } from "./services/opsAlert.js";
+
+// An uncaught error still ends the process, as it always has, so Railway
+// restarts it; the difference is that the Owner is now told. See opsAlert.ts.
+installCrashReporting("API");
 
 const app = express();
 const surface = appSurface();
