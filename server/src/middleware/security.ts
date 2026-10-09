@@ -124,6 +124,53 @@ export function forceHttps(req: Request, res: Response, next: NextFunction) {
   return res.redirect(308, `https://${req.headers.host}${req.originalUrl}`);
 }
 
+// --- Writes from pages we do not run ------------------------------------------
+
+/**
+ * The browser origins allowed to call the API with a session cookie. CORS in
+ * index.ts reads the same list, so the two cannot drift apart.
+ */
+const TRUSTED_ORIGINS = new Set([
+  "https://os.dakyx.com",
+  "https://app.dakyx.com",
+  "https://editor.dakyx.com",
+  "https://dakyx.com",
+  "https://www.dakyx.com",
+  "https://os.dakyworld.com",
+]);
+
+export function isTrustedOrigin(origin: string): boolean {
+  if (TRUSTED_ORIGINS.has(origin)) return true;
+  if (process.env.CLIENT_ORIGIN && origin === process.env.CLIENT_ORIGIN) return true;
+  return !isProduction() && (origin.includes("localhost") || origin.includes("127.0.0.1"));
+}
+
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * Refuses a write that a browser says came from a page that is not ours.
+ *
+ * The session cookie is `SameSite=Lax`, and "site" there means the registrable
+ * domain. Every `*.dakyx.com` host therefore counts as the same site as
+ * os.dakyx.com, and the browser attaches the Owner's cookie to whatever such a
+ * page sends. That includes customer websites the moment they are hosted under
+ * dakyx.com. CORS does not cover the gap. It stops a page *reading* the answer,
+ * and it stops JSON bodies by refusing the preflight. A POST with no body, or a
+ * form body, is a "simple" request: it is sent, with the cookie, and the route
+ * runs. Approve, run, cancel and sign-out all take no body.
+ *
+ * A page cannot forge `Origin`, because the browser writes it. A request with no
+ * `Origin` at all is not a browser making a cross-origin write: it is curl, an
+ * MCP client or another server, and none of those carries somebody else's
+ * cookie. `null` comes from sandboxed frames and `data:` pages and is never ours.
+ */
+export function refuseForeignWrites(req: Request, res: Response, next: NextFunction) {
+  if (SAFE_METHODS.has(req.method)) return next();
+  const origin = req.headers.origin;
+  if (origin === undefined || (origin !== "null" && isTrustedOrigin(origin))) return next();
+  return res.status(403).json({ error: "This request came from a page that is not part of DakyXTech, so it was refused." });
+}
+
 // --- Rate limiting -----------------------------------------------------------
 
 interface LimitOptions {

@@ -57,7 +57,7 @@ import { mcpRouter } from "./routes/mcp.js";
 import { websiteRouter } from "./routes/website.js";
 import { registerWebsiteFreelancerWorkspaceRoutes } from "./services/websiteFreelancerWorkspace.js";
 import { registerPublicReviewRoutes } from "./services/websiteReviewLinks.js";
-import { apiRateLimit, forceHttps, publicReviewRateLimit, securityHeaders, webhookRateLimit } from "./middleware/security.js";
+import { apiRateLimit, forceHttps, isTrustedOrigin, publicReviewRateLimit, refuseForeignWrites, securityHeaders, webhookRateLimit } from "./middleware/security.js";
 import { allowedRepos, bareEntries } from "./lib/github.js";
 import { settingsRouter } from "./routes/settings.js";
 import { prisma } from "./lib/prisma.js";
@@ -113,24 +113,9 @@ app.use(forceHttps);
 app.use("/api", (_req, res, next) => { res.set("Cache-Control", "private, no-store"); next(); });
 app.use(invalidateAfterWrite);
 
-const ALLOWED_ORIGINS = new Set([
-  "https://os.dakyx.com",
-  "https://app.dakyx.com",
-  "https://editor.dakyx.com",
-  "https://dakyx.com",
-  "https://www.dakyx.com",
-  "https://os.dakyworld.com",
-]);
-
 app.use(cors({
   origin(origin, callback) {
-    if (!origin) return callback(null, true);
-    if (ALLOWED_ORIGINS.has(origin)) return callback(null, true);
-    if (process.env.CLIENT_ORIGIN && origin === process.env.CLIENT_ORIGIN) return callback(null, true);
-    if (process.env.NODE_ENV !== "production" && (origin.includes("localhost") || origin.includes("127.0.0.1"))) {
-      return callback(null, true);
-    }
-    callback(null, false);
+    callback(null, !origin || isTrustedOrigin(origin));
   },
   credentials: true,
   exposedHeaders: ["X-Next-Cursor"],
@@ -285,6 +270,10 @@ app.use("/api/public", publicProductsRouter);
 // round trip.
 app.use("/api", apiRateLimit);
 app.use("/api", requestAdmission);
+// Below the public routes and webhooks (other sites post to those on purpose),
+// above the session: a write a browser sent from someone else's page never
+// reaches a route that would act on the signed-in user's cookie.
+app.use("/api", refuseForeignWrites);
 
 // Resolves the session cookie but never rejects — /api/auth/login has to stay
 // reachable without one. requireAuth below is what actually closes the door.
