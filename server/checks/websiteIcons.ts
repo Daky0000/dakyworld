@@ -16,7 +16,7 @@ import { optimizeImageBuffer } from "../src/lib/imageOptimization.js";
 import { applyValues, readPage, type SiteField } from "../src/services/website/regions.js";
 import { sanitizeValue, sanitizeSharedValue } from "../src/services/website/index.js";
 import { ICON_LIBRARY, iconChoiceMarkup, safeIconSrc } from "../src/shared/websiteIcons.js";
-import { readTailwindConfig, tailwindCdnCss, usesTailwindCdn } from "../src/services/website/cdnStyles.js";
+import { MAX_TAILWIND_CONTENT, MAX_TAILWIND_TOKEN, readTailwindConfig, tailwindCdnCss, tailwindContent, usesTailwindCdn } from "../src/services/website/cdnStyles.js";
 
 let checks = 0;
 function check(name: string, condition: unknown) {
@@ -200,6 +200,14 @@ check("with its own colours", /\.bg-on-secondary-fixed|\.text-primary\s*\{[^}]*1
 check("and the plugins its script asked for", (built ?? "").includes("[type='text']"));
 check("nothing in it can close the style element it goes in", !/<\/style/i.test(built ?? ""));
 equal("a page without the CDN gets nothing built", await tailwindCdnCss("<html><body class=\"w-4\">x</body></html>"), null);
+// The limits on what a customer's page can make the API do (GHSA-rj75-hqrm-r3gf: the
+// selector parser under runtime Tailwind 3 is quadratic in a selector's length).
+const hugeToken = "a:".repeat(MAX_TAILWIND_TOKEN);
+check("an absurdly long token never reaches Tailwind", !(tailwindContent(`<div class="w-4 ${hugeToken}">x</div>`) ?? "").includes(hugeToken));
+check("while ordinary classes beside it do", (tailwindContent(`<div class="w-4 ${hugeToken}">x</div>`) ?? "").includes("w-4"));
+check("a long but real arbitrary value survives", (tailwindContent(`<div class="bg-[url(/assets/a-long-but-ordinary-file-name.webp)]">x</div>`) ?? "").includes("bg-[url("));
+equal("a page over the size limit is not built at all", tailwindContent("<p class=\"w-4\">" + "x ".repeat(MAX_TAILWIND_CONTENT) + "</p>"), null);
+equal("and the build says so by returning nothing", await tailwindCdnCss(`<script src="https://cdn.tailwindcss.com"></script><p class="w-4">${"x ".repeat(MAX_TAILWIND_CONTENT)}</p>`), null);
 
 // --- Brand logo & media element detection and replacement -------------------
 

@@ -80,13 +80,11 @@ jobs:
       # Only what actually ships. A dev-only advisory (a bundler's dev server,
       # a test runner) is worth knowing about but is not a reason to fail a
       # deploy, and a job that fails for reasons nobody can act on gets ignored.
-      - name: Server — shipped dependencies
-        working-directory: server
-        run: npm audit --omit=dev --audit-level=high
-
-      - name: Client — shipped dependencies
-        working-directory: server/client
-        run: npm audit --omit=dev --audit-level=high
+      # High and critical fail unless scripts/audit-allowlist.json says why one
+      # is unreachable and until when. The one entry today is braces under
+      # runtime Tailwind 3, which has no fixed release; see scripts/audit.mjs.
+      - name: Server and client — shipped dependencies
+        run: node scripts/audit.mjs
 
       # Reported, never fatal.
       - name: Everything else, for information

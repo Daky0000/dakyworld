@@ -1,0 +1,11 @@
+{
+  "accepted": [
+    {
+      "advisory": "GHSA-vfj7-8cjw-p6xm",
+      "package": "braces",
+      "where": "server",
+      "reason": "Pulled in only by runtime Tailwind 3 (chokidar, fast-glob, micromatch). services/website/cdnStyles.ts passes Tailwind raw page content and never a glob or a user-supplied pattern, and keeps only design keys from a page's config, so braces never expands input an outsider controls. No fixed braces release exists; Tailwind 4 removes the chain.",
+      "reviewBy": "2027-01-31"
+    }
+  ]
+}

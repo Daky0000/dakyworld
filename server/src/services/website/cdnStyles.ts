@@ -41,6 +41,28 @@ const KEPT_KEYS = ["theme", "darkMode", "important", "prefix", "separator", "cor
 const cache = new Map<string, string>();
 const CACHE_LIMIT = 40;
 
+/**
+ * The two limits on what a customer's page can make this process do.
+ *
+ * Tailwind runs here, in the API, on every editor preview, over markup the
+ * customer wrote. Its selector parser (postcss-selector-parser below 7.1.6,
+ * GHSA-rj75-hqrm-r3gf) is quadratic in the length of a selector, and Tailwind
+ * builds selectors from the tokens it finds on the page, so one absurdly long
+ * "class" could hold the CPU that every other customer is waiting on. No real
+ * utility class is anywhere near 512 characters; anything that long is dropped
+ * before Tailwind sees it. A page past a megabyte after its scripts are removed
+ * is not built here at all, and the preview goes without the generated CSS.
+ */
+export const MAX_TAILWIND_TOKEN = 512;
+export const MAX_TAILWIND_CONTENT = 1_000_000;
+
+/** The page as Tailwind should read it: scripts gone, over-long tokens gone. Null when it is too big to build. */
+export function tailwindContent(html: string): string | null {
+  // A class name inside the config's JavaScript is not a class on the page.
+  const content = html.replace(/<script\b[\s\S]*?<\/script>/gi, "").replace(new RegExp(`\\S{${MAX_TAILWIND_TOKEN + 1},}`, "g"), " ");
+  return content.length > MAX_TAILWIND_CONTENT ? null : content;
+}
+
 /** True when the page builds its styles in the browser with the Tailwind Play CDN. */
 export function usesTailwindCdn(html: string): boolean {
   return CDN_SCRIPT.test(html);
@@ -100,9 +122,10 @@ export async function tailwindCdnCss(html: string): Promise<string | null> {
     .map((name) => PLUGINS[name.trim()])
     .filter(Boolean);
   const config = readTailwindConfig(html) ?? {};
-  // The page's own markup, with the CDN script and its config taken out: a
-  // class name inside the config's JavaScript is not a class on the page.
-  const content = html.replace(/<script\b[\s\S]*?<\/script>/gi, "");
+  // The page's own markup, with the CDN script and its config taken out, and
+  // within the limits above.
+  const content = tailwindContent(html);
+  if (content === null) return null;
 
   try {
     const result = await postcss([
