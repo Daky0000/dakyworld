@@ -4,6 +4,7 @@ import { legacyPublishedAsset } from "./services/publishedAssets.js";
 import { capacity } from "./lib/capacity.js";
 import { requestCacheContext } from "./lib/requestCache.js";
 import { startBackgroundRuntime } from "./services/backgroundRuntime.js";
+import { isDown, startWorkerWatch, workerStatus } from "./services/workerWatch.js";
 import { operationsRouter } from "./routes/operations.js";
 import { requestAdmission } from "./middleware/requestAdmission.js";
 import { startLocalInvalidations, invalidateAfterWrite } from "./services/cacheInvalidation.js";
@@ -254,6 +255,22 @@ app.get("/api/ready", async (_req, res) => {
   }
 });
 
+/**
+ * The worker's pulse, for the same monitor. The worker has no public address
+ * of its own, and `/api/ready` stays green while it is dead — which is exactly
+ * how a five-hour crash loop went unseen. Up or down and how long it has been
+ * quiet, nothing else.
+ */
+app.get("/api/ready/worker", async (_req, res) => {
+  try {
+    const status = await workerStatus();
+    const silentSeconds = status.silentMs === null ? null : Math.round(status.silentMs / 1000);
+    res.status(isDown(status) ? 503 : 200).json({ ok: !isDown(status), silentSeconds });
+  } catch {
+    res.status(503).json({ ok: false, silentSeconds: null });
+  }
+});
+
 // Also public, and deliberately so: an unsubscribe link that needs a login is
 // not an unsubscribe link. Every cold email this app sends carries one.
 app.use("/api/emails", unsubscribeRouter);
@@ -374,6 +391,8 @@ ensureSystemRoles()
       // nothing configured: it finds nothing due and goes back to sleep.
       stopLocalInvalidations = startLocalInvalidations();
       stopBackground = startBackgroundRuntime();
+      // A split API watches the worker it no longer contains.
+      if (capacity.role === "api") startWorkerWatch();
       // The letters that ship with the app, copied in once so they can be
       // edited. Failing here must not take the API down.
       void ensureBuiltinTemplates().catch((err) => console.error("Template seed failed:", err));
