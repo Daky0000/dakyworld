@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { clearTextFormatter, editableInnerHtml, formatTextRange, rememberTextFormatter, type InlineFormat } from "../lib/websiteTextSelection";
+import { applyTextFormat, clearTextFormatter, DEFAULT_HIGHLIGHT, editableInnerHtml, rememberTextFormatter, textFormatState, type TextFormatAction } from "../lib/websiteTextSelection";
 
 /**
  * What sits on top of the page while something is selected: a label naming
@@ -119,7 +119,7 @@ export function WebsiteCanvasOverlay({
       if (!next.collapsed && element.contains(next.commonAncestorContainer)) {
         range.current = next.cloneRange();
         setSelection(toStage(next.getBoundingClientRect()));
-        rememberTextFormatter(element, (styles) => apply(styles));
+        rememberTextFormatter(element, (action) => apply(action));
       } else {
         range.current = null;
         setSelection(null);
@@ -131,9 +131,9 @@ export function WebsiteCanvasOverlay({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [element, readOnly, zoom]);
 
-  const apply = (styles: Partial<Record<InlineFormat, string>>) => {
+  const apply = (action: TextFormatAction) => {
     if (!element || !range.current) return;
-    const next = formatTextRange(element, range.current, styles);
+    const next = applyTextFormat(element, range.current, action);
     if (!next) return;
     const current = element.ownerDocument.getSelection();
     current?.removeAllRanges();
@@ -144,6 +144,7 @@ export function WebsiteCanvasOverlay({
   };
 
   if (!box) return null;
+  const state = selection && range.current && element ? textFormatState(element, range.current) : { bold: false, italic: false, underline: false, strike: false };
   const isText = kind !== "image" && kind !== "container" && kind !== "icon" && kind !== "unsupported";
   const isSection = kind === "container";
   const stageWidth = stage.current?.clientWidth ?? 800;
@@ -184,15 +185,16 @@ export function WebsiteCanvasOverlay({
           style={{ left: Math.max(8, selection.x + selection.w / 2 - 150), top: Math.max(4, selection.y - 44) }}
           onMouseDown={(event) => { if (!(event.target instanceof HTMLInputElement)) event.preventDefault(); }}
         >
-          <button type="button" title="Bold" onClick={() => apply({ "font-weight": "700" })}><b>B</b></button>
-          <button type="button" title="Italic" onClick={() => apply({ "font-style": "italic" })}><i>I</i></button>
-          <button type="button" title="Underline" onClick={() => apply({ "text-decoration": "underline" })}><u>U</u></button>
-          <button type="button" title="Strikethrough" onClick={() => apply({ "text-decoration": "line-through" })}><s>S</s></button>
+          {/* Each press switches it on or off, judged by the words themselves. */}
+          <button type="button" title="Bold" aria-label="Bold" aria-pressed={state.bold} onClick={() => apply({ kind: "toggle", format: "bold" })}><b>B</b></button>
+          <button type="button" title="Italic" aria-label="Italic" aria-pressed={state.italic} onClick={() => apply({ kind: "toggle", format: "italic" })}><i>I</i></button>
+          <button type="button" title="Underline" aria-label="Underline" aria-pressed={state.underline} onClick={() => apply({ kind: "toggle", format: "underline" })}><u>U</u></button>
+          <button type="button" title="Strikethrough" aria-label="Strikethrough" aria-pressed={state.strike} onClick={() => apply({ kind: "toggle", format: "strike" })}><s>S</s></button>
           <span className="dx-sep" />
-          <label title="Text colour"><span className="dx-ftc">A</span><input type="color" aria-label="Selected text colour" defaultValue="#3157ff" onChange={(event) => apply({ color: event.target.value })} /></label>
-          <label title="Highlight"><span className="dx-fhl">A</span><input type="color" aria-label="Selected text highlight" defaultValue="#fff2a8" onChange={(event) => apply({ "background-color": event.target.value })} /></label>
+          <label title="Text colour"><span className="dx-ftc">A</span><input type="color" aria-label="Selected text colour" defaultValue="#3157ff" onChange={(event) => apply({ kind: "set", styles: { color: event.target.value } })} /></label>
+          <label title="Highlight"><span className="dx-fhl">A</span><input type="color" aria-label="Selected text highlight" defaultValue={DEFAULT_HIGHLIGHT} onChange={(event) => apply({ kind: "set", styles: { "background-color": event.target.value } })} /></label>
           <span className="dx-sep" />
-          <button type="button" title="Clear formatting" onClick={() => apply({ "font-weight": "normal", "font-style": "normal", "text-decoration": "none" })}>Aa</button>
+          <button type="button" title="Clear formatting: bold, italic, lines, colour and highlight" aria-label="Clear formatting" onClick={() => apply({ kind: "clear" })}>Aa</button>
         </div>
       )}
     </>

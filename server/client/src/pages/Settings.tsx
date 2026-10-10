@@ -4118,7 +4118,8 @@ function DeveloperPanel({ settings }: { settings: AppSettings }) {
       what={
         <>
           What the technical agents read to answer "what shipped this week" and "what is open against this client" — repositories,
-          recent commits and issues. They can raise an issue; they cannot touch code.
+          recent commits and issues — and what the Website Builder publishes through, on any website that is not connected
+          with the GitHub app. The agents can raise an issue; they cannot touch code.
         </>
       }
       where={
@@ -4133,9 +4134,11 @@ function DeveloperPanel({ settings }: { settings: AppSettings }) {
             >
               fine-grained token
             </a>{" "}
-            with <strong>Contents: read</strong>, <strong>Issues: read and write</strong> and <strong>Metadata: read</strong> on the
-            repositories that matter. A classic token with <code className="font-mono">repo</code> also works and is broader than
-            needed.
+            with <strong>Contents: read and write</strong>, <strong>Pull requests: read and write</strong>,{" "}
+            <strong>Issues: read and write</strong> and <strong>Metadata: read</strong> on the repositories that matter, including
+            every website repository you publish to. Publishing a page is a commit, so <strong>Contents: read</strong> alone lets
+            the editor open a page but not publish it. A classic token with <code className="font-mono">repo</code> also works and
+            is broader than needed.
           </>
         )
       }

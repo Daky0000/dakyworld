@@ -1056,7 +1056,7 @@ export function WebsiteAgentChat({
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-1.5 font-bold text-xs text-amber-950">
                               <IconFileText size={14} className="text-amber-800 shrink-0" />
-                              <span>Owner Escalation Report</span>
+                              <span>Developer help requested</span>
                               {msg.plan.escalation?.reportNumber && (
                                 <span className="rounded bg-amber-600 px-1.5 py-0.5 text-[10px] font-mono text-white">
                                   #{msg.plan.escalation.reportNumber}
@@ -1064,11 +1064,11 @@ export function WebsiteAgentChat({
                               )}
                             </div>
                             <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
-                              Dispatched
+                              Sent
                             </span>
                           </div>
                           <p className="mt-1.5 text-[11px] text-amber-900 leading-relaxed">
-                            This report has been filed directly to the business owner and leadership team. They have full context of your request and will follow up with you.
+                            A DakyXTech developer has your request, with the page and element you were on, and will get back to you.
                           </p>
                         </div>
                       ) : !msg.applied ? (
@@ -1146,7 +1146,7 @@ export function WebsiteAgentChat({
                     </div>
                   )}
 
-                  {/* Owner & Developer Handoff Escalation Card when a request requires custom code or couldn't be auto-planned */}
+                  {/* "Let us help": a developer takes over when the agent could not do it, or the person would rather a human did. */}
                   {msg.sender === "agent" &&
                     msg.id !== "welcome" &&
                     msg.plan?.actionKind !== "escalation" &&
@@ -1156,12 +1156,12 @@ export function WebsiteAgentChat({
                         {msg.escalatedTicketId ? (
                           <div className="inline-flex items-center gap-1.5 text-[11px] font-medium text-positive-text">
                             <IconCheck />
-                            <span>Report filed to owner & developer team (Report #{msg.escalatedTicketId.slice(0, 12)}). We have full context of this page.</span>
+                            <span>Request sent. A DakyXTech developer can see this page and what you asked, and will get back to you.</span>
                           </div>
                         ) : (
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-[10px] text-muted">
-                              Need business owner or developer help?
+                              Need a developer's help? Let us help.
                             </span>
                             <button
                               type="button"
@@ -1175,7 +1175,7 @@ export function WebsiteAgentChat({
                               className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-sunken px-2.5 py-1 text-[10px] font-semibold text-ink hover:border-amber-500 hover:text-amber-800 transition disabled:opacity-50"
                             >
                               <IconMessageSquare size={12} />
-                              <span>{msg.escalating ? "Sending…" : "Report to Owner"}</span>
+                              <span>{msg.escalating ? "Sending…" : "Request developer help"}</span>
                             </button>
                           </div>
                         )}

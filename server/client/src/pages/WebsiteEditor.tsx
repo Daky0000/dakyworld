@@ -1,5 +1,5 @@
 import { DeferredPanel } from "../components/DeferredPanel";
-import { editableInnerHtml, formatActiveText, formatTextRange, type InlineFormat } from "../lib/websiteTextSelection";
+import { applyTextFormat, editableInnerHtml, formatActiveText, type TextToggle } from "../lib/websiteTextSelection";
 import { WebsiteCanvasOverlay } from "../components/WebsiteCanvasOverlay";
 import { WebsiteRichText } from "../components/WebsiteRichText";
 import { WebsiteTextFormatting } from "../components/WebsiteTextFormatting";
@@ -627,8 +627,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     if (!doc || !doc.body) return "unreachable";
 
     if (kind === "select") {
-      const was = doc.querySelector("[data-dw-selected]");
-      if (was) was.removeAttribute("data-dw-selected");
+      // All of them. The frame's own script marks what is clicked and this
+      // marks what is chosen from here (Select parent, Layers), so more than
+      // one can be left behind — and removing only the first meant clearing
+      // the selection left an outline on the page that nothing would take off.
+      doc.querySelectorAll("[data-dw-selected]").forEach((was) => was.removeAttribute("data-dw-selected"));
       if (!id) return "written";
       const el = doc.querySelector(`[data-dw-field="${id.replace(/"/g, "")}"]`);
       if (!el) return "absent";
@@ -2027,8 +2030,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           hasParent={Boolean(picked.parentId)}
           agent={canEdit && (!tierStatus?.features || tierStatus.features.aiBuilderAgent)}
           onEdit={() => tell({ type: "edit", id: picked.id })}
-          onBold={() => formatWhole({ "font-weight": "700" })}
-          onItalic={() => formatWhole({ "font-style": "italic" })}
+          onBold={() => formatWhole("bold")}
+          onItalic={() => formatWhole("italic")}
           onLink={() => setInspectorTab("content")}
           onReplace={() => { setAssetTargetMode("image"); setAssetModalOpen(true); }}
           onParent={() => picked.parentId && pick(picked.parentId)}
@@ -2092,12 +2095,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     </button>
   ) : null;
 
-  /** Bold or italic over the whole of the selected element, from the mini toolbar. */
-  const formatWhole = (styles: Partial<Record<InlineFormat, string>>) => {
+  /** Bold or italic over the whole of the selected element, from the mini toolbar. Pressed again, it comes off. */
+  const formatWhole = (format: TextToggle) => {
     if (!picked || !pickedElement || readOnly) return;
     const range = pickedElement.ownerDocument.createRange();
     range.selectNodeContents(pickedElement);
-    if (!formatTextRange(pickedElement, range, styles)) return;
+    if (!applyTextFormat(pickedElement, range, { kind: "toggle", format })) return;
     change(picked.id, { ...edits[picked.id], value: editableInnerHtml(pickedElement) }, { fromFrame: true, commit: true });
     setFrameEdit((token) => token + 1);
   };

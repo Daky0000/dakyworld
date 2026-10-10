@@ -590,8 +590,21 @@ export function githubFailure(err: unknown, repo: string, branch: string): unkno
     return new WebsiteError(403, `${repo} is not on the list of repositories this system may write to. Add it under Settings → Developer, then publish again.`);
   }
   if (err instanceof GitHubError) {
-    if (err.status === 401) return new WebsiteError(403, "GitHub rejected the access token — it has expired or been revoked. Create a new one and paste it under Settings → Developer.");
-    if (err.status === 403) return new WebsiteError(403, `The GitHub token cannot write to ${repo}. Give it Contents: write on that repository — a fine-grained token must also list ${repo} among the repositories it can reach — then publish again.`);
+    const app = err.via === "installation";
+    // GitHub's own sentence, when it said one: "Resource not accessible by
+    // personal access token" and "…by integration" are fixed in different
+    // places, and a message that hides which one GitHub sent hides the fix.
+    const said = err.message && !/^GitHub returned \d+$/.test(err.message) ? ` GitHub said: "${err.message.replace(/\.$/, "")}".` : "";
+    if (err.status === 401) {
+      return app
+        ? new WebsiteError(403, `GitHub would not accept the DakyXTech app's access to ${repo}. Reconnect GitHub from this website's settings, then publish again.`)
+        : new WebsiteError(403, "GitHub rejected the access token — it has expired or been revoked. Create a new one and paste it under Settings → Developer.");
+    }
+    if (err.status === 403) {
+      return app
+        ? new WebsiteError(403, `The DakyXTech GitHub app cannot write to ${repo}.${said} On GitHub, open the app's Configure page and check that ${repo} is one of its selected repositories and that any permissions it has asked for have been accepted, then publish again.`)
+        : new WebsiteError(403, `The GitHub token saved under Settings → Developer cannot write to ${repo}.${said} Publishing is a commit, so the token needs Contents: read and write on ${repo} — read-only is not enough — and a fine-grained token must also list ${repo} among the repositories it can reach. Edit the token on GitHub or paste a new one, then publish again.`);
+    }
     if (err.status === 404) return new WebsiteError(404, `GitHub cannot find ${repo} on branch ${branch}, or the token cannot see it. Check the repository and branch on the site's settings, and that the token has access to it.`);
     if (err.status === 409 || err.status === 422) return new WebsiteError(409, `GitHub would not accept the commit to ${branch}: ${err.message}. A branch protection rule is the usual cause.`);
     return new WebsiteError(502, `GitHub would not accept the publish: ${err.message}`);
@@ -1037,6 +1050,10 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
     animation-play-state: paused !important;
   }
   [data-dw-overlay-hidden] { display: none !important; }
+  /* Words being picked out for formatting. Translucent on purpose: a page's own
+     ::selection can be nearly invisible, and an opaque one hides the highlight
+     colour that was just applied underneath it. */
+  [data-dw-field]::selection, [data-dw-field] *::selection { background: rgba(49,87,255,.28) !important; }
 </style>
 <script nonce="${nonce}">
 (function () {
@@ -1051,8 +1068,12 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
   function find(id) {
     return id ? document.querySelector('[data-dw-field="' + String(id).replace(/"/g, "") + '"]') : null;
   }
+  // Every mark, not only the one this script remembers: the editor also writes
+  // the mark directly (Select parent, Layers, Escape), so the remembered one
+  // can be stale, and clearing only that left an outline nothing could remove.
   function mark(el) {
-    if (selected && selected !== el) selected.removeAttribute("data-dw-selected");
+    var marked = document.querySelectorAll("[data-dw-selected]");
+    for (var m = 0; m < marked.length; m++) if (marked[m] !== el) marked[m].removeAttribute("data-dw-selected");
     selected = el;
     if (el) el.setAttribute("data-dw-selected", "");
   }
@@ -1169,7 +1190,15 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
       parent.postMessage({ source: "dakyworld-preview", type: "shortcut", key: event.key, shiftKey: event.shiftKey }, location.origin);
       return;
     }
-    if (!editing) return;
+    if (!editing) {
+      // After a click on the page the keyboard is in here, not in the editor,
+      // so Escape has to clear the selection from this side too.
+      if (event.key === "Escape" && document.querySelector("[data-dw-selected]")) {
+        mark(null);
+        post({ type: "select", id: null });
+      }
+      return;
+    }
     if (event.key === "Escape") { event.preventDefault(); stopEdit(); return; }
     // Lines within an element, not new paragraphs — the browser's default here
     // is a <div>, which would put a block inside a heading.

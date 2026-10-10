@@ -11,10 +11,13 @@ import { SETTING, getSetting } from "./settings.js";
  * opening an issue — because "raise it as an issue" is the only useful thing
  * an agent can do here that doesn't touch code.
  *
- * A fine-grained personal access token with **Contents: read**, **Issues:
- * read and write** and **Metadata: read** on the repositories that matter is
- * the whole configuration. Classic tokens work too; `repo` is broader than
- * needed but is what most people already have.
+ * A fine-grained personal access token with **Contents: read and write**,
+ * **Pull requests: read and write**, **Issues: read and write** and
+ * **Metadata: read** on the repositories that matter is the whole
+ * configuration. Contents has to be *write*, not read: the Website Builder
+ * publishes through this same token on every site not connected with the
+ * GitHub app, and a publish is a commit. Classic tokens work too; `repo` is
+ * broader than needed but is what most people already have.
  */
 
 /**
@@ -59,6 +62,13 @@ const ACCEPT = "application/vnd.github+json";
 
 export class GitHubError extends Error {
   status: number;
+  /**
+   * Which credential GitHub refused: the shared token from Settings, or a
+   * customer's app installation. They are fixed in different places, so an
+   * error message that cannot tell them apart sends somebody to the wrong one.
+   * Unset when the call named its own token, or never reached GitHub.
+   */
+  via?: GithubCredential["kind"];
   constructor(status: number, message: string) {
     super(message);
     this.name = "GitHubError";
@@ -120,6 +130,8 @@ type Attempt<T> = { value: T } | { retryIn: number; error: GitHubError };
 async function attemptRequest<T>(path: string, options: { method?: "GET" | "POST" | "PATCH" | "PUT"; body?: unknown; token?: string }): Promise<Attempt<T>> {
   const token = options.token ?? credential.getStore()?.token ?? (await getSetting(SETTING.GITHUB_TOKEN));
   if (!token) throw new GitHubNotConfiguredError();
+  const via: GithubCredential["kind"] | undefined = options.token ? undefined : credential.getStore()?.kind ?? "token";
+  const refused = (error: GitHubError) => { error.via = via; return error; };
   if ((options.method ?? "GET") !== "GET") await beforeWebsiteExternalAction();
 
   const controller = new AbortController();
@@ -151,16 +163,16 @@ async function attemptRequest<T>(path: string, options: { method?: "GET" | "POST
       .json()
       .then((body: any) => body?.message)
       .catch(() => null);
-    if (response.status === 401) throw new GitHubError(401, "GitHub rejected the token. Check it under Settings → Developer.");
+    if (response.status === 401) throw refused(new GitHubError(401, "GitHub rejected the token. Check it under Settings → Developer."));
     if (response.status === 404) {
-      throw new GitHubError(404, "GitHub returned 404 — the repository doesn't exist, or the token can't see it.");
+      throw refused(new GitHubError(404, "GitHub returned 404 — the repository doesn't exist, or the token can't see it."));
     }
 
     const retryAfter = response.headers.get("retry-after");
     const rateLimited = (response.status === 403 || response.status === 429) && (retryAfter !== null || !!detail?.includes("rate limit"));
-    const error = rateLimited
+    const error = refused(rateLimited
       ? new GitHubError(429, "GitHub's rate limit has been hit. Try again shortly.")
-      : new GitHubError(response.status, detail ?? `GitHub returned ${response.status}`);
+      : new GitHubError(response.status, detail ?? `GitHub returned ${response.status}`));
 
     if (retryableStatus(response.status, detail, retryAfter)) {
       const advised = Number(retryAfter);

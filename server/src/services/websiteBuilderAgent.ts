@@ -7,9 +7,9 @@ import type { Request, Response, Router } from "express";
 import type { Site, SitePage } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import { prisma } from "../lib/prisma.js";
 import { callModel } from "../lib/models/call.js";
+import { AnalystError } from "../lib/claude.js";
 import { currentRun } from "../lib/runContext.js";
 import { sniff } from "../lib/fileType.js";
 import { optimizeImageBuffer } from "../lib/imageOptimization.js";
@@ -989,7 +989,7 @@ const AI_AGENT_SYSTEM_DOCTRINE = `You are the Website Builder Agent for a connec
 
 CRITICAL BOUNDARY ENFORCEMENT:
 You DO NOT perform actions outside the visual website builder. You must NEVER manage CRM leads, execute outbound mass emailing or cold email campaigns, process staff payroll or salaries, execute server/database administration, or change OS system settings.
-If a user asks for anything outside website design, layout, or copy, set intent to "escalate" with an explanation and category so an official Escalation Report is dispatched to the business owner.`;
+If a user asks for anything outside website design, layout, or copy, set intent to "escalate" with an explanation and category, and a DakyXTech developer is asked to help them. Say that in the explanation; never say it was reported to an owner.`;
 
 const aiPlanSchema = z.object({
   explanation: z.string(),
@@ -1019,6 +1019,135 @@ const aiPlanSchema = z.object({
     })),
   })).default([]),
 });
+
+type AiPlan = z.infer<typeof aiPlanSchema>;
+
+/**
+ * What the model is asked to fill in, written out by hand.
+ *
+ * It used to be `zodToJsonSchema(aiPlanSchema, { target: "openAi" })`, which
+ * renders each `.optional()` as `anyOf: [{ not: { $ref: OpenAiAnyType } }, …]`
+ * — a negation over a definition that refers to itself. Structured outputs
+ * compile a schema rather than validate against it: OpenAI's strict mode does
+ * not support `not`, Claude's does not support recursive schemas, and the
+ * NVIDIA rungs compile the same subset. A schema a vendor cannot compile is a
+ * refusal of the whole request, and the planner's catch then filed every one
+ * of those as a report "to the business owner" — so the agent changed nothing
+ * and told the person it had reported them.
+ *
+ * Closed and fully required like every other schema in this app. "Nothing" is
+ * an empty string, "none" or an empty list, never an absent field, because an
+ * optional field is exactly what produced the construct above.
+ */
+export const AI_PLAN_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["explanation", "intent", "editorCommand", "escalationReason", "escalationCategory", "parsedOperation", "structuralActions", "pages"],
+  properties: {
+    explanation: { type: "string", description: "One or two plain sentences to the person: what you changed, or why nothing could be changed." },
+    intent: {
+      type: "string",
+      enum: ["font", "color", "phone", "email", "content", "page_edits", "structure", "command", "escalate"],
+      description: "font/color/phone/email/content: one value replaced across the whole site, described in parsedOperation. page_edits: changes to named fields, in pages. structure: blocks removed, duplicated or moved, in structuralActions. command: undo, redo or discard. escalate: needs a developer.",
+    },
+    editorCommand: { type: "string", enum: ["none", "undo", "redo", "discard"], description: "Only for intent command; otherwise none." },
+    escalationReason: { type: "string", description: "Only for intent escalate: what a developer would have to do. Otherwise an empty string." },
+    escalationCategory: {
+      type: "string",
+      enum: ["none", "custom_backend", "third_party_integration", "crm_or_leads", "billing_or_account", "complex_engineering", "other"],
+      description: "Only for intent escalate; otherwise none.",
+    },
+    parsedOperation: {
+      type: "object",
+      additionalProperties: false,
+      required: ["from", "to", "property"],
+      description: "Only for a site-wide font, color, phone, email or content change. Otherwise all three are empty strings.",
+      properties: {
+        from: { type: "string", description: "The value as it is now, or an empty string." },
+        to: { type: "string", description: "The new value, or an empty string." },
+        property: { type: "string", description: "The CSS property involved, or an empty string." },
+      },
+    },
+    structuralActions: {
+      type: "array",
+      description: "Blocks to remove, duplicate or move. Use only fields marked canRemove or canDuplicate. Empty when there are none.",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["pageId", "kind", "fieldId", "targetId", "label"],
+        properties: {
+          pageId: { type: "string" },
+          kind: { type: "string", enum: ["remove", "duplicate", "before", "after"] },
+          fieldId: { type: "string" },
+          targetId: { type: "string", description: "For before or after: the field to move next to. Otherwise an empty string." },
+          label: { type: "string", description: "A short name for the block, such as Pricing card." },
+        },
+      },
+    },
+    pages: {
+      type: "array",
+      description: "Field changes, grouped by page. Use only fieldIds from currentPageFields. Empty when there are none.",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["pageId", "changes"],
+        properties: {
+          pageId: { type: "string" },
+          changes: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["fieldId", "operation", "property", "value"],
+              properties: {
+                fieldId: { type: "string" },
+                operation: { type: "string", enum: ["replace_text", "set_link", "set_alt", "set_style", "set_variant", "set_new_tab"] },
+                property: { type: "string", description: "For set_style, the one CSS property, such as font-size. Otherwise an empty string." },
+                value: { type: "string", description: "The new text, address, description, CSS value, variant, or true/false for set_new_tab." },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+} as const;
+
+/**
+ * The model's answer in the shape the planner below was written for.
+ *
+ * Tolerant on purpose: a rung that only *accepts* a schema rather than
+ * enforcing it can leave a field out or send null, and the empty values the
+ * schema asks for mean "absent" here.
+ */
+export function planFromModel(raw: unknown): AiPlan {
+  const data = (raw && typeof raw === "object" ? raw : {}) as Record<string, any>;
+  const text = (value: unknown) => (typeof value === "string" ? value : "");
+  const intents = aiPlanSchema.shape.intent.options as readonly string[];
+  const intent = (intents.includes(text(data.intent)) ? text(data.intent) : "page_edits") as AiPlan["intent"];
+  const command = text(data.editorCommand);
+  const category = text(data.escalationCategory);
+  const operation = data.parsedOperation && typeof data.parsedOperation === "object" ? data.parsedOperation : null;
+  return {
+    explanation: text(data.explanation),
+    intent,
+    editorCommand: command === "undo" || command === "redo" || command === "discard" ? command : null,
+    escalationReason: text(data.escalationReason) || undefined,
+    escalationCategory: category && category !== "none" ? (category as AiPlan["escalationCategory"]) : undefined,
+    parsedOperation: operation ? { from: text(operation.from), to: text(operation.to), property: text(operation.property) || null } : undefined,
+    structuralActions: (Array.isArray(data.structuralActions) ? data.structuralActions : [])
+      .filter((action: any) => action && ["remove", "duplicate", "before", "after"].includes(action.kind) && text(action.fieldId))
+      .map((action: any) => ({ pageId: text(action.pageId), kind: action.kind, fieldId: text(action.fieldId), targetId: text(action.targetId) || null, label: text(action.label) || "Block" })),
+    pages: (Array.isArray(data.pages) ? data.pages : [])
+      .filter((page: any) => page && Array.isArray(page.changes))
+      .map((page: any) => ({
+        pageId: text(page.pageId),
+        changes: page.changes
+          .filter((change: any) => change && text(change.fieldId) && ["replace_text", "set_link", "set_alt", "set_style", "set_variant", "set_new_tab"].includes(change.operation))
+          .map((change: any) => ({ fieldId: text(change.fieldId), operation: change.operation, property: text(change.property) || null, value: text(change.value) })),
+      })),
+  };
+}
 
 // ============================================================================
 // Scope Guardrails & Section Matcher
@@ -1080,7 +1209,7 @@ export function evaluateBuilderScope(prompt: string): ScopeEvaluation {
 export function isExplicitEscalationRequest(prompt: string): boolean {
   const p = prompt.toLowerCase();
   return (
-    /\b(?:escalate(?:\s+this)?\s+to\s+(?:the\s+)?owner|report(?:\s+this)?\s+to\s+(?:the\s+)?owner|send(?:\s+a)?\s+report\s+to\s+(?:the\s+)?owner|talk\s+to\s+(?:the\s+)?owner|contact(?:\s+the)?\s+owner|ask(?:\s+the)?\s+owner|talk\s+to\s+dan|report\s+to\s+dan|ask\s+dan|hand\s*off\s+to\s+developer|developer\s+handoff|submit\s+(?:an?\s+)?escalation)\b/i.test(p)
+    /\b(?:escalate(?:\s+this)?\s+to\s+(?:the\s+)?owner|report(?:\s+this)?\s+to\s+(?:the\s+)?owner|send(?:\s+a)?\s+report\s+to\s+(?:the\s+)?owner|talk\s+to\s+(?:the\s+)?owner|contact(?:\s+the)?\s+owner|ask(?:\s+the)?\s+owner|talk\s+to\s+dan|report\s+to\s+dan|ask\s+dan|hand\s*off\s+to\s+(?:a\s+)?developer|developer\s+handoff|submit\s+(?:an?\s+)?escalation|need\s+(?:a\s+)?developer|developer(?:'s)?\s+help|request\s+(?:developer\s+)?help|let\s+us\s+help|talk\s+to\s+(?:a\s+)?(?:developer|human|person))\b/i.test(p)
   );
 }
 
@@ -1196,11 +1325,11 @@ export async function planAgentInstruction(
       userPrompt: prompt,
       reason: "OUT_OF_SCOPE",
       category: scopeResult.category ?? "other",
-      agentNotes: `User prompt is outside website builder scope (${scopeResult.topic}): ${scopeResult.reason}. Escalation report filed for owner review.`,
+      agentNotes: `User prompt is outside website builder scope (${scopeResult.topic}): ${scopeResult.reason}. Developer help requested.`,
     });
 
     return enrichPlanWithApprovalMetadata({
-      explanation: `The Website Builder Agent specializes strictly in website design, copy, typography, colors, sections, media assets, and SEO metadata. Your request regarding "${scopeResult.topic}" is outside website design and layout. I have submitted an official Escalation Report (${escalation.reportNumber}) directly to the business owner and leadership team for direct follow-up.`,
+      explanation: `I can change your website's words, layout, styling, pictures and SEO, and "${scopeResult.topic}" is outside that, so I've asked a DakyXTech developer to help (request ${escalation.reportNumber}). They can see this page and what you asked, and will get back to you.`,
       actionKind: "escalation",
       summary: { totalPages: livePages.length, affectedPages: 0, totalChanges: 0 },
       pages: [],
@@ -1230,11 +1359,11 @@ export async function planAgentInstruction(
       userPrompt: prompt,
       reason: "OWNER_REQUESTED",
       category: "other",
-      agentNotes: `User requested explicit escalation to site owner from the website builder agent chat.`,
+      agentNotes: `User asked for developer help from the website builder agent chat.`,
     });
 
     return enrichPlanWithApprovalMetadata({
-      explanation: `Your escalation report (${escalation.reportNumber}) has been submitted to the business owner and leadership team. They can view, track, and resolve it from the Owner Reports dashboard.`,
+      explanation: `Your request for developer help (${escalation.reportNumber}) has been sent. A DakyXTech developer can see this page and what you asked, and will get back to you.`,
       actionKind: "escalation",
       summary: { totalPages: livePages.length, affectedPages: 0, totalChanges: 0 },
       pages: [],
@@ -2022,14 +2151,14 @@ export async function planAgentInstruction(
   };
 
   try {
-    const result = await callModel<z.infer<typeof aiPlanSchema>>({
+    const result = await callModel<unknown>({
       purpose: "website.assistant",
       job: "html",
       system: await writerSystem("website.editor", AI_AGENT_SYSTEM_DOCTRINE, {
         contract: "Return only the JSON plan conforming strictly to the requested schema. Never output markdown fences or commentary.",
       }),
       prompt: () => `User request:\n${trimmed}\n\nWorkspace context:\n${JSON.stringify(contextData)}`,
-      schema: zodToJsonSchema(aiPlanSchema, { target: "openAi" }) as Record<string, unknown>,
+      schema: AI_PLAN_JSON_SCHEMA as unknown as Record<string, unknown>,
       effort: budget.action === "downgrade" ? "low" : "medium",
       maxTokens: 4_000,
       messages: {
@@ -2037,7 +2166,7 @@ export async function planAgentInstruction(
       },
     });
 
-    const aiData = result.data;
+    const aiData = planFromModel(result.data);
 
     if (aiData.intent === "escalate") {
       const esc = await createWebsiteEscalation({
@@ -2051,7 +2180,7 @@ export async function planAgentInstruction(
       });
 
       return enrichPlanWithApprovalMetadata({
-        explanation: aiData.explanation || `This custom request requires developer assistance beyond automated layout editing. An Escalation Report (${esc.reportNumber}) has been submitted to the business owner and technical leadership team.`,
+        explanation: `${aiData.explanation ? `${aiData.explanation.trim()} ` : ""}This needs a developer rather than the editor, so I've asked a DakyXTech developer to help (request ${esc.reportNumber}). They will get back to you.`,
         actionKind: "escalation",
         summary: { totalPages: livePages.length, affectedPages: 0, totalChanges: 0 },
         pages: [],
@@ -2227,33 +2356,21 @@ export async function planAgentInstruction(
     if (err instanceof WebsiteError && err.status < 500) {
       throw err;
     }
-    // Automatically file an escalation report so the business owner is notified
-    const esc = await createWebsiteEscalation({
-      siteId: site.id,
-      pageId: currentPage?.id,
-      pageTitle: currentPage?.title,
-      userPrompt: trimmed,
-      reason: "EXECUTION_FAILURE",
-      category: "complex_engineering",
-      agentNotes: `Automated planner encountered an execution failure: ${err instanceof Error ? err.message : String(err)}. Escalated to site owner.`,
-    });
-
+    // Said as what it is. This used to file an "escalation report to the
+    // business owner" on the person's behalf, which read as the agent working
+    // and reporting them, and buried the actual failure in a row nobody saw.
+    // Now the reason goes to the log, the person is told nothing changed, and
+    // asking a developer is theirs to choose — the chat offers it under any
+    // answer that changed nothing.
+    console.error(`[website agent] the planner failed on site ${site.id}:`, err);
+    const noModel = err instanceof AnalystError && err.status === 503;
     return enrichPlanWithApprovalMetadata({
-      explanation: `The automated website builder could not complete this specific task. An official Escalation Report (${esc.reportNumber}) has been filed and sent directly to the business owner and developer team for manual assistance.`,
-      actionKind: "escalation",
+      explanation: noModel
+        ? `I can't answer open-ended requests yet: no AI model is connected for this workspace. Nothing on your page was changed. Direct requests still work, such as "change the font to Inter" or "change #08101F to #1E293B". Or ask a developer below.`
+        : `I couldn't work that one out just now: the AI model behind me did not answer properly. Nothing on your page was changed. Try asking again in a moment, or ask a developer below and we'll do it for you.`,
+      actionKind: "instruction",
       summary: { totalPages: livePages.length, affectedPages: 0, totalChanges: 0 },
       pages: [],
-      escalation: {
-        id: esc.id,
-        reportNumber: esc.reportNumber,
-        reason: esc.reason,
-        category: esc.category,
-        agentNotes: esc.agentNotes,
-        status: esc.status,
-        createdAt: esc.createdAt.toISOString(),
-        siteId: site.id,
-        pageTitle: currentPage?.title ?? null,
-      },
       requiresApproval: false,
     });
   } finally {
@@ -2761,7 +2878,7 @@ export function registerWebsiteBuilderAgent(
       res.status(201).json({
         ticketId: escalation.id,
         reportNumber: escalation.reportNumber,
-        message: `Request sent to the business owner and DakyXTech technical team (Report #${escalation.reportNumber}). We have full context of the page and element you were working on.`,
+        message: `Request sent (#${escalation.reportNumber}). A DakyXTech developer can see the page and element you were working on, and will get back to you.`,
       });
     } catch (err) {
       next(err);

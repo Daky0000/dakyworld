@@ -732,3 +732,39 @@ changed is where `pageSource` gets its bytes and what a publish writes.
   deploy" and their failure names the build.
 - **A page with no built copy anywhere** answers 409 and the editor offers the
   source screen, which needs no HTML at all.
+
+## Formatting words, the selection outline, and the agent's schema (10 Oct 2026)
+
+- **Bold, italic, underline and strikethrough are toggles** (`applyTextFormat`
+  in `client/src/lib/websiteTextSelection.ts`). They used to be `set`, so bold
+  could never come off, and "clear formatting" wrote `font-weight: normal` over
+  the words instead of removing anything, so colour and highlight could never be
+  cleared. A toggle is judged by **computed style** over the words, so a heading
+  that is bold from its own CSS shows Bold pressed and pressing it writes
+  `font-weight: 400`; pressing again removes that override rather than stacking
+  700 on it. Removing formatting from part of a styled span splits the span
+  (`isolate`) so the neighbouring words keep theirs. `checks/browser/textFormatting.mjs`
+  covers the round trips.
+- **One selection outline at a time.** The frame's picker script and the editor
+  both write `data-dw-selected` — the script on a click, the editor directly for
+  Select parent and Layers. Each used to clear only the one it knew about, so
+  Select parent followed by a click elsewhere left two outlines, and clearing the
+  selection removed one. Both now clear every mark. Escape inside the frame also
+  clears, because after a click on the page the keyboard is in the frame.
+- **The editor sets its own `::selection`** in the frame, translucent, so a page
+  with a faint selection colour still shows what is selected and a highlight
+  just applied shows through it.
+- **The agent's model schema is written by hand** (`AI_PLAN_JSON_SCHEMA` in
+  `websiteBuilderAgent.ts`). `zodToJsonSchema(…, { target: "openAi" })` rendered
+  `.optional()` as `anyOf [{ not: { $ref: OpenAiAnyType } }]` over a recursive
+  definition, which structured outputs do not compile, and the planner's catch
+  turned every failure into an "escalation report to the business owner". A
+  failure is now said as one, logged as `[website agent] the planner failed`, and
+  never filed on the person's behalf; the chat offers **Request developer help**
+  under any answer that changed nothing. `checks/websiteAgentSchema.ts` keeps the
+  schema closed, fully required and free of `not`, `$ref`, `default` and `anyOf`.
+- **The person-facing wording is "developer help", never "report to owner".**
+- **A GitHub 403 on publish names the credential and quotes GitHub.** The shared
+  token (Settings → Developer) needs **Contents: read and write**, and the
+  Settings screen used to ask for read only. An app installation is named as the
+  app. `GitHubError.via` carries which one GitHub refused.
