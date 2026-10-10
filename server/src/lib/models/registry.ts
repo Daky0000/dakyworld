@@ -1282,7 +1282,7 @@ export async function isFreeModel(model: string): Promise<boolean> {
  * paid floor, and slipping another call in between would be latency nobody
  * asked for at exactly the moment free capacity was short.
  */
-export async function nvidiaAttempts(job: ModelJob): Promise<(string | undefined)[]> {
+export async function nvidiaAttempts(job: LadderKey): Promise<(string | undefined)[]> {
   const ladder = await freeLadderFor(job);
   return ladder.length > 0 ? ladder : [undefined];
 }

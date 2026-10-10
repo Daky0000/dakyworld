@@ -20,7 +20,11 @@ import {
   imageModel,
   isFreeModel,
   modelForJob,
+  isPaidProvider,
+  modelForLevel,
   nvidiaAttempts,
+  PAID_AGENT_CHAIN,
+  providerConfigured,
   providerKey,
   providerModel,
   readFreeLadders,
@@ -33,6 +37,7 @@ import {
   type LadderKey,
   type ModelJob,
   type ProviderKey,
+  type TaskLevel,
 } from "./registry.js";
 
 /**
@@ -154,6 +159,19 @@ export interface ModelRequest {
    * must not be in the chain for a job that has one.
    */
   images?: PromptImage[];
+  /**
+   * Run this call on the models the OS agents run on, instead of this job's
+   * own routing: NVIDIA's `agent` free ladder first, then Claude, ChatGPT and
+   * Gemini — whichever have a key — each at the model set for this task level
+   * (`TIER_MODELS`, or the Owner's choice under Settings → AI models).
+   *
+   * For a conversational agent that lives outside the agent loop. The Website
+   * Builder's agent is one: it answered from the "web pages" job, a different
+   * ladder and a different paid model from the agents the Owner had set up and
+   * was watching work, so changing an agent model in Settings changed nothing
+   * there.
+   */
+  agentChain?: { level: TaskLevel };
 }
 
 export type { PromptImage };
@@ -952,8 +970,13 @@ async function callModelUnbounded<T>(request: ModelRequest): Promise<ModelResult
    * job** — and the whole point of a ladder is that a rung failing is an
    * ordinary event rather than the vendor failing. See `nvidiaAttempts`.
    */
-  const modelsFor = async (serving: ProviderKey): Promise<(string | undefined)[]> =>
-    serving === "nvidia" ? await nvidiaAttempts(request.job) : [undefined];
+  const level = request.agentChain?.level;
+  const modelsFor = async (serving: ProviderKey): Promise<(string | undefined)[]> => {
+    if (serving === "nvidia") return nvidiaAttempts(level ? "agent" : request.job);
+    // On the agents' chain a paid vendor serves the model for the task's level.
+    if (level && isPaidProvider(serving)) return [await modelForLevel(serving, level)];
+    return [undefined];
+  };
 
   /**
    * Asks one vendor, down its whole ladder, and gives up on it only when every
@@ -987,6 +1010,26 @@ async function callModelUnbounded<T>(request: ModelRequest): Promise<ModelResult
     const result = await askVendor(request.provider);
     if (result) return { ...result, continuedFrom: continuedFrom() };
     throw failures.at(-1) ?? new AnalystError(502, say("empty"));
+  }
+
+  if (level) {
+    // The same order and the same rule as `runAgentLoop`: free first, then
+    // the paid floor, and only vendors with a key, so the chain can only end
+    // at somebody who could have answered.
+    const chain: ProviderKey[] = [];
+    if (await providerConfigured("nvidia")) chain.push("nvidia");
+    for (const paid of PAID_AGENT_CHAIN) if (await providerConfigured(paid)) chain.push(paid);
+    if (chain.length === 0) throw new AnalystError(503, say("noKey"));
+    for (const serving of chain) {
+      const result = await askVendor(serving);
+      if (result) {
+        const from = continuedFrom();
+        const finished = from ? ` It carried on from ${from}'s unfinished answer rather than starting again.` : "";
+        return { ...result, continuedFrom: continuedFrom(), fallbackNote: tried.length ? `${tried.join("; ")}, so ${PROVIDERS[serving].name} answered.${finished}` : null };
+      }
+    }
+    const last = failures.at(-1);
+    throw new AnalystError(last?.status ?? 502, `${JOBS[request.job].phrase} could not be done. ${tried.join("; ")}. Last error: ${last?.message ?? "unknown"}`);
   }
 
   const { chosen, chain } = await serveChain(request.job);
@@ -1054,7 +1097,7 @@ async function attemptProvider<T>(
         // layer honour one answer. Left unset, the job's tier and the Owner's
         // per-job choice would apply to the three fetch vendors and silently
         // not to Claude — which is the vendor most jobs actually fall back to.
-        model: await modelForJob(asked.job, "anthropic"),
+        model: modelOverride ?? (await modelForJob(asked.job, "anthropic")),
         maxTokens: asked.maxTokens,
         images: asked.images,
         messages: asked.messages,

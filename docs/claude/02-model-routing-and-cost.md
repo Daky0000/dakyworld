@@ -57,6 +57,11 @@ and some of the time simply does not answer. One of them as *the* model is a
 system that stops working at busy times; three in a row with a paid floor behind
 them is a system that costs nothing most days and never stops.
 
+- **A one-shot call can borrow the workforce's chain.** `callModel({ agentChain:
+  { level } })` asks the `agent` ladder, then Claude, ChatGPT and Gemini (with a
+  key) at `modelForLevel(vendor, level)` — the same order and models as
+  `runAgentLoop`. The Website Builder's agent uses it, so a model change made for
+  the agents in Settings reaches the editor too.
 - **The assignment is the point.** `FREE_LADDER_BY_JOB` is eleven rows — every
   `ModelJob`, plus `agent` for the loop that runs the workforce. Three rules
   were applied to each: capability first (a model that cannot see is never in

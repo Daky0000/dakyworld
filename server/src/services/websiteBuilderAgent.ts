@@ -10,6 +10,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { callModel } from "../lib/models/call.js";
 import { AnalystError } from "../lib/claude.js";
+import { effortForLevel, type TaskLevel } from "../lib/models/registry.js";
 import { currentRun } from "../lib/runContext.js";
 import { sniff } from "../lib/fileType.js";
 import { optimizeImageBuffer } from "../lib/imageOptimization.js";
@@ -1149,6 +1150,23 @@ export function planFromModel(raw: unknown): AiPlan {
   };
 }
 
+/**
+ * How demanding a builder request is, which decides the paid model that takes
+ * over when the free ones cannot (the same levels the OS agents use).
+ *
+ * Rules only, no model call: this runs while somebody is waiting in a chat,
+ * and the OS's own sizing says the same thing — sizing must never be the
+ * reason a request did not run. A change across the whole site, a picture or
+ * file to work from, or a long brief is complex; everything else is standard.
+ * A spend ceiling in its downgrade band holds it at standard, as it does for
+ * the agents.
+ */
+export function builderTaskLevel(prompt: string, attachments: number, downgrade = false): TaskLevel {
+  const wide = /\b(?:all|every|each|whole|entire|across)\b[^.]{0,40}\b(?:pages?|site|website)\b/i.test(prompt);
+  const level: TaskLevel = wide || attachments > 0 || prompt.length > 600 ? "complex" : "standard";
+  return downgrade && level === "complex" ? "standard" : level;
+}
+
 // ============================================================================
 // Scope Guardrails & Section Matcher
 // ============================================================================
@@ -2107,6 +2125,7 @@ export async function planAgentInstruction(
 
   // Include active page fields so the AI model can target any element on the open canvas
   let currentPageFieldsSummary: Array<{ id: string; label: string; kind: string; tag: string; value: string; href?: string; style?: string; canRemove?: boolean; canDuplicate?: boolean }> = [];
+  let pageUnreadable: string | null = null;
   if (currentPage) {
     try {
       const source = await pageSource(site, currentPage);
@@ -2117,19 +2136,28 @@ export async function planAgentInstruction(
       const html = editingSource(source.html, existingDraft);
       const { fields } = discoverFields(html);
       const controls = structureControls(html);
-      currentPageFieldsSummary = fields.slice(0, 80).map(f => ({
+      // The selected element first, then the rest of the page. This was the
+      // first eighty fields only, and a homepage has two hundred: select
+      // anything below the fold, say "make this bold", and the model was
+      // never shown the element it was being asked to change.
+      const selectedId = options?.selectedFieldId ?? null;
+      const ordered = selectedId ? [...fields.filter(f => f.id === selectedId), ...fields.filter(f => f.id !== selectedId)] : fields;
+      currentPageFieldsSummary = ordered.slice(0, 220).map(f => ({
         id: f.id,
         label: f.label,
         kind: f.kind,
         tag: f.tag,
-        value: (f.value ?? "").slice(0, 140),
+        value: (f.value ?? "").slice(0, f.id === selectedId ? 600 : 120),
         ...(f.href !== undefined ? { href: f.href } : {}),
         ...(f.style ? { style: f.style } : {}),
         ...(controls[f.id]?.remove ? { canRemove: true } : {}),
         ...(controls[f.id]?.duplicate ? { canDuplicate: true } : {}),
       }));
-    } catch {
-      // Ignore if unreadable
+    } catch (err) {
+      // Said in the log: a model shown no fields can only answer with nothing,
+      // and that reads as the agent not working rather than the page not loading.
+      pageUnreadable = err instanceof Error ? err.message : String(err);
+      console.error(`[website agent] could not read page ${currentPage.id} for the planner: ${pageUnreadable}`);
     }
   }
 
@@ -2140,6 +2168,7 @@ export async function planAgentInstruction(
     currentPageId: currentPage?.id ?? null,
     currentPageTitle: currentPage?.title ?? null,
     selectedFieldId: options?.selectedFieldId ?? null,
+    selectedField: currentPageFieldsSummary.find(f => f.id === options?.selectedFieldId) ?? null,
     recentConversation: history.slice(-6),
     attachments: attachments.map(a => ({ filename: a.filename, url: a.url, kind: a.kind, contentType: a.contentType })),
     currentPageFields: currentPageFieldsSummary,
@@ -2150,16 +2179,24 @@ export async function planAgentInstruction(
     pages: livePages.map(p => ({ id: p.id, title: p.title, path: p.path })),
   };
 
+  const level = builderTaskLevel(trimmed, attachments.length, budget.action === "downgrade");
   try {
     const result = await callModel<unknown>({
       purpose: "website.assistant",
       job: "html",
+      // The models the OS agents run on, not the "web pages" job: the free
+      // agent ladder, then Claude, ChatGPT and Gemini at this request's level.
+      agentChain: { level },
       system: await writerSystem("website.editor", AI_AGENT_SYSTEM_DOCTRINE, {
-        contract: "Return only the JSON plan conforming strictly to the requested schema. Never output markdown fences or commentary.",
+        contract:
+          "Return only the JSON plan conforming strictly to the requested schema. Never output markdown fences or commentary. " +
+          "Every fieldId and pageId must be copied exactly from the workspace context; a field that is not listed cannot be changed. " +
+          "When the person says this, it, here or the selected one, they mean selectedField. " +
+          "If nothing can be changed, return no changes and say why in explanation.",
       }),
       prompt: () => `User request:\n${trimmed}\n\nWorkspace context:\n${JSON.stringify(contextData)}`,
       schema: AI_PLAN_JSON_SCHEMA as unknown as Record<string, unknown>,
-      effort: budget.action === "downgrade" ? "low" : "medium",
+      effort: effortForLevel(level),
       maxTokens: 4_000,
       messages: {
         noKey: "Connect an AI model in Settings to use open-ended conversational requests. Direct builder commands (fonts, colors, phones, emails, background images, file links, delete/duplicate blocks, and undo/redo) work automatically.",
@@ -2167,6 +2204,8 @@ export async function planAgentInstruction(
     });
 
     const aiData = planFromModel(result.data);
+    const proposed = aiData.pages.reduce((sum, page) => sum + page.changes.length, 0) + aiData.structuralActions.length;
+    const dropped: string[] = [];
 
     if (aiData.intent === "escalate") {
       const esc = await createWebsiteEscalation({
@@ -2276,7 +2315,7 @@ export async function planAgentInstruction(
 
         for (const ch of aiPage.changes) {
           const field = byId.get(ch.fieldId);
-          if (!field) continue;
+          if (!field) { dropped.push(`${ch.fieldId} is not an element on ${page.title}`); continue; }
           const prevEdit = pageEdits[field.id] ?? (existingDraft[field.id] ? editableValues(existingDraft[field.id]) : {});
           const nextEdit: AgentFieldEdit = { ...prevEdit };
 
@@ -2303,6 +2342,8 @@ export async function planAgentInstruction(
             if (sanitized) {
               nextEdit.style = sanitized;
               pageChanges.push({ fieldId: field.id, label: field.label, property: ch.property, before: beforeVal, after: ch.value });
+            } else {
+              dropped.push(`${ch.property}: ${ch.value} is not a style the editor can set on ${field.label}`);
             }
           }
 
@@ -2339,8 +2380,23 @@ export async function planAgentInstruction(
 
     totalChanges += builtStructuralActions.length;
 
+    console.log(
+      `[website agent] site ${site.id}: ${result.model} (${level}) intent=${aiData.intent} proposed=${proposed} applied=${totalChanges}` +
+        (dropped.length ? ` dropped: ${dropped.slice(0, 5).join("; ")}` : "") +
+        (result.fallbackNote ? ` | ${result.fallbackNote}` : ""),
+    );
+
+    // A plan the model described but none of which could be applied must not
+    // be shown under the model's own "Done — I made the heading bold".
+    const explanation =
+      totalChanges === 0 && (proposed > 0 || pageUnreadable)
+        ? pageUnreadable
+          ? `I couldn't read this page to change it (${pageUnreadable}). Nothing was changed. Try again in a moment, or ask a developer below.`
+          : `I worked out a change but couldn't apply it to this page: ${dropped.slice(0, 3).join("; ")}. Nothing was changed. Select the element you mean and ask again, or ask a developer below.`
+        : aiData.explanation || (totalChanges === 0 ? "I couldn't find anything on this page to change for that. Select the element you mean and ask again, or ask a developer below." : "Prepared change plan for your website.");
+
     return enrichPlanWithApprovalMetadata({
-      explanation: aiData.explanation || "Prepared change plan for your website.",
+      explanation,
       actionKind: builtStructuralActions.length > 0 ? "structure" : "instruction",
       summary: {
         totalPages: livePages.length,

@@ -768,3 +768,16 @@ changed is where `pageSource` gets its bytes and what a publish writes.
   token (Settings → Developer) needs **Contents: read and write**, and the
   Settings screen used to ask for read only. An app installation is named as the
   app. `GitHubError.via` carries which one GitHub refused.
+- **The builder agent runs on the OS agents' models** (`agentChain` on
+  `callModel`). The free rungs are NVIDIA's `agent` ladder, then Claude, ChatGPT
+  and Gemini, whichever have a key, each at the model for the request's level
+  (`builderTaskLevel`: standard, or complex for a whole-site change, an
+  attachment or a long brief). It used to answer from the "web pages" job, so
+  changing an agent model in Settings changed nothing in the editor.
+  `checks/websiteAgentChain.ts` proves the order against stub vendors.
+- **The selected element is always shown to the model**, first, and the page
+  list goes to 220 fields. It was the first 80, so selecting anything lower on a
+  long page and saying "make this bold" asked about an element the model never
+  saw. A plan whose changes could not be applied now says why instead of
+  showing the model's "Done", and every plan logs one `[website agent]` line:
+  model, level, proposed, applied, and what was dropped.
