@@ -1040,8 +1040,8 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
 <style nonce="${nonce}">
   [data-dw-field] { cursor: pointer; }
   [data-dw-field]:hover { outline: 2px dashed rgba(49,87,255,.55); outline-offset: 2px; }
-  [data-dw-selected] { outline: 2px solid #2563EB !important; outline-offset: 2px; background: rgba(37,99,235,.06); }
-  [data-dw-editing] { cursor: text !important; outline: 2px solid #2563EB !important; outline-offset: 2px; background: rgba(37,99,235,.10); }
+  [data-dw-selected] { outline: 2px solid #2563EB !important; outline-offset: 2px; }
+  [data-dw-editing] { cursor: text !important; outline: 2px solid #2563EB !important; outline-offset: 2px; }
   [data-dw-editing]:hover { outline-style: solid !important; }
   [data-dw-shown] { opacity: 1 !important; transform: none !important; filter: none !important; }
   [data-dw-field]:hover, [data-dw-field]:hover *,
@@ -1328,7 +1328,10 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
       mark(el);
       if (el && el.scrollIntoView) {
         var pos = window.getComputedStyle ? window.getComputedStyle(el).position : "static";
-        if (pos !== "sticky" && pos !== "fixed") el.scrollIntoView({ block: "center", behavior: "smooth" });
+        // The frame's own window only: scrollIntoView would also scroll the
+        // editor around the frame and push its header off screen.
+        var r = el.getBoundingClientRect();
+        if (pos !== "sticky" && pos !== "fixed" && (r.top < 0 || r.bottom > window.innerHeight)) window.scrollTo({ top: window.scrollY + r.top - Math.max(0, (window.innerHeight - r.height) / 2), behavior: "smooth" });
       }
     } else if (data.type === "cssVar") {
       if (data.name && document.documentElement && document.documentElement.style) {

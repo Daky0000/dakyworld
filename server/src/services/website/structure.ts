@@ -4,11 +4,13 @@ import { describeChanges } from "./index.js";
 import { attrNode, parseHtml, walk, type ElementNode } from "./parse.js";
 import { applyValues, readPage, type FieldValue } from "./regions.js";
 import { regenerateResponsiveStyles } from "./responsive.js";
+import { WebsiteError } from "./site.js";
 import { DOCUMENT_KEY, boundedHistory, draftDocument, editingSource, fieldValues, sourceHash, type DraftDocument, type DocumentSnapshot } from "./document.js";
 
 export type StructureAction = { kind: "remove" | "duplicate" | "before" | "after"; fieldId: string; targetId?: string } | { kind: "undo" | "redo" };
 export type StructureControl = { remove: boolean; duplicate: boolean; repeatable?: boolean; previousId?: string; nextId?: string; group?: string; reason?: string; duplicateReason?: string };
-export class StructureError extends Error { status = 409; }
+/** A refusal written for the person, so the error handler passes its sentence through rather than "Something went wrong." */
+export class StructureError extends WebsiteError { constructor(message: string) { super(409, message); this.name = "StructureError"; } }
 const BLOCKED = new Set(["html", "head", "body", "script", "style", "form", "input", "select", "textarea", "iframe", "template", "canvas", "video", "audio", "object", "embed", "link", "meta"]);
 const escapeAttribute = (value: string) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 const freshId = () => `node-${randomBytes(12).toString("hex")}`;
@@ -110,7 +112,9 @@ export function changeStructure(source: string, values: Record<string, FieldValu
   }
   html = regenerateResponsiveStyles(html);
   if (/--dw-(?:hover-|focus-|active-|enter|loop|scroll)|data-dw-interaction-styles/.test(html)) html = regenerateInteractionStyles(html);
-  if (Buffer.byteLength(html) > 3 * 1024 * 1024) throw new StructureError("This page is too large to duplicate more content. Remove unused blocks first.");
+  // Only growth is refused. A page already over the ceiling must still be able
+  // to lose a block or rearrange one, or the advice in the message cannot be followed.
+  if (Buffer.byteLength(html) > 3 * 1024 * 1024 && Buffer.byteLength(html) > Buffer.byteLength(current.html)) throw new StructureError("This page is too large to duplicate more content. Remove unused blocks first.");
   const verb = action.kind === "remove" ? "Removed" : action.kind === "duplicate" ? "Duplicated" : "Moved";
   const document: DraftDocument = { baseHash: previous?.baseHash ?? sourceHash(source), html, changes: [...current.changes, `${verb} ${field.label}`].slice(-100), summary: [...(current.summary ?? []), ...describeChanges(readPage(current.html).fields, current.values)], undo: boundedHistory([...(previous?.undo ?? []), current]), redo: [] };
   return { values: { [DOCUMENT_KEY]: { document } }, selectedId };

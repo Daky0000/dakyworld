@@ -637,7 +637,16 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       const el = doc.querySelector(`[data-dw-field="${id.replace(/"/g, "")}"]`);
       if (!el) return "absent";
       el.setAttribute("data-dw-selected", "");
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      // "still" is a selection made on the canvas itself: the element is already
+      // under the pointer, and centring a tall container would yank the page away.
+      // Scroll the frame's own window only. scrollIntoView walks every scroller
+      // up to the top document, and the editor shell is one of them: it slid the
+      // header off screen and left a blank strip under the canvas.
+      if (value !== "still") {
+        const view = doc.defaultView;
+        const rect = el.getBoundingClientRect();
+        if (view && (rect.top < 0 || rect.bottom > view.innerHeight)) view.scrollTo({ top: view.scrollY + rect.top - Math.max(0, (view.innerHeight - rect.height) / 2), behavior: "smooth" });
+      }
       return "written";
     }
 
@@ -899,6 +908,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         setContextMenu(null);
         setPickedId(data.id ?? null);
       } else if (data.type === "contextmenu") {
+        if ((frame.current?.contentDocument as (Document & { __dwCtxBound?: boolean }) | null | undefined)?.__dwCtxBound) return;
         const rect = frame.current?.getBoundingClientRect();
         const rawX = (rect?.left ?? 0) + (data.clientX ?? 0);
         const rawY = (rect?.top ?? 0) + (data.clientY ?? 0);
@@ -1899,7 +1909,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     const x = Math.max(12, Math.min(rawX, window.innerWidth - 280));
     const y = Math.max(12, Math.min(rawY, window.innerHeight - 420));
     setPickedId(id ?? null);
-    if (id) writeInFrame("select", id);
+    if (id) writeInFrame("select", id, "still");
     const tag = el
       ? el.tagName.toLowerCase()
       : fallbackTarget?.tagName

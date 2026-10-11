@@ -808,7 +808,7 @@ button:disabled { cursor:not-allowed; }
 .dx-sl input[type=range] { width:100%; accent-color:var(--editor-accent); background:transparent!important; border:0!important; min-height:0!important; padding:0; }
 .dx-segc { display:flex; background:var(--editor-input); border-radius:8px; padding:2px; gap:2px; }
 .dx-segc button { flex:1; height:26px; border-radius:6px; color:var(--editor-muted); font-size:12px; }
-.dx-segc button[aria-pressed="true"] { background:var(--editor-panel); color:var(--editor-text); box-shadow:0 1px 2px rgba(0,0,0,.25); }
+.dx-segc button[aria-pressed="true"] { background:var(--editor-accent); color:#fff; box-shadow:0 1px 2px rgba(0,0,0,.25); }
 .dx-toggle { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12.5px; cursor:pointer; }
 .dx-editor .dx-toggle input { appearance:none; width:32px; height:18px; min-height:0!important; border-radius:9px; background:var(--editor-hover)!important; position:relative; flex:none; margin:0; border:0!important; padding:0; }
 .dx-toggle input::after { content:""; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:#fff; transition:left .15s; }
@@ -832,11 +832,12 @@ button:disabled { cursor:not-allowed; }
 .dx-seltag { position:absolute; z-index:5; background:#4d7bff; color:#fff; font:500 10.5px ui-monospace,Menlo,monospace; padding:2px 6px; border-radius:4px 4px 0 0; pointer-events:none; white-space:nowrap; }
 .dx-mini { position:absolute; z-index:6; display:flex; gap:2px; background:var(--editor-panel); border:1px solid var(--editor-line); border-radius:10px; padding:3px; box-shadow:var(--editor-shadow); color:var(--editor-text); }
 .dx-mini .dx-ib { height:28px; min-width:28px; font-size:12px; color:var(--editor-text); }
+.dx-mini .dx-ib[aria-pressed="true"] { background:var(--editor-accent); color:#fff; }
 .dx-sep { width:1px; background:var(--editor-line); margin:4px 2px; align-self:stretch; }
 .dx-fmtbar { position:absolute; z-index:9; display:flex; align-items:center; gap:2px; background:#151c30; color:#fff; border-radius:10px; padding:4px; box-shadow:var(--editor-shadow); }
 .dx-fmtbar button, .dx-fmtbar label { width:30px; height:28px; border-radius:6px; display:grid; place-items:center; font-size:13px; color:#fff!important; cursor:pointer; position:relative; }
 .dx-fmtbar button:hover, .dx-fmtbar label:hover { background:rgba(255,255,255,.12); }
-.dx-fmtbar button[aria-pressed=true] { background:rgba(255,255,255,.22); box-shadow:inset 0 -2px 0 #8fa8ff; }
+.dx-fmtbar button[aria-pressed=true] { background:#3157ff; box-shadow:inset 0 -2px 0 #c9d4ff; }
 .dx-fmtbar .dx-sep { background:rgba(255,255,255,.18); height:18px; align-self:center; margin:0 3px; }
 .dx-fmtbar input[type=color] { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%; }
 .dx-ftc { border-bottom:3px solid #2563EB; line-height:1; font-weight:600; }
@@ -1012,3 +1013,36 @@ button.dx-ctr:hover { color:var(--editor-accent); }
 .dx-fp { position:absolute; width:16px; height:16px; border-radius:50%; border:2px solid #fff; box-shadow:0 0 0 2px rgba(0,0,0,.4); transform:translate(-50%,-50%); pointer-events:none; }
 .dx-insp .dx-stack > .space-y-2\.5 select { width:auto; min-width:150px; }
 .dx-insp [data-section="content"] > .dx-sec-h { display:none; } .dx-insp [data-section="content"] { border-bottom:0; } .dx-insp [data-section="content"] > .dx-sec-body { padding-top:12px; }
+
+/* Layers panel: rounded rows, depth guides and a tinted badge per kind. */
+.dx-layers { background:var(--editor-panel); color:var(--editor-text); }
+.dx-layers-float { border:1px solid var(--editor-line); border-radius:14px; box-shadow:var(--editor-shadow); }
+.dx-layers-head { border-bottom:1px solid var(--editor-line); }
+.dx-lcount { min-width:20px; padding:1px 6px; border-radius:999px; background:var(--editor-input); color:var(--editor-muted); font-size:10px; font-weight:600; text-align:center; }
+.dx-ltool { display:flex; height:26px; width:26px; align-items:center; justify-content:center; border-radius:7px; color:var(--editor-muted); }
+.dx-ltool:hover:not(:disabled), .dx-ltool[aria-pressed="true"] { background:var(--editor-input); color:var(--editor-text); }
+.dx-layers-search { border-bottom:1px solid var(--editor-line); }
+.dx-lsearch { background:var(--editor-input); border:1px solid var(--editor-line); color:var(--editor-text); }
+.dx-lsearch:focus { border-color:var(--editor-accent); }
+.dx-lrow { position:relative; display:flex; align-items:center; gap:7px; width:calc(100% - 12px); margin:1px 6px; height:32px!important; padding-right:8px; border-radius:9px; text-align:left; font-size:12.5px; color:var(--editor-muted); outline:none; transition:background .12s, color .12s; }
+.dx-lrow:hover { background:var(--editor-input); color:var(--editor-text); }
+.dx-lrow:focus-visible { box-shadow:0 0 0 2px var(--editor-accent); }
+.dx-lrow[aria-selected="true"] { background:var(--editor-accent-soft); color:var(--editor-text); font-weight:600; }
+.dx-lrow[aria-selected="true"]::before { content:""; position:absolute; left:0; top:7px; bottom:7px; width:3px; border-radius:3px; background:var(--editor-accent); }
+.dx-lguide { position:absolute; top:0; bottom:0; width:1px; background:var(--editor-line); pointer-events:none; }
+.dx-lcaret { color:var(--editor-muted); }
+.dx-lcaret:hover { color:var(--editor-text); }
+.dx-lkind { --k:#7c8db5; display:grid; place-items:center; flex:none; width:22px; height:22px; border-radius:7px; color:var(--k); background:color-mix(in srgb, var(--k) 16%, transparent); }
+.dx-lkind[data-kind="container"], .dx-lkind[data-kind="header"], .dx-lkind[data-kind="footer"] { --k:#8b7cf6; }
+.dx-lkind[data-kind="heading"] { --k:#f59e0b; }
+.dx-lkind[data-kind="text"] { --k:#94a3b8; }
+.dx-lkind[data-kind="button"] { --k:#22c55e; }
+.dx-lkind[data-kind="image"], .dx-lkind[data-kind="carousel"] { --k:#06b6d4; }
+.dx-lkind[data-kind="logo"] { --k:#ec4899; }
+.dx-lkind svg { width:14px; height:14px; }
+.dx-lsub { color:var(--editor-muted); opacity:.8; }
+.dx-lshared { background:var(--editor-accent-soft); color:var(--editor-accent); }
+.dx-leye { color:var(--editor-muted); }
+.dx-leye:hover { background:var(--editor-input); color:var(--editor-text); }
+.dx-layers-foot { border-top:1px solid var(--editor-line); }
+.dx-lgrip { width:28px; height:3px; border-radius:3px; background:var(--editor-line); }

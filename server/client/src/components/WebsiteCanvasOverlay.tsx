@@ -145,6 +145,13 @@ export function WebsiteCanvasOverlay({
 
   if (!box) return null;
   const state = selection && range.current && element ? textFormatState(element, range.current) : { bold: false, italic: false, underline: false, strike: false };
+  // The whole-element buttons show what the element already is, judged by its words.
+  const whole = (() => {
+    if (!element?.isConnected) return { bold: false, italic: false };
+    const all = element.ownerDocument.createRange();
+    all.selectNodeContents(element);
+    return textFormatState(element, all);
+  })();
   const isText = kind !== "image" && kind !== "container" && kind !== "icon" && kind !== "unsupported";
   const isSection = kind === "container";
   const stageWidth = stage.current?.clientWidth ?? 800;
@@ -159,8 +166,8 @@ export function WebsiteCanvasOverlay({
           {isText && (
             <>
               <button type="button" className="dx-ib" onClick={onEdit}>Edit text</button>
-              <button type="button" className="dx-ib" title="Bold" aria-label="Bold" onClick={onBold}><b>B</b></button>
-              <button type="button" className="dx-ib" title="Italic" aria-label="Italic" onClick={onItalic}><i>I</i></button>
+              <button type="button" className="dx-ib" title="Bold" aria-label="Bold" aria-pressed={whole.bold} onClick={onBold}><b>B</b></button>
+              <button type="button" className="dx-ib" title="Italic" aria-label="Italic" aria-pressed={whole.italic} onClick={onItalic}><i>I</i></button>
               {(kind === "link" || kind === "button") && <button type="button" className="dx-ib" title="Where it goes" aria-label="Where it goes" onClick={onLink}>{I.link}</button>}
               <span className="dx-sep" />
             </>
