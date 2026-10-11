@@ -7,10 +7,12 @@ import { regenerateResponsiveStyles } from "./responsive.js";
 import { WebsiteError } from "./site.js";
 import { DOCUMENT_KEY, boundedHistory, draftDocument, editingSource, fieldValues, sourceHash, type DraftDocument, type DocumentSnapshot } from "./document.js";
 
-export type StructureAction = { kind: "remove" | "duplicate" | "before" | "after"; fieldId: string; targetId?: string } | { kind: "undo" | "redo" };
-export type StructureControl = { remove: boolean; duplicate: boolean; repeatable?: boolean; previousId?: string; nextId?: string; group?: string; reason?: string; duplicateReason?: string };
+export type StructureAction = { kind: "remove" | "duplicate" | "before" | "after"; fieldId: string; targetId?: string; force?: boolean } | { kind: "undo" | "redo" };
+export type StructureControl = { remove: boolean; duplicate: boolean; repeatable?: boolean; previousId?: string; nextId?: string; group?: string; reason?: string; duplicateReason?: string; forceRemove?: boolean };
 /** A refusal written for the person, so the error handler passes its sentence through rather than "Something went wrong." */
 export class StructureError extends WebsiteError { constructor(message: string) { super(409, message); this.name = "StructureError"; } }
+/** The one refusal a person may override: deleting the whole block removes its scripts and forms with it, which is a choice, not a corruption. */
+export const INTERACTIVE_BLOCK_REASON = "This block contains interactive code or forms. Change its structure in the source editor.";
 const BLOCKED = new Set(["html", "head", "body", "script", "style", "form", "input", "select", "textarea", "iframe", "template", "canvas", "video", "audio", "object", "embed", "link", "meta"]);
 const escapeAttribute = (value: string) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 const freshId = () => `node-${randomBytes(12).toString("hex")}`;
@@ -23,7 +25,7 @@ function splice(source: string, edits: Splice[]): string {
 function structuralReason(node: ElementNode | undefined): string | undefined {
   if (!node || BLOCKED.has(node.tag) || !node.parent) return "This element is controlled by the page source.";
   for (let at: ElementNode | null = node.parent; at; at = at.parent) if (BLOCKED.has(at.tag) && !["body", "html"].includes(at.tag)) return "This element belongs to an interactive or source-controlled region.";
-  if ([...walk(node)].some(child => BLOCKED.has(child.tag) || child.attrs.some(attr => /^on[a-z]/i.test(attr.name)))) return "This block contains interactive code or forms. Change its structure in the source editor.";
+  if ([...walk(node)].some(child => BLOCKED.has(child.tag) || child.attrs.some(attr => /^on[a-z]/i.test(attr.name)))) return INTERACTIVE_BLOCK_REASON;
   if (!node.selfClosing && node.innerEnd === node.end) return "This element has no explicit closing tag. Fix its HTML before moving it.";
   return undefined;
 }
@@ -36,7 +38,7 @@ export function structureControls(source: string): Record<string, StructureContr
   return Object.fromEntries(fields.map(field => {
     const node = field.attrInsert === undefined ? undefined : at.get(field.attrInsert);
     const reason = structuralReason(node);
-    if (reason || !node) return [field.id, { remove: false, duplicate: false, reason }];
+    if (reason || !node) return [field.id, { remove: false, duplicate: false, reason, ...(node && reason === INTERACTIVE_BLOCK_REASON ? { forceRemove: true } : {}) }];
     const siblings = node.parent!.children.filter(child => fieldAt.has(child.attrInsert) && !structuralReason(child));
     const index = siblings.indexOf(node);
     const isRepeatable = Boolean(attrNode(node, "data-dw-repeatable") || (node.parent && attrNode(node.parent, "data-dw-repeatable")));
@@ -81,7 +83,8 @@ export function changeStructure(source: string, values: Record<string, FieldValu
   const rendered = applyValues(identified, withoutAnchors(values)).html;
   const controls = structureControls(rendered);
   const control = controls[action.fieldId];
-  if (!control?.remove) throw new StructureError(control?.reason ?? "This element is no longer available.");
+  const forced = action.kind === "remove" && action.force === true && control?.forceRemove === true;
+  if (!control?.remove && !forced) throw new StructureError(control?.reason ?? "This element is no longer available.");
   if (action.kind === "duplicate" && !control.duplicate) throw new StructureError(control.duplicateReason!);
   const fields = readPage(rendered).fields;
   const nodes = new Map([...walk(parseHtml(rendered))].map(node => [node.attrInsert, node]));

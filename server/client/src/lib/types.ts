@@ -3317,7 +3317,7 @@ export type FieldKind = "text" | "richtext" | "link" | "button" | "image" | "ico
 
 /** One thing on a page somebody can change. Offsets stay on the server. */
 export type SiteFieldRow = {
-  structure?: { remove: boolean; duplicate: boolean; repeatable?: boolean; previousId?: string; nextId?: string; group?: string; reason?: string; duplicateReason?: string };
+  structure?: { remove: boolean; duplicate: boolean; repeatable?: boolean; previousId?: string; nextId?: string; group?: string; reason?: string; duplicateReason?: string; forceRemove?: boolean };
   id: string;
   parentId?: string;
   order?: number;

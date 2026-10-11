@@ -759,7 +759,7 @@ websiteRouter.delete("/pages/:pageId/draft", async (req, res, next) => {
 
 websiteRouter.post("/pages/:pageId/structure", async (req, res, next) => {
   try {
-    const body = z.object({ ifRevision: z.number().int().nonnegative(), kind: z.enum(["remove", "duplicate", "before", "after", "undo", "redo"]), fieldId: z.string().min(1).max(200).optional(), targetId: z.string().min(1).max(200).optional() }).strict().parse(req.body);
+    const body = z.object({ ifRevision: z.number().int().nonnegative(), kind: z.enum(["remove", "duplicate", "before", "after", "undo", "redo"]), fieldId: z.string().min(1).max(200).optional(), targetId: z.string().min(1).max(200).optional(), force: z.boolean().optional() }).strict().parse(req.body);
     if (!["undo", "redo"].includes(body.kind) && !body.fieldId) throw new WebsiteError(400, "Select an element first.");
     const { page, site } = await loadPage(req, req.params.pageId);
     await assertEditAllowance(req, site.id);
@@ -768,7 +768,7 @@ websiteRouter.post("/pages/:pageId/structure", async (req, res, next) => {
     const values = draftValues(page);
     const problems = validateFieldChange(discoverFields(editingSource(source.html, values)).fields, values);
     if (problems.length) throw Object.assign(new WebsiteError(422, "Resolve the draft's validation problems before changing its layout."), { problems });
-    const result = changeStructure(source.html, values, body.kind === "undo" || body.kind === "redo" ? { kind: body.kind } : { kind: body.kind, fieldId: body.fieldId!, targetId: body.targetId });
+    const result = changeStructure(source.html, values, body.kind === "undo" || body.kind === "redo" ? { kind: body.kind } : { kind: body.kind, fieldId: body.fieldId!, targetId: body.targetId, force: body.force });
     await prisma.$transaction(async tx => {
       const changed = await tx.sitePage.updateMany({ where: { id: page.id, draftRevision: body.ifRevision }, data: { draft: result.values as unknown as Prisma.InputJsonValue, draftRevision: { increment: 1 }, draftSavedAt: new Date(), draftSavedById: req.dbUser?.id ?? null } });
       if (!changed.count) throw new WebsiteError(409, "Another editor saved first. Nothing was moved or removed. Reload the page and try again.");

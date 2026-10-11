@@ -197,6 +197,17 @@ table {
 .website-editor.editor-dark :is(.text-emerald-800, .text-emerald-700, .text-emerald-600, .text-positive-text) { color:#6EE7B7!important; }
 .website-editor.editor-dark :is(.text-amber-800, .text-amber-900, .text-amber-950, .text-amber-700, .text-warn-text) { color:#FCD34D!important; }
 .website-editor.editor-dark :is(.text-danger-text, .text-red-700, .text-red-800) { color:#FCA5A5!important; }
+/* Notices on the dark editor: the text turns light above, so the light tint behind it must turn dark too, or a notice is pale yellow on cream. */
+.website-editor.editor-dark :is(.bg-warn-surface, .bg-amber-50, .bg-amber-100, [class*="bg-amber-50/"], [class*="bg-warn-surface/"]) { background-color:rgba(245,158,11,.14)!important; }
+.website-editor.editor-dark :is(.border-warn-line, .border-amber-200, .border-amber-300) { border-color:rgba(252,211,77,.35)!important; }
+.website-editor.editor-dark :is(.bg-positive-surface, .bg-emerald-50, .bg-emerald-100, [class*="bg-emerald-50/"]) { background-color:rgba(16,185,129,.14)!important; }
+.website-editor.editor-dark :is(.border-positive-line, .border-emerald-200, .border-emerald-300) { border-color:rgba(110,231,183,.35)!important; }
+.website-editor.editor-dark :is(.bg-danger-surface, .bg-red-50, .bg-red-100, [class*="bg-red-50/"], [class*="bg-danger-surface/"]) { background-color:rgba(239,68,68,.14)!important; }
+.website-editor.editor-dark :is(.border-danger-line, .border-red-200, .border-red-300) { border-color:rgba(252,165,165,.35)!important; }
+.dx-confirm { background:var(--editor-panel); color:var(--editor-text); border:1px solid var(--editor-line); box-shadow:var(--editor-shadow); }
+.dx-confirm-body { color:var(--editor-muted); }
+.dx-danger { background:#dc2626; color:#fff; }
+.dx-danger:hover { background:#b91c1c; }
 
 /* Hover States inside Website Editor (prevents dark-on-dark or white-on-white hover bugs) */
 .website-editor :is(.hover\:text-ink:hover, .enabled\:hover\:text-ink:hover:enabled, .group:hover .group-hover\:text-ink, a.hover\:text-ink:hover, button.hover\:text-ink:hover) { color:var(--editor-text)!important; }
@@ -1046,3 +1057,7 @@ button.dx-ctr:hover { color:var(--editor-accent); }
 .dx-leye:hover { background:var(--editor-input); color:var(--editor-text); }
 .dx-layers-foot { border-top:1px solid var(--editor-line); }
 .dx-lgrip { width:28px; height:3px; border-radius:3px; background:var(--editor-line); }
+
+.dx-ldragging { outline:1.5px dashed var(--editor-accent); outline-offset:-2px; background:var(--editor-accent-soft); color:var(--editor-text); }
+.dx-lghost { background:var(--editor-panel)!important; color:var(--editor-text)!important; border:1px solid var(--editor-accent); box-shadow:var(--editor-shadow); opacity:1; }
+.dx-layers-foot:hover .dx-lgrip { background:var(--editor-accent); }

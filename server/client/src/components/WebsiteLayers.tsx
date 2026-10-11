@@ -286,6 +286,10 @@ export function WebsiteLayers({
   });
 
   const [interactingWindow, setInteractingWindow] = useState<"drag" | "resize" | null>(null);
+  const [dockedHeight, setDockedHeight] = useState<number | null>(() => {
+    try { const saved = Number(localStorage.getItem("dw-layers-height")); return saved > 0 ? saved : null; } catch { return null; }
+  });
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const clampOnResize = () => {
@@ -352,7 +356,26 @@ export function WebsiteLayers({
   };
 
   const startResizeDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!isFloating) return;
+    if (!isFloating) {
+      event.preventDefault();
+      const startY = event.clientY;
+      const initial = panelRef.current?.getBoundingClientRect().height ?? 300;
+      setInteractingWindow("resize");
+      let last = initial;
+      const onMove = (moveEvt: PointerEvent) => {
+        last = Math.max(140, Math.min(window.innerHeight - 160, initial + moveEvt.clientY - startY));
+        setDockedHeight(last);
+      };
+      const onUp = () => {
+        setInteractingWindow(null);
+        try { localStorage.setItem("dw-layers-height", String(Math.round(last))); } catch {}
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     const startX = event.clientX;
@@ -386,6 +409,7 @@ export function WebsiteLayers({
 
   const panelBody = (
     <div
+      ref={panelRef}
       style={
         isFloating
           ? {
@@ -394,7 +418,9 @@ export function WebsiteLayers({
               width: `${winBounds.w}px`,
               height: `${winBounds.h}px`,
             }
-          : undefined
+          : dockedHeight
+            ? { height: `${dockedHeight}px`, maxHeight: "none", flex: "none" }
+            : undefined
       }
       className={
         isFloating
@@ -547,6 +573,15 @@ export function WebsiteLayers({
                     setDragging(field.id);
                     event.dataTransfer.setData("application/x-dakyworld-field", field.id);
                     event.dataTransfer.effectAllowed = "move";
+                    const row = event.currentTarget;
+                    const ghost = row.cloneNode(true) as HTMLElement;
+                    ghost.classList.add("dx-lghost");
+                    ghost.style.width = `${row.offsetWidth}px`;
+                    ghost.style.position = "fixed";
+                    ghost.style.top = "-1000px";
+                    (row.closest(".dx-layers") ?? document.body).appendChild(ghost);
+                    event.dataTransfer.setDragImage(ghost, 24, 16);
+                    requestAnimationFrame(() => ghost.remove());
                   }}
                   onDragEnd={() => {
                     setDragging(null);
@@ -554,6 +589,7 @@ export function WebsiteLayers({
                   }}
                   onDragOver={(event) => {
                     const source = dragging ? tree.nodes.get(dragging)?.field : undefined;
+                    if (dragging === field.id) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; setDrop(null); return; }
                     if (
                       !onMove ||
                       !source?.structure?.group ||
@@ -609,7 +645,7 @@ export function WebsiteLayers({
                         ? `inset 0 ${drop.position === "before" ? "2px" : "-2px"} var(--editor-accent)`
                         : undefined,
                   }}
-                  className={`dx-lrow group ${dragging === field.id ? "opacity-40" : ""} ${isHidden ? "opacity-50" : ""}`}
+                  className={`dx-lrow group ${dragging === field.id ? "dx-ldragging" : ""} ${isHidden ? "opacity-50" : ""}`}
                 >
                   {Array.from({ length: Math.min(depth - 1, 10) }, (_, level) => (
                     <span key={level} aria-hidden="true" className="dx-lguide" style={{ left: `${level * 14 + 15}px` }} />
@@ -709,8 +745,8 @@ export function WebsiteLayers({
       {/* Resize handle while floating */}
       <div
         onPointerDown={startResizeDrag}
-        title={isFloating ? "Drag to resize" : undefined}
-        className={`dx-layers-foot relative flex h-3 select-none items-center justify-center ${isFloating ? "cursor-ns-resize" : ""}`}
+        title="Drag to resize"
+        className="dx-layers-foot relative flex h-3 flex-none cursor-ns-resize select-none items-center justify-center"
       >
         <span className="dx-lgrip" />
         {isFloating && (

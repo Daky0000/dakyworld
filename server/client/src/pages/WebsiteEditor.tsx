@@ -1322,14 +1322,20 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     return map;
   }, [save.data, page.data]);
 
-  async function runStructure(kind: "remove" | "duplicate" | "before" | "after" | "undo" | "redo", fieldId?: string, targetId?: string) {
+  /** A delete that needs saying yes to: the block carries scripts or a form. */
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; label: string } | null>(null);
+  async function runStructure(kind: "remove" | "duplicate" | "before" | "after" | "undo" | "redo", fieldId?: string, targetId?: string, force = false) {
+    if (kind === "remove" && fieldId && !force) {
+      const field = allFields.find(entry => entry.id === fieldId);
+      if (field && !field.structure?.remove && field.structure?.forceRemove) { setConfirmDelete({ id: fieldId, label: field.label }); return; }
+    }
     if (!canEdit || save.isPending || publishPending.current || structurePending.current || reviewOpen || showVersions) return;
     if (typingId) { setFailure("Press Escape to finish typing on the page, then change its layout."); return; }
     structurePending.current = true; setStructureBusy(true); setFailure(null);
     try {
       if (dirty.current) await save.mutateAsync(latestEdits.current);
       if (dirty.current) throw new Error("Some edits have not saved. Resolve them before changing the layout.");
-      const result = await api.post<{ revision: number; selectedId: string | null }>(`/website/pages/${pageId}/structure`, { kind, fieldId, targetId, ifRevision: revision.current });
+      const result = await api.post<{ revision: number; selectedId: string | null }>(`/website/pages/${pageId}/structure`, { kind, fieldId, targetId, ifRevision: revision.current, ...(force ? { force: true } : {}) });
       dirty.current = false;
       try { sessionStorage.removeItem(localDraftKey); } catch { /* Server checkpoint is saved. */ }
       const refreshed = await qc.fetchQuery({ queryKey: ["website", "page", pageId], queryFn: ({ signal }) => api.get<SitePageDetail>(`/website/pages/${pageId}`, signal), staleTime: 0 });
@@ -2037,7 +2043,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           typing={typingId === picked.id}
           readOnly={readOnly}
           canDuplicate={!readOnly && Boolean(picked.structure?.duplicate)}
-          canDelete={!readOnly && Boolean(picked.structure?.remove)}
+          canDelete={!readOnly && Boolean(picked.structure?.remove || picked.structure?.forceRemove)}
           hasParent={Boolean(picked.parentId)}
           agent={canEdit && (!tierStatus?.features || tierStatus.features.aiBuilderAgent)}
           onEdit={() => tell({ type: "edit", id: picked.id })}
@@ -2835,6 +2841,18 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       </header>
 
 
+      {confirmDelete && (
+        <div className="fixed inset-0 z-[9990] grid place-items-center bg-black/50 p-4" role="presentation" onClick={() => setConfirmDelete(null)}>
+          <div role="alertdialog" aria-modal="true" aria-labelledby="dx-del-title" aria-describedby="dx-del-body" className="dx-confirm w-full max-w-sm rounded-2xl p-5" onClick={(event) => event.stopPropagation()}>
+            <h2 id="dx-del-title" className="text-base font-semibold">Delete “{confirmDelete.label}”?</h2>
+            <p id="dx-del-body" className="dx-confirm-body mt-2 text-sm leading-relaxed">This block contains interactive code or a form. Deleting it removes those too, so anything that depends on them may stop working. You can undo this until you publish.</p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" autoFocus className="dx-btn dx-ghost" onClick={() => setConfirmDelete(null)}>Keep it</button>
+              <button type="button" className="dx-btn dx-danger" onClick={() => { const id = confirmDelete.id; setConfirmDelete(null); void runStructure("remove", id, undefined, true); }}>Delete anyway</button>
+            </div>
+          </div>
+        </div>
+      )}
       {failure && (
         <div className="flex-none border-b border-line px-4 py-3">
           <div className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">{failure}</div>
@@ -3121,7 +3139,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 {(picked.repeatable || picked.structure?.repeatable) && (
                   <button type="button" className="font-semibold text-blue disabled:text-faint" title={picked.structure?.duplicateReason ?? "Add a new item to this repeatable list"} disabled={readOnly || save.isPending || !picked.structure?.duplicate} onClick={() => void runStructure("duplicate", picked.id)}>+ Add Item</button>
                 )}
-                <button type="button" className="text-danger-text disabled:text-faint" disabled={readOnly || save.isPending || !picked.structure?.remove} onClick={() => void runStructure("remove", picked.id)}>Remove</button>
+                <button type="button" className="text-danger-text disabled:text-faint" disabled={readOnly || save.isPending || !(picked.structure?.remove || picked.structure?.forceRemove)} onClick={() => void runStructure("remove", picked.id)}>Remove</button>
               </div>
               <p className="mt-2 text-xs text-muted">{picked.structure?.reason || picked.structure?.duplicateReason || "Drag layers to reorder within their container. Changes stay in the draft; Undo brings them back."}</p>
             </div>}
@@ -3328,6 +3346,24 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                           const currentFit = isContainer
                             ? (styleMap["background-size"] ?? "cover")
                             : (styleMap["object-fit"] ?? computed["object-fit"] ?? "cover");
+                          // Anything that is not one of the presets is a size somebody typed.
+                          const presetFits = isContainer ? ["cover", "contain", "100% 100%", "auto"] : ["cover", "contain", "fill", "scale-down", "none"];
+                          const customFit = isContainer ? !presetFits.includes(currentFit) : styleMap["object-fit"] === "fill" && Boolean(styleMap.width || styleMap.height) && styleMap.width !== "100%";
+                          const [customW, customH] = isContainer
+                            ? (customFit ? currentFit.split(/\s+/) : ["", ""])
+                            : [styleMap.width ?? "", styleMap.height ?? ""];
+                          const writeStyleKeys = (patch: Record<string, string | null>) => {
+                            const nextMap = { ...styleMap };
+                            for (const [key, val] of Object.entries(patch)) { if (val) nextMap[key] = val; else delete nextMap[key]; }
+                            changePickedStyle(writeStyle(nextMap), true);
+                          };
+                          const lengthOf = (raw: string) => { const t = raw.trim(); return !t ? "" : /^\d*\.?\d+$/.test(t) ? `${t}px` : t; };
+                          const writeCustom = (w: string, h: string) => {
+                            const W = lengthOf(w) || "auto", H = lengthOf(h) || "auto";
+                            if (isContainer) writeStyleKeys({ "background-size": `${W} ${H}` });
+                            else writeStyleKeys({ "object-fit": "fill", width: W === "auto" ? null : W, height: H === "auto" ? null : H });
+                          };
+                          const imageOpacity = Math.round(100 * Number.parseFloat(styleMap.opacity ?? computed.opacity ?? "1")) || 0;
                           const currentAlt = edits[picked.id]?.alt ?? picked.alt ?? "";
                           const currentHref = edits[picked.id]?.href ?? picked.href ?? "";
 
@@ -3419,8 +3455,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                                 <select
                                   id="dx-img-fit"
                                   disabled={readOnly}
-                                  value={currentFit}
+                                  value={customFit ? "custom" : currentFit}
                                   onChange={(e) => {
+                                    if (e.target.value === "custom") { writeCustom(customW || "300", customH || "200"); return; }
                                     const nextMap = { ...styleMap };
                                     if (isContainer) nextMap["background-size"] = e.target.value;
                                     else nextMap["object-fit"] = e.target.value;
@@ -3441,10 +3478,41 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                                       <option value="none">Original size</option>
                                     </>
                                   )}
+                                  <option value="custom">Custom size</option>
                                 </select>
                               </div>
+                              {customFit && (
+                                <div className="dx-g2">
+                                  <div className="dx-f">
+                                    <div className="dx-fl"><label htmlFor="dx-img-cw">Width</label></div>
+                                    <input id="dx-img-cw" type="text" disabled={readOnly} defaultValue={customW === "auto" ? "" : customW} key={`w${customW}`} placeholder="auto" onBlur={(e) => writeCustom(e.target.value, customH === "auto" ? "" : customH)} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+                                  </div>
+                                  <div className="dx-f">
+                                    <div className="dx-fl"><label htmlFor="dx-img-ch">Height</label></div>
+                                    <input id="dx-img-ch" type="text" disabled={readOnly} defaultValue={customH === "auto" ? "" : customH} key={`h${customH}`} placeholder="auto" onBlur={(e) => writeCustom(customW === "auto" ? "" : customW, e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+                                  </div>
+                                </div>
+                              )}
+                              {isContainer && (
+                                <div className="dx-f">
+                                  <div className="dx-fl"><label htmlFor="dx-img-repeat">Repeat</label></div>
+                                  <select id="dx-img-repeat" disabled={readOnly} value={styleMap["background-repeat"] ?? ""} onChange={(e) => writeStyleKeys({ "background-repeat": e.target.value || null })}>
+                                    <option value="">As designed</option>
+                                    <option value="no-repeat">No repeat</option>
+                                    <option value="repeat">Repeat (tile)</option>
+                                    <option value="repeat-x">Repeat across</option>
+                                    <option value="repeat-y">Repeat down</option>
+                                    <option value="space">Space evenly</option>
+                                    <option value="round">Round to fit</option>
+                                  </select>
+                                </div>
+                              )}
                               <ImagePositionControl value={currentPos || computed[posKey]} device={device} disabled={readOnly} onChange={(next) => writePos(next ?? "")} onCommit={() => commitHistory(edits)} />
                               <p className="dx-hint">Click the preview to set the crop's focal point.</p>
+                              <div className="dx-f">
+                                <div className="dx-fl"><label htmlFor="dx-img-opacity">Opacity</label><span className="dx-hint">{imageOpacity}%</span></div>
+                                <input id="dx-img-opacity" type="range" min={0} max={100} disabled={readOnly} value={imageOpacity} onChange={(e) => { const n = Number(e.target.value); writeStyleKeys({ opacity: n >= 100 ? null : String(n / 100) }); }} />
+                              </div>
                               {!isContainer && !isIcon && (
                                 <>
                                   <div className="dx-sub">Details</div>
@@ -3879,7 +3947,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               showQuickToast(hiddenOnPhone ? "Shown on phone screens again" : "Hidden on phone screens");
             }, { disabled: busy })}
             <hr />
-            {item("Delete", <IconTrash size={15} />, () => void runStructure("remove", ctxField.id), { keys: "Del", danger: true, disabled: busy || !ctxField.structure?.remove, title: ctxField.structure?.reason })}
+            {item("Delete", <IconTrash size={15} />, () => void runStructure("remove", ctxField.id), { keys: "Del", danger: true, disabled: busy || !(ctxField.structure?.remove || ctxField.structure?.forceRemove), title: ctxField.structure?.forceRemove ? "Contains scripts or a form. You will be asked first." : ctxField.structure?.reason })}
           </div>
         );
       })()}
