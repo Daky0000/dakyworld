@@ -1254,7 +1254,19 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
       if (at < height + step) window.requestAnimationFrame(next);
       else {
         window.scrollTo(0, was);
+        // Once is not enough: transitions that started during the sweep, and
+        // scroll-linked animations that hide again when scrolled back out of
+        // view, leave whole sections blank. Look again for a while, and on
+        // every scroll after that.
         window.setTimeout(force, 80);
+        window.setTimeout(force, 700);
+        window.setTimeout(force, 2000);
+        var queued = false;
+        window.addEventListener("scroll", function () {
+          if (queued) return;
+          queued = true;
+          window.setTimeout(function () { queued = false; force(); }, 150);
+        }, { passive: true, capture: true });
       }
     })();
   }
