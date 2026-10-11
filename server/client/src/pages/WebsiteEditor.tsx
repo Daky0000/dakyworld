@@ -2838,7 +2838,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             isDemo
               ? "Demo updated. Refresh the live demo to see it."
               : published.hosted
-                ? "Your changes are live."
+                ? published.url
+                  ? "Your changes are live."
+                  : "Saved as the live version. Add an address in Website settings so visitors can see it."
                 : "Changes sent. Your site rebuilds in a few minutes."
           }
           href={isDemo ? liveDemoHref || undefined : published.prUrl || published.url || undefined}
