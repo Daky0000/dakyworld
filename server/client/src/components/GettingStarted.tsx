@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
@@ -16,11 +17,30 @@ import { tourSeen, updateUiState, useUiState } from "../lib/uiState";
  * browser's storage, each ticked by hand and each describing a feature in
  * words it did not have ("zero-downtime", drag to reorder).
  */
+const MINIMISED_KEY = "dw.gettingStarted.minimised";
+
+function readMinimised(): boolean {
+  try {
+    return window.localStorage.getItem(MINIMISED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 type Item = { id: string; title: string; done: boolean; action?: { label: string; to?: string; onClick?: () => void } };
 
 export function GettingStarted({ site, pages }: { site: SiteSummary; pages: SitePageRow[] }) {
   const { user } = useAuth();
   const ui = useUiState();
+  const [minimised, setMinimisedState] = useState(readMinimised);
+  const setMinimised = (value: boolean) => {
+    setMinimisedState(value);
+    try {
+      window.localStorage.setItem(MINIMISED_KEY, value ? "1" : "0");
+    } catch {
+      /* private window: it simply opens again next time */
+    }
+  };
   const canInvite = Boolean(site.capabilities?.members);
   const members = useQuery({
     queryKey: ["website", "members", site.id],
@@ -71,11 +91,40 @@ export function GettingStarted({ site, pages }: { site: SiteSummary; pages: Site
   const done = items.filter((item) => item.done).length;
   if (done === items.length) return null;
 
+  // Floats in the bottom-right corner so it never pushes the pages list down,
+  // and folds to a small pill when it is in the way.
+  if (minimised) {
+    return (
+      <button
+        type="button"
+        onClick={() => setMinimised(false)}
+        className="fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-full border border-line bg-white px-4 py-2.5 text-sm font-semibold text-ink shadow-lg hover:border-line-strong"
+        aria-label={`Getting started, ${done} of ${items.length} done. Open the list`}
+      >
+        Getting started
+        <span className="rounded-full bg-blue px-2 py-0.5 text-[11px] font-semibold text-white">{done}/{items.length}</span>
+      </button>
+    );
+  }
+
   return (
-    <section aria-labelledby="getting-started" className="mb-6 rounded-2xl border border-line bg-white p-5">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
+    <section
+      aria-labelledby="getting-started"
+      className="fixed bottom-4 right-4 z-40 max-h-[calc(100vh-2rem)] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto rounded-2xl border border-line bg-white p-5 shadow-xl"
+    >
+      <div className="flex items-baseline justify-between gap-2">
         <h2 id="getting-started" className="font-display text-lg text-ink">Getting started</h2>
-        <span className="text-xs text-muted">{done} of {items.length} done</span>
+        <span className="flex items-center gap-3">
+          <span className="text-xs text-muted">{done} of {items.length} done</span>
+          <button
+            type="button"
+            onClick={() => setMinimised(true)}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted hover:bg-sunken hover:text-ink"
+            aria-label="Minimise the getting started list"
+          >
+            <span aria-hidden>–</span>
+          </button>
+        </span>
       </div>
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-sunken" aria-hidden>
         <div className="h-full rounded-full bg-blue transition-all" style={{ width: `${Math.round((done / items.length) * 100)}%` }} />
