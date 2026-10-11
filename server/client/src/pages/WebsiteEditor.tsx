@@ -18,6 +18,8 @@ import { TourHost } from "../components/TourHost";
 import { HelpDialog } from "../components/HelpDialog";
 import { startTour, tourAction, TOUR_EVENTS, TOURS, type TourId } from "../lib/tours";
 import { tourSeen, useUiState } from "../lib/uiState";
+import { LinkDestinationField } from "../components/LinkDestinationField";
+import { PublishedToast } from "../components/PublishedToast";
 
 
 import { WebsiteImageFraming } from "../components/WebsiteImageFraming";
@@ -26,7 +28,6 @@ import { WebsitePresetPicker } from "../components/WebsiteBrandPresets";
 import type { BrandPreset } from "../lib/websiteBrandPresets";
 import { WebsiteAssetLibrary, WebsiteAssetPickerModal, type CapturedHtmlImage } from "../components/WebsiteAssetLibrary";
 import { MakeSharedPanel, SharedElementPanel, SharedPublishReview } from "../components/WebsiteShared";
-import { PublishStatus } from "../components/PublishStatus";
 import { PublishReview, type WebsiteReview } from "../components/PublishReview";
 import { ElementInspector } from "../components/ElementInspector";
 import { ColorCodeInput, parseStyle, writeStyle } from "../components/InspectorControls";
@@ -1484,9 +1485,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         setInspectorTab("content");
       }
     } else if (pickedField.kind === "container") {
-      const allowed: Array<typeof inspectorTab> = ["layout", "style", "interactions"];
+      const allowed: Array<typeof inspectorTab> = ["content", "layout", "style", "interactions"];
       if (!allowed.includes(inspectorTab)) {
-        setInspectorTab("layout");
+        setInspectorTab("content");
       }
     } else {
       const allowed: Array<typeof inspectorTab> = ["content", "style", "interactions"];
@@ -2824,94 +2825,26 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       </header>
 
 
-      {(published || failure) && (
+      {failure && (
         <div className="flex-none border-b border-line px-4 py-3">
-          {published && (
-            <div className="rounded-xl border border-line bg-white p-3 text-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="font-semibold text-ink">
-                  {isDemo
-                    ? `Demo updated (version ${published.version}) — refresh the live demo to see your changes.`
-                    : published.hosted
-                      ? `Published — version ${published.version}, ${published.changed} change${published.changed === 1 ? "" : "s"}.`
-                      : `Changes sent — version ${published.version}, ${published.changed} change${published.changed === 1 ? "" : "s"}.`}
-                </p>
-                {isDemo && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    {liveDemoHref && <a
-                      href={liveDemoHref}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 rounded-lg border border-blue/30 bg-blue/10 px-2.5 py-1 text-xs font-semibold text-blue hover:bg-blue/15"
-                    >
-                      <IconEye size={12} />
-                      <span>Open Live Demo</span>
-                    </a>}
-                    {demoIdFromUrl && (
-                      <a
-                        href={`/api/demos/${demoIdFromUrl}/download`}
-                        download={`${page.data.page.filePath || "demo.html"}`}
-                        className="inline-flex items-center gap-1 rounded-lg border border-line bg-sunken px-2.5 py-1 text-xs font-semibold text-ink hover:bg-line/50"
-                      >
-                        <IconDownload size={12} />
-                        <span>Download .html</span>
-                      </a>
-                    )}
-                  </div>
-                )}
-              </div>
-              {/* What went out, in words. A count on its own is not something
-                  anybody can check, and this is the last moment before it is
-                  only recoverable from the version list. */}
-              {published.summary.length > 0 && (
-                <ul className="mt-1.5 space-y-0.5 text-xs text-muted">
-                  {published.summary.slice(0, 5).map((entry, index) => (
-                    <li key={`${entry.id}-${entry.part}-${index}`} className="break-words">
-                      {entry.label}: “{entry.from}” → “{entry.to}”
-                    </li>
-                  ))}
-                  {published.summary.length > 5 && <li className="text-muted">and {published.summary.length - 5} more</li>}
-                </ul>
-              )}
-              {published.touched.seo && (
-                <p className="mt-1.5 text-xs text-warn-text">
-                  This changed the page title or its search-result description. The generated link-preview copies need{" "}
-                  <code className="font-mono">npm run site</code> in the repository to match.
-                </p>
-              )}
-              {/* For a hosted page the progress panel below says the same thing. */}
-              {!(published.hosted && published.job) && <p className="mt-1 text-xs text-muted">{published.note}</p>}
-              {/* A commit is not a deployment, and until this says so the only
-                  honest claim is that the change is in the repository. */}
-              {published.job && <PublishStatus siteId={site.id} jobId={published.job.id} />}
-              {/* Only a repository has a rebuild to wait for. A hosted page is
-                  served from here and is already what visitors get. */}
-              {!published.hosted && !isDemo && (
-                <p className="mt-1 text-xs text-muted">
-                  This screen reads the page back from the published site, so it goes on showing the old words until that rebuild
-                  finishes. It will catch up on its own; the circular arrow in the bar looks again now.
-                </p>
-              )}
-              <div className="mt-2 flex flex-wrap items-center gap-4 text-xs">
-                {published.prUrl ? (
-                  <a href={published.prUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-blue underline-offset-2 hover:underline">
-                     View Pull Request #{published.prNumber} on GitHub
-                  </a>
-                ) : published.url ? (
-                  <a href={published.url} target="_blank" rel="noreferrer" className="text-ink underline-offset-2 hover:underline">
-                    Open the live page
-                  </a>
-                ) : null}
-                {published.commit.url && (
-                  <a href={published.commit.url} target="_blank" rel="noreferrer" className="text-muted underline-offset-2 hover:underline">
-                    {published.mode === "pull_request" ? "See PR commit" : "See the commit"}
-                  </a>
-                )}
-              </div>
-            </div>
-          )}
-          {failure && <div className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">{failure}</div>}
+          <div className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">{failure}</div>
         </div>
+      )}
+      {/* A publish is announced in the corner and gets out of the way: the
+          page itself is the evidence. The full detail is in History. */}
+      {published && (
+        <PublishedToast
+          message={
+            isDemo
+              ? "Demo updated. Refresh the live demo to see it."
+              : published.hosted
+                ? "Your changes are live."
+                : "Changes sent. Your site rebuilds in a few minutes."
+          }
+          href={isDemo ? liveDemoHref || undefined : published.prUrl || published.url || undefined}
+          linkLabel={isDemo ? "Open live demo" : published.prUrl ? "View pull request" : "Open the live page"}
+          onClose={() => setPublished(null)}
+        />
       )}
 
       {/* ---------------------------------------------------------- body */}
@@ -3181,7 +3114,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               <p className="mt-2 text-xs text-muted">{picked.structure?.reason || picked.structure?.duplicateReason || "Drag layers to reorder within their container. Changes stay in the draft; Undo brings them back."}</p>
             </div>}
             <div role="tablist" aria-label="Element settings" className="editor-tabs dx-tabs">
-              {(picked.kind === "container" ? (["layout", "style", "interactions"] as const) : (["content", "style", "interactions"] as const)).map((tab) => (
+              {(picked.kind === "container" ? (["content", "layout", "style", "interactions"] as const) : (["content", "style", "interactions"] as const)).map((tab) => (
                 <button type="button" role="tab" key={tab} aria-selected={inspectorTab === tab} onClick={() => setInspectorTab(tab)}>
                   {tab[0].toUpperCase() + tab.slice(1)}
                 </button>
@@ -3341,6 +3274,16 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     onReset={() => changePickedStyle(device === "desktop" ? picked.style ?? "" : picked.responsive?.[device] ?? "", true)}
                     content={
                       <>
+                        {picked.href !== undefined && picked.kind !== "image" && (
+                          <LinkDestinationField
+                            key={picked.id}
+                            href={edits[picked.id]?.href ?? picked.href ?? ""}
+                            kind={picked.kind}
+                            pages={(links ?? []).map((link) => ({ label: link.title || link.path, href: link.path }))}
+                            readOnly={readOnly}
+                            onHref={(href) => change(picked.id, { ...edits[picked.id], value: edits[picked.id]?.value ?? picked.value, href }, { commit: true })}
+                          />
+                        )}
                         {(picked.kind === "image" ||
                           picked.kind === "icon" ||
                           (picked.kind === "container" &&

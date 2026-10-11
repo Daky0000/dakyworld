@@ -98,6 +98,14 @@ export type SiteField = {
   responsive?: ResponsiveStyles;
   content?: Span;
   hrefSpan?: Span;
+  /**
+   * Words or a container that is not a link yet, and could be: the whole
+   * element, which a new link is written around. Absent where a link would
+   * nest inside another (an anchor or a button within or around it).
+   */
+  linkWrap?: Span;
+  /** The editor's own link around this element, taken away whole when the link is removed. */
+  linkUnwrap?: { open: Span; close: Span };
   srcSpan?: Span;
   altSpan?: Span;
   styleSpan?: Span;
@@ -587,7 +595,7 @@ function isField(source: string, element: ElementNode): boolean {
   }
   // A <button> inside is its own field, like a link: otherwise the wrapper's
   // words would be the button's markup, and typing over them would erase it.
-  return !hasDescendant(element, (child) => BLOCK.has(child.tag) || child.tag === "a" || child.tag === "button");
+  return !hasDescendant(element, (child) => BLOCK.has(child.tag) || (child.tag === "a" && !isLinkWrapper(child)) || child.tag === "button");
 }
 
 function firstLine(text: string, max = 90): string {
@@ -792,9 +800,24 @@ function backgroundField(child: ElementNode, id: string): SiteField | null {
  * `<strong>` inside it is part of that paragraph and not a second field naming
  * the same words.
  */
+/**
+ * A link the editor put around an element (`<a data-dw-link>`). It is not a
+ * field of its own: the element inside carries its destination, and walking
+ * through it as if it were not there keeps every positional id where it was.
+ */
+export function isLinkWrapper(node: ElementNode | null | undefined): boolean {
+  return Boolean(node && node.tag === "a" && node.attrs.some((attr) => attr.name === "data-dw-link"));
+}
+
+const LINK_WRAP_OPEN = (href: string) => `<a data-dw-link href="${attrEscape(href)}" style="display:contents;color:inherit;text-decoration:inherit">`;
+
 function collect(source: string, element: ElementNode, out: SiteField[], sectionId: string): void {
   for (const child of element.children) {
     if (SKIP.has(child.tag)) continue;
+    if (isLinkWrapper(child)) {
+      collect(source, child, out, sectionId);
+      continue;
+    }
     if (child.attrs.some((candidate) => candidate.name === "hidden")) continue;
     // Only skip aria-hidden on empty scroll-progress indicators; visible carousels,
     // tickers (`<div class="ticker" aria-hidden="true">`), and logo icons
@@ -1082,6 +1105,10 @@ export function readPage(source: string): PageContent {
   const collectLoose = (element: ElementNode) => {
     for (const child of element.children) {
       if (claimed.has(child) || SKIP.has(child.tag)) continue;
+      if (isLinkWrapper(child)) {
+        collectLoose(child);
+        continue;
+      }
       if (["header", "footer", "section", "article"].includes(child.tag)) continue;
       const id = `loose.${loose.length}`;
       if (child.tag === "picture") {
@@ -1314,6 +1341,23 @@ export function readPage(source: string): PageContent {
       field.confidence = "annotated";
     }
     if (node && field.tag !== "body") fieldAt.set(node.attrInsert, field);
+    // Words and containers can be made into links from the Content tab.
+    if (node && field.href === undefined && (field.kind === "text" || field.kind === "richtext" || field.kind === "container") && node.tag !== "body" && node.tag !== "a" && node.tag !== "button") {
+      const wrapper = isLinkWrapper(node.parent) && node.parent!.children.length === 1 ? node.parent! : undefined;
+      if (wrapper) {
+        const href = attrNode(wrapper, "href");
+        field.href = href?.value ?? "";
+        if (href) field.hrefSpan = { start: href.valueStart, end: href.valueEnd };
+        field.linkUnwrap = { open: { start: wrapper.start, end: wrapper.innerStart }, close: { start: wrapper.innerEnd, end: wrapper.end } };
+      } else {
+        let insideLink = false;
+        for (let at = node.parent; at; at = at.parent) if (at.tag === "a" || at.tag === "button") insideLink = true;
+        if (!insideLink && !hasDescendant(node, (child) => child.tag === "a" || child.tag === "button" || child.tag === "form")) {
+          field.href = "";
+          field.linkWrap = { start: node.start, end: node.end };
+        }
+      }
+    }
   }
   for (const field of all) {
     let parent = field.attrInsert === undefined ? undefined : byOffset.get(field.attrInsert)?.parent;
@@ -1592,9 +1636,17 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
         touched = true;
       }
     }
-    if (edit.href !== undefined && field.hrefSpan && edit.href !== field.href) {
-      edits.push({ span: field.hrefSpan, text: attrEscape(edit.href) });
-      touched = true;
+    if (edit.href !== undefined && edit.href !== (field.href ?? "")) {
+      if (field.linkUnwrap && !edit.href.trim()) {
+        edits.push({ span: field.linkUnwrap.close, text: "" }, { span: field.linkUnwrap.open, text: "" });
+        touched = true;
+      } else if (field.hrefSpan) {
+        edits.push({ span: field.hrefSpan, text: attrEscape(edit.href) });
+        touched = true;
+      } else if (field.linkWrap && edit.href.trim()) {
+        edits.push({ insertAt: field.linkWrap.end, text: "</a>" }, { insertAt: field.linkWrap.start, text: LINK_WRAP_OPEN(edit.href.trim()) });
+        touched = true;
+      }
     }
     if (edit.alt !== undefined && field.kind === "image" && edit.alt !== field.alt) {
       if (field.altSpan) edits.push({ span: field.altSpan, text: attrEscape(edit.alt) });

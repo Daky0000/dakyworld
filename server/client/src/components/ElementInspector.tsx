@@ -154,7 +154,7 @@ export function ElementInspector({
       return true;
     })
   );
-  if ((tab === "content" || (tab === "layout" && facts.kind === "container")) && content) shown.add("content");
+  if (tab === "content" && content) shown.add("content");
   if (tab === "layout" && facts.kind === "container") {
     shown.add("background");
   }

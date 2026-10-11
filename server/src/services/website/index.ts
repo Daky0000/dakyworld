@@ -277,7 +277,8 @@ export function validateFieldChange(fields: SiteField[], values: Record<string, 
         reason: "This cannot be left empty — a heading or a button with no words disappears from the page.",
       });
     }
-    if (edit.href !== undefined) {
+    // An empty destination on a link the editor added means "remove the link".
+    if (edit.href !== undefined && !(field.linkUnwrap && !edit.href.trim())) {
       const checked = checkLink(edit.href);
       if (!checked.ok) problems.push({ id, label: field.label, reason: checked.reason });
     }
