@@ -75,6 +75,16 @@ export async function cancelSiteDeletion(siteId: string, actor: Actor): Promise<
 }
 
 /**
+ * Erases a website straight away, for the person who is sure. Pages, versions,
+ * assets, members, review links and the audit trail cascade from the site row
+ * (schema.prisma), so there is nothing to restore afterwards.
+ */
+export async function eraseSiteNow(siteId: string): Promise<void> {
+  const erased = await prisma.site.deleteMany({ where: { id: siteId } });
+  if (!erased.count) throw new WebsiteError(404, "No such website.");
+}
+
+/**
  * A customer closing their own account.
  *
  * Refused while they are paying (cancel first, and keep the site until the

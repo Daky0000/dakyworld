@@ -6,7 +6,7 @@ import { cancelWebsiteSubscription } from "./websiteCommerce.js";
 import { resolveEntitlement } from "./websiteEntitlement.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
 import { subscriptionManagementLink } from "../lib/paystack.js";
-import { cancelSiteDeletion, scheduleSiteDeletion } from "./websiteDeletion.js";
+import { cancelSiteDeletion, eraseSiteNow, scheduleSiteDeletion } from "./websiteDeletion.js";
 
 /**
  * What a customer can do about their own subscription and their own data,
@@ -152,7 +152,8 @@ export function registerSubscriberSelfService(router: Router) {
   );
 
   /**
-   * Deletes a website — after a thirty-day hold (services/websiteDeletion.ts).
+   * Deletes a website — after a thirty-day hold (services/websiteDeletion.ts),
+   * or at once when the body says `now` (also cuts short a hold already running).
    *
    * Typing the site's name is the confirmation, because a dialog with a button
    * is not a decision. The site goes offline at once and can be restored until
@@ -164,11 +165,19 @@ export function registerSubscriberSelfService(router: Router) {
     "/sites/:id/erase",
     handler(async (req, res) => {
       await assertWebsiteSiteAccess(req, req.params.id!, "manage");
-      const { confirmName } = z.object({ confirmName: z.string().trim().min(1).max(200) }).parse(req.body ?? {});
-      const site = await prisma.site.findUnique({ where: { id: req.params.id! }, select: { id: true, name: true } });
+      const { confirmName, now } = z.object({ confirmName: z.string().trim().min(1).max(200), now: z.boolean().optional() }).parse(req.body ?? {});
+      const site = await prisma.site.findUnique({ where: { id: req.params.id! }, select: { id: true, name: true, deletionScheduledFor: true } });
       if (!site) throw new WebsiteError(404, "No such website.");
       if (confirmName.trim().toLowerCase() !== site.name.trim().toLowerCase()) {
         throw new WebsiteError(400, `Type the website's name exactly — "${site.name}" — to confirm. Nothing has been deleted.`);
+      }
+      const erased = { ok: true, erased: true, message: `${site.name} has been permanently deleted.` };
+      // Already offline and waiting: the subscription question was asked when
+      // the hold began, so erasing now only shortens the wait.
+      if (now && site.deletionScheduledFor) {
+        await eraseSiteNow(site.id);
+        res.json(erased);
+        return;
       }
       const entitlement = await resolveEntitlement(req);
       if (entitlement.purchaseId) {
@@ -185,6 +194,11 @@ export function registerSubscriberSelfService(router: Router) {
             "This is the only website on your subscription. Cancel the subscription first — the website stays up until the paid period ends — and then delete it if you still want to.",
           );
         }
+      }
+      if (now) {
+        await eraseSiteNow(site.id);
+        res.json(erased);
+        return;
       }
       const deletesOn = await scheduleSiteDeletion(site.id, { id: req.dbUser?.id, name: req.dbUser?.name });
       res.json({

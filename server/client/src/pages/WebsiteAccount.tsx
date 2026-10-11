@@ -143,10 +143,11 @@ function SiteRow({ site }: { site: SiteSummary }) {
   const qc = useQueryClient();
   const [confirming, setConfirming] = useState(false);
   const [typed, setTyped] = useState("");
+  const [now, setNow] = useState(false);
   const refresh = () => void qc.invalidateQueries({ queryKey: ["website"] });
   const erase = useMutation({
-    mutationFn: () => api.post<{ message: string }>(`/website/sites/${encodeURIComponent(site.id)}/erase`, { confirmName: typed }),
-    onSuccess: () => { setConfirming(false); setTyped(""); refresh(); },
+    mutationFn: () => api.post<{ message: string }>(`/website/sites/${encodeURIComponent(site.id)}/erase`, { confirmName: typed, now: now || Boolean(site.deletionScheduledFor) }),
+    onSuccess: () => { setConfirming(false); setTyped(""); setNow(false); refresh(); },
   });
   const restore = useMutation({
     mutationFn: () => api.post<{ message: string }>(`/website/sites/${encodeURIComponent(site.id)}/erase/cancel`, {}),
@@ -167,9 +168,14 @@ function SiteRow({ site }: { site: SiteSummary }) {
             Download a copy
           </a>
           {held ? (
-            <Button size="sm" disabled={restore.isPending} onClick={() => restore.mutate()}>
-              {restore.isPending ? "Restoring…" : "Restore website"}
-            </Button>
+            <>
+              <Button size="sm" disabled={restore.isPending} onClick={() => restore.mutate()}>
+                {restore.isPending ? "Restoring…" : "Restore website"}
+              </Button>
+              <Button size="sm" variant="danger" disabled={confirming} onClick={() => setConfirming(true)}>
+                Delete now…
+              </Button>
+            </>
           ) : (
             <Button size="sm" variant="danger" disabled={confirming} onClick={() => setConfirming(true)}>
               Delete website…
@@ -177,7 +183,7 @@ function SiteRow({ site }: { site: SiteSummary }) {
           )}
         </div>
       </div>
-      {confirming && !held && (
+      {confirming && (
         <form
           className="mt-3 rounded-xl border border-danger-line bg-danger-surface p-4"
           onSubmit={(event) => {
@@ -186,17 +192,25 @@ function SiteRow({ site }: { site: SiteSummary }) {
           }}
         >
           <p className="text-sm text-danger-text">
-            The website goes offline straight away and is erased in 30 days, with its pages, pictures and history. You can restore it from here until then.
+            {held || now
+              ? "The website is erased straight away, with its pages, pictures and history. This cannot be undone."
+              : "The website goes offline straight away and is erased in 30 days, with its pages, pictures and history. You can restore it from here until then."}{" "}
             Download a copy first if you might want it.
           </p>
+          {!held && (
+            <label className="mt-3 flex items-center gap-2 text-sm text-danger-text">
+              <input type="checkbox" checked={now} onChange={(e) => setNow(e.target.checked)} />
+              Delete permanently now instead of in 30 days
+            </label>
+          )}
           <Field label={`Type “${site.name}” to confirm`}>
             <input className="input" autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
           </Field>
           <div className="mt-3 flex flex-wrap gap-2">
             <Button type="submit" variant="danger" disabled={erase.isPending || typed.trim().toLowerCase() !== site.name.trim().toLowerCase()}>
-              {erase.isPending ? "Deleting…" : "Delete this website"}
+              {erase.isPending ? "Deleting…" : held || now ? "Delete permanently" : "Delete this website"}
             </Button>
-            <Button variant="secondary" onClick={() => { setConfirming(false); setTyped(""); erase.reset(); }}>
+            <Button variant="secondary" onClick={() => { setConfirming(false); setTyped(""); setNow(false); erase.reset(); }}>
               Keep it
             </Button>
           </div>
