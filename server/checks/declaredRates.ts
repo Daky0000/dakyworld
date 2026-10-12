@@ -54,6 +54,11 @@ const { SETTING, clearSettingsCache, getSetting, setSetting } = await import("..
 const { MODEL_PRICING, rateFor } = await import("../src/lib/claudePricing.js");
 const { PROVIDER_PRICING, TIER_MODELS, isPricedModelAsync, isShippedPricedModel, modelForJob, tierSlot } = await import("../src/lib/models/registry.js");
 const { rateForModel } = await import("../src/lib/models/call.js");
+const { ensureSystemRoles } = await import("../src/lib/accessRoles.js");
+
+// The dev user is an Owner only once the Owner role exists. A fresh database has
+// none until the server boots, and every PUT below then answers 403.
+await ensureSystemRoles();
 
 const SETTINGS = [
   SETTING.MODEL_PRICING,

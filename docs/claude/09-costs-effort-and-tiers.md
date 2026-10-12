@@ -144,7 +144,12 @@ rungs still serve first. Four stages, first answer wins:
    No NVIDIA key, no look.
 4. **The budget.** Downgrade or approve band ⇒ at most standard, over the
    Owner's override too (the ceiling is theirs as well). `easeOff` still lowers
-   one level, once, between turns.
+   one level, once, between turns — measured on the whole effort scale, so a
+   retry thinking at `xhigh` or `max` (`effortFloor`) eases off like any other
+   run; it used to compare against low-to-high only, and those were the runs
+   most likely to be near their ceiling. A retry whose level cannot drop (a
+   standard task asked for medium) gives back the raised thinking instead, on
+   the same model.
 
 Resolution of a slot (`tierSlot`): `models.tierModels` (priced ids only, like
 `models.jobModels`) → the model the Owner had already set for that vendor

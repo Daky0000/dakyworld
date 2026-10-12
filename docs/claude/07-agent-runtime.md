@@ -351,8 +351,18 @@ not in the stored row, and `pruneMemories()` never sweeps them.
 value`, kept against one subject and **superseded in place** for the same
 `(subject, key)`, so the next agent reads the latest fault, demo link or hook
 used rather than three contradicting conclusions. It is the daily chain's
-handoff channel, and it reaches a prompt through `livingContextBlock` on the
-task's subjects — `company` plus the records the task is about.
+handoff channel, and it reaches a prompt **once**: through
+`livingContextBlock` in the brief, on the task's subjects — `company` plus the
+records the task is about. `recall()` leaves `[state:` rows out (they were being
+printed in the system prompt as standing instruction, and crowding out the
+Owner's own rules), and the brief form of the dossier does not repeat them; the
+full dossier — `readHistory`, the Owner's screen, the PDF — still does. The
+block orders by `updatedAt` (a key is replaced in place, so `createdAt` dropped
+the key refreshed every morning first), reads company keys (25) and record keys
+(40) separately, and caps itself at 6,000 characters, saying how many it did
+not show. A `consult` answers from the colleague's own prompt, which has no
+brief, so a colleague consulted on a record does not see its living state —
+the asker passes on whatever the question turns on.
 
 - **A per-record key binds to a record or is refused.** Standing work
   (`standingWork.ts`, `startTheDay.ts`) raises subject-less tasks over a batch
@@ -657,9 +667,10 @@ DONE over DONE plus FAILED, the evidence for raising an agent's autonomy —
 counted each one as a success.
 
 - **Refused is BLOCKED**, and the card names the model, says it was not retried
-  on another one, and quotes the vendor's `stop_details` when the loop hands
-  them on. A content refusal is never routed around, by the loop or by
-  anything above it.
+  on another one, and quotes the vendor's `stop_details` — the loop carries
+  Claude's category and explanation back as `AgentRunResult.stopDetails`, and
+  the card says nothing about why when a vendor sent none. A content refusal is
+  never routed around, by the loop or by anything above it.
 - **Truncated is FAILED**, not BLOCKED: nothing about it needs a person's
   answer, and failure cards are the ones held back in weather.
 - **Out of turns is BLOCKED**, quoting the last thing it said and offering the

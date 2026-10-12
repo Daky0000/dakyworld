@@ -166,6 +166,12 @@ export interface AgentRunResult {
   /** Why the loop ended. */
   stoppedBecause: "finished" | "stopped-by-tool" | "iteration-cap" | "refusal" | "truncated" | "interrupted";
   /**
+   * What Claude said about a refusal — the policy category and, sometimes, a
+   * sentence of explanation. Only on a "refusal" ending, and only when the
+   * vendor sent any: the card quotes it rather than guessing at a reason.
+   */
+  stopDetails?: { category: string | null; explanation: string | null } | null;
+  /**
    * Where it got to. Worth keeping for any ending somebody may carry on from:
    * "interrupted" above all, and "iteration-cap", which the Owner can lift
    * once to let the same conversation finish. A conversation that finished,
@@ -645,6 +651,8 @@ interface WireTurn {
   // as finished when there is nothing to call — which is the honest reading of
   // a stop reason nobody has heard of yet.
   stop_reason: Anthropic.Beta.BetaStopReason | null;
+  /** Claude's account of a refusal. The other vendors never send one. */
+  stop_details?: { category: string | null; explanation?: string | null } | null;
   usage: {
     input_tokens: number;
     output_tokens: number;
@@ -1385,6 +1393,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
 
   let servedBy = resumed?.model ?? model;
   let stoppedBecause: AgentRunResult["stoppedBecause"] = "iteration-cap";
+  let stopDetails: AgentRunResult["stopDetails"] = null;
   let iteration = resumed?.iteration ?? 0;
 
   const state = (): AgentCheckpointState => ({
@@ -1422,7 +1431,10 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
    * saves eight. It would not be worth it per turn, which is why this only ever
    * moves in one direction and never moves back.
    */
-  const ORDER: Effort[] = ["low", "medium", "high"];
+  // The whole scale, not low to high: a retried run thinks at xhigh or max
+  // (`effortFloor`), and a word missing from the list read as "already below
+  // anything asked for", so the runs most likely to be near their ceiling were
+  // the ones that never eased off.
   const easeOffIfAsked = async () => {
     if (!request.easeOff) return;
     let wanted: Effort | null = null;
@@ -1432,12 +1444,21 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
       // A failed check is not a reason to change how a run is being paid for.
       return;
     }
-    if (!wanted || ORDER.indexOf(wanted) >= ORDER.indexOf(effort)) return;
+    if (!wanted || efforts.indexOf(wanted) >= efforts.indexOf(effort)) return;
     // A sized run eases off a level rather than an effort word, so the model
     // and the thinking keep moving together.
     if (level) {
       const lower = levelForEffort(wanted);
-      if (TASK_LEVELS.indexOf(lower) >= TASK_LEVELS.indexOf(level)) return;
+      if (TASK_LEVELS.indexOf(lower) >= TASK_LEVELS.indexOf(level)) {
+        // Same level, but a retry raised the thinking above the level's own:
+        // give that back first. The level picks the model, so it stays put.
+        const own = effortForLevel(level);
+        if (efforts.indexOf(own) >= efforts.indexOf(effort)) return;
+        const was = effort;
+        effort = own;
+        await saying(`Carrying on at ${own} effort rather than ${was} — this run is close to its ceiling.`);
+        return;
+      }
       const wasLevel = level;
       level = lower;
       effort = effortForLevel(lower);
@@ -1472,6 +1493,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
       costUsd,
       model: servedBy,
       stoppedBecause,
+      ...(stopDetails ? { stopDetails } : {}),
       state: state(),
     };
   };
@@ -1782,6 +1804,9 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
 
       if (response.stop_reason === "refusal") {
         stoppedBecause = "refusal";
+        if (response.stop_details) {
+          stopDetails = { category: response.stop_details.category ?? null, explanation: response.stop_details.explanation ?? null };
+        }
         // Whoever declined, by name. Never routed around — see
         // `CANNOT_SERVE_STATUSES`.
         narration.push(`${PROVIDERS[serving].name} declined this task. Rephrase the brief, or do this one by hand.`);

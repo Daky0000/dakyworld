@@ -614,6 +614,93 @@ async function main() {
       claudeSeen[0]?.body.model === TIER_MODELS.anthropic.complex && claudeSeen[1]?.body.model === TIER_MODELS.anthropic.standard,
       claudeSeen.map((hit) => hit.body.model).join(" → "),
     );
+
+    // A retry thinks harder than its level (`effortFloor`), and those are the
+    // runs most likely to be near their ceiling. Measured on low-to-high only,
+    // xhigh and max read as below anything asked for, and never eased off.
+    const toolThenDone = (hit: Seen) =>
+      claudeSeen.length === 1
+        ? {
+            status: 200,
+            payload: {
+              id: "msg_tool",
+              type: "message",
+              role: "assistant",
+              model: hit.body.model,
+              content: [{ type: "tool_use", id: "toolu_check", name: "look_up", input: { what: "x" } }],
+              stop_reason: "tool_use",
+              stop_sequence: null,
+              usage: { input_tokens: 50, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+            },
+          }
+        : claudeDone(hit);
+    const lookUp = [{ name: "look_up", description: "Looks something up.", inputSchema: { type: "object", properties: { what: { type: "string" } } }, run: async () => ({ content: "Tuesday." }) }];
+    for (const floor of ["xhigh", "max"] as const) {
+      claudeSeen.length = 0;
+      claudeReply = toolThenDone;
+      let askedRetry = 0;
+      await runAgentLoop({
+        purpose: `${PURPOSE}.ease`,
+        system: "You are a check.",
+        prompt: "Look something up, then stop.",
+        tools: lookUp,
+        level: "complex",
+        effortFloor: floor,
+        easeOff: async () => (askedRetry++ === 0 ? null : "medium"),
+      });
+      check(
+        `a complex retry at ${floor} effort still eases off a level near its ceiling`,
+        claudeSeen[0]?.body.output_config?.effort === floor &&
+          claudeSeen[1]?.body.model === TIER_MODELS.anthropic.standard &&
+          claudeSeen[1]?.body.output_config?.effort === "medium",
+        claudeSeen.map((hit) => `${hit.body.model}@${hit.body.output_config?.effort}`).join(" → "),
+      );
+    }
+    // A standard retry raised to high cannot drop a level by being asked for
+    // medium — that is its own level — so it gives back the raised thinking.
+    claudeSeen.length = 0;
+    claudeReply = toolThenDone;
+    let askedStandard = 0;
+    await runAgentLoop({
+      purpose: `${PURPOSE}.ease`,
+      system: "You are a check.",
+      prompt: "Look something up, then stop.",
+      tools: lookUp,
+      level: "standard",
+      effortFloor: "high",
+      easeOff: async () => (askedStandard++ === 0 ? null : "medium"),
+    });
+    check(
+      "a standard retry raised to high eases back to medium on the same model",
+      claudeSeen[0]?.body.output_config?.effort === "high" &&
+        claudeSeen[1]?.body.output_config?.effort === "medium" &&
+        claudeSeen[0]?.body.model === TIER_MODELS.anthropic.standard &&
+        claudeSeen[1]?.body.model === TIER_MODELS.anthropic.standard,
+      claudeSeen.map((hit) => `${hit.body.model}@${hit.body.output_config?.effort}`).join(" → "),
+    );
+
+    // A refusal's own words reach the result, for the card to quote.
+    claudeSeen.length = 0;
+    claudeReply = (hit) => ({
+      status: 200,
+      payload: {
+        id: "msg_refused",
+        type: "message",
+        role: "assistant",
+        model: hit.body.model,
+        content: [],
+        stop_reason: "refusal",
+        stop_details: { type: "refusal", category: "cyber", explanation: "Declined on policy grounds." },
+        stop_sequence: null,
+        usage: { input_tokens: 50, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      },
+    });
+    const refused = await runAgentLoop({ purpose: `${PURPOSE}.refusal`, system: "You are a check.", prompt: "Do something.", tools: [], level: "standard" });
+    check(
+      "a refusal carries its category and explanation back as stopDetails",
+      refused.stoppedBecause === "refusal" && refused.stopDetails?.category === "cyber" && refused.stopDetails?.explanation === "Declined on policy grounds.",
+      `${refused.stoppedBecause} ${JSON.stringify(refused.stopDetails ?? null)}`,
+    );
     claudeReply = claudeDone;
 
     console.log("\nA real task is sized, says so, and runs at that size");

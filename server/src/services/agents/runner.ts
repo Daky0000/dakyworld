@@ -2919,12 +2919,12 @@ function prepared(counters: Counters): string {
  * Why the model declined, when the loop carried the vendor's own words back.
  *
  * A refusal arrives with `stop_details` — a category, sometimes an explanation
- * — and is meant to be shown rather than branched on. The loop does not hand it
- * on yet; this reads it when it is there and says nothing when it is not,
- * rather than inventing a reason.
+ * — and is meant to be shown rather than branched on. The loop carries it back
+ * as `stopDetails`; this says nothing when the vendor sent none, rather than
+ * inventing a reason.
  */
 function refusalDetails(result: AgentRunResult): string | null {
-  const details = (result as AgentRunResult & { stopDetails?: { category?: unknown; explanation?: unknown } | null }).stopDetails;
+  const details = result.stopDetails;
   if (!details) return null;
   const said = [
     typeof details.category === "string" && details.category ? `category: ${details.category}` : "",
