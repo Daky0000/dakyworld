@@ -32,7 +32,7 @@ import { prepareImportedHtml } from "./htmlCompiler.js";
 import { analyzeImportPackage, commitPackageToSite } from "./websitePackageImport.js";
 import { generatePagePrepublishReport, generateSitePrepublishReport } from "./websitePrepublishReport.js";
 import { updateSiteSettings } from "./websiteSiteSettings.js";
-import { HOST_DOMAIN } from "./websiteHosting.js";
+import { HOST_DOMAIN, PLACEHOLDER_HOST_DOMAIN, PLACEHOLDER_HOSTS, expectedHostedUrl, hostedPublicUrl, isSlugAddress } from "./websiteHosting.js";
 
 const publicUrl = z.string().url().max(2000).refine(value => {
   const url = new URL(value);
@@ -320,7 +320,6 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     if (!!input.repoOwner !== !!input.repoName) throw new WebsiteError(400, "Enter both the repository owner and name.");
     if (!input.publicUrl && input.repoOwner) throw new WebsiteError(400, "Enter the address the repository's website is published at.");
     const slug = `${input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0,60) || "site"}-${randomUUID().slice(0,8)}`;
-    const fallbackPublicUrl = hostedPublicUrl(slug);
     let { html, templateKey, packageData, packageFilename, publicUrl: givenPublicUrl, githubRepositoryId, ...rest } = input;
     if (githubRepositoryId && (html || templateKey || packageData || rest.repoOwner || rest.repoName)) {
       throw new WebsiteError(400, "A website from a GitHub repository takes its pages from the repository, so it cannot also start from a template or an upload.");
@@ -331,7 +330,8 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       ...(github ? { repoOwner: github.owner, repoName: github.name, repoBranch: github.branch, githubInstallationId: github.installationId, githubRepositoryId: github.repositoryId } : {}),
       // A repository's site with no address given is most often its GitHub
       // Pages one; better than a hosted address that will never serve it.
-      publicUrl: givenPublicUrl ?? (github ? githubPagesUrl(github.owner, github.name) : fallbackPublicUrl),
+      // Otherwise the hosted address its first publish will give it.
+      publicUrl: givenPublicUrl ?? (github ? githubPagesUrl(github.owner, github.name) : await expectedHostedUrl(slug)),
     };
     if (html) {
       html = prepareImportedHtml(html);
@@ -652,54 +652,47 @@ export function registerWebsiteManagement(router: Router, access: Access) {
 }
 
 /**
- * Where a hosted site with no address of its own is served: the same rule
- * `hostedUrlFor` uses, `<label>.<WEBSITE_HOST_DOMAIN>`.
- *
- * Without a host domain there is no such address, and this used to invent one
- * under `sites.dakyx.com`. Nothing serves that, so customers were shown a dead
- * address — and were it ever pointed at the app, every customer's script would
- * run same-site with os.dakyx.com (docs/website-builder-launch.md, step 1).
- * `.invalid` is reserved never to resolve (RFC 2606), so a placeholder that
- * leaks anywhere is plainly a placeholder; the screens that show an address
- * leave it out, and `adoptHostedAddresses` replaces it once a domain is set.
- */
-export const PLACEHOLDER_HOST_DOMAIN = "hosting.invalid";
-export function hostedPublicUrl(label: string, hostDomain = HOST_DOMAIN): string {
-  return `https://${label}.${hostDomain || PLACEHOLDER_HOST_DOMAIN}`;
-}
-
-/** The two placeholder suffixes a hosted site's address may still carry. */
-const PLACEHOLDER_HOSTS = ["sites.dakyx.com", PLACEHOLDER_HOST_DOMAIN];
-
-/**
- * Gives every hosted site still carrying a placeholder address the one it has
- * now — run on every boot (index.ts), so setting WEBSITE_HOST_DOMAIN is the
- * whole of the launch runbook's step 4 rather than a hand-written UPDATE.
+ * Gives every hosted site still carrying an address it was handed, rather than
+ * one it is served at, the one it has now — run on every boot (index.ts), so
+ * setting WEBSITE_HOST_DOMAIN is the whole of the launch runbook's step 4
+ * rather than a hand-written UPDATE.
  *
  * Only a site with no repository, and only a host that *ends* in a placeholder
- * suffix: `shop.sites.dakyx.com.example` is somebody's real domain. Without a
- * host domain, a `sites.dakyx.com` address is still turned into the `.invalid`
- * one, so no screen is left handing out a dakyx.com address nothing serves.
- * The path is kept, because `assetUrl` is built from it and the published pages
- * already carry it. Idempotent: an address already right is not written, and a
- * write is conditional on the value read, so a manager's save wins a race.
+ * suffix (`shop.sites.dakyx.com.example` is somebody's real domain) or is the
+ * one its own slug made under the host domain. That second kind was written
+ * from the whole slug before `hostedLabelFor`, so a long-named site was given
+ * a host it was never served at; a label somebody chose, and an address the
+ * site is already served at, are left alone. The new address is where the site
+ * is served — its verified domain first, then its hosted label, then the label
+ * its first publish will give it. Without a host domain, a `sites.dakyx.com`
+ * address is still turned into the `.invalid` one, so no screen is left
+ * handing out a dakyx.com address nothing serves. The path is kept, because
+ * `assetUrl` is built from it and the published pages already carry it.
+ * Idempotent: an address already right is not written, and a write is
+ * conditional on the value read, so a manager's save wins a race.
  */
 export async function adoptHostedAddresses(hostDomain = HOST_DOMAIN): Promise<number> {
+  const suffixes = hostDomain ? [...PLACEHOLDER_HOSTS, hostDomain] : PLACEHOLDER_HOSTS;
   const sites = await prisma.site.findMany({
-    where: { repoName: null, OR: PLACEHOLDER_HOSTS.map((suffix) => ({ publicUrl: { contains: `.${suffix}` } })) },
-    select: { id: true, slug: true, hostedSlug: true, publicUrl: true },
+    where: { repoName: null, OR: suffixes.map((suffix) => ({ publicUrl: { contains: `.${suffix}` } })) },
+    select: { id: true, slug: true, hostedSlug: true, publicUrl: true, customDomain: true, customDomainVerifiedAt: true },
   });
   let rewritten = 0;
   for (const site of sites) {
     let current: URL;
     try { current = new URL(site.publicUrl); } catch { continue; }
-    if (!PLACEHOLDER_HOSTS.some((suffix) => current.hostname.endsWith(`.${suffix}`))) continue;
-    const next = `${hostedPublicUrl(site.hostedSlug ?? site.slug, hostDomain)}${current.pathname.replace(/\/+$/, "")}`;
+    const placeholder = PLACEHOLDER_HOSTS.some((suffix) => current.hostname.endsWith(`.${suffix}`));
+    if (!placeholder && !isSlugAddress(current.hostname, site.slug, hostDomain)) continue;
+    if (!placeholder && site.hostedSlug && current.hostname === `${site.hostedSlug}.${hostDomain}`) continue;
+    const root = site.customDomain && site.customDomainVerifiedAt ? `https://${site.customDomain}`
+      : site.hostedSlug ? hostedPublicUrl(site.hostedSlug, hostDomain)
+      : await expectedHostedUrl(site.slug, hostDomain);
+    const next = `${root}${current.pathname.replace(/\/+$/, "")}`;
     if (next === site.publicUrl) continue;
     const written = await prisma.site.updateMany({ where: { id: site.id, repoName: null, publicUrl: site.publicUrl }, data: { publicUrl: next } });
     rewritten += written.count;
   }
-  if (rewritten) console.log(`  → Moved ${rewritten} hosted website${rewritten === 1 ? "" : "s"} to ${hostDomain ? `an address under ${hostDomain}` : `a .${PLACEHOLDER_HOST_DOMAIN} placeholder until WEBSITE_HOST_DOMAIN is set`}`);
+  if (rewritten) console.log(`  → Moved ${rewritten} hosted website${rewritten === 1 ? "" : "s"} to ${hostDomain ? "the address each is served at" : `a .${PLACEHOLDER_HOST_DOMAIN} placeholder until WEBSITE_HOST_DOMAIN is set`}`);
   return rewritten;
 }
 

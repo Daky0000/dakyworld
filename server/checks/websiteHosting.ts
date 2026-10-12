@@ -12,8 +12,11 @@
  * The files every site is asked for — robots.txt, sitemap.xml, favicon.ico —
  * and a page of the site's own at one of those paths winning. A tracked link
  * (?utm_source=) served like any other. The other spelling of a verified domain
- * redirected, and an unverified one not. A flood from one address slowed. The
- * editor's hostnames in a comma-separated CLIENT_ORIGIN left alone.
+ * redirected, and an unverified one not — and an icon named at that other
+ * spelling (or the site's hosted address) answered here, followed redirect by
+ * redirect: favicon.ico and the www redirect used to send a browser between
+ * them until it gave up. A flood from one address slowed. The editor's
+ * hostnames in a comma-separated CLIENT_ORIGIN left alone.
  *
  * And the squatting fix: two websites may both claim a domain, verifying one
  * clears the other, a verified domain cannot be claimed, and the database
@@ -126,6 +129,20 @@ try {
   await site(`${mark}-apex`, { customDomain: apex, customDomainToken: "t1", customDomainVerifiedAt: new Date() }, [{ path: "/", filePath: "index.html", publishedHtml: "<p>apex</p>" }]);
   await site(`${mark}-www`, { customDomain: `www.${wwwFirst}`, customDomainToken: "t2", customDomainVerifiedAt: new Date() }, [{ path: "/", filePath: "index.html", publishedHtml: "<p>www</p>" }]);
   await site(`${mark}-pending`, { customDomain: pending, customDomainToken: "t3" }, [{ path: "/", filePath: "index.html", publishedHtml: "<p>pending</p>" }]);
+  // Icons named at another address of the same site: the other spelling of its
+  // domain (either way round), or its hosted address.
+  const iconApex = `${mark}-iconapex.example`;
+  const iconWww = `${mark}-iconwww.example`;
+  const iconPath = `${mark}-iconpath.example`;
+  const iconHosted = `${mark}-iconhosted.example`;
+  const iconFile = `assets/dw/${randomUUID()}.png`;
+  const verifiedAs = (domain: string, token: string) => ({ customDomain: domain, customDomainToken: token, customDomainVerifiedAt: new Date() });
+  const iconHome = (href: string) => [{ path: "/", filePath: "index.html", publishedHtml: `<html><head><link rel="icon" href="${href}"></head><body>icons</body></html>` }];
+  await site(`${mark}-iconapex`, verifiedAs(iconApex, "t5"), iconHome(`https://www.${iconApex}/favicon.ico`));
+  await site(`${mark}-iconwww`, verifiedAs(`www.${iconWww}`, "t6"), iconHome(`https://${iconWww}/favicon.ico`));
+  const iconPathSite = await site(`${mark}-iconpath`, verifiedAs(iconPath, "t7"), iconHome(`https://www.${iconPath}/${iconFile}`));
+  await prisma.siteAsset.create({ data: { siteId: iconPathSite.id, repoPath: iconFile, filename: "icon.png", contentType: "image/png", content: Buffer.from("icon"), size: 4 } });
+  await site(`${mark}-iconhosted`, verifiedAs(iconHosted, "t8"), iconHome(`https://${hostOf(`${mark}-iconhosted`)}/favicon.ico`));
 
   const role = await prisma.accessRole.create({ data: { key: mark, name: mark, external: true, permissions: [] } });
   const manager = await prisma.user.create({ data: { email: `${mark}-manager@example.test`, name: "Manager", accessRoleId: role.id } });
@@ -281,6 +298,37 @@ try {
   check("an unverified domain is not redirected to", () => assert.equal(response.status, 404));
   response = await call("/", { host: apex });
   check("and the verified one itself is served", () => { assert.equal(response.status, 200); assert.match(response.text, /apex/); });
+
+  console.log("\nfavicon.ico across a site's own addresses");
+  // Follows redirects the way a browser does, and stops at ten: a loop of
+  // favicon.ico and the www redirect used to run until the browser gave up.
+  async function follow(startHost: string, startPath: string) {
+    const hops: string[] = [];
+    let at = new URL(startPath, `https://${startHost}/`);
+    for (let i = 0; i < 10; i += 1) {
+      const answer = await call(`${at.pathname}${at.search}`, { host: at.host });
+      if (answer.status < 300 || answer.status >= 400) return { status: answer.status, hops };
+      at = new URL(answer.headers.location!, at);
+      hops.push(at.href);
+    }
+    return { status: 0, hops };
+  }
+  let chain = await follow(iconApex, "/favicon.ico");
+  check("an icon named at /favicon.ico on the www spelling is no icon on the bare one, not a loop", () => assert.deepEqual(chain, { status: 204, hops: [] }, JSON.stringify(chain)));
+  chain = await follow(`www.${iconApex}`, "/favicon.ico");
+  check("and asked for at www, one hop to the bare domain and done", () => assert.deepEqual(chain, { status: 204, hops: [`https://${iconApex}/favicon.ico`] }, JSON.stringify(chain)));
+  chain = await follow(`www.${iconWww}`, "/favicon.ico");
+  check("the other way round — www connected, the bare spelling in the HTML — is no loop either", () => assert.deepEqual(chain, { status: 204, hops: [] }, JSON.stringify(chain)));
+  chain = await follow(iconWww, "/favicon.ico");
+  check("…from either spelling", () => assert.deepEqual(chain, { status: 204, hops: [`https://www.${iconWww}/favicon.ico`] }, JSON.stringify(chain)));
+  chain = await follow(iconPath, "/favicon.ico");
+  check("an icon at another path on the other spelling is that path, here: one hop, then the picture", () => {
+    assert.deepEqual(chain, { status: 200, hops: [`https://${iconPath}/${iconFile}`] }, JSON.stringify(chain));
+  });
+  chain = await follow(`www.${iconPath}`, "/favicon.ico");
+  check("and from the other spelling it still ends in the picture", () => { assert.equal(chain.status, 200, JSON.stringify(chain)); assert.ok(chain.hops.length <= 2); });
+  chain = await follow(iconHosted, "/favicon.ico");
+  check("the site's own hosted address counts as the same site too", () => assert.deepEqual(chain, { status: 204, hops: [] }, JSON.stringify(chain)));
 
   console.log("\nThe editor's own hostnames");
   process.env.CLIENT_ORIGIN = `https://a-${mark}.os.invalid,https://b-${mark}.os.invalid`;

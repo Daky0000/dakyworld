@@ -8,6 +8,14 @@
 > websites must be hosted on a **separate registrable domain**, never under
 > dakyx.com — see `server/docs/website-builder-launch.md`, step 1.
 
+> **Before any customer domain is proxied through Cloudflare**, read
+> `server/deploy/CAPACITY.md`, step 9. `TRUSTED_PROXY_HOPS` is verified as 2
+> for the direct Railway path, and Cloudflare adds a hop: left as it is, every
+> visitor arriving through one Cloudflare location counts as one address, and
+> the hosted-site visitor limit refuses them together. The proxy setting must
+> change, and that limit must key on the address Cloudflare reports
+> (`CF-Connecting-IP`, trusted only from Cloudflare), first.
+
 Two domains are served from this one repository, by two different hosts that
 both watch it. They cannot collide, because each host is told its own domain in
 its own place.

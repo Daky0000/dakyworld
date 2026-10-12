@@ -3,6 +3,7 @@ import {
 } from "./publishedAssets.js";
 import { decodeEntities, parse } from "./website/index.js";
 import { getOrLoad } from "../lib/cache.js";
+import { bypassRequestCache } from "../lib/requestCache.js";
 import { capacity } from "../lib/capacity.js";
 import { cloudflareZones } from "./cacheInvalidation.js";
 import crypto from "node:crypto";
@@ -91,10 +92,31 @@ function osHosts(): Set<string> {
   if (process.env.NODE_ENV !== "production") hosts.push("localhost", "127.0.0.1");
   return new Set(hosts);
 }
+/**
+ * One lookup per host at a time, shared by every request that arrives while it
+ * runs. A page's pictures are fetched together, and with the response cache off
+ * each lookup takes a slot in the cache's fallback gate, which refuses rather
+ * than waits once twenty are running — forty pictures were forty lookups and
+ * about twenty 503s. Nothing outlives the lookup, so a domain verified or a
+ * site deleted a moment ago is seen by the next request, exactly as before. A
+ * request that must not be answered from the cache (a form post) shares only
+ * with others like it.
+ */
+const lookups = new Map<string, Promise<unknown>>();
+function sharedLookup<T>(name: string, lookup: () => Promise<T>): Promise<T> {
+  const key = `${bypassRequestCache() ? "fresh " : ""}${name}`;
+  const running = lookups.get(key);
+  if (running) return running as Promise<T>;
+  const started = lookup().finally(() => lookups.delete(key));
+  lookups.set(key, started);
+  return started;
+}
+
 async function siteForHost(host: string) {
   if (osHosts().has(host)) return null;
   // Unknown hosts have a short lifetime to avoid retaining arbitrary host scans.
-  return getOrLoad({ scope: "public", resource: "hosts", identity: host }, { ttlMs: 4500 }, () => uncachedSiteForHost(host));
+  return sharedLookup(`site:${host}`, () =>
+    getOrLoad({ scope: "public", resource: "hosts", identity: host }, { ttlMs: 4500 }, () => uncachedSiteForHost(host)));
 }
 
 /**
@@ -106,28 +128,46 @@ async function siteForHost(host: string) {
  * verified domain is redirected to — the same rule that decides what is served.
  */
 async function canonicalHostFor(host: string): Promise<string | null> {
-  const other = host.startsWith("www.") ? host.slice(4) : `www.${host}`;
+  const other = otherSpelling(host);
   if (!other.includes(".")) return null;
-  const verified = await getOrLoad({ scope: "public", resource: "hosts", identity: `verified:${other}` }, { ttlMs: 4500 }, async () =>
-    Boolean(await prisma.site.findFirst({
-      where: { customDomain: other, customDomainVerifiedAt: { not: null }, hostedEnabled: true, deletionScheduledFor: null },
-      select: { id: true },
-    })));
+  const verified = await sharedLookup(`verified:${other}`, () =>
+    getOrLoad({ scope: "public", resource: "hosts", identity: `verified:${other}` }, { ttlMs: 4500 }, async () =>
+      Boolean(await prisma.site.findFirst({
+        where: { customDomain: other, customDomainVerifiedAt: { not: null }, hostedEnabled: true, deletionScheduledFor: null },
+        select: { id: true },
+      }))));
   return verified ? other : null;
+}
+
+/** `www.example.com` for `example.com`, and the other way round. */
+function otherSpelling(host: string): string {
+  return host.startsWith("www.") ? host.slice(4) : `www.${host}`;
 }
 
 /**
  * A ceiling per visitor per hosted site, held in memory.
  *
  * Hosted pages share a process with the editor, so one scraper hammering one
- * customer's site slowed every customer's editor. Generous on purpose — a page
- * with forty pictures is forty requests, and a school or an office is one
- * address — and never a database write per page view, which would turn a flood
- * into exactly the load this is meant to stop. When the table is full the
- * oldest windows go; nobody is refused because somebody else filled it.
+ * customer's site slowed every customer's editor. Never a database write per
+ * page view, which would turn a flood into exactly the load this is meant to
+ * stop. When the table is full the oldest windows go; nobody is refused because
+ * somebody else filled it.
+ *
+ * Pages and pictures are counted apart. One count for both made a page with
+ * forty pictures cost forty-one, so a school, an office or a mobile carrier's
+ * shared address was refused after about seven page views — with an empty
+ * body, which a browser shows as a blank page. Pictures have their own
+ * allowance, ten times the pages', because a picture is cheap to answer now
+ * and a page view asks for many of them.
+ *
+ * The address is `req.ip`, which is right only while `TRUSTED_PROXY_HOPS`
+ * matches the path a request took. A customer domain proxied through
+ * Cloudflare adds a hop, and every visitor arriving through one Cloudflare
+ * location would then share one allowance — see deploy/CAPACITY.md, step 9.
  */
 const VISITOR_WINDOW_MS = 60_000;
 const VISITOR_KEYS = 20_000;
+const PICTURE_ALLOWANCE = 10;
 const visitorWindows = new Map<string, { count: number; resetAt: number }>();
 
 function visitorLimit(): number {
@@ -135,8 +175,10 @@ function visitorLimit(): number {
   return Number.isInteger(value) && value > 0 ? value : 300;
 }
 
+const TOO_MANY_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Too many requests</title><style>body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;background:#fafafa;color:#1b2029}main{text-align:center;padding:24px;max-width:32rem}h1{font-size:20px;margin:0 0 8px}p{color:#5b6572;margin:0;line-height:1.6}</style></head><body><main><h1>Too many requests</h1><p>This website has had a lot of requests from your network in the last minute. Wait a moment, then reload the page.</p></main></body></html>`;
+
 /** Seconds until this visitor may come back, or 0 while they are within the limit. */
-function visitorRetryAfter(key: string, now = Date.now()): number {
+function visitorRetryAfter(key: string, limit: number, now = Date.now()): number {
   let entry = visitorWindows.get(key);
   if (!entry || entry.resetAt <= now) {
     // A new window is always appended, never renewed in place, so the map stays
@@ -150,8 +192,11 @@ function visitorRetryAfter(key: string, now = Date.now()): number {
     visitorWindows.set(key, entry);
   }
   entry.count += 1;
-  return entry.count > visitorLimit() ? Math.max(1, Math.ceil((entry.resetAt - now) / 1000)) : 0;
+  return entry.count > limit ? Math.max(1, Math.ceil((entry.resetAt - now) / 1000)) : 0;
 }
+
+/** An uploaded file's repository path, when that is what the request asks for. */
+const ASSET_REQUEST = /(?:^|\/)(assets\/dw\/[^/]+)$/;
 
 async function findLivePage(siteId: string, path: string) {
   return (await prisma.sitePage.findFirst({
@@ -234,14 +279,35 @@ function declaredIcon(html: string): string | null {
   return null;
 }
 
-/** Where `/favicon.ico` should send a browser: a same-site path or an https URL, never itself. */
+/**
+ * Every hostname this site answers at, or is redirected to from: its hosted
+ * address, its verified domain, and the other spelling of either.
+ */
+async function ownHosts(siteId: string, host: string): Promise<Set<string>> {
+  const site = await prisma.site.findUnique({ where: { id: siteId }, select: { hostedSlug: true, customDomain: true, customDomainVerifiedAt: true } });
+  const hosts = new Set([host, otherSpelling(host)]);
+  if (site?.hostedSlug && HOST_DOMAIN) hosts.add(`${site.hostedSlug}.${HOST_DOMAIN}`);
+  if (site?.customDomain && site.customDomainVerifiedAt) hosts.add(site.customDomain).add(otherSpelling(site.customDomain));
+  return hosts;
+}
+
+/**
+ * Where `/favicon.ico` should send a browser: a same-site path or an https URL, never itself.
+ *
+ * An icon named at another address of the same site is answered here, by its
+ * path. Sent to the other spelling of the domain instead, a `/favicon.ico`
+ * there came straight back through that spelling's 301 — the two redirected
+ * to each other, each cached for an hour, until the browser gave up.
+ */
 async function faviconFor(siteId: string, host: string): Promise<string | null> {
   const home = await findLivePage(siteId, "/");
   const href = home?.publishedHtml ? declaredIcon(home.publishedHtml) : null;
   if (!href) return null;
   let url: URL;
   try { url = new URL(href, `https://${host}/`); } catch { return null; }
-  if (url.host === host) return url.pathname === "/favicon.ico" ? null : `${url.pathname}${url.search}`;
+  if (url.host === host || (await ownHosts(siteId, host)).has(url.host)) {
+    return url.pathname === "/favicon.ico" ? null : `${url.pathname}${url.search}`;
+  }
   return url.protocol === "https:" ? url.href : null;
 }
 
@@ -312,8 +378,16 @@ export function publicSiteHosting() {
     const host = hostOf(req);
     if (!host || osHosts().has(host)) return next();
 
-    const retryAfter = visitorRetryAfter(`${host} ${req.ip ?? req.socket.remoteAddress ?? "?"}`);
-    if (retryAfter) return res.status(429).set("Retry-After", String(retryAfter)).set("Cache-Control", "no-store").end();
+    const path = (req.path || "/").replace(/\/+$/, "") || "/";
+    const assetPath = ASSET_REQUEST.exec(path)?.[1];
+    const visitor = `${host} ${req.ip ?? req.socket.remoteAddress ?? "?"}`;
+    const retryAfter = assetPath
+      ? visitorRetryAfter(`${visitor} pictures`, visitorLimit() * PICTURE_ALLOWANCE)
+      : visitorRetryAfter(visitor, visitorLimit());
+    if (retryAfter) {
+      return res.status(429).set("Retry-After", String(retryAfter)).set("Cache-Control", "no-store")
+        .set("Content-Type", "text/html; charset=utf-8").send(TOO_MANY_HTML);
+    }
 
     let site: { id: string; name: string; publicUrl: string } | null = null;
     let canonical: string | null = null;
@@ -342,9 +416,7 @@ export function publicSiteHosting() {
     }
     if (!["GET", "HEAD"].includes(req.method)) return res.status(405).set("Cache-Control", "no-store").end();
 
-    const path = (req.path || "/").replace(/\/+$/, "") || "/";
     try {
-      const assetPath = /(?:^|\/)(assets\/dw\/[^/]+)$/.exec(path)?.[1];
       if (assetPath) return await serveAsset(site, assetPath, path, req, res);
 
       // The one header added to a customer's pages. No Content-Security-Policy
@@ -402,6 +474,61 @@ export function hostedUrlFor(site: { hostedSlug: string | null; customDomain: st
   if (site.customDomain && site.customDomainVerifiedAt) return `https://${site.customDomain}`;
   if (site.hostedSlug && HOST_DOMAIN) return `https://${site.hostedSlug}.${HOST_DOMAIN}`;
   return null;
+}
+
+/**
+ * The hostname label a site's slug becomes: the one rule for it, used by
+ * `ensureHostedAddress` and by everything that shows an address before it has
+ * run. The address shown used to be built from the whole slug, which is up to
+ * 69 characters, while the label is cut to fifty — so a long-named website was
+ * promised a host it was never served at. Never ending in a hyphen, which no
+ * hostname label may.
+ */
+export function hostedLabelFor(slug: string): string {
+  return slug.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "").slice(0, 50).replace(/-+$/, "") || "site";
+}
+
+/**
+ * Where a hosted site with no address of its own is served: the same rule
+ * `hostedUrlFor` uses, `<label>.<WEBSITE_HOST_DOMAIN>`.
+ *
+ * Without a host domain there is no such address, and this used to invent one
+ * under `sites.dakyx.com`. Nothing serves that, so customers were shown a dead
+ * address — and were it ever pointed at the app, every customer's script would
+ * run same-site with os.dakyx.com (docs/website-builder-launch.md, step 1).
+ * `.invalid` is reserved never to resolve (RFC 2606), so a placeholder that
+ * leaks anywhere is plainly a placeholder; the screens that show an address
+ * leave it out, and `adoptHostedAddresses` replaces it once a domain is set.
+ */
+export const PLACEHOLDER_HOST_DOMAIN = "hosting.invalid";
+export function hostedPublicUrl(label: string, hostDomain = HOST_DOMAIN): string {
+  return `https://${label}.${hostDomain || PLACEHOLDER_HOST_DOMAIN}`;
+}
+
+/** The two placeholder suffixes a hosted site's address may still carry. */
+export const PLACEHOLDER_HOSTS = ["sites.dakyx.com", PLACEHOLDER_HOST_DOMAIN];
+
+/**
+ * Whether this hostname is one a site was handed from its slug rather than
+ * chosen: by the whole slug (what was handed out before `hostedLabelFor`) or
+ * by its label, under the host domain or a placeholder.
+ */
+export function isSlugAddress(hostname: string, slug: string, hostDomain = HOST_DOMAIN): boolean {
+  const labels = [slug.toLowerCase(), hostedLabelFor(slug)];
+  const suffixes = hostDomain ? [hostDomain, ...PLACEHOLDER_HOSTS] : PLACEHOLDER_HOSTS;
+  return labels.some((label) => suffixes.some((suffix) => hostname === `${label}.${suffix}`));
+}
+
+/**
+ * The address a hosted site will be served at, before its first publish
+ * chooses a label: the one `ensureHostedAddress` will choose. Unless another
+ * website already holds that label — then the address is somebody else's
+ * website, and the placeholder stands until the first publish settles it.
+ */
+export async function expectedHostedUrl(slug: string, hostDomain = HOST_DOMAIN): Promise<string> {
+  const label = hostedLabelFor(slug);
+  const taken = hostDomain ? await prisma.site.findFirst({ where: { hostedSlug: label }, select: { id: true } }) : null;
+  return hostedPublicUrl(label, taken ? "" : hostDomain);
 }
 
 /**
@@ -547,7 +674,7 @@ export function registerWebsiteHosting(router: Router) {
       const publishedPages = await prisma.sitePage.count({ where: { siteId: req.params.id!, publishedHtml: { not: null } } });
       res.json({
         hostedEnabled: site.hostedEnabled,
-        hostedSlug: site.hostedSlug ?? site.slug,
+        hostedSlug: site.hostedSlug ?? hostedLabelFor(site.slug),
         hostDomain: HOST_DOMAIN || null,
         hostedUrl: hostedUrlFor(site),
         publishesToRepository: Boolean(site.repoName),
@@ -618,20 +745,35 @@ export function registerWebsiteHosting(router: Router) {
  * A site with a repository keeps publishing there and gets a hosted address as
  * well, which costs nothing and is useful for staging. A site without one has
  * this as its only address.
+ *
+ * And a site without one that still carries an address handed to it from its
+ * slug is moved to the label actually chosen, in the same write. The two differ
+ * when another website already had the label; the address shown until now was
+ * then never going to be served.
  */
 export async function ensureHostedAddress(siteId: string, db: import("@prisma/client").Prisma.TransactionClient = prisma): Promise<void> {
-  const site = await db.site.findUnique({ where: { id: siteId }, select: { slug: true, hostedSlug: true, repoName: true } });
+  const site = await db.site.findUnique({
+    where: { id: siteId },
+    select: { slug: true, hostedSlug: true, repoName: true, publicUrl: true, customDomain: true, customDomainVerifiedAt: true },
+  });
   if (!site || site.hostedSlug) return;
   // The slug is the obvious label, but it has to be unique among hostnames as
   // well as among sites, and two sites can be renamed into a collision.
-  let label = site.slug.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "").slice(0, 50) || "site";
+  let label = hostedLabelFor(site.slug);
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const clash = await db.site.findFirst({ where: { hostedSlug: label }, select: { id: true } });
     if (!clash) break;
     label = `${label.slice(0, 44)}-${crypto.randomBytes(2).toString("hex")}`;
   }
+  let publicUrl: string | undefined;
+  let current: URL | null = null;
+  try { current = site.repoName ? null : new URL(site.publicUrl); } catch { /* Not an address this ever wrote. */ }
+  if (current && isSlugAddress(current.hostname, site.slug)) {
+    const root = hostedUrlFor({ hostedSlug: label, customDomain: site.customDomain, customDomainVerifiedAt: site.customDomainVerifiedAt }) ?? hostedPublicUrl(label, "");
+    publicUrl = `${root}${current.pathname.replace(/\/+$/, "")}`;
+  }
   await db.site.update({
     where: { id: siteId },
-    data: { hostedSlug: label, hostedEnabled: !site.repoName ? true : undefined },
+    data: { hostedSlug: label, hostedEnabled: !site.repoName ? true : undefined, publicUrl },
   });
 }

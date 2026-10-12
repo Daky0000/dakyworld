@@ -41,7 +41,8 @@ process.env.NODE_ENV = "development";
 
 const { prisma } = await import("../src/lib/prisma.js");
 const { assetUrl } = await import("../src/services/websiteAssets.js");
-const { adoptHostedAddresses, hostedPublicUrl, registerWebsiteManagement } = await import("../src/services/websiteManagement.js");
+const { adoptHostedAddresses, registerWebsiteManagement } = await import("../src/services/websiteManagement.js");
+const { hostedPublicUrl } = await import("../src/services/websiteHosting.js");
 const { reachableAddress } = await import("../client/src/lib/websiteAddress.js");
 
 let checks = 0;

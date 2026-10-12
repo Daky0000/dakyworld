@@ -464,8 +464,9 @@ reach the page title, a picture's description, or a heading three screens down.
   as a callback URL on the app. The team route is the paid setup assistance and
   shows its real price. Answers go on `User.uiState.welcome` (`heardFrom`,
   `purpose`, enums only). With no address, `POST /website/sites` now defaults
-  `publicUrl` to `<slug>.<WEBSITE_HOST_DOMAIN || sites.dakyx.com>` instead of
-  the client inventing `name.com`. `checks/browser/welcomeFlow.mjs` walks it.
+  `publicUrl` to the hosted address its first publish will give it (see "No
+  address is ever invented" under Launch hardening) instead of the client
+  inventing `name.com`. `checks/browser/welcomeFlow.mjs` walks it.
 
 ### The redesign, finished (7 Oct 2026, second pass)
 
@@ -1055,11 +1056,20 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   `scripts/migrate-images-to-r2.mjs` sets `SiteAsset.content` to NULL after
   uploading, and the hosting route used to answer 404 for a NULL column.
   Authorisation still comes first: a site serves only a file one of its own
-  LIVE pages references, now read from a per-site path set extracted in
-  Postgres and kept under the page cache's own key (`public:<site>` /
-  `pages`), so a publish's invalidation clears it. Upload paths are always a
-  fresh `assets/dw/<uuid>.<ext>` and are cached immutable; package-import
-  paths keep their own names and still revalidate.
+  LIVE pages references, read from a per-site path set extracted in Postgres.
+  **The set is held in process and checked on every request against a version
+  of the LIVE pages** — their ids and the trigger-written `publishedEtag`,
+  never the HTML — and is extracted together with its version in one
+  statement. It used to sit in the response cache; with that cache off (the
+  default) every picture re-extracted the whole site through the fallback
+  gate, which refuses once twenty reads are running, so a page with forty
+  pictures got about half of them as 503. Do not put it behind a timer
+  instead: checked, it is exact both ways — a picture published a moment ago
+  is served at once, one removed is refused at once, and a refusal is never
+  kept. Host lookups are shared while in flight (`sharedLookup`) for the same
+  reason and keep nothing afterwards. Upload paths are always a fresh
+  `assets/dw/<uuid>.<ext>` and are cached immutable; package-import paths
+  keep their own names and still revalidate. `checks/websiteHostingLoad.ts`.
 - **The R2 migration is a manual one-off, never a deploy step.** As Railway's
   `preDeployCommand` it ran on every deploy and copied every `StoredFile`
   (email attachments, prospect audit PDFs, lead screenshots) into the *public*
@@ -1079,21 +1089,42 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   switched on by hand in Railway, and the panel says so.
 - **Hosted sites answer `robots.txt`, `sitemap.xml` and `favicon.ico`** unless
   a LIVE page owns the path. The page cache key ignores the query string, so
-  `?utm_source=` links stop missing it. An in-memory limit per host and client
-  address (`WEBSITE_HOST_RATE_LIMIT`, 300 a minute) protects the shared
-  process and evicts old windows rather than refusing when full; it is never a
-  database write per page view.
+  `?utm_source=` links stop missing it. An icon the home page names at another
+  address of the same site — the other `www.`/bare spelling, its hosted host,
+  its verified domain — is answered by its path (or 204), never redirected:
+  sent to the other spelling, `/favicon.ico` came straight back through that
+  spelling's 301, and the two looped until the browser gave up.
+- **The visitor limit counts pages and pictures apart.** In memory, per host
+  and client address: `WEBSITE_HOST_RATE_LIMIT` (300 a minute) for pages and
+  everything else, ten times that for `/assets/dw/` pictures. One count for
+  both made a forty-picture page cost forty-one requests, so a school or a
+  mobile carrier's shared address was refused after about seven page views —
+  with an empty body, which is a blank page; the 429 says so in words now. It
+  protects the shared process, evicts old windows rather than refusing when
+  full, and is never a database write per page view. **It keys on `req.ip`**,
+  which is right only while `TRUSTED_PROXY_HOPS` matches the path a request
+  took: read `server/deploy/CAPACITY.md` step 9 before any customer domain is
+  proxied through Cloudflare.
 - **Deleting a picture a live page uses is refused on a hosted site** — there
   is no repository copy; the row or the R2 object is the only one. For every
   site the R2 object is kept whenever something published may still point at
   it, because with R2 on, the editor writes the R2 address into the page
   itself. Erasing a site removes its own upload keys from R2, best effort,
   never another site's.
-- **No address is ever invented under dakyx.com.** Without
-  `WEBSITE_HOST_DOMAIN` a hosted site gets `https://<slug>.hosting.invalid`
-  (a reserved name that never resolves) and screens say "No public address
-  yet"; `adoptHostedAddresses` moves those to the real host domain at boot
-  once it is set.
+- **No address is ever invented under dakyx.com, nor one the site is not
+  served at.** Without `WEBSITE_HOST_DOMAIN` a hosted site gets
+  `https://<label>.hosting.invalid` (a reserved name that never resolves) and
+  screens say "No public address yet"; `adoptHostedAddresses` moves those to
+  the real host domain at boot once it is set. **The label is
+  `hostedLabelFor(slug)` everywhere** — `POST /sites`, the boot fix-up and
+  `ensureHostedAddress` — because the first two used the whole slug while the
+  label is cut to fifty characters, so a name over about 41 characters was
+  promised a host that answered 404. When another site already holds the
+  label the placeholder stands, and the first publish moves an address still
+  made from the slug onto the label it really got. The fix-up also corrects a
+  whole-slug address under the host domain, prefers a verified domain when it
+  rewrites, and never moves an address the site is already served at.
+  `checks/websiteHostedLabel.ts`.
 - **An edit is a page changed on a UTC day.** Every autosave used to spend one
   of the plan's monthly edits. `writePageEdit` decides inside the conditional
   update itself, so two saves arriving together cannot both count; the
