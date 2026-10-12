@@ -3,7 +3,7 @@ import { USES_INTERACTION_CSS } from "../../shared/websiteInteraction.js";
 import { randomBytes } from "node:crypto";
 import { describeChanges } from "./index.js";
 import { attrNode, parseHtml, walk, type ElementNode } from "./parse.js";
-import { applyValues, readPage, type FieldValue } from "./regions.js";
+import { applyValues, isLinkWrapper, readPage, type FieldValue } from "./regions.js";
 import { regenerateResponsiveStyles } from "./responsive.js";
 import { WebsiteError } from "./site.js";
 import { DOCUMENT_KEY, boundedHistory, draftDocument, editingSource, fieldValues, sourceHash, type DraftDocument, type DocumentSnapshot } from "./document.js";
@@ -13,12 +13,51 @@ export type StructureAction =
   | { kind: "remove" | "duplicate" | "before" | "after"; fieldId: string; targetId?: string; force?: boolean }
   | { kind: "settings"; fieldId: string; settings: ElementSettingsChange }
   | { kind: "undo" | "redo" };
-export type StructureControl = { remove: boolean; duplicate: boolean; repeatable?: boolean; previousId?: string; nextId?: string; group?: string; reason?: string; duplicateReason?: string; forceRemove?: boolean };
+/**
+ * What may be done to one element's place on the page.
+ *
+ * `remove` keeps the meaning everything else was built on — this block may be
+ * taken away without asking — which is what the assistant and the agent read
+ * before proposing a deletion. The two flags beside it are what a person gets
+ * on top: `move` for a block that can be lifted and put down beside a sibling,
+ * and `forceRemove` for one that can be deleted once they have said yes to
+ * `removeWarning`. `reason` is set only where nothing at all is offered.
+ */
+export type StructureControl = { remove: boolean; duplicate: boolean; move?: boolean; repeatable?: boolean; previousId?: string; nextId?: string; group?: string; reason?: string; duplicateReason?: string; forceRemove?: boolean; removeWarning?: string };
 /** A refusal written for the person, so the error handler passes its sentence through rather than "Something went wrong." */
 export class StructureError extends WebsiteError { constructor(message: string) { super(409, message); this.name = "StructureError"; } }
-/** The one refusal a person may override: deleting the whole block removes its scripts and forms with it, which is a choice, not a corruption. */
-export const INTERACTIVE_BLOCK_REASON = "This block contains interactive code or forms. Change its structure in the source editor.";
-const BLOCKED = new Set(["html", "head", "body", "script", "style", "form", "input", "select", "textarea", "iframe", "template", "canvas", "video", "audio", "object", "embed", "link", "meta"]);
+/** Without these there is no page left: the only elements that can never be moved or deleted. */
+const SKELETON = new Set(["html", "head", "body"]);
+/** Elements that are a form, an embed, a player or code — what a person is asked about before one is deleted. */
+const INTERACTIVE = new Set(["script", "style", "form", "input", "select", "textarea", "iframe", "template", "canvas", "video", "audio", "object", "embed", "link", "meta"]);
+/**
+ * What ends an element whose closing tag was left off, for the tags HTML lets
+ * an author leave off. The reader in `parse.ts` does not apply these — it nests
+ * the next `<li>` inside the open one — so a removal that trusted `node.end`
+ * would take every later item in the list with it.
+ */
+const P_CLOSERS = ["address", "article", "aside", "blockquote", "details", "div", "dl", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hgroup", "hr", "main", "menu", "nav", "ol", "p", "pre", "section", "table", "ul"];
+const IMPLIED_END: Record<string, ReadonlySet<string>> = {
+  li: new Set(["li"]),
+  dt: new Set(["dt", "dd"]),
+  dd: new Set(["dt", "dd"]),
+  p: new Set(P_CLOSERS),
+  option: new Set(["option", "optgroup"]),
+  optgroup: new Set(["optgroup"]),
+  tr: new Set(["tr", "tbody", "tfoot", "thead"]),
+  td: new Set(["td", "th", "tr", "tbody", "tfoot", "thead"]),
+  th: new Set(["td", "th", "tr", "tbody", "tfoot", "thead"]),
+  thead: new Set(["tbody", "tfoot", "thead"]),
+  tbody: new Set(["tbody", "tfoot", "thead"]),
+  tfoot: new Set(["tbody", "tfoot", "thead"]),
+};
+const unclosed = (node: ElementNode) => !node.selfClosing && node.innerEnd === node.end;
+/** Where a removal of this element stops: its own end, or the sibling that closes it when it was never closed. */
+function removalEnd(node: ElementNode): number {
+  if (!unclosed(node)) return node.end;
+  const closers = IMPLIED_END[node.tag];
+  return (closers && node.children.find(child => closers.has(child.tag))?.start) ?? node.end;
+}
 const escapeAttribute = (value: string) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 const freshId = () => `node-${randomBytes(12).toString("hex")}`;
 type Splice = { start: number; end: number; text: string };
@@ -31,12 +70,74 @@ function splice(source: string, edits: Splice[]): string {
   for (const edit of edits.sort((a, b) => b.start - a.start || b.end - a.end)) result = result.slice(0, edit.start) + edit.text + result.slice(edit.end);
   return result;
 }
-function structuralReason(node: ElementNode | undefined): string | undefined {
-  if (!node || BLOCKED.has(node.tag) || !node.parent) return "This element is controlled by the page source.";
-  for (let at: ElementNode | null = node.parent; at; at = at.parent) if (BLOCKED.has(at.tag) && !["body", "html"].includes(at.tag)) return "This element belongs to an interactive or source-controlled region.";
-  if ([...walk(node)].some(child => BLOCKED.has(child.tag) || child.attrs.some(attr => /^on[a-z]/i.test(attr.name)))) return INTERACTIVE_BLOCK_REASON;
-  if (!node.selfClosing && node.innerEnd === node.end) return "This element has no explicit closing tag. Fix its HTML before moving it.";
-  return undefined;
+const WHAT_IT_IS: Record<string, string> = {
+  form: "a form", input: "a form field", select: "a form field", textarea: "a form field",
+  iframe: "an embedded frame, such as a map or a video from another site", object: "an embed", embed: "an embed",
+  video: "a video player", audio: "an audio player", canvas: "a canvas that a script draws on",
+  script: "a script", style: "a stylesheet", link: "a link to a file the page loads", meta: "page information", template: "a template that a script fills in",
+};
+const WHAT_IT_SITS_IN: Record<string, string> = {
+  form: "a form", select: "a menu in a form", template: "a template that a script fills in",
+  video: "a video player", audio: "an audio player", object: "an embed", iframe: "an embedded frame", canvas: "a canvas",
+};
+/** The interactive things inside a block, named the way somebody who is not a developer would. */
+function heldInside(node: ElementNode): string[] {
+  const tags = new Set<string>();
+  let handlers = false;
+  for (const child of walk(node)) {
+    if (INTERACTIVE.has(child.tag)) tags.add(child.tag);
+    if (child.attrs.some(attr => /^on[a-z]/i.test(attr.name))) handlers = true;
+  }
+  const has = (...names: string[]) => names.some(name => tags.has(name));
+  const parts: string[] = [];
+  if (has("form")) parts.push("a form");
+  else if (has("input", "select", "textarea")) parts.push("form fields");
+  if (has("iframe", "object", "embed")) parts.push("an embed");
+  if (has("video")) parts.push("a video");
+  if (has("audio")) parts.push("an audio player");
+  if (has("canvas")) parts.push("a canvas");
+  if (has("script", "template") || handlers) parts.push("scripts");
+  if (has("style", "link")) parts.push("styles of its own");
+  if (!parts.length && tags.size) parts.push("page code");
+  return parts;
+}
+const listed = (parts: string[]) => parts.length < 2 ? parts.join("") : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+
+/**
+ * Where one element stands.
+ *
+ * Almost nothing is locked: only the page's own skeleton and a field with no
+ * element of its own. Everything else can be deleted, and the two softer
+ * answers say what a person has to be told first —
+ *
+ *  - `warning`: deleting it takes a form, an embed or code with it. Deleting
+ *    is their decision, so it is asked rather than refused;
+ *  - `fixed`: its closing tag is missing, so its bytes cannot be lifted and
+ *    put down somewhere else. It can still be deleted, where it ends being
+ *    worked out by `removalEnd`.
+ *
+ * It used to be one sentence that refused all three alike, which read to the
+ * person editing as a page they were not allowed to change: a contact section
+ * could not be moved or removed because it held the contact form.
+ */
+type Standing = { locked?: string; warning?: string; fixed?: string; interactive?: boolean };
+function standingOf(node: ElementNode | undefined): Standing {
+  if (!node) return { locked: "This part of the page has no element of its own to move or delete." };
+  if (SKELETON.has(node.tag) || !node.parent) return { locked: "This is the page itself. The blocks inside it can be moved and deleted; the page cannot." };
+  for (let at: ElementNode | null = node.parent; at; at = at.parent) if (at.tag === "head") return { locked: "This belongs to the page's settings rather than to what a visitor sees." };
+  if (unclosed(node)) {
+    return {
+      fixed: "This element has no closing tag in the page's HTML, so it cannot be moved or copied. It can still be deleted.",
+      warning: "This element has no closing tag in the page's HTML, so the editor has to work out where it ends. Look at the page after deleting it.",
+    };
+  }
+  if (INTERACTIVE.has(node.tag)) return { interactive: true, warning: `This is ${WHAT_IT_IS[node.tag] ?? "part of the page's code"}. Deleting it removes it for every visitor, and anything on the site that relies on it will stop working.` };
+  for (let at: ElementNode | null = node.parent; at; at = at.parent) {
+    if (INTERACTIVE.has(at.tag)) return { interactive: true, warning: `This is part of ${WHAT_IT_SITS_IN[at.tag] ?? "the page's code"}. Deleting it may stop that working the way it was built.` };
+  }
+  const held = heldInside(node);
+  if (held.length) return { interactive: true, warning: `This block holds ${listed(held)}. Deleting the block deletes everything inside it, so anything on the site that depends on that may stop working.` };
+  return {};
 }
 
 export function structureControls(source: string): Record<string, StructureControl> {
@@ -44,15 +145,26 @@ export function structureControls(source: string): Record<string, StructureContr
   const nodes = [...walk(parseHtml(source))];
   const at = new Map(nodes.map(node => [node.attrInsert, node]));
   const fieldAt = new Map(fields.filter(field => field.attrInsert !== undefined).map(field => [field.attrInsert!, field]));
+  // Asked once per element: every block asks about each of its siblings, and
+  // the answer walks the whole subtree.
+  const known = new Map<ElementNode, Standing>();
+  const standing = (node: ElementNode) => known.get(node) ?? known.set(node, standingOf(node)).get(node)!;
+  const movable = (node: ElementNode) => { const state = standing(node); return !state.locked && !state.fixed; };
   return Object.fromEntries(fields.map(field => {
     const node = field.attrInsert === undefined ? undefined : at.get(field.attrInsert);
-    const reason = structuralReason(node);
-    if (reason || !node) return [field.id, { remove: false, duplicate: false, reason, ...(node && reason === INTERACTIVE_BLOCK_REASON ? { forceRemove: true } : {}) }];
-    const siblings = node.parent!.children.filter(child => fieldAt.has(child.attrInsert) && !structuralReason(child));
+    const state = node ? standing(node) : standingOf(undefined);
+    if (!node || state.locked) return [field.id, { remove: false, duplicate: false, reason: state.locked } satisfies StructureControl];
+    if (state.fixed) return [field.id, { remove: false, duplicate: false, reason: state.fixed, forceRemove: true, removeWarning: state.warning } satisfies StructureControl];
+    const siblings = node.parent!.children.filter(child => fieldAt.has(child.attrInsert) && movable(child));
     const index = siblings.indexOf(node);
     const isRepeatable = Boolean(attrNode(node, "data-dw-repeatable") || (node.parent && attrNode(node.parent, "data-dw-repeatable")));
     const hasIds = node.tag === "main" || (!isRepeatable && [...walk(node)].some(child => attrNode(child, "id")));
-    return [field.id, { remove: true, duplicate: !hasIds, repeatable: isRepeatable, previousId: index > 0 ? fieldAt.get(siblings[index - 1]!.attrInsert)!.id : undefined, nextId: index < siblings.length - 1 ? fieldAt.get(siblings[index + 1]!.attrInsert)!.id : undefined, group: sourceHash(String(node.parent!.start)).slice(0, 16), duplicateReason: node.tag === "main" ? "A page should have one main region. Duplicate one of its inner sections instead." : hasIds ? "This block uses fixed HTML IDs. Duplicate an inner block without IDs to preserve selectors and links." : undefined } satisfies StructureControl];
+    const place = { move: true, repeatable: isRepeatable, previousId: index > 0 ? fieldAt.get(siblings[index - 1]!.attrInsert)!.id : undefined, nextId: index < siblings.length - 1 ? fieldAt.get(siblings[index + 1]!.attrInsert)!.id : undefined, group: sourceHash(String(node.parent!.start)).slice(0, 16) };
+    // A copy is the one thing still held back here: a second form posts twice,
+    // a second script runs twice, and neither is what "duplicate" means to the
+    // person pressing it.
+    if (state.interactive) return [field.id, { remove: false, duplicate: false, forceRemove: true, removeWarning: state.warning, duplicateReason: "A copy of this block would repeat its form, embed or scripts. It can be moved and deleted here; make a second one in the page's code.", ...place } satisfies StructureControl];
+    return [field.id, { remove: true, duplicate: !hasIds, ...place, duplicateReason: node.tag === "main" ? "A page should have one main region. Duplicate one of its inner sections instead." : hasIds ? "This block uses fixed HTML IDs. Duplicate an inner block without IDs to preserve selectors and links." : undefined } satisfies StructureControl];
   }));
 }
 
@@ -215,9 +327,16 @@ export function changeStructure(source: string, values: Record<string, FieldValu
   // Settings change one element in place, so they answer to their own rule
   // rather than to the one that decides whether a block may move or go.
   if (action.kind !== "settings") {
-    const forced = action.kind === "remove" && action.force === true && control?.forceRemove === true;
-    if (!control?.remove && !forced) throw new StructureError(control?.reason ?? "This element is no longer available.");
-    if (action.kind === "duplicate" && !control.duplicate) throw new StructureError(control.duplicateReason!);
+    if (!control) throw new StructureError("This element is no longer available.");
+    if (action.kind === "remove") {
+      if (!control.remove && !control.forceRemove) throw new StructureError(control.reason ?? "This element cannot be deleted.");
+      // Deleting something interactive is a decision, and the request has to
+      // carry it. A screen that never asked — or an assistant — is answered
+      // with what the deletion would take with it rather than with a deletion.
+      if (!control.remove && action.force !== true) throw new StructureError(control.removeWarning ?? "Confirm that this element should be deleted.");
+    } else if (action.kind === "duplicate") {
+      if (!control.duplicate) throw new StructureError(control.duplicateReason ?? control.reason ?? "This element cannot be duplicated.");
+    } else if (!control.move) throw new StructureError(control.reason ?? "This element cannot be moved.");
   }
   const fields = readPage(rendered).fields;
   const nodes = new Map([...walk(parseHtml(rendered))].map(node => [node.attrInsert, node]));
@@ -229,7 +348,14 @@ export function changeStructure(source: string, values: Record<string, FieldValu
   let selectedId: string | null = action.fieldId;
   let line: string | undefined;
   if (action.kind === "settings") { ({ html, line } = applyElementSettings(rendered, field.label, field.kind, node, nodes.values(), action.settings)); }
-  else if (action.kind === "remove") { html = splice(rendered, [{ start: node.start, end: node.end, text: "" }]); selectedId = field.parentId ?? null; }
+  else if (action.kind === "remove") {
+    // A link the editor wrapped around this element goes with it. Left behind,
+    // it is an empty link on the published page: nothing to see, and still a
+    // stop for a keyboard and a screen reader.
+    const wrapper = isLinkWrapper(node.parent) && node.parent!.children.length === 1 ? node.parent! : null;
+    html = splice(rendered, [wrapper ? { start: wrapper.start, end: wrapper.end, text: "" } : { start: node.start, end: removalEnd(node), text: "" }]);
+    selectedId = field.parentId ?? null;
+  }
   else if (action.kind === "duplicate") {
     const edits: Splice[] = [];
     const cloneId = freshId();
@@ -245,7 +371,7 @@ export function changeStructure(source: string, values: Record<string, FieldValu
   } else {
     const targetField = fields.find(field => field.id === action.targetId);
     const target = targetField?.attrInsert === undefined ? undefined : nodes.get(targetField.attrInsert);
-    if (!target || target === node || target.parent !== node.parent || !controls[action.targetId!]?.remove) throw new StructureError("Move an element beside another editable element in the same parent container.");
+    if (!target || target === node || target.parent !== node.parent || !controls[action.targetId!]?.move) throw new StructureError("Move an element beside another editable element in the same parent container.");
     const position = action.kind === "before" ? target.start : target.end;
     html = splice(rendered, [{ start: node.start, end: node.end, text: "" }, { start: position, end: position, text: block }]);
   }

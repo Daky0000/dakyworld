@@ -440,7 +440,8 @@ reach the page title, a picture's description, or a heading three screens down.
 - The first-edit checklist on the canvas is derived from state (selected,
   changed, looked at a phone, published); only "put it away" is stored.
 - **Layers docks by default** inside its drawer; popping it out is still
-  remembered (`dw-structure-floating`).
+  remembered (`dw-structure-floating`). See "Deleting, moving and the floating
+  Layers panel" below for where the floating window is drawn and how it docks.
 - **`/website/welcome` is `WebsiteWelcomeFlow`**: name, purpose (chooses the
   starter template), address-or-not, how to start, how they heard, then a build
   log whose every line is a request that actually resolved. **Choosing GitHub
@@ -781,6 +782,59 @@ changed is where `pageSource` gets its bytes and what a publish writes.
   showing the model's "Done", and every plan logs one `[website agent]` line:
   model, level, proposed, applied, and what was dropped.
 
+## Deleting, moving and the floating Layers panel (12 Oct 2026)
+
+- **Almost nothing is locked.** `standingOf` in `structure.ts` used to be one
+  sentence that refused three different things alike: a form or embed, anything
+  inside one, and any block holding one or carrying an inline `on…` handler.
+  On a page an AI built that is most of the page — one `onclick` on a button
+  marked its section, and every section above it, "interactive" — so a contact
+  section could be neither moved nor removed, and the person editing was told
+  to change it in the source editor. Now only the skeleton (`html`, `head`,
+  `body`) and a field with no element of its own are locked. Everything else
+  moves among its siblings and can be deleted.
+- **A delete that takes something with it is asked, not refused.** The control
+  carries `forceRemove` and `removeWarning` — the server's own sentence naming
+  what goes (a form, an embed, a video, scripts) — and the editor shows it in
+  the question. The request must carry `force: true`; a bare remove is answered
+  with the warning, so the assistant, the agent and a stale screen cannot
+  delete a form by accident. **`remove` still means "without asking"**, which
+  is what those three read before proposing a deletion, and `move` is the new
+  flag the Layers drag and the move guard read.
+- **A copy is the one thing still held back** for those blocks: a second form
+  posts twice and a second script runs twice. Why is on the Duplicate button;
+  the strip under the structure buttons says only what cannot be done at all.
+- **A missing closing tag is a deletion that has to find its own end.** The
+  reader in `parse.ts` does not apply HTML's implied end tags: `<li>A<li>B`
+  nests B inside A, and A is still the field. Removing A's span would take the
+  rest of the list. `removalEnd` stops at the first child that would have
+  closed it (`IMPLIED_END`). Such an element is deleted after a question and is
+  never moved or copied — its bytes cannot be lifted.
+- **A link the editor wrapped round an element goes with the element.** The
+  `<a data-dw-link>` is not a field, so deleting the picture inside it left an
+  empty link on the published page: nothing to see, still a stop for a
+  keyboard. Moving or duplicating a wrapped element is still wrong in the same
+  way and is open.
+- **The floating Layers window is drawn inside `.website-editor`.** It was
+  portalled to `document.body`, and every colour it has is a variable declared
+  on `.website-editor`. Out of reach, its background resolved to nothing and
+  the window came loose see-through. The rules now carry fallbacks as well, so
+  it is a solid panel wherever it is drawn.
+- **Carried back over its drawer and let go, it docks.** The drawer keeps a
+  slot while the panel floats (`.dx-layers-home`, with a Dock it here button),
+  and the promise to dock is drawn as a ring round the drawer and round the
+  window, because the window covers most of the slot while it is over it. A
+  drag that never leaves the drawer is not a float.
+- **Two rows above the Style panels were taken out**: the line naming the
+  screen size being edited with the element's measured size, and the Saved
+  style menu when there is nothing saved to choose. The menu still appears for
+  an element that has an approved style.
+
+`checks/websiteStructure.ts` holds the server half and
+`checks/browser/layersAndDelete.mjs` the rest. The second reads the window's
+**computed** background in both themes and compares it with the drawer's;
+portalling back to `body` fails it.
+
 ## The inspector: General · Style · Interactions (11 Oct 2026)
 
 The reference — every element, every control, where each value is stored — is
@@ -823,8 +877,9 @@ is here is why it is built this way, and what cost time.
   than a builder that owns its runtime, because here an invited editor must not
   be able to run script on the site's visitors.
 - **A video's settings are attributes through the same door.** `<video>` is
-  still kind `unsupported` and cannot be moved or removed, but settings answer
-  to their own rule (`settingsReason`), so its typed controls work. The address
+  still kind `unsupported`, and settings answer to their own rule
+  (`settingsReason`) rather than to the one that decides whether a block may
+  move or go, so its typed controls work. The address
   may sit on one `<source>` child and is written there; several sources are a
   file per browser and are refused. Autoplay is sent with `muted`, because a
   browser will not start an unmuted video on its own and a switch that does

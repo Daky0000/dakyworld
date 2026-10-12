@@ -1332,12 +1332,16 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     return map;
   }, [save.data, page.data]);
 
-  /** A delete that needs saying yes to: the block carries scripts or a form. */
-  const [confirmDelete, setConfirmDelete] = useState<{ id: string; label: string } | null>(null);
+  /**
+   * A delete that needs saying yes to. Nothing on the page is locked against
+   * deleting; what holds a form, an embed or scripts is asked about first, and
+   * the server's own sentence says what would go with it.
+   */
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; label: string; warning?: string } | null>(null);
   async function runStructure(kind: "remove" | "duplicate" | "before" | "after" | "undo" | "redo" | "settings", fieldId?: string, targetId?: string, force = false, settings?: ElementSettingsChange) {
     if (kind === "remove" && fieldId && !force) {
       const field = allFields.find(entry => entry.id === fieldId);
-      if (field && !field.structure?.remove && field.structure?.forceRemove) { setConfirmDelete({ id: fieldId, label: field.label }); return; }
+      if (field && !field.structure?.remove && field.structure?.forceRemove) { setConfirmDelete({ id: fieldId, label: field.label.replace(/\s*\(read-only\)$/i, ""), warning: field.structure.removeWarning }); return; }
     }
     if (!canEdit || save.isPending || publishPending.current || structurePending.current || reviewOpen || showVersions) return;
     if (typingId) { setFailure("Press Escape to finish typing on the page, then change its layout."); return; }
@@ -2909,7 +2913,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         <div className="fixed inset-0 z-[9990] grid place-items-center bg-black/50 p-4" role="presentation" onClick={() => setConfirmDelete(null)}>
           <div role="alertdialog" aria-modal="true" aria-labelledby="dx-del-title" aria-describedby="dx-del-body" className="dx-confirm w-full max-w-sm rounded-2xl p-5" onClick={(event) => event.stopPropagation()}>
             <h2 id="dx-del-title" className="text-base font-semibold">Delete “{confirmDelete.label}”?</h2>
-            <p id="dx-del-body" className="dx-confirm-body mt-2 text-sm leading-relaxed">This block contains interactive code or a form. Deleting it removes those too, so anything that depends on them may stop working. You can undo this until you publish.</p>
+            <p id="dx-del-body" className="dx-confirm-body mt-2 text-sm leading-relaxed">{confirmDelete.warning ?? "This block holds a form, an embed or scripts. Deleting the block deletes everything inside it, so anything on the site that depends on that may stop working."} Undo brings it back until you publish.</p>
             <div className="mt-4 flex justify-end gap-2">
               <button type="button" autoFocus className="dx-btn dx-ghost" onClick={() => setConfirmDelete(null)}>Keep it</button>
               <button type="button" className="dx-btn dx-danger" onClick={() => { const id = confirmDelete.id; setConfirmDelete(null); void runStructure("remove", id, undefined, true); }}>Delete anyway</button>
@@ -3205,7 +3209,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 )}
                 <button type="button" className="text-danger-text disabled:text-faint" disabled={readOnly || save.isPending || !(picked.structure?.remove || picked.structure?.forceRemove)} onClick={() => void runStructure("remove", picked.id)}>Remove</button>
               </div>
-              <p className="mt-2 text-xs text-muted">{picked.structure?.reason || picked.structure?.duplicateReason || "Drag layers to reorder within their container. Changes stay in the draft; Undo brings them back."}</p>
+              {/* Only what cannot be done at all is said here. Why a copy is not
+                  offered is on the Duplicate button itself, and a delete that
+                  needs a yes asks when it is pressed. */}
+              <p className="mt-2 text-xs text-muted">{picked.structure?.reason || "Drag layers to reorder within their container. Changes stay in the draft; Undo brings them back."}</p>
             </div>}
             <div role="tablist" aria-label="Element settings" className="editor-tabs dx-tabs">
               {(["general", "style", "interactions"] as const).map((tab) => (
@@ -3249,21 +3256,17 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     />
                   )}
 
-                  {/* Which width is being edited, its measured size, and the
-                      three actions that belong to the whole element rather than
-                      to any one property. One line each: this bar sits above
-                      every panel and is not what somebody came to read. */}
+                  {/* Normal or Hover, and nothing else above the panels. The
+                      line that named the screen size being edited and the
+                      element's measured size was taken out on 12 Oct 2026: the
+                      device switch in the bar already says which, and it was a
+                      row of reading before every control. */}
                   <div hidden={inspectorTab !== "style"} className="dx-scope-wrap">
                     {inspectorTab === "style" && (
                       <div className="dx-states" data-tour="style-states">
                         <Seg label="Pick a state to style" value={styleState} options={[{ value: "normal", label: "Normal" }, { value: "hover", label: "Hover" }]} onChange={setStyleState} />
                       </div>
                     )}
-                    <div className="dx-scope" title="Desktop styles apply to every screen unless you change them on tablet or phone">
-                      {device === "desktop" ? <IconDesktop size={15} /> : device === "tablet" ? <IconTablet size={15} /> : <IconPhoneDevice size={15} />}
-                      Editing <b>{device === "desktop" ? "Desktop · all screens" : device === "tablet" ? "Tablet and smaller" : "Phone only"}</b>
-                      <span className="dx-dim">{computed.width ? `${parseInt(computed.width)} × ${parseInt(computed.height || "0")}` : "—"}</span>
-                    </div>
                     {device !== "desktop" && /!\s*important/i.test(edits[picked.id]?.style ?? picked.style ?? "") && (
                       <p className="dx-note warn">
                         This element has a base style marked !important, so that property keeps its base value at every size until you change it under Desktop.
@@ -3274,7 +3277,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   {/* One panel for every element: the same sections, drawn from
                       what the frame says the element is — its display, its
                       parent's, whether it is positioned. */}
-                  {!readOnly && inspectorTab === "style" && styleState === "normal" && <div className="dx-pad" style={{ paddingBottom: 4 }}><WebsitePresetPicker compact presets={design.data?.options.presets ?? []} kind={picked.kind} tag={picked.tag} style={pickedStyle ?? ""} onApply={next => changePickedStyle(next, true)} /></div>}
+                  {!readOnly && inspectorTab === "style" && styleState === "normal" && <WebsitePresetPicker compact presets={design.data?.options.presets ?? []} kind={picked.kind} tag={picked.tag} style={pickedStyle ?? ""} onApply={next => changePickedStyle(next, true)} />}
                   {inspectorTab === "interactions" && (
                     <WebsiteInteractionsPanel
                       key={picked.id}
@@ -3688,7 +3691,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               showQuickToast(hiddenOnPhone ? "Shown on phone screens again" : "Hidden on phone screens");
             }, { disabled: busy })}
             <hr />
-            {item("Delete", <IconTrash size={15} />, () => void runStructure("remove", ctxField.id), { keys: "Del", danger: true, disabled: busy || !(ctxField.structure?.remove || ctxField.structure?.forceRemove), title: ctxField.structure?.forceRemove ? "Contains scripts or a form. You will be asked first." : ctxField.structure?.reason })}
+            {item("Delete", <IconTrash size={15} />, () => void runStructure("remove", ctxField.id), { keys: "Del", danger: true, disabled: busy || !(ctxField.structure?.remove || ctxField.structure?.forceRemove), title: ctxField.structure?.remove ? undefined : ctxField.structure?.forceRemove ? "You will be asked first." : ctxField.structure?.reason })}
           </div>
         );
       })()}

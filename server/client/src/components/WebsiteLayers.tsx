@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { FieldEdit, SharedFieldScope, SiteFieldRow } from "../lib/types";
 import { layerAncestors, visibleWebsiteLayers, websiteLayerNavigation, websiteLayerTabStop, websiteLayerTree } from "../lib/websiteLayers";
 
 const ROW_HEIGHT = 34;
+
+/** A block that can be lifted and put down beside a sibling. Page data from before `move` says so with `remove`. */
+const movable = (field: SiteFieldRow | undefined) => Boolean(field?.structure?.move ?? field?.structure?.remove);
 
 function classifyStructureNode(field: SiteFieldRow): {
   kindKey: "container" | "header" | "footer" | "carousel" | "logo" | "heading" | "divider" | "text" | "button" | "image";
@@ -290,6 +293,19 @@ export function WebsiteLayers({
     try { const saved = Number(localStorage.getItem("dw-layers-height")); return saved > 0 ? saved : null; } catch { return null; }
   });
   const panelRef = useRef<HTMLDivElement>(null);
+  /** The slot left in the drawer while the panel floats: where it is dropped to dock again. */
+  const homeRef = useRef<HTMLDivElement>(null);
+  /**
+   * Where the floating window is drawn. It used to be `document.body`, which is
+   * outside `.website-editor` — and every colour this panel has is a variable
+   * declared there. Out of its reach the background resolved to nothing, so the
+   * window came loose see-through, with the page showing between the rows.
+   */
+  const [host, setHost] = useState<HTMLElement | null>(null);
+  const [dockArmed, setDockArmed] = useState(false);
+  useLayoutEffect(() => {
+    setHost(isFloating ? (homeRef.current?.closest<HTMLElement>(".website-editor") ?? document.body) : null);
+  }, [isFloating]);
 
   useEffect(() => {
     const clampOnResize = () => {
@@ -323,6 +339,12 @@ export function WebsiteLayers({
     const initialX = isFloating ? winBounds.x : Math.max(16, event.clientX - Math.round(winBounds.w / 2));
     const initialY = isFloating ? winBounds.y : Math.max(16, event.clientY - 18);
     let moved = false;
+    // Home is the drawer the panel lives in. Carried back over it and let go,
+    // the panel docks — which is how anybody tries to put it back, and until
+    // 12 Oct 2026 nothing happened when they did.
+    const drawer = (homeRef.current ?? panelRef.current)?.closest<HTMLElement>(".dx-drawer") ?? null;
+    const cameFrom = isFloating ? { x: winBounds.x, y: winBounds.y } : null;
+    let overHome = false;
 
     setInteractingWindow("drag");
 
@@ -333,7 +355,10 @@ export function WebsiteLayers({
         moved = true;
         if (!isFloating) toggleFloatingMode(true);
       }
-      if (!moved && !isFloating) return;
+      if (!moved) return;
+      const home = (drawer ?? homeRef.current)?.getBoundingClientRect();
+      overHome = Boolean(home && moveEvt.clientX >= home.left && moveEvt.clientX <= home.right && moveEvt.clientY >= home.top && moveEvt.clientY <= home.bottom);
+      setDockArmed(overHome);
       const nextX = Math.max(8, Math.min(window.innerWidth - winBounds.w - 8, initialX + dx));
       const nextY = Math.max(8, Math.min(window.innerHeight - 80, initialY + dy));
       setWinBounds((prev) => {
@@ -347,12 +372,27 @@ export function WebsiteLayers({
 
     const onUp = () => {
       setInteractingWindow(null);
+      setDockArmed(false);
+      if (moved && overHome) {
+        toggleFloatingMode(false);
+        // The window was last drawn on top of its own drawer. Floated again it
+        // should open where it was before this drag, not over the slot it left.
+        setWinBounds((prev) => {
+          const restored = { ...prev, x: cameFrom?.x ?? Math.max(24, window.innerWidth - prev.w - 28), y: cameFrom?.y ?? 74 };
+          try {
+            localStorage.setItem("dw-structure-bounds", JSON.stringify(restored));
+          } catch {}
+          return restored;
+        });
+      }
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
 
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   };
 
   const startResizeDrag = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -410,6 +450,7 @@ export function WebsiteLayers({
   const panelBody = (
     <div
       ref={panelRef}
+      data-docking={isFloating && dockArmed ? "" : undefined}
       style={
         isFloating
           ? {
@@ -428,10 +469,10 @@ export function WebsiteLayers({
           : "dx-layers editor-layers flex min-h-0 flex-1 flex-col"
       }
     >
-      {/* Header: drag it to float the panel. */}
+      {/* Header: drag it to float the panel, and back over its drawer to dock it. */}
       <div
         onPointerDown={startHeaderDrag}
-        title="Drag to float the Layers panel"
+        title={isFloating ? "Drag to move. Drop it back on the Layers drawer to dock it." : "Drag to float the Layers panel"}
         className="dx-layers-head flex cursor-grab select-none items-center justify-between px-3 py-2.5 active:cursor-grabbing"
       >
         <div className="flex items-center gap-1.5">
@@ -568,7 +609,7 @@ export function WebsiteLayers({
               return (
                 <button
                   key={field.id}
-                  draggable={Boolean(onMove && field.structure?.remove)}
+                  draggable={Boolean(onMove && movable(field))}
                   onDragStart={(event) => {
                     setDragging(field.id);
                     event.dataTransfer.setData("application/x-dakyworld-field", field.id);
@@ -595,7 +636,7 @@ export function WebsiteLayers({
                       !source?.structure?.group ||
                       source.id === field.id ||
                       source.structure.group !== field.structure?.group ||
-                      !field.structure.remove
+                      !movable(field)
                     )
                       return;
                     event.preventDefault();
@@ -778,7 +819,22 @@ export function WebsiteLayers({
   );
 
   if (isFloating && typeof document !== "undefined") {
-    return createPortal(fullContent, document.body);
+    return (
+      <>
+        <div ref={homeRef} className="dx-layers-home" data-armed={dockArmed ? "" : undefined}>
+          <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
+            <rect x="2" y="2.5" width="12" height="11" rx="1.5" />
+            <path d="M6 2.5v11" />
+          </svg>
+          <b>{dockArmed ? "Let go to dock Layers here" : "Layers is floating"}</b>
+          {!dockArmed && <span>Drag it back here to dock it.</span>}
+          <button type="button" className="dx-btn dx-ghost" onClick={() => toggleFloatingMode(false)}>
+            Dock it here
+          </button>
+        </div>
+        {host && createPortal(fullContent, host)}
+      </>
+    );
   }
   return fullContent;
 }

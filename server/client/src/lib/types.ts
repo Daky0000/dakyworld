@@ -3317,7 +3317,12 @@ export type FieldKind = "text" | "richtext" | "link" | "button" | "image" | "ico
 
 /** One thing on a page somebody can change. Offsets stay on the server. */
 export type SiteFieldRow = {
-  structure?: { remove: boolean; duplicate: boolean; repeatable?: boolean; previousId?: string; nextId?: string; group?: string; reason?: string; duplicateReason?: string; forceRemove?: boolean };
+  /**
+   * What may be done to this element's place on the page. `remove` is "without
+   * asking"; `forceRemove` is "once the person has said yes to `removeWarning`".
+   * `move` is whether it can be lifted and put down beside a sibling.
+   */
+  structure?: { remove: boolean; duplicate: boolean; move?: boolean; repeatable?: boolean; previousId?: string; nextId?: string; group?: string; reason?: string; duplicateReason?: string; forceRemove?: boolean; removeWarning?: string };
   id: string;
   parentId?: string;
   order?: number;

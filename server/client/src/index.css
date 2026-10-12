@@ -828,9 +828,6 @@ button:disabled { cursor:not-allowed; }
 .dx-statebar { margin:10px 14px; padding:8px 10px; border-radius:8px; background:var(--editor-accent-soft); color:var(--editor-accent); font-size:12px; display:flex; gap:8px; align-items:center; }
 .dx-states { padding:12px 14px 2px; }
 .dx-scope-wrap { padding-bottom:4px; }
-.dx-scope { display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--editor-muted); background:var(--editor-input); border-radius:8px; padding:6px 9px; margin:10px 14px 4px; }
-.dx-scope b { color:var(--editor-text); font-weight:500; }
-.dx-dim { margin-left:auto; font:11px ui-monospace,Menlo,monospace; }
 .dx-crow { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12.5px; }
 .dx-pad { padding:12px 14px; display:flex; flex-direction:column; gap:12px; }
 .dx-soft { background:var(--editor-input); color:var(--editor-text); }
@@ -1026,8 +1023,22 @@ button.dx-ctr:hover { color:var(--editor-accent); }
 .dx-insp [data-section="content"] > .dx-sec-h { display:none; } .dx-insp [data-section="content"] { border-bottom:0; } .dx-insp [data-section="content"] > .dx-sec-body { padding-top:12px; }
 
 /* Layers panel: rounded rows, depth guides and a tinted badge per kind. */
-.dx-layers { background:var(--editor-panel); color:var(--editor-text); }
-.dx-layers-float { border:1px solid var(--editor-line); border-radius:14px; box-shadow:var(--editor-shadow); }
+/* The fallbacks are for the floating window: it is drawn inside the editor so
+   these variables reach it, and it must still be a solid panel if it ever is
+   not. Without a background it came loose see-through. */
+.dx-layers { background:var(--editor-panel, #FFFFFF); color:var(--editor-text, #131A2B); }
+.dx-layers-float { border:1px solid var(--editor-line, #E0E4EE); border-radius:14px; box-shadow:var(--editor-shadow, 0 16px 48px rgba(20, 26, 44, .14)); }
+/* The slot the panel leaves in its drawer while it floats, and where it is dropped to dock again. */
+.dx-layers-home { flex:1; min-height:180px; margin:12px; padding:24px 16px; border:1.5px dashed var(--editor-line); border-radius:12px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; text-align:center; font-size:12.5px; color:var(--editor-muted); transition:border-color .12s, background-color .12s, color .12s; }
+.dx-layers-home b { font-size:13px; font-weight:600; color:var(--editor-text); }
+.dx-layers-home .dx-btn { margin-top:6px; }
+.dx-layers-home[data-armed] { border-color:var(--editor-accent); background:var(--editor-accent-soft); color:var(--editor-text); }
+.dx-layers-home[data-armed] svg { color:var(--editor-accent); }
+/* The window covers most of the slot while it is carried over it, so the
+   promise to dock is drawn where it still shows: round the drawer, and round
+   the window itself. A ring, never a fade — the panel stays solid. */
+.dx-drawer:has(.dx-layers-home[data-armed]) { box-shadow:inset 0 0 0 2px var(--editor-accent); }
+.dx-layers-float[data-docking] { outline:2px solid var(--editor-accent, #2F5CF0); outline-offset:2px; }
 .dx-layers-head { border-bottom:1px solid var(--editor-line); }
 .dx-lcount { min-width:20px; padding:1px 6px; border-radius:999px; background:var(--editor-input); color:var(--editor-muted); font-size:10px; font-weight:600; text-align:center; }
 .dx-ltool { display:flex; height:26px; width:26px; align-items:center; justify-content:center; border-radius:7px; color:var(--editor-muted); }
