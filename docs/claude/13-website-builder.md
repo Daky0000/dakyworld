@@ -1089,3 +1089,36 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   (`AI_DAILY_LIMIT_EDITOR/_CARE/_MANAGED`); the legacy `AI_DAILY_USER_LIMIT`,
   when set, still caps every plan. Business's label reads the same number the
   queue enforces.
+- **dakyx.com is not a trusted origin.** It was on `TRUSTED_ORIGINS`, the one
+  list behind the credentialed CORS grant *and* `refuseForeignWrites`, and the
+  marketing site is edited with this very builder: script that landed there
+  ran with the Owner's session. The marketing site sends no credentials and
+  calls only public routes that set their own CORS. Never add it back
+  (`checks/originGuard.ts`). `CLIENT_ORIGIN` is a comma-separated list.
+- **The surface gate takes the narrowest surface any host header names**
+  (app, then editor, then os), so a forged `X-Forwarded-Host` can only take
+  access away; `req.hostname` is not used because Express fills it from that
+  very header (`checks/appSurface.ts`).
+- **A set-password token goes only to the checkout key**, the UUID the
+  checkout page keeps in `sessionStorage` and never in a URL. A Paystack
+  reference alone — which sits in browser history and receipts — learns paid
+  or unpaid and nothing else (`checks/checkoutTokenScope.ts`).
+- **Hosted forms are limited in the shared rate table** (site and address,
+  eight in ten minutes), and a site emails its managers at most
+  `WEBSITE_FORM_EMAILS_PER_DAY` (50) a day; past that, messages wait in the
+  inbox and one last email says so.
+- **A ZIP is judged by its declared sizes before anything inflates**, and each
+  entry is held to its declared size while it does — one lying entry costs a
+  16 KB block, not the process.
+- **Errors go to Sentry, scrubbed, and only the accidents.**
+  `src/instrument.ts` is the first import of `index.ts` and `worker.ts`; the
+  client loads `lib/monitoring.ts` lazily on the production hosts only.
+  `errorHandler` reports only what it renders as the generic 500 — never a
+  `WebsiteError`, a validation refusal or any composed error class, whatever
+  its status — because a refusal is the system working. Before anything
+  leaves, cookies, bodies, auth headers, IP, frame variables, query values and
+  Prisma's echoed arguments are removed (Prisma prints the call's values,
+  which here means customer HTML and visitors' messages). The DSNs are
+  committed on purpose — they only permit sending — and `SENTRY_DSN=off`
+  stops it. The CSP's `connect-src` names exactly the ingest host.
+  `checks/monitoring.ts`.
