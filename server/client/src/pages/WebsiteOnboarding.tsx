@@ -5,6 +5,7 @@ import { api, ApiError } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { Badge, Button } from "../components/ui";
 import { useWebsiteSites } from "../components/WebsiteGuard";
+import { reachableAddress } from "../lib/websiteAddress";
 
 /**
  * Getting a client's website ready, in the order it has to happen.
@@ -117,9 +118,11 @@ export function WebsiteOnboarding() {
                   {done} of {total} done
                 </span>
               </div>
-              <a href={onboarding.data.site.publicUrl} target="_blank" rel="noreferrer" className="font-mono text-xs text-muted underline-offset-2 hover:text-ink hover:underline">
-                {onboarding.data.site.publicUrl}
-              </a>
+              {reachableAddress(onboarding.data.site.publicUrl) && (
+                <a href={onboarding.data.site.publicUrl} target="_blank" rel="noreferrer" className="font-mono text-xs text-muted underline-offset-2 hover:text-ink hover:underline">
+                  {onboarding.data.site.publicUrl}
+                </a>
+              )}
             </div>
             <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-sunken">
               <div className="h-full rounded-full bg-blue transition-all" style={{ width: `${total ? (done / total) * 100 : 0}%` }} />

@@ -6,7 +6,7 @@
     "buildCommand": "npm run build"
   },
   "deploy": {
-    "preDeployCommand": "node scripts/migrate-images-to-r2.mjs",
+    "preDeployCommand": "npm --prefix server run db:deploy",
     "preDeployTimeoutSeconds": 300,
     "startCommand": "npm start",
     "healthcheckPath": "/api/ready",

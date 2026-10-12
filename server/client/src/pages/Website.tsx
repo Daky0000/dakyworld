@@ -1,4 +1,5 @@
 import { useSiteDirectory, SiteDirectoryMore } from "../lib/siteDirectory";
+import { reachableAddress } from "../lib/websiteAddress";
 import { ConnectWebsite } from "../components/ConnectWebsite";
 import { ImportWebsitePage } from "../components/ImportWebsitePage";
 import { useState } from "react";
@@ -143,9 +144,11 @@ export function Website() {
 
       <div className="mb-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-muted">
         <span>
-          <a href={current.publicUrl} target="_blank" rel="noreferrer" className="text-ink underline-offset-2 hover:underline">
-            {current.publicUrl.replace(/^https?:\/\//, "")}
-          </a>
+          {reachableAddress(current.publicUrl) ? (
+            <a href={current.publicUrl} target="_blank" rel="noreferrer" className="text-ink underline-offset-2 hover:underline">
+              {current.publicUrl.replace(/^https?:\/\//, "")}
+            </a>
+          ) : "No public address yet"}
         </span>
         <span>{current.repo ? `${current.repo} · ${current.branch}` : "No repository connected"}</span>
         {draftCount > 0 && <span className="text-ink">{draftCount} page{draftCount === 1 ? "" : "s"} with unpublished changes</span>}

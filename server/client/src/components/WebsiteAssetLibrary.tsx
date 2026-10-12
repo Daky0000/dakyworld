@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { SiteSummary } from "../lib/types";
 import { Button, PageHeader } from "./ui";
@@ -338,6 +338,13 @@ export function WebsiteAssetLibrary({
               {(assets.error as Error).message}
             </p>
           )}
+          {/* A refused delete names the pages still using the picture; unshown,
+              the click simply did nothing. */}
+          {deleteAsset.error && (
+            <p role="alert" className="text-xs text-danger-text">
+              {(deleteAsset.error as Error).message}
+            </p>
+          )}
           <div className="grid grid-cols-3 gap-2.5">
             {assets.data?.map((asset) => (
               <div
@@ -395,8 +402,16 @@ export function WebsiteAssets() {
   const [selected, setSelected] = useState("");
   const [search, setSearch] = useState("");
   const sites = useQuery({ queryKey: ["website", "sites"], queryFn: ({ signal }) => api.get<SiteSummary[]>("/website/sites", signal) });
-  const allAssets = useQuery({ queryKey: ["website", "assets", "all"], queryFn: ({ signal }) => api.get<(Asset & { siteId: string; siteName: string; size: number })[]>("/website/assets", signal) });
-  const shown = allAssets.data?.filter((asset) =>
+  // Paged on the server (for staff it is every customer's library), so the
+  // pages are joined here and the filters below run over what has arrived.
+  const allAssets = useInfiniteQuery({
+    queryKey: ["website", "assets", "all"], initialPageParam: "",
+    queryFn: ({ pageParam, signal }) => api.page<Asset & { siteId: string; siteName: string; size: number }>(`/website/assets?limit=100${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`, signal),
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
+  });
+  const loaded = allAssets.data?.pages.flatMap((page) => page.items);
+  const more = allAssets.hasNextPage;
+  const shown = loaded?.filter((asset) =>
     (!selected || asset.siteId === selected) &&
     `${asset.filename} ${asset.alt} ${asset.siteName}`.toLowerCase().includes(search.trim().toLowerCase()),
   );
@@ -412,7 +427,7 @@ export function WebsiteAssets() {
       </div>
       {allAssets.isLoading && <p className="text-sm text-muted">Loading assets…</p>}
       {allAssets.error && <p role="alert" className="text-sm text-danger-text">{(allAssets.error as Error).message}</p>}
-      {shown && <p className="text-xs text-muted">{shown.length} {shown.length === 1 ? "image" : "images"}</p>}
+      {shown && <p className="text-xs text-muted">{shown.length} {shown.length === 1 ? "image" : "images"}{more ? " so far" : ""}</p>}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
         {shown?.map((asset) => <article key={asset.id} className="overflow-hidden rounded-xl border border-line bg-white">
           <img src={asset.preview} alt={asset.alt || asset.filename} loading="lazy" className="h-36 w-full bg-sunken object-contain" />
@@ -423,7 +438,12 @@ export function WebsiteAssets() {
           </div>
         </article>)}
       </div>
-      {shown?.length === 0 && <p className="text-sm text-muted">{search || selected ? "No images match these filters." : "No uploaded images yet. Select a website below to upload one."}</p>}
+      {shown?.length === 0 && <p className="text-sm text-muted">{search || selected ? (more ? "None of the images loaded so far match these filters." : "No images match these filters.") : "No uploaded images yet. Select a website below to upload one."}</p>}
+      {more && (
+        <button type="button" className="text-sm underline" disabled={allAssets.isFetchingNextPage} onClick={() => void allAssets.fetchNextPage()}>
+          {allAssets.isFetchingNextPage ? "Loading images…" : "Load more images"}
+        </button>
+      )}
       {sites.data?.length ? <div className="max-w-3xl border-t border-line pt-5">
         <h2 className="mb-3 text-sm font-semibold text-ink">Upload and manage website images</h2>
         <select aria-label="Website for upload" value={selected || sites.data[0].id} onChange={(e) => setSelected(e.target.value)} className="mb-4 h-10 rounded-xl border border-line bg-white px-3 text-sm">

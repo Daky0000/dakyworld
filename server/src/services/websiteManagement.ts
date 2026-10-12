@@ -9,7 +9,8 @@ import { pageSource, WebsiteError } from "./website/site.js";
 import { sniff } from "../lib/fileType.js";
 import { optimizeImageBuffer } from "../lib/imageOptimization.js";
 import { looksLikeSvg, SvgRejected, SVG_CONTENT_SECURITY_POLICY } from "../lib/svgSanitize.js";
-import { assetUrl, embedWebsiteAssets, unpublishedUsesOf } from "./websiteAssets.js";
+import { assetUrl, embedWebsiteAssets, pagesUsingAsset, storedObjectStillNeeded, unpublishedUsesOf } from "./websiteAssets.js";
+import { listPage } from "../lib/pagination.js";
 import { isR2Configured, uploadToR2, deleteFromR2, getR2PublicUrl } from "../lib/r2.js";
 import { runPublishGuardChecks } from "./websitePublishGuard.js";
 import { runVisualRegression } from "./websiteVisualRegression.js";
@@ -91,12 +92,25 @@ type Access = {
 export function registerWebsiteManagement(router: Router, access: Access) {
   const handler = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: (error?: unknown) => void) => { void fn(req, res).catch(next); };
 
+  /**
+   * Every upload on every website the caller can open, a page at a time.
+   *
+   * For staff that is every customer's library, and it used to arrive in one
+   * response with each asset carrying its whole site row — settings document
+   * and all — when the screen reads two fields of it. Paged like the site list
+   * (`X-Next-Cursor`), newest first.
+   */
   router.get("/assets", handler(async (req, res) => {
-    const assets = await prisma.siteAsset.findMany({
+    const { limit, cursor } = listPage.parse(req.query);
+    const rows = await prisma.siteAsset.findMany({
       where: { site: websiteSiteFilter(req) },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      select: { id: true, siteId: true, filename: true, repoPath: true, alt: true, contentType: true, size: true, createdAt: true, site: true },
+      take: limit + 1,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      select: { id: true, siteId: true, filename: true, repoPath: true, alt: true, contentType: true, size: true, createdAt: true, site: { select: { name: true, publicUrl: true } } },
     });
+    const assets = rows.slice(0, limit);
+    if (rows.length > limit) res.set("X-Next-Cursor", assets[assets.length - 1]!.id);
     res.json(assets.map(({ site, ...asset }) => ({
       ...asset,
       siteName: site.name,
@@ -216,13 +230,21 @@ export function registerWebsiteManagement(router: Router, access: Access) {
    * **It refuses while an unpublished draft still points at the file**, which is
    * the one case where deleting does real damage: the draft would publish a page
    * referencing a picture this system no longer holds and can no longer commit,
-   * and the customer would find out by looking at their live site. A reference
-   * from an already-published page is not a reason to refuse — that file is in
-   * their repository and stays there whatever happens to this row.
+   * and the customer would find out by looking at their live site.
+   *
+   * **A site with no repository also refuses while a page uses the file.** The
+   * old reasoning — a published page's picture is in the customer's repository
+   * and survives this row — is true only of a site that has one. A hosted site
+   * is served from here: the row, or the R2 object behind it, is the only copy,
+   * and deleting it took the picture off the live page with nothing to say so.
+   *
+   * **The R2 object outlives the row whenever something published may still
+   * point at it**, for every site — see `storedObjectStillNeeded` for why a
+   * repository's site is not exempt. What was decided goes in the audit event.
    */
   router.delete("/sites/:siteId/assets/:assetId", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
-    const asset = await prisma.siteAsset.findFirst({ where: { id: req.params.assetId, siteId: site.id }, select: { id: true, filename: true, repoPath: true, size: true } });
+    const asset = await prisma.siteAsset.findFirst({ where: { id: req.params.assetId, siteId: site.id }, select: { id: true, filename: true, repoPath: true, size: true, publishedAt: true } });
     if (!asset) throw new WebsiteError(404, "That image is not part of this site.");
 
     // Page drafts *and* shared-element drafts — see `unpublishedUsesOf`, which
@@ -235,11 +257,33 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       );
     }
 
+    const pages = await pagesUsingAsset(site.id, asset.repoPath);
+    // Only a LIVE page is served; a hidden one is not, and naming a page the
+    // customer cannot find in their list would send them looking for nothing.
+    const served = site.repoName ? [] : pages.filter((page) => page.status === "LIVE").map((page) => page.title);
+    if (served.length) {
+      throw new WebsiteError(
+        409,
+        `${asset.filename} is on ${served.join(", ")}, and this website is served from here, so there is no other copy of it. Change the picture on ${served.length === 1 ? "that page" : "those pages"} and publish, then delete it.`,
+      );
+    }
+
+    const r2 = isR2Configured();
+    const elsewhere = r2 ? await prisma.siteAsset.count({ where: { repoPath: asset.repoPath, siteId: { not: site.id } } }) : 0;
+    const keepObject = r2 ? storedObjectStillNeeded(asset, pages, elsewhere) : null;
     await prisma.$transaction(async (tx) => {
       await tx.siteAsset.delete({ where: { id: asset.id } });
-      await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "ASSET_DELETED", summary: `Deleted ${asset.filename}`, ...actor(req), detail: { assetId: asset.id, repoPath: asset.repoPath, bytes: asset.size } } });
+      await tx.siteAuditEvent.create({
+        data: {
+          siteId: site.id,
+          kind: "ASSET_DELETED",
+          summary: `Deleted ${asset.filename}`,
+          ...actor(req),
+          detail: { assetId: asset.id, repoPath: asset.repoPath, bytes: asset.size, ...(r2 ? { storedObject: keepObject ? "kept" : "deleted", ...(keepObject ? { keptBecause: keepObject } : {}) } : {}) },
+        },
+      });
     });
-    if (isR2Configured()) {
+    if (r2 && !keepObject) {
       await deleteFromR2(asset.repoPath);
     }
     recordMediaStorageAdded(req, -asset.size);
@@ -276,9 +320,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     if (!!input.repoOwner !== !!input.repoName) throw new WebsiteError(400, "Enter both the repository owner and name.");
     if (!input.publicUrl && input.repoOwner) throw new WebsiteError(400, "Enter the address the repository's website is published at.");
     const slug = `${input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0,60) || "site"}-${randomUUID().slice(0,8)}`;
-    // A hosted site with no address of its own is given the one it will be
-    // served at: <slug>.<WEBSITE_HOST_DOMAIN>, the same rule hostedUrlFor uses.
-    const fallbackPublicUrl = `https://${slug}.${HOST_DOMAIN || "sites.dakyx.com"}`;
+    const fallbackPublicUrl = hostedPublicUrl(slug);
     let { html, templateKey, packageData, packageFilename, publicUrl: givenPublicUrl, githubRepositoryId, ...rest } = input;
     if (githubRepositoryId && (html || templateKey || packageData || rest.repoOwner || rest.repoName)) {
       throw new WebsiteError(400, "A website from a GitHub repository takes its pages from the repository, so it cannot also start from a template or an upload.");
@@ -607,6 +649,58 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     res.setHeader("Content-Disposition", `attachment; filename="${page.filePath.split("/").pop()?.replace(/[^a-zA-Z0-9_.-]/g,"_") || "page.html"}"`);
     res.type("text/html").send(await embedWebsiteAssets(site, plan?.html ?? source.html));
   }));
+}
+
+/**
+ * Where a hosted site with no address of its own is served: the same rule
+ * `hostedUrlFor` uses, `<label>.<WEBSITE_HOST_DOMAIN>`.
+ *
+ * Without a host domain there is no such address, and this used to invent one
+ * under `sites.dakyx.com`. Nothing serves that, so customers were shown a dead
+ * address — and were it ever pointed at the app, every customer's script would
+ * run same-site with os.dakyx.com (docs/website-builder-launch.md, step 1).
+ * `.invalid` is reserved never to resolve (RFC 2606), so a placeholder that
+ * leaks anywhere is plainly a placeholder; the screens that show an address
+ * leave it out, and `adoptHostedAddresses` replaces it once a domain is set.
+ */
+export const PLACEHOLDER_HOST_DOMAIN = "hosting.invalid";
+export function hostedPublicUrl(label: string, hostDomain = HOST_DOMAIN): string {
+  return `https://${label}.${hostDomain || PLACEHOLDER_HOST_DOMAIN}`;
+}
+
+/** The two placeholder suffixes a hosted site's address may still carry. */
+const PLACEHOLDER_HOSTS = ["sites.dakyx.com", PLACEHOLDER_HOST_DOMAIN];
+
+/**
+ * Gives every hosted site still carrying a placeholder address the one it has
+ * now — run on every boot (index.ts), so setting WEBSITE_HOST_DOMAIN is the
+ * whole of the launch runbook's step 4 rather than a hand-written UPDATE.
+ *
+ * Only a site with no repository, and only a host that *ends* in a placeholder
+ * suffix: `shop.sites.dakyx.com.example` is somebody's real domain. Without a
+ * host domain, a `sites.dakyx.com` address is still turned into the `.invalid`
+ * one, so no screen is left handing out a dakyx.com address nothing serves.
+ * The path is kept, because `assetUrl` is built from it and the published pages
+ * already carry it. Idempotent: an address already right is not written, and a
+ * write is conditional on the value read, so a manager's save wins a race.
+ */
+export async function adoptHostedAddresses(hostDomain = HOST_DOMAIN): Promise<number> {
+  const sites = await prisma.site.findMany({
+    where: { repoName: null, OR: PLACEHOLDER_HOSTS.map((suffix) => ({ publicUrl: { contains: `.${suffix}` } })) },
+    select: { id: true, slug: true, hostedSlug: true, publicUrl: true },
+  });
+  let rewritten = 0;
+  for (const site of sites) {
+    let current: URL;
+    try { current = new URL(site.publicUrl); } catch { continue; }
+    if (!PLACEHOLDER_HOSTS.some((suffix) => current.hostname.endsWith(`.${suffix}`))) continue;
+    const next = `${hostedPublicUrl(site.hostedSlug ?? site.slug, hostDomain)}${current.pathname.replace(/\/+$/, "")}`;
+    if (next === site.publicUrl) continue;
+    const written = await prisma.site.updateMany({ where: { id: site.id, repoName: null, publicUrl: site.publicUrl }, data: { publicUrl: next } });
+    rewritten += written.count;
+  }
+  if (rewritten) console.log(`  → Moved ${rewritten} hosted website${rewritten === 1 ? "" : "s"} to ${hostDomain ? `an address under ${hostDomain}` : `a .${PLACEHOLDER_HOST_DOMAIN} placeholder until WEBSITE_HOST_DOMAIN is set`}`);
+  return rewritten;
 }
 
 /**

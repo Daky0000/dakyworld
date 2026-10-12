@@ -4,6 +4,7 @@ import { useAuth } from "../lib/auth";
 import { api } from "../lib/api";
 import { setPageTitle } from "../lib/surface";
 import type { SiteSummary as SiteRow } from "../lib/types";
+import { reachableAddress } from "../lib/websiteAddress";
 import { planPriceSentence, useWebsiteTierStatus } from "../components/WebsiteTierStatusBanner";
 
 /**
@@ -30,7 +31,7 @@ const dateFormat = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "
 function siteAddress(site: SiteRow): string | null {
   if (site.customDomain) return `https://${site.customDomain}`;
   if (site.hosted) return site.hostedUrl ?? null;
-  return site.publicUrl || null;
+  return reachableAddress(site.publicUrl);
 }
 
 export function CustomerWorkspace() {

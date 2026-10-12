@@ -1,4 +1,5 @@
 import { useSiteDirectory, SiteDirectoryMore } from "../lib/siteDirectory";
+import { reachableAddress } from "../lib/websiteAddress";
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -432,7 +433,7 @@ export function WebsiteAI() {
               <div>
                 <h3 className="font-display text-base font-semibold leading-tight text-ink">{site.name}</h3>
                 <p className="text-xs text-muted">
-                  {site.publicUrl ? <a href={site.publicUrl} target="_blank" rel="noreferrer" className="hover:underline">{site.publicUrl}</a> : site.repo ? site.repo : "Connected site"}
+                  {reachableAddress(site.publicUrl) ? <a href={site.publicUrl} target="_blank" rel="noreferrer" className="hover:underline">{site.publicUrl}</a> : site.repo ? site.repo : "Connected site"}
                   {" · "}{overview.data?.pageCount ?? 0} pages
                 </p>
               </div>

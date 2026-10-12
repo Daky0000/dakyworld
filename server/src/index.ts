@@ -412,6 +412,7 @@ ensureSystemRoles()
         .then(() => ensureWebsiteTierUsersAndPlans())
         .then((seeded) => console.log(`  → Website tiers ready (${seeded.users.map((u) => `${u.email} [${u.priceDisplay}]`).join(", ")})`))
         .catch((err) => console.error("Website seed failed:", err));
+      void import("./services/websiteManagement.js").then(({ adoptHostedAddresses }) => adoptHostedAddresses()).catch((err) => console.error("Hosted address fix-up failed:", err));
       // A writable-repository entry that names no owner used to match any
       // repository with that name, belonging to anybody. It now matches
       // nothing, which is right and is also silent: a site that published fine

@@ -19,7 +19,7 @@ const { prisma } = await import("../src/lib/prisma.js");
 const { hashPassword } = await import("../src/lib/password.js");
 const { createSession } = await import("../src/lib/session.js");
 const { WebsiteError } = await import("../src/services/website/site.js");
-const { scheduleSiteDeletion, cancelSiteDeletion, requestAccountDeletion, purgeDueDeletions, assertSiteNotPendingDeletion, DELETION_HOLD_DAYS } = await import("../src/services/websiteDeletion.js");
+const { scheduleSiteDeletion, cancelSiteDeletion, requestAccountDeletion, purgeDueDeletions, assertSiteNotPendingDeletion, eraseSiteNow, mediaKeysToRemove, DELETION_HOLD_DAYS } = await import("../src/services/websiteDeletion.js");
 
 let passed = 0;
 const failures: string[] = [];
@@ -85,6 +85,87 @@ try {
   check("is erased, with everything under it, once it has", () => { assert.equal(gone, 0); assert.ok(swept.websites >= 1); });
   const pagesLeft = await prisma.sitePage.count({ where: { siteId: shop.id } });
   check("its pages went with it", () => assert.equal(pagesLeft, 0));
+
+  console.log("\nIts pictures in object storage");
+  // The rows cascade with the site; the R2 objects are in another system and
+  // do not. The remover is injected so this proves *which* keys go without a
+  // bucket or a network — the real one is R2's, used only when R2 is configured.
+  const upload = (siteId: string, repoPath: string) =>
+    prisma.siteAsset.create({ data: { siteId, filename: repoPath.split("/").pop()!, repoPath, contentType: "image/png", size: 1 } });
+  const key = (ext = "png") => `assets/dw/${randomUUID()}.${ext}`;
+
+  const [ownA, ownB, sharedUpload] = [key(), key(), key()];
+  check("the pure rule: only an upload's own key, and only one no other site holds", () =>
+    assert.deepEqual(mediaKeysToRemove([ownA, "assets/img/logo.png", ownB, sharedUpload], [sharedUpload]), [ownA, ownB]));
+
+  const gallery = await site("gallery", [[owner, "MANAGER"]]);
+  const neighbour = await site("neighbour", []);
+  const galleryKeys = [key(), key("webp")];
+  for (const repoPath of galleryKeys) await upload(gallery.id, repoPath);
+  // A package import keeps the archive's own paths: a key like these is not one
+  // customer's, and may be where the company's own image sits in the bucket.
+  await upload(gallery.id, "images/logo.png");
+  await upload(neighbour.id, "images/logo.png");
+  await upload(gallery.id, "assets/img/hero.png");
+  // An upload's path on two sites, as after one exported a package another imported.
+  await upload(gallery.id, sharedUpload);
+  await upload(neighbour.id, sharedUpload);
+  const neighbourKey = key();
+  await upload(neighbour.id, neighbourKey);
+
+  const removed: string[] = [];
+  const erasedNow = await eraseSiteNow(gallery.id, async (objectKey) => { removed.push(objectKey); });
+  check("erasing a website removes exactly its own uploads' objects", () => assert.deepEqual([...removed].sort(), [...galleryKeys].sort()));
+  check("…never a path from a package, which is not its alone", () => { assert.ok(!removed.includes("images/logo.png")); assert.ok(!removed.includes("assets/img/hero.png")); });
+  check("…never an upload another site's library still names", () => assert.ok(!removed.includes(sharedUpload)));
+  check("…never the other site's own", () => assert.ok(!removed.includes(neighbourKey)));
+  check("…and says which it removed", () => assert.deepEqual([...erasedNow.mediaRemoved].sort(), [...galleryKeys].sort()));
+  const neighbourRows = await prisma.siteAsset.count({ where: { siteId: neighbour.id } });
+  check("the other site's library is untouched", () => assert.equal(neighbourRows, 3));
+  const galleryGone = await prisma.site.count({ where: { id: gallery.id } });
+  check("the website itself is gone", () => assert.equal(galleryGone, 0));
+
+  const flakySite = await site("flaky", []);
+  const [failsKey, worksKey] = [key(), key()];
+  await upload(flakySite.id, failsKey);
+  await upload(flakySite.id, worksKey);
+  const tried: string[] = [];
+  const quiet = console.error;
+  console.error = () => {};
+  let flaky: { mediaRemoved: string[] } | null = null;
+  try {
+    flaky = await eraseSiteNow(flakySite.id, async (objectKey) => {
+      tried.push(objectKey);
+      if (objectKey === failsKey) throw new Error("R2 is down");
+    });
+  } finally {
+    console.error = quiet;
+  }
+  const flakyGone = await prisma.site.count({ where: { id: flakySite.id } });
+  check("object storage failing does not fail the erasure", () => { assert.ok(flaky); assert.equal(flakyGone, 0); });
+  check("…the other objects are still tried", () => assert.deepEqual([...tried].sort(), [failsKey, worksKey].sort()));
+  check("…and only what really went is reported", () => assert.deepEqual(flaky?.mediaRemoved, [worksKey]));
+
+  const unconfigured = await site("unconfigured", []);
+  await upload(unconfigured.id, key());
+  const withoutR2 = await eraseSiteNow(unconfigured.id, null);
+  const unconfiguredGone = await prisma.site.count({ where: { id: unconfigured.id } });
+  check("with R2 not configured nothing is attempted, and the site is still erased", () => { assert.deepEqual(withoutR2.mediaRemoved, []); assert.equal(unconfiguredGone, 0); });
+
+  const due = await site("due", [[owner, "MANAGER"]]);
+  const kept = await site("kept", [[owner, "MANAGER"]]);
+  const [dueKey, keptKey] = [key(), key()];
+  await upload(due.id, dueKey);
+  await upload(kept.id, keptKey);
+  await scheduleSiteDeletion(due.id, { id: owner.id });
+  await scheduleSiteDeletion(kept.id, { id: owner.id });
+  await cancelSiteDeletion(kept.id, { id: owner.id });
+  const sweptKeys: string[] = [];
+  const sweep = await purgeDueDeletions(new Date(Date.now() + (DELETION_HOLD_DAYS + 1) * DAY), async (objectKey) => { sweptKeys.push(objectKey); });
+  check("the daily sweep removes the objects of a website whose hold ran out", () => { assert.ok(sweptKeys.includes(dueKey)); assert.ok(sweep.mediaRemoved.includes(dueKey)); });
+  check("…and not those of one restored inside the hold", () => assert.ok(!sweptKeys.includes(keptKey)));
+  const keptRows = await prisma.siteAsset.count({ where: { siteId: kept.id } });
+  check("…whose library is still there", () => assert.equal(keptRows, 1));
 
   console.log("\nA customer's account");
   const customer = await person("customer");

@@ -5,6 +5,7 @@ import { api, apiUrl, ApiError } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { setPageTitle } from "../lib/surface";
 import type { SiteSummary } from "../lib/types";
+import { reachableAddress } from "../lib/websiteAddress";
 import { Button, Field, PageHeader } from "../components/ui";
 import { TwoFactorControls, useTwoFactorState } from "../components/TwoFactorControls";
 import { NewPasswordField, PasswordInput } from "../components/PasswordField";
@@ -160,7 +161,7 @@ function SiteRow({ site }: { site: SiteSummary }) {
         <div className="min-w-0">
           <p className="break-words text-sm font-semibold text-ink">{site.name}</p>
           <p className="mt-0.5 text-xs text-muted">
-            {held ? <span className="font-semibold text-danger-text">Offline — erased on {day(held)} unless you restore it</span> : site.customDomain || site.hostedUrl || site.publicUrl}
+            {held ? <span className="font-semibold text-danger-text">Offline — erased on {day(held)} unless you restore it</span> : site.customDomain || site.hostedUrl || reachableAddress(site.publicUrl) || "No public address yet"}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

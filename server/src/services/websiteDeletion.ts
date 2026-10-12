@@ -1,5 +1,8 @@
 import type { User } from "@prisma/client";
+import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { prisma } from "../lib/prisma.js";
+import { getR2Client, isR2Configured } from "../lib/r2.js";
+import { isUploadKey } from "./websiteAssets.js";
 import { verifyPassword } from "../lib/password.js";
 import { WebsiteError } from "./website/site.js";
 
@@ -74,14 +77,82 @@ export async function cancelSiteDeletion(siteId: string, actor: Actor): Promise<
   });
 }
 
+/** Removes one stored object by key, and throws when it could not. */
+export type MediaRemover = (key: string) => Promise<void>;
+
+/**
+ * R2's remover. Not `deleteFromR2`, which swallows every failure: an erasure
+ * that left a customer's picture behind has to at least reach the log.
+ */
+const removeFromR2: MediaRemover = async (key) => {
+  const r2 = getR2Client();
+  if (!r2) throw new Error("Cloudflare R2 is not configured.");
+  await r2.s3.send(new DeleteObjectCommand({ Bucket: r2.bucketName, Key: key }));
+};
+const defaultRemover = (): MediaRemover | null => (isR2Configured() ? removeFromR2 : null);
+
+/** The R2 keys a site's uploads occupy — read before the row cascades them away. */
+async function siteMediaKeys(siteId: string): Promise<string[]> {
+  const assets = await prisma.siteAsset.findMany({ where: { siteId }, select: { repoPath: true } });
+  return [...new Set(assets.map((asset) => asset.repoPath.replace(/^\/+/, "")).filter(Boolean))];
+}
+
+/**
+ * Which of an erased site's keys may go: an upload's own key (`isUploadKey`)
+ * that no other site's library still names.
+ *
+ * The bucket is shared and a key is a bare repoPath, so a package import's
+ * `images/logo.png` may be another customer's or the company's own, and erasing
+ * one customer must not take somebody else's picture with it. An upload's uuid
+ * path can still be on two sites when one exported a package another imported,
+ * hence the second test.
+ */
+export function mediaKeysToRemove(siteKeys: string[], heldElsewhere: Iterable<string>): string[] {
+  const kept = new Set(heldElsewhere);
+  return siteKeys.filter((key) => isUploadKey(key) && !kept.has(key));
+}
+
+/**
+ * Removes an erased site's media from R2, best effort, after the erasure has
+ * already happened.
+ *
+ * The rows cascade with the site, but the objects are in another system and a
+ * cascade cannot reach them, so a deleted website's pictures sat in the public
+ * bucket for ever — which is not what "erased within the month" promises. It
+ * never throws: object storage being down must not make an erasure fail or be
+ * retried, so a failure is logged with the key and the sweep goes on.
+ */
+async function removeErasedSiteMedia(keys: string[], remove: MediaRemover | null): Promise<string[]> {
+  if (!remove || !keys.length) return [];
+  const removed: string[] = [];
+  try {
+    const shared = await prisma.siteAsset.findMany({ where: { repoPath: { in: keys } }, select: { repoPath: true } });
+    for (const key of mediaKeysToRemove(keys, shared.map((asset) => asset.repoPath))) {
+      try {
+        await remove(key);
+        removed.push(key);
+      } catch (error) {
+        console.error(`[website deletion] could not remove ${key} from object storage: ${(error as Error).message}`);
+      }
+    }
+  } catch (error) {
+    console.error(`[website deletion] could not clear an erased website's media: ${(error as Error).message}`);
+  }
+  return removed;
+}
+
 /**
  * Erases a website straight away, for the person who is sure. Pages, versions,
  * assets, members, review links and the audit trail cascade from the site row
- * (schema.prisma), so there is nothing to restore afterwards.
+ * (schema.prisma), so there is nothing to restore afterwards; its media in R2
+ * goes after it. `remove` is there for checks — it defaults to R2 when R2 is
+ * configured and to nothing when it is not.
  */
-export async function eraseSiteNow(siteId: string): Promise<void> {
+export async function eraseSiteNow(siteId: string, remove: MediaRemover | null = defaultRemover()): Promise<{ mediaRemoved: string[] }> {
+  const keys = await siteMediaKeys(siteId);
   const erased = await prisma.site.deleteMany({ where: { id: siteId } });
   if (!erased.count) throw new WebsiteError(404, "No such website.");
+  return { mediaRemoved: await removeErasedSiteMedia(keys, remove) };
 }
 
 /**
@@ -163,15 +234,20 @@ async function anonymiseAccount(userId: string): Promise<void> {
  * The daily sweep: websites and accounts whose hold has run out. Each delete
  * re-checks the date, so a restore that lands while this runs wins.
  */
-export async function purgeDueDeletions(now = new Date()): Promise<{ websites: number; accounts: number }> {
+export async function purgeDueDeletions(now = new Date(), remove: MediaRemover | null = defaultRemover()): Promise<{ websites: number; accounts: number; mediaRemoved: string[] }> {
   const sites = await prisma.site.findMany({ where: { deletionScheduledFor: { lte: now } }, select: { id: true } });
   let websites = 0;
+  const mediaRemoved: string[] = [];
   for (const site of sites) {
     // Pages, versions, assets, members, review links and the audit trail all
-    // cascade from the site row (schema.prisma).
-    websites += (await prisma.site.deleteMany({ where: { id: site.id, deletionScheduledFor: { lte: now } } })).count;
+    // cascade from the site row (schema.prisma); the R2 objects do not, so
+    // their keys are read first and removed only if the delete really happened.
+    const keys = await siteMediaKeys(site.id);
+    const erased = (await prisma.site.deleteMany({ where: { id: site.id, deletionScheduledFor: { lte: now } } })).count;
+    websites += erased;
+    if (erased) mediaRemoved.push(...(await removeErasedSiteMedia(keys, remove)));
   }
   const due = await prisma.user.findMany({ where: { deletionScheduledFor: { lte: now }, active: false }, select: { id: true } });
   for (const account of due) await anonymiseAccount(account.id);
-  return { websites, accounts: due.length };
+  return { websites, accounts: due.length, mediaRemoved };
 }

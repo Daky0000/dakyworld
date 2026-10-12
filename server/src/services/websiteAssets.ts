@@ -1,4 +1,4 @@
-import type { Site } from "@prisma/client";
+import type { Site, SitePageStatus } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { WebsiteError } from "./website/site.js";
@@ -189,12 +189,90 @@ export async function referencedAssetPaths(site: Pick<Site, "id" | "publicUrl">,
 }
 
 /**
+ * Whether some HTML, or a stored draft, uses an upload — by any address it can
+ * be written as.
+ *
+ * Every one of them ends in the repoPath: the site-relative `assetUrl`, the
+ * bare path a package import writes, and the R2 public URL the upload route
+ * hands the editor once R2 is on. So the repoPath is the one string to look
+ * for. Looking for `assetUrl` alone missed the R2 form on any site served from
+ * a sub-path (`https://owner.github.io/repo`), whose R2 address does not
+ * contain `/repo/assets/…` — a picture in use read as a picture nobody used.
+ */
+export function mentionsAsset(text: string | null | undefined, repoPath: string): boolean {
+  return Boolean(text && repoPath && text.includes(repoPath));
+}
+
+/** A page, as much of it as deciding about one of the site's uploads needs. */
+export type PageUsingAsset = { title: string; status: SitePageStatus; publishedHtml: string | null; sourceHtml: string | null };
+
+/**
+ * The site's pages whose stored HTML uses an upload, whatever their status.
+ *
+ * The database narrows it to rows that contain the path, so deleting one
+ * picture does not read every page of the site into memory; the survivors are
+ * tested again here because `contains` is a `LIKE`, and an underscore in a
+ * package import's path is a wildcard there.
+ */
+export async function pagesUsingAsset(siteId: string, repoPath: string): Promise<PageUsingAsset[]> {
+  const pages = await prisma.sitePage.findMany({
+    where: { siteId, OR: [{ publishedHtml: { contains: repoPath } }, { sourceHtml: { contains: repoPath } }] },
+    orderBy: [{ sortOrder: "asc" }, { path: "asc" }],
+    select: { title: true, status: true, publishedHtml: true, sourceHtml: true },
+  });
+  return pages.filter((page) => mentionsAsset(page.publishedHtml, repoPath) || mentionsAsset(page.sourceHtml, repoPath));
+}
+
+/**
+ * Whether an R2 key belongs to one upload and nobody else.
+ *
+ * A key is the bare repoPath, in a bucket the whole company shares. The upload
+ * routes mint `assets/dw/<uuid>.<ext>`, which no other file can have; a package
+ * import keeps the archive's own paths, so two customers can both own
+ * `images/logo.png`, and `assets/img/…` is where the company's own images sit.
+ * Only a key of the first kind is ever this system's to delete.
+ */
+const UPLOAD_KEY = /^assets\/dw\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.-]/;
+export function isUploadKey(key: string): boolean {
+  return UPLOAD_KEY.test(key);
+}
+
+/**
+ * Whether the stored object behind an upload has to outlive its row, and why;
+ * null when nothing published can still be pointing at it.
+ *
+ * R2 keys are the repoPath, and with R2 on the editor writes the R2 address
+ * into the page itself — so a page committed to a repository loads the picture
+ * from R2, not from the copy committed beside it. Deleting the object because
+ * the row went broke a live page on a site this system was not even serving.
+ * Every page counts, hidden ones included: hidden means kept out of the
+ * editor's list, not off the web, and a repository's hidden page is still
+ * served. Keeping an object costs a few kilobytes; removing a needed one costs
+ * a customer a broken page, and the site's erasure removes it in the end.
+ * `elsewhere` is how many other sites' libraries hold the same path — one
+ * package exported from a site and imported into another carries its uploads.
+ */
+export function storedObjectStillNeeded(
+  asset: { repoPath: string; publishedAt: Date | null },
+  pages: Array<Pick<PageUsingAsset, "title" | "publishedHtml" | "sourceHtml">>,
+  elsewhere = 0,
+): string | null {
+  if (!isUploadKey(asset.repoPath)) return "its key is not this upload's alone";
+  if (elsewhere) return "another website's library holds the same file";
+  if (asset.publishedAt) return "a publish carrying it was verified live";
+  const holding = pages.filter((page) => mentionsAsset(page.publishedHtml, asset.repoPath) || mentionsAsset(page.sourceHtml, asset.repoPath));
+  return holding.length ? `still on ${holding.map((page) => page.title).join(", ")}` : null;
+}
+
+/**
  * The unpublished changes that still need a given image, named for a person.
  *
- * Deleting an upload is safe exactly when nothing unpublished still points at
- * it: a reference from an already-published page is not a reason to refuse,
- * because that file is in the customer's repository and stays there whatever
- * happens to this row.
+ * For a site with a repository, deleting an upload is safe exactly when nothing
+ * unpublished still points at it: a reference from an already-published page
+ * is not a reason to refuse there, because that file is in the customer's
+ * repository and stays there whatever happens to this row. A site with no
+ * repository has no such second copy — see the delete route, which also asks
+ * `pagesUsingAsset` before it lets one go.
  *
  * **There are two places an unpublished change lives, and only one is obvious.**
  * A page draft is the first. The second is a shared element — a logo swapped in
@@ -212,7 +290,6 @@ export async function referencedAssetPaths(site: Pick<Site, "id" | "publicUrl">,
  * which holds the value.
  */
 export async function unpublishedUsesOf(site: Pick<Site, "id" | "publicUrl">, repoPath: string): Promise<string[]> {
-  const url = assetUrl(site, repoPath);
   const [pages, shared] = await Promise.all([
     prisma.sitePage.findMany({
       where: { siteId: site.id, NOT: { draft: { equals: Prisma.DbNull } } },
@@ -224,7 +301,7 @@ export async function unpublishedUsesOf(site: Pick<Site, "id" | "publicUrl">, re
     }),
   ]);
 
-  const mentions = (draft: unknown) => JSON.stringify(draft ?? {}).includes(url);
+  const mentions = (draft: unknown) => mentionsAsset(JSON.stringify(draft ?? {}), repoPath);
   return [
     ...pages.filter((page) => mentions(page.draft)).map((page) => page.title),
     ...shared.filter((element) => mentions(element.draft)).map((element) => `the ${element.name}`),
