@@ -62,6 +62,9 @@ export const subjectOf = {
 const RECALL_LIMIT = 24;
 const CONTENT_MAX = 600;
 
+/** What every living-state row starts with — see `upsertLivingContext()`. */
+const STATE_PREFIX = "[state:";
+
 export interface MemoryInput {
   /** Whose memory this is — the agent that will be shown it. */
   agentKey: string;
@@ -246,6 +249,15 @@ export interface Recalled {
  * ranking, not in the record**: a house rule that survives the cut only when
  * an agent happens to hold few opinions is not a house rule, and inflating the
  * stored value instead would corrupt what the Owner actually typed.
+ *
+ * **Living state is not recalled here.** `[state:…]` rows are shared rows at
+ * importance 5, so they used to come back from this query too — printed in
+ * the system prompt under "treat it as standing instruction", a second time
+ * in the brief by `livingContextBlock()`, and for a lead a third time in its
+ * dossier. That promoted whatever an agent last set a key to (on whatever
+ * model it ran) into a house rule, and thirty keys took thirty of the
+ * twenty-four places the Owner's own rules compete for. `livingContextBlock()`
+ * is the one channel they reach a prompt through now.
  */
 export async function recall(agentKey: string, subjects: string[]): Promise<Recalled[]> {
   const own = [...new Set(["self", ...subjects.filter(Boolean)])];
@@ -258,7 +270,7 @@ export async function recall(agentKey: string, subjects: string[]): Promise<Reca
     where: {
       OR: [
         { scope: "AGENT", agentKey, subject: { in: own } },
-        { scope: "SHARED", subject: { in: shared } },
+        { scope: "SHARED", subject: { in: shared }, NOT: { content: { startsWith: STATE_PREFIX } } },
       ],
       AND: [{ OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] }],
     },
@@ -505,42 +517,82 @@ export async function upsertLivingContext(input: LivingContextUpsertInput) {
 }
 
 /**
+ * How many living-state rows of each kind are read, and how much of a prompt
+ * they may fill between them.
+ *
+ * Two reads rather than one. They were one query of forty ordered by creation,
+ * so every record key written after the seven baseline company keys pushed one
+ * of them out — a busy lead cost an agent the company's payment terms first.
+ *
+ * The character cap exists because a value may be six hundred characters and
+ * sixty-five of them is a brief nobody budgeted for; this block is paid for on
+ * every task and in every writer's prompt.
+ */
+const LIVING_COMPANY_ROWS = 25;
+const LIVING_RECORD_ROWS = 40;
+const LIVING_BLOCK_MAX = 6_000;
+
+/**
  * Renders the current keyed Living State for both `company` and the active record subjects
  * (`lead:<id>`, `client:<id>`, `project:<id>`) so every agent in a workflow chain
  * inherits the latest evolved state immediately.
+ *
+ * This is the **one** road living state takes into a prompt: `recall()` leaves
+ * these rows out and the prompt dossier drops its copy, so each key is said
+ * once, in the brief, as what a colleague last recorded — not as a house rule.
+ *
+ * `readWith` names the tool that prints every key, for a reader that has one.
+ * Only the task brief does: a writer is one call with no tools, and naming a
+ * tool to a model that was not sent it spends its turn on a call that cannot
+ * resolve.
  */
-export async function livingContextBlock(subjects: string[]): Promise<string | null> {
-  const querySubjects = [...new Set(["company", ...subjects.filter(Boolean)])];
-  const rows = await prisma.agentMemory.findMany({
-    where: {
-      scope: "SHARED",
-      subject: { in: querySubjects },
-      content: { startsWith: "[state:" },
-      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
-    },
-    orderBy: [{ createdAt: "desc" }],
-    take: 40,
-  });
+export async function livingContextBlock(subjects: string[], options: { readWith?: string } = {}): Promise<string | null> {
+  const records = [...new Set(subjects.filter((subject) => subject && subject !== "company"))];
+  const live = { scope: "SHARED" as const, content: { startsWith: STATE_PREFIX }, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] };
+  const companyWhere = { ...live, subject: "company" };
+  const recordWhere = { ...live, subject: { in: records } };
 
-  if (rows.length === 0) return null;
+  // Newest *update* first. A key is replaced in place, so its `createdAt` is the
+  // day it was first set: ordering by that dropped the keys being kept most
+  // current, and kept a key nobody had touched since it was made.
+  const [companyRows, recordRows] = await Promise.all([
+    prisma.agentMemory.findMany({ where: companyWhere, orderBy: [{ updatedAt: "desc" }], take: LIVING_COMPANY_ROWS }),
+    records.length > 0
+      ? prisma.agentMemory.findMany({ where: recordWhere, orderBy: [{ updatedAt: "desc" }], take: LIVING_RECORD_ROWS })
+      : Promise.resolve([]),
+  ]);
+
+  if (companyRows.length === 0 && recordRows.length === 0) return null;
+
+  // Counted only when a read came back full, which is the only time there can
+  // be more than was read.
+  const [companyTotal, recordTotal] = await Promise.all([
+    companyRows.length < LIVING_COMPANY_ROWS ? companyRows.length : prisma.agentMemory.count({ where: companyWhere }),
+    recordRows.length < LIVING_RECORD_ROWS ? recordRows.length : prisma.agentMemory.count({ where: recordWhere }),
+  ]);
 
   // Deduplicate by (subject, stateKey) keeping the most recently updated entry
   const seen = new Set<string>();
+  let notKeys = 0;
   const companyLines: string[] = [];
   const entityLines: string[] = [];
 
-  for (const row of rows) {
-    const match = /^\[state:([^\]]+)\]\s*(.+)$/.exec(row.content);
-    if (!match) continue;
-    const [, stateKey, stateVal] = match;
-    const dedupKey = `${row.subject}::${stateKey}`;
-    if (seen.has(dedupKey)) continue;
+  for (const row of [...companyRows, ...recordRows]) {
+    // `[\s\S]` rather than `.`: a value written with a line break in it — a
+    // preserve list, a cut script — failed `.+$` and was silently never shown.
+    const match = /^\[state:([^\]]+)\]\s*([\s\S]+)$/.exec(row.content);
+    const dedupKey = match ? `${row.subject}::${match[1]}` : "";
+    if (!match || seen.has(dedupKey)) {
+      notKeys += 1;
+      continue;
+    }
     seen.add(dedupKey);
 
+    const [, stateKey, raw] = match;
+    const stateVal = raw.replace(/\s+/g, " ").trim();
     const by = row.authorKey ? ` [updated by ${row.authorKey}]` : "";
-    const formatted = `- **${stateKey}**: ${stateVal}${by}`;
     if (row.subject === "company") {
-      companyLines.push(formatted);
+      companyLines.push(`- **${stateKey}**: ${stateVal}${by}`);
     } else {
       entityLines.push(`- **${stateKey}** (${row.subject}): ${stateVal}${by}`);
     }
@@ -548,10 +600,37 @@ export async function livingContextBlock(subjects: string[]): Promise<string | n
 
   if (companyLines.length === 0 && entityLines.length === 0) return null;
 
+  const header =
+    "DYNAMIC LIVING CONTEXT — self-updating state shared across the workforce: the latest value of each key, and who set it. It is a colleague's record of where things stand, not a checked fact; where the record in front of you disagrees, the record wins.";
+  const companyHeading = "**Company-Wide Live State (`company`):**";
+  const entityHeading = "**Active Record & Cross-Agent Handoff State:**";
+
+  // Each half is promised half the room and may use whatever the other leaves.
+  // Company state first would let twenty-five long company values crowd out the
+  // record this task is actually about; record state first would let a busy
+  // lead do the same to the payment terms. Lines are cut from the oldest end.
+  const room = LIVING_BLOCK_MAX - header.length - companyHeading.length - entityHeading.length - 160;
+  const size = (lines: string[]) => lines.reduce((sum, line) => sum + line.length + 1, 0);
+  const fit = (lines: string[], space: number) => {
+    const kept: string[] = [];
+    let used = 0;
+    for (const line of lines) {
+      if (used + line.length + 1 > space) break;
+      kept.push(line);
+      used += line.length + 1;
+    }
+    return kept;
+  };
+  const companyKept = fit(companyLines, room - Math.min(size(entityLines), room / 2));
+  const entityKept = fit(entityLines, room - size(companyKept));
+
+  const hidden = companyTotal + recordTotal - notKeys - companyKept.length - entityKept.length;
+
   return [
-    "DYNAMIC LIVING CONTEXT — self-updating state shared across the workforce. Use `update_living_context` whenever your work establishes or changes one of these values so downstream agents stay synchronized:",
-    ...(companyLines.length > 0 ? ["", "**Company-Wide Live State (`company`):**", ...companyLines] : []),
-    ...(entityLines.length > 0 ? ["", "**Active Record & Cross-Agent Handoff State:**", ...entityLines] : []),
+    header,
+    ...(companyKept.length > 0 ? ["", companyHeading, ...companyKept] : []),
+    ...(entityKept.length > 0 ? ["", entityHeading, ...entityKept] : []),
+    ...(hidden > 0 ? ["", `${hidden} more not shown${options.readWith ? ` — read them with \`${options.readWith}\`` : ""}.`] : []),
   ].join("\n");
 }
 
@@ -599,6 +678,9 @@ const BASELINE_COMPANY_STATE: Array<{ key: string; value: string; reason: string
     agentKey: "board.risk",
   },
 ];
+
+/** The keys seeded above, for a check that must find them in a brief. */
+export const BASELINE_STATE_KEYS = BASELINE_COMPANY_STATE.map((item) => item.key);
 
 /**
  * Seeds the baseline `company` living state keys on boot if they do not exist yet.

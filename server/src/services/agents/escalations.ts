@@ -1,5 +1,7 @@
 import { prisma } from "../../lib/prisma.js";
+import { appendNote } from "../context/dossier.js";
 import { appendOwnerAnswer } from "./checkpoint.js";
+import { subjectOf } from "./memory.js";
 import { optionsFor, settleTaskCard } from "./escalationCards.js";
 import { runTask } from "./runner.js";
 import { transition } from "./state.js";
@@ -91,11 +93,15 @@ async function readyToResume(taskId: string) {
 /**
  * Writes one answer everywhere it has to go.
  *
- * Three places, and dropping any of them is a distinct bug:
+ * Four places, and dropping any of them is a distinct bug:
  *
  * - **The brief**, so what the agent was told stays beside what it was asked.
  * - **The conversation**, so the agent that resumes has actually been told.
  *   Without this it carries on from the moment it asked, and asks again.
+ * - **The record's history**, when the task is about a lead, a client or a
+ *   project, so the *next* agent to open that company is told too. Without it
+ *   the Owner's decision lived on one task's brief, and a colleague picking up
+ *   the same lead tomorrow asked the same question again.
  * - **The Slack card**, so the channel stops showing a live question under an
  *   answer somebody has already given. That is the half that made deciding in
  *   the app look like nothing happening in Slack.
@@ -104,11 +110,20 @@ async function readyToResume(taskId: string) {
  * day one copy stops doing the second of those is a day nobody notices.
  */
 export async function recordOwnerAnswer(task: { id: string; brief: string; status: string }, text: string, by: AnsweredBy): Promise<void> {
+  // Read before the requeue below clears `blockedReason`: the question is half
+  // of what the history needs to say.
+  const asked = await prisma.agentTask.findUnique({
+    where: { id: task.id },
+    select: { title: true, blockedReason: true, rehearsal: true, leadId: true, clientId: true, projectId: true, agent: { select: { name: true } } },
+  });
   await prisma.agentTask.update({
     where: { id: task.id },
     data: { brief: `${task.brief}\n\n--- Answer from the Owner ---\n${text}`.slice(0, 8000) },
   });
   await appendOwnerAnswer(task.id, text);
+  // Before the requeue, so it is on the record by the time anything can claim
+  // the task again.
+  if (asked) await fileAnswerOnRecord(task.id, asked, text, by);
 
   // Both stopped states must be queued: a busy agent will not claim a FAILED
   // task through the scheduler, even though a direct run can claim it.
@@ -124,6 +139,55 @@ export async function recordOwnerAnswer(task: { id: string; brief: string; statu
   }
 
   await settleTaskCard(task.id, by.who ?? null, text);
+}
+
+/**
+ * The Owner's answer, as a decision in the history of the record it was about.
+ *
+ * A `DECISION` note by `owner` rather than a memory: a memory is an agent's own
+ * conclusion and loses to the record, while this is what the company decided,
+ * and it belongs where every colleague opening this company reads it. Never
+ * the agent's `self` memory, which would keep it from all the others.
+ *
+ * Never on a rehearsal — a test's answers are not news about a customer — and
+ * never at the answer's expense: an answer with a password in it is refused
+ * here by the same check as any note, and the answer itself still goes through.
+ */
+async function fileAnswerOnRecord(
+  taskId: string,
+  asked: { title: string; blockedReason: string | null; rehearsal: boolean; leadId: string | null; clientId: string | null; projectId: string | null; agent: { name: string } },
+  text: string,
+  by: AnsweredBy,
+): Promise<void> {
+  const subject = asked.leadId
+    ? subjectOf.lead(asked.leadId)
+    : asked.clientId
+      ? subjectOf.client(asked.clientId)
+      : asked.projectId
+        ? subjectOf.project(asked.projectId)
+        : null;
+  if (!subject || asked.rehearsal) return;
+
+  const answer = text.replace(/\s+/g, " ").trim();
+  const question = asked.blockedReason?.replace(/\s+/g, " ").trim();
+  try {
+    await appendNote({
+      subject,
+      kind: "DECISION",
+      // The answer first: the brief prints this line cut to two hundred
+      // characters, and of the two halves the answer is the one that decides.
+      summary: question ? `The Owner decided: ${answer} (asked by ${asked.agent.name}: ${question})` : `The Owner decided: ${answer}`,
+      body: [
+        question ? `${asked.agent.name} asked, while working on "${asked.title}":\n${asked.blockedReason}` : `Said to ${asked.agent.name}, while working on "${asked.title}".`,
+        // `owner` is whose authority it carries; the name says who typed it.
+        `The Owner answered${by.who ? ` (${by.who})` : ""}:\n${text}`,
+      ].join("\n\n"),
+      authorKey: "owner",
+      sourceTaskId: taskId,
+    });
+  } catch (err) {
+    console.warn(`[agent] ${taskId}: the answer was recorded but not filed on ${subject} — ${(err as Error).message}`);
+  }
 }
 
 /**

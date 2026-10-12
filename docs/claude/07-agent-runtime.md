@@ -208,6 +208,12 @@ overtaken by the reaper must not announce an outcome it did not write.
   Slack buttons were two copies of "append to the brief, rejoin the
   conversation, requeue", and the third thing neither did was rewrite the Slack
   card. That is what *"I decided and nothing happened in Slack"* actually was.
+  The fourth is the record: on a task about a lead, a client or a project the
+  answer is filed in that company's history as a `DECISION` note by `owner`,
+  answer first and question after, so the next agent on that company reads it
+  in its brief instead of asking again. Never as the agent's own memory, never
+  for a rehearsal, and an answer the credential check refuses is still
+  delivered to the task — `checks/livingContext.ts`.
 - **A webhook post is still recorded as posted**, under a `webhook` sentinel
   channel, because a webhook reports neither a channel nor a message id.
   Without it `settleTaskCard` cannot tell a question that was never posted —

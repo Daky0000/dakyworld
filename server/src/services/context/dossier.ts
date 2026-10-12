@@ -484,6 +484,12 @@ export interface LivingContextItem {
 /**
  * Reads the active `living_context` whiteboard keys for a subject (plus its
  * linked lead/client alias and company-wide context when appropriate).
+ *
+ * Newest *update* first, and `updatedAt` is the date reported. A key is
+ * replaced in place, so its `createdAt` is the day it was first set — a key
+ * refreshed this morning used to read as a month old, and sort as one. This is
+ * honest now only because `recall()` no longer touches these rows: its usage
+ * counter bumped `updatedAt` on every task that so much as read one.
  */
 export async function listLivingContext(subjectKey: string, includeCompany = false): Promise<LivingContextItem[]> {
   const subject = parseSubject(subjectKey);
@@ -498,14 +504,16 @@ export async function listLivingContext(subjectKey: string, includeCompany = fal
       content: { startsWith: "[state:" },
       OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
     },
-    orderBy: [{ createdAt: "desc" }],
+    orderBy: [{ updatedAt: "desc" }],
   });
 
   const seen = new Set<string>();
   const items: LivingContextItem[] = [];
 
   for (const row of rows) {
-    const match = /^\[state:([^\]]+)\]\s*(.+)$/.exec(row.content);
+    // `[\s\S]`, not `.`: a value with a line break in it otherwise never matched
+    // and the key silently vanished from every screen and export.
+    const match = /^\[state:([^\]]+)\]\s*([\s\S]+)$/.exec(row.content);
     if (!match) continue;
     const [, rawKey, rawVal] = match;
     const dedupKey = `${row.subject}::${rawKey}`;
@@ -519,7 +527,7 @@ export async function listLivingContext(subjectKey: string, includeCompany = fal
       value: rawVal,
       previousValue: null,
       updatedBy: row.authorKey ?? row.agentKey ?? "system",
-      updatedAt: row.createdAt,
+      updatedAt: row.updatedAt,
     });
   }
 
@@ -533,12 +541,22 @@ export async function renderDossier(subjectKey: string, options: DossierOptions 
   const { header, entries } = await gatherEntries(subject);
   if (!header.found) return `No record found for ${subjectKey}.`;
 
-  const living = await listLivingContext(subject.key, subject.kind !== "company");
+  // The brief form leaves living state out, both the whiteboard and the pinned
+  // `[State: …]` notes that mirror it. The task brief already carries every key
+  // once, from `livingContextBlock()`; here it was a second and third copy,
+  // under a heading telling the agent this is "what happened, not what anyone
+  // concluded" — which is exactly what an agent's last word on a key is not.
+  // Everything else prints as before, and the full form is untouched: what a
+  // person reads or exports is what `readHistory` hands an agent.
+  const living = options.brief ? [] : await listLivingContext(subject.key, subject.kind !== "company");
+  // Unpinned as well as pinned: the Owner can unpin a state note, and it would
+  // then have come back as a dated line under "What has happened".
+  const shown = options.brief ? entries.filter((entry) => !entry.title.startsWith("[State:")) : entries;
 
   const limit = options.limit ?? 40;
-  const pinned = entries.filter((entry) => entry.pinned);
-  const rest = entries.filter((entry) => !entry.pinned).slice(0, limit);
-  const hidden = entries.filter((entry) => !entry.pinned).length - rest.length;
+  const pinned = shown.filter((entry) => entry.pinned);
+  const rest = shown.filter((entry) => !entry.pinned).slice(0, limit);
+  const hidden = shown.filter((entry) => !entry.pinned).length - rest.length;
 
   const lines: string[] = [`# ${header.name}`, ""];
   for (const fact of header.facts) lines.push(`- ${fact}`);
@@ -597,7 +615,10 @@ export async function dossierForPrompt(subjectKeys: string[]): Promise<string> {
   // client it became, the lead's dossier already gathers the client's history,
   // so rendering both would print most of it twice.
   const [primary] = usable;
-  const rendered = await renderDossier(primary.key, { limit: 12, brief: true, moreAvailable: true });
+  // Naming `readHistory`, the agent's road to the rest: left to the default,
+  // every brief with more than twelve entries told the agent to use
+  // `context.read`, which no agent has ever been granted.
+  const rendered = await renderDossier(primary.key, { limit: 12, brief: true, moreAvailable: true, readWith: "readHistory" });
   if (!rendered || rendered.startsWith("No record")) return "";
 
   return [
