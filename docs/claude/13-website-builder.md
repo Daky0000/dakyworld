@@ -1008,3 +1008,84 @@ Three things that cost time writing them:
 - **A heredoc eats backslashes here, and a `\n` pattern matches nothing on a
   CRLF file.** Write a patch script with the Write tool, read the file as LF,
   and write it back with the endings it had.
+
+## Launch hardening (12 Oct 2026)
+
+A launch audit, then fixes. What each rule is for, so nobody undoes it.
+
+- **An agent's whole-page rewrite is signed and inspected, twice over.**
+  `POST /sites/:id/agent/apply` used to take `documentHtmlUpdates[pageId].html`
+  from the request body and store it as the page's whole-document draft — the
+  one way round "`$document` is written only by the server", and an editor
+  could stage a `<script>` under a harmless label for a publisher to send live.
+  Each entry is now an HMAC (`signingKey()` in `lib/secrets.ts`, its own
+  purpose string) over site, page, the person the plan was made for, the
+  HTML's hash and the label; apply refuses a missing or altered one before any
+  page is written. **Independently**, `services/website/activeContent.ts`
+  refuses a rewrite that adds anything that runs which the page does not
+  already have (a new or changed script, `on*`, a script address, `srcdoc`,
+  frames, `base`, meta refresh) — because what a model writes can be steered
+  by the words on the page it is reading. Both client call sites send
+  `documentHtmlUpdates` back whole, or the signatures cannot survive.
+  `checks/websiteActiveContent.ts`.
+- **Text that ends up inside `<script type="application/ld+json">` is escaped
+  for the script, not just for JSON** (`<`, `>`, `&`, U+2028/9). Every SEO
+  replacement that carries somebody's words is a function, because a string
+  replacement expands `` $` `` and `$'` into pieces of the page.
+- **One rule for script-ish `data-` names** — `isScriptDataAttribute` in
+  `shared/websiteElementSettings.ts`, used by the Settings panel and by
+  `sanitize.ts` alike. `data-bind` and `data-hx-*` run code on Knockout and
+  htmx sites; `data-target` (the count-up figures) must still survive.
+- **A hosted picture whose bytes moved to R2 is a 302 to R2**, never a 404.
+  `scripts/migrate-images-to-r2.mjs` sets `SiteAsset.content` to NULL after
+  uploading, and the hosting route used to answer 404 for a NULL column.
+  Authorisation still comes first: a site serves only a file one of its own
+  LIVE pages references, now read from a per-site path set extracted in
+  Postgres and kept under the page cache's own key (`public:<site>` /
+  `pages`), so a publish's invalidation clears it. Upload paths are always a
+  fresh `assets/dw/<uuid>.<ext>` and are cached immutable; package-import
+  paths keep their own names and still revalidate.
+- **The R2 migration is a manual one-off, never a deploy step.** As Railway's
+  `preDeployCommand` it ran on every deploy and copied every `StoredFile`
+  (email attachments, prospect audit PDFs, lead screenshots) into the *public*
+  bucket. Private documents must never be written to the public bucket; those
+  phases are gone and `preDeployCommand` is `npm run db:deploy`. The script
+  still moves only upload keys on repository sites — written before hosting
+  had its R2 fallback, and conservative on purpose.
+- **A custom domain is unique only once verified.** A claim is stored before
+  anything is proved, so `@unique` let anybody type a business's domain and
+  keep the real owner out for good. A hand-written partial unique index
+  (`WHERE "customDomainVerifiedAt" IS NOT NULL` — Prisma cannot express it)
+  enforces it; verifying clears every other unverified claim of the same
+  domain in one transaction under a per-domain advisory lock (two proofs
+  landing together deadlocked without it). The other spelling of a verified
+  domain (`www.` or bare) is a 301 to it, and the DNS instructions say when a
+  name is a zone apex, where a CNAME is not allowed. The certificate is still
+  switched on by hand in Railway, and the panel says so.
+- **Hosted sites answer `robots.txt`, `sitemap.xml` and `favicon.ico`** unless
+  a LIVE page owns the path. The page cache key ignores the query string, so
+  `?utm_source=` links stop missing it. An in-memory limit per host and client
+  address (`WEBSITE_HOST_RATE_LIMIT`, 300 a minute) protects the shared
+  process and evicts old windows rather than refusing when full; it is never a
+  database write per page view.
+- **Deleting a picture a live page uses is refused on a hosted site** — there
+  is no repository copy; the row or the R2 object is the only one. For every
+  site the R2 object is kept whenever something published may still point at
+  it, because with R2 on, the editor writes the R2 address into the page
+  itself. Erasing a site removes its own upload keys from R2, best effort,
+  never another site's.
+- **No address is ever invented under dakyx.com.** Without
+  `WEBSITE_HOST_DOMAIN` a hosted site gets `https://<slug>.hosting.invalid`
+  (a reserved name that never resolves) and screens say "No public address
+  yet"; `adoptHostedAddresses` moves those to the real host domain at boot
+  once it is set.
+- **An edit is a page changed on a UTC day.** Every autosave used to spend one
+  of the plan's monthly edits. `writePageEdit` decides inside the conditional
+  update itself, so two saves arriving together cannot both count; the
+  allowance refuses only a save that would count. The day is read from
+  `updatedAt`, not `draftSavedAt`, which publishing, discarding and every
+  shared-element save clear. `checks/websitePlanLimits.ts`.
+- **The daily AI allowance is the plan's** — Starter 0, Pro 10, Business 50
+  (`AI_DAILY_LIMIT_EDITOR/_CARE/_MANAGED`); the legacy `AI_DAILY_USER_LIMIT`,
+  when set, still caps every plan. Business's label reads the same number the
+  queue enforces.
