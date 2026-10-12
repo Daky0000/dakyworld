@@ -20,8 +20,9 @@ import type { ToolScope } from "../tools/types.js";
  *
  * 0. **Fixed answers.** The Owner's own call on this task; the level a resumed
  *    conversation already had (one conversation is not split across two
- *    judgements, and a model change costs a cache miss); and one level up
- *    after a run that failed outright at a lower level.
+ *    judgements, and a model change costs a cache miss); and the retry ladder
+ *    after a run that failed outright — the same model thinking harder first,
+ *    a stronger model only when that has failed too.
  * 1. **The rules.** `scoreTask` — free, instant, and a pure function so a check
  *    can hold it still.
  * 2. **A quick look**, only for a task that scores on a boundary. One call on a
@@ -274,6 +275,25 @@ export function stepUp(level: TaskLevel): TaskLevel {
   return TASK_LEVELS[Math.min(TASK_LEVELS.indexOf(level) + 1, TASK_LEVELS.length - 1)];
 }
 
+/** Every effort the loop can ask for, least first. */
+export const EFFORT_LADDER: readonly Effort[] = ["low", "medium", "high", "xhigh", "max"];
+
+/** `steps` rungs up the effort ladder, stopping at max. */
+export function raiseEffort(effort: Effort, steps = 1): Effort {
+  const at = Math.max(0, EFFORT_LADDER.indexOf(effort));
+  return EFFORT_LADDER[Math.min(at + Math.max(0, steps), EFFORT_LADDER.length - 1)];
+}
+
+/**
+ * Who can fail a task without it being the model's fault.
+ *
+ * The reaper and the boot pass fail a task that kept dying without getting
+ * any further — a crash loop, a deploy storm, a process killed for memory.
+ * None of that is evidence the model was not up to the work, so none of it
+ * buys a harder-thinking or a dearer retry.
+ */
+export const NOT_THE_MODELS_FAULT: ReadonlySet<string> = new Set(["reaper", "boot"]);
+
 /** `level`, held to within one step of `around`. */
 export function clampLevel(level: TaskLevel, around: TaskLevel): TaskLevel {
   const at = TASK_LEVELS.indexOf(around);
@@ -395,6 +415,12 @@ export interface LevelDecision {
   level: TaskLevel | null;
   /** The effort for the run — from the level, or the old answer when off. */
   effort: Effort;
+  /**
+   * Set only on the first retry after a failed run: the same level, and so the
+   * same model, thinking one step harder than the level would. Handed to the
+   * loop as `effortFloor`. Null everywhere else.
+   */
+  effortFloor: Effort | null;
   decidedBy: DecidedBy;
   /** The rules' score, when the rules were asked. */
   score: number | null;
@@ -414,8 +440,26 @@ export interface RouteRequest {
   likely: string[];
   /** True when the run continues a saved conversation. */
   resuming: boolean;
-  /** Where the task was before this run claimed it. */
+  /**
+   * Where the task was before this run claimed it — or `FAILED` when the runner
+   * found, in the task's transitions, that this claim follows a failed run it
+   * was requeued out of. See `lastFailure` in the runner: the claim alone says
+   * QUEUED whenever a person, Slack or the API role requeued first.
+   */
   previousStatus: AgentTaskStatus | null;
+  /** Who failed it — `runner`, or `reaper`/`boot` for a run that kept dying. */
+  previousActor?: string | null;
+  /**
+   * How many runs in a row the runner itself ended FAILED, the last one
+   * included. One is the first retry; absent is read as one.
+   */
+  failuresInARow?: number;
+  /**
+   * The effort a retry was raised to, read back off the checkpoint it saved.
+   * Honoured only on a plain resume, so a pause in the middle of a retry
+   * comes back on the same rung rather than quietly thinking less.
+   */
+  savedEffortFloor?: Effort | null;
   /** Sizing on/off, read once by the caller. Read here when absent. */
   mode?: RoutingMode;
   /** Replaces the free-model look. For a check; nothing else passes it. */
@@ -463,7 +507,7 @@ export async function routeTask(request: RouteRequest): Promise<LevelDecision> {
   if (mode === "off") {
     let effort = legacyEffort(agent);
     if (effort === "high" && (await budgetWantsCheaper(agent.key).catch(() => false))) effort = "medium";
-    return { level: null, effort, decidedBy: "legacy", score: null, reasons: [], cappedByBudget: false, sentence: null };
+    return { level: null, effort, effortFloor: null, decidedBy: "legacy", score: null, reasons: [], cappedByBudget: false, sentence: null };
   }
 
   const stored = fromStored(task.level);
@@ -474,17 +518,39 @@ export async function routeTask(request: RouteRequest): Promise<LevelDecision> {
   let score: number | null = null;
   let reasons: string[] = [];
   let sentence: string | null;
+  let effortFloor: Effort | null = null;
 
   if (override) {
     level = override;
     decidedBy = "owner";
     sentence = `Sized as a ${level} task because that was chosen for it.`;
-  } else if (stored && request.previousStatus === "FAILED" && stored !== "complex") {
-    level = stepUp(stored);
+  } else if (stored && request.previousStatus === "FAILED" && !NOT_THE_MODELS_FAULT.has(request.previousActor ?? "")) {
+    // **Effort before model** — the Owner's rule. The first retry keeps the
+    // level, and so the model and its warm cache, and only thinks harder: a
+    // mid-tier model given room to think often does what a dearer one at low
+    // effort would, at a fraction of the price. A second failure in a row is
+    // the evidence that thinking was not enough, and only then does a dearer
+    // model take it. Complex has nowhere further to go, so it keeps thinking
+    // harder each time instead, up to max.
+    const failures = Math.max(1, request.failuresInARow ?? 1);
     decidedBy = "retry";
-    sentence = `Its last run failed as a ${stored} task, so this one runs as ${level}.`;
+    if (stored === "complex") {
+      level = stored;
+      effortFloor = raiseEffort(effortForLevel(stored), failures);
+      sentence =
+        `Its last ${failures === 1 ? "run" : `${failures} runs`} failed as a complex task, and there is no stronger model to hand it to, ` +
+        `so this one thinks harder — ${effortFloor} effort rather than ${effortForLevel(stored)}.`;
+    } else if (failures === 1) {
+      level = stored;
+      effortFloor = raiseEffort(effortForLevel(stored), 1);
+      sentence = `Its last run failed as a ${stored} task, so this one stays ${stored} and thinks harder — ${effortFloor} effort rather than ${effortForLevel(stored)} — before a stronger model is tried.`;
+    } else {
+      level = stepUp(stored);
+      sentence = `Its last ${failures} runs in a row failed, and thinking harder was tried first, so this one runs as ${level} rather than ${stored}.`;
+    }
   } else if (stored && request.resuming) {
     level = stored;
+    effortFloor = request.savedEffortFloor ?? null;
     decidedBy = "stored";
     // Nothing new to say. A task paused for a rate limit resumes every few
     // minutes, and a line each time would bury the timeline.
@@ -525,6 +591,9 @@ export async function routeTask(request: RouteRequest): Promise<LevelDecision> {
   if (level === "complex" && (await budgetWantsCheaper(agent.key).catch(() => false))) {
     level = atMost(level, "standard");
     cappedByBudget = true;
+    // The harder thinking goes with it. Effort is spend as surely as the model
+    // is, and the ceiling's answer outranks the retry's.
+    effortFloor = null;
     const held = "Held at standard because spending is in its downgrade band.";
     sentence = sentence ? `${sentence} ${held}` : held;
   }
@@ -533,5 +602,7 @@ export async function routeTask(request: RouteRequest): Promise<LevelDecision> {
     sentence = `${sentence} Free models first; if they cannot finish it, ${MODEL_WORDS[level]} takes over.`;
   }
 
-  return { level, effort: effortForLevel(level), decidedBy, score, reasons, cappedByBudget, sentence };
+  // A floor only ever raises: one at or under the level's own effort is no floor.
+  if (effortFloor && EFFORT_LADDER.indexOf(effortFloor) <= EFFORT_LADDER.indexOf(effortForLevel(level))) effortFloor = null;
+  return { level, effort: effortFloor ?? effortForLevel(level), effortFloor, decidedBy, score, reasons, cappedByBudget, sentence };
 }

@@ -1,16 +1,18 @@
 /**
  * Is an agent sent a tool it could not possibly use?
  *
- * Every agent carries nine workflow tools on top of its own — escalate,
- * remember, the two history ones, delegate, and the four for working with
- * colleagues. Measured against the real roster they are about 2,100 tokens of
- * JSON Schema per turn, where the agent's *own* granted tools average 711. So
- * two thirds of what a typical turn spends before it does anything is the
- * scaffolding for asking somebody else, and a good part of that is provably
- * dead on arrival:
+ * Every agent carries ten workflow tools on top of its own — escalate,
+ * remember, update_living_context, the two history ones, delegate, and the
+ * four for working with colleagues. Measured against the seeded roster (see
+ * the tripwire at the bottom, which prints it) they are about three quarters
+ * of the tool schema a typical turn sends. So most of what a turn spends
+ * before it does anything is the scaffolding for asking somebody else, and a
+ * good part of that is provably dead on arrival:
  *
  *   - `addToHistory` and `readHistory` both refuse when the task is not about a
- *     lead, a client or a project. There is no company to have a history.
+ *     lead, a client or a project and names none. There is no company to have
+ *     a history — except in standing work, which is about a batch and names
+ *     one per call, so a scheduled task keeps them.
  *   - `consult` refuses once the task's allowance is spent.
  *   - `handOff` refuses once `MAX_HANDOFFS` are gone.
  *
@@ -32,7 +34,7 @@
  */
 import type { Agent, AgentTask } from "@prisma/client";
 import { prisma } from "../src/lib/prisma.js";
-import { ensureAgents } from "../src/services/agentRegistry.js";
+import { AGENT_SEEDS, ensureAgents } from "../src/services/agentRegistry.js";
 import { composePrompt, toolsFor, workflowAvailability, workflowTools, type Counters } from "../src/services/agents/runner.js";
 import { taskSubjects } from "../src/services/agents/context.js";
 
@@ -107,6 +109,8 @@ async function main() {
   ok("a manager gets delegate", full.includes("delegate"));
   ok("findAgent is always there", full.includes("findAgent"));
   ok("and so is needSkill — the only road to the Agent Creator", full.includes("needSkill"));
+  ok("a manager with a subject gets all ten workflow tools", full.length === 10, `${full.length}: ${full.join(", ")}`);
+  ok("update_living_context among them", full.includes("update_living_context"));
 
   console.log("\nA task about no record at all");
   const aboutNothing = taskOn({});
@@ -117,16 +121,24 @@ async function main() {
   ok("and escalate, which is never pruned", bare.includes("escalate"));
   // Why dropping them is safe, asserted rather than trusted to a comment.
   //
-  // Both handlers open with `const [subject] = taskSubjects(task)` and refuse
-  // when there is none, and `workflowAvailability` prunes on
-  // `taskSubjects(task).length > 0` — the same expression, so the tool is
-  // withheld in exactly the cases where it would have answered with an error.
-  // Asserting the predicate is what keeps those two in step: if a handler ever
-  // learns to do something useful without a subject, this is where it shows up.
+  // Both handlers take the task's first subject when they are not handed a
+  // `record`, and refuse when there is neither; `workflowAvailability` prunes
+  // on `taskSubjects(task).length > 0` — the same expression — except for
+  // standing work, where naming a record per call is the whole job. Asserting
+  // the predicate is what keeps those in step: if a handler ever learns to do
+  // something useful without a subject, this is where it shows up.
   ok("a task about no record has no memory subject at all", taskSubjects(aboutNothing).length === 0);
   ok("and a task about a lead has one", taskSubjects(aboutLead).length > 0);
   ok("which is the condition the pruning reads", workflowAvailability(manager, aboutNothing, fresh(), 3).history === false);
   ok("and the condition it keeps them on", workflowAvailability(manager, aboutLead, fresh(), 3).history === true);
+
+  console.log("\nStanding work, about a batch rather than one record");
+  const standing = taskOn({ origin: "SCHEDULE" });
+  const batch = names(manager, standing, fresh(), 3);
+  ok("a scheduled task about no record keeps readHistory — it names a record per call", batch.includes("readHistory"));
+  ok("and addToHistory", batch.includes("addToHistory"));
+  ok("which the pruning predicate agrees with", workflowAvailability(manager, standing, fresh(), 3).history === true);
+  ok("an Owner's errand about no record still does not get them", !bare.includes("readHistory") && workflowAvailability(manager, aboutNothing, fresh(), 3).history === false);
 
   console.log("\nAn allowance that has been spent");
   const exhausted = names(manager, aboutLead, spent(), 3);
@@ -148,6 +160,19 @@ async function main() {
   const sub = names(specialist, aboutLead, fresh(), 3);
   ok("has no delegate — it has nobody under it", !sub.includes("delegate"));
   ok("but can still ask sideways", sub.includes("handOff") && sub.includes("consult"));
+
+  console.log("\nupdate_living_context is never pruned");
+  for (const [label, list] of [
+    ["about a company", full],
+    ["about no record", bare],
+    ["standing work", batch],
+    ["a spent allowance", exhausted],
+    ["one of each left", nearly],
+    ["no ceiling worked out", unknown],
+    ["a specialist", sub],
+  ] as [string, string[]][]) {
+    ok(`${label}: update_living_context is sent`, list.includes("update_living_context"));
+  }
 
   console.log("\nThe prompt says only what was sent");
   for (const [label, counters, task, limit] of [
@@ -194,6 +219,46 @@ async function main() {
   // A saving that came from removing something an agent needed would show up
   // here as an implausibly large one.
   ok("and not so much that a capability went missing", perAgent < 1600, `${perAgent} tok/agent/turn`);
+
+  // --- A tripwire on the weight of a turn -----------------------------------
+  //
+  // What every agent is sent before it does anything: the system prompt and
+  // the tool schemas. Measured from the seeds rather than the rows, so an
+  // Owner's own rewrite of one agent cannot trip it, and with the regions that
+  // carry live business state — the company profile, the brand, the catalogue
+  // — left out, because those grow with the business and not with this code.
+  // A change that makes every turn of every agent ten per cent heavier should
+  // be a decision somebody made on purpose, so it fails here until the numbers
+  // below are moved by hand, with a reason in the commit.
+  console.log("\nThe weight of a turn, per agent, from the seeds");
+  const LIVE_REGIONS = new Set(["brand", "contact", "commercial"]);
+  const SYSTEM_CHARS_PER_AGENT = 11_131;
+  const TOOL_CHARS_PER_AGENT = 14_848;
+  let systemChars = 0;
+  let toolChars = 0;
+  for (const seed of AGENT_SEEDS) {
+    const agent = {
+      ...seed,
+      managerKey: seed.managerKey ?? null,
+      skills: seed.skills ?? [],
+      not_responsible: seed.not_responsible ?? [],
+      not_responsible_subject: seed.not_responsible_subject ?? [],
+      avatar: null,
+      promptEditedAt: null,
+    } as unknown as Agent;
+    const task = taskOn({ leadId: "lead-1", agentKey: seed.key });
+    const regions = await composePrompt(agent, [], { can: workflowAvailability(agent, task, fresh(), 3) });
+    systemChars += regions.filter((region) => !LIVE_REGIONS.has(region.key)).reduce((total, region) => total + region.text.length, 0);
+    const sent = (await toolsFor(agent, task, fresh(), 3)).tools;
+    toolChars += JSON.stringify(sent.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema }))).length;
+  }
+  const systemPer = Math.round(systemChars / AGENT_SEEDS.length);
+  const toolPer = Math.round(toolChars / AGENT_SEEDS.length);
+  console.log(`  ${AGENT_SEEDS.length} seeded agents`);
+  console.log(`  system prompt, without live business state: ${systemPer} chars/agent (recorded ${SYSTEM_CHARS_PER_AGENT})`);
+  console.log(`  tool schemas, on a task about a company:    ${toolPer} chars/agent (recorded ${TOOL_CHARS_PER_AGENT})`);
+  ok("the system prompt has not grown more than 10% past what was recorded", systemPer <= SYSTEM_CHARS_PER_AGENT * 1.1, `${systemPer} > ${Math.round(SYSTEM_CHARS_PER_AGENT * 1.1)}`);
+  ok("nor have the tool schemas", toolPer <= TOOL_CHARS_PER_AGENT * 1.1, `${toolPer} > ${Math.round(TOOL_CHARS_PER_AGENT * 1.1)}`);
 
   await prisma.$disconnect();
   console.log(`\n${passed} passed, ${failures.length} failed`);

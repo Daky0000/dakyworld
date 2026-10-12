@@ -1162,6 +1162,13 @@ export interface AgentRunRequest {
    */
   level?: TaskLevel;
   /**
+   * The least effort this run thinks at, whatever the level says. The runner
+   * sets it on the first retry after a failed run — effort is raised before
+   * the model is — and it only ever raises: a level whose own effort is higher
+   * keeps it.
+   */
+  effortFloor?: Effort;
+  /**
    * Asked between turns whether this run should carry on more cheaply.
    *
    * Returns the effort to drop to, or null to leave it alone. Checked where
@@ -1228,7 +1235,9 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
   // The level, when there is one, and the effort that follows from it. Both
   // can only go down from here, once — see `easeOffIfAsked`.
   let level: TaskLevel | null = request.level ?? null;
-  let effort = level ? effortForLevel(level) : (request.effort ?? "medium");
+  const efforts: Effort[] = ["low", "medium", "high", "xhigh", "max"];
+  const fromLevel = level ? effortForLevel(level) : (request.effort ?? "medium");
+  let effort = request.effortFloor && efforts.indexOf(request.effortFloor) > efforts.indexOf(fromLevel) ? request.effortFloor : fromLevel;
 
   // Who runs this conversation, in the order they will be asked.
   //

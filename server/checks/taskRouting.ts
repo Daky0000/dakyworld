@@ -16,7 +16,8 @@
  *     read as the most expensive day the company has had.
  *  2. **The decision**, with the free-model look replaced by a fake: the
  *     Owner's override wins, a resumed conversation keeps its level, a failed
- *     run comes back one level up, the look is asked only on a boundary and is
+ *     run thinks harder first and comes back one level up the second time in
+ *     a row, the look is asked only on a boundary and is
  *     clamped to one step, a failed look keeps the rules' answer, `off` gives
  *     back exactly the old effort, and a budget in its downgrade band holds
  *     the level at standard.
@@ -295,8 +296,13 @@ async function decisions() {
   check("a resumed conversation keeps its level", resumed.level === "complex" && resumed.decidedBy === "stored", `${resumed.level}/${resumed.decidedBy}`);
   check("without a fresh line every time it resumes", resumed.sentence === null, resumed.sentence ?? "");
 
-  const retried = await routeTask({ ...base, agent: agentRow(), task: taskRow({ level: "SIMPLE" }), resuming: true, previousStatus: "FAILED", mode: "full" });
-  check("a run that failed comes back one level up", retried.level === "standard" && retried.decidedBy === "retry", `${retried.level}/${retried.decidedBy}`);
+  // Effort before model: the first retry keeps the level and thinks harder,
+  // the second failure in a row moves it up. `checks/agentResume.ts` holds the
+  // rest of the ladder.
+  const retried = await routeTask({ ...base, agent: agentRow(), task: taskRow({ level: "SIMPLE" }), resuming: true, previousStatus: "FAILED", failuresInARow: 1, mode: "full" });
+  check("a run that failed comes back at the same level, thinking harder", retried.level === "simple" && retried.effort === "medium" && retried.decidedBy === "retry", `${retried.level}/${retried.effort}/${retried.decidedBy}`);
+  const retriedAgain = await routeTask({ ...base, agent: agentRow(), task: taskRow({ level: "SIMPLE" }), resuming: true, previousStatus: "FAILED", failuresInARow: 2, mode: "full" });
+  check("and one that failed twice in a row comes back one level up", retriedAgain.level === "standard" && retriedAgain.decidedBy === "retry", `${retriedAgain.level}/${retriedAgain.decidedBy}`);
 
   const paused = await routeTask({ ...base, agent: agentRow(), task: taskRow({ level: "SIMPLE" }), resuming: true, previousStatus: "QUEUED", mode: "full" });
   check("a run put down for a busy vendor does not", paused.level === "simple", paused.level ?? "null");

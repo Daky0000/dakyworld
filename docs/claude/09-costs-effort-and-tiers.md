@@ -114,9 +114,20 @@ rungs still serve first. Four stages, first answer wins:
 1. **Fixed answers.** `AgentTask.levelOverride` (the Owner's call, per task, from
    the give-task form or the task drawer — `POST /agents/tasks/:id/level`). A
    **resume reuses the stored `level`** — one conversation is not split across two
-   judgements, and a model change is a cache miss. A run claimed from **FAILED**
-   comes back **one level up** (`claim.from` in the runner); a pause for a busy
-   vendor does not, because that was never the model's fault.
+   judgements, and a model change is a cache miss. **A retry after a failed run
+   raises effort before it raises the model** (the Owner's rule): the first
+   retry keeps the level — so the model and its warm cache — and thinks one step
+   harder (`effortFloor`, low → medium → high → xhigh → max); a second failure in
+   a row comes back **one level up**. A complex task has nowhere further to go,
+   so it keeps thinking harder instead, to max. **So the level no longer always
+   fixes the effort**: the floor is the one thing that raises it, the loop takes
+   the higher of the two, and a budget in its downgrade band, which holds a
+   complex task at standard, drops the floor with it. "A retry" is read from the transitions (`lastFailure` in the
+   runner), not from `claim.from`, which says QUEUED whenever anybody requeued
+   the task first; see [07](07-agent-runtime.md). A pause for a busy vendor, a
+   block that was answered, and a failure the reaper or a restart wrote do not
+   count, because none of them was the model's fault — and a pause in the middle
+   of a retry comes back on the rung its checkpoint saved.
 2. **`scoreTask()`**, pure: agent tier, origin (schedule and delegated −1), the
    tools the brief points at (`likelyTools` — a build or judgement tool +2,
    reading only −1), brief length, wording cues (capped ±2; "care plan" is a

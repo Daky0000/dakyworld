@@ -2,13 +2,13 @@ import { createHash } from "node:crypto";
 import { capacity } from "../../lib/capacity.js";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import type { Agent, AgentTask, AgentStepKind } from "@prisma/client";
+import type { Agent, AgentTask, AgentStepKind, Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 import { SETTING, getSetting, setSetting } from "../../lib/settings.js";
-import { clipToolResult, runAgentLoop, type AgentTool, type AgentToolOutcome } from "../../lib/claudeAgent.js";
-import { clearCheckpoint, loadCheckpoint, saveCheckpoint } from "./checkpoint.js";
+import { MAX_ITERATIONS, clipToolResult, runAgentLoop, type AgentRunResult, type AgentTool, type AgentToolOutcome } from "../../lib/claudeAgent.js";
+import { appendToConversation, clearCheckpoint, loadCheckpoint, saveCheckpoint } from "./checkpoint.js";
 import { reconcileCounters } from "./checkpoint-journal.js";
-import { AnalystError } from "../../lib/claude.js";
+import { AnalystError, type Effort } from "../../lib/claude.js";
 import { listAllTools } from "../tools/catalogue.js";
 import { UNTRUSTED_CONTENT_RULE } from "../../lib/untrusted.js";
 import type { ToolDefinition } from "../tools/types.js";
@@ -20,7 +20,7 @@ import { brandBlock, catalogueBlock } from "../context/business.js";
 import { MemoryRefused, recall, remember, subjectOf, upsertLivingContext, type Recalled } from "./memory.js";
 import { authoredInstruction } from "./authored.js";
 import { describeTask, taskSubjects } from "./context.js";
-import { appendNote, renderDossier } from "../context/dossier.js";
+import { appendNote, parseSubject, renderDossier } from "../context/dossier.js";
 import { recordGap, searchRoster, similarity, tokens } from "./hiring.js";
 import { callModel } from "../../lib/models/call.js";
 import { withRunContext } from "../../lib/runContext.js";
@@ -30,7 +30,7 @@ import { wakeOne } from "../rehearsals/wake.js";
 import { check, scopesForAgent, type BudgetState } from "../budgets.js";
 import { hasPace, paceFor } from "./pace.js";
 import { planFor } from "./retry.js";
-import { routeTask, toStored } from "./complexity.js";
+import { EFFORT_LADDER, NOT_THE_MODELS_FAULT, routeTask, toStored } from "./complexity.js";
 
 /**
  * What actually runs an agent.
@@ -143,6 +143,64 @@ const busyAgents = new Set<string>();
 
 /** Cheap enough to be wrong about, expensive enough to be worth capping. */
 const MAX_ATTEMPTS = 3;
+
+/**
+ * How many more turns "Carry on" buys a task that used all of its own.
+ *
+ * **The one recorded exception to "the cap counts across resumes."** That rule
+ * stops an interrupted task collecting a fresh budget on every resume, and it
+ * stays. What it also did was make a task that ran out of turns unfinishable:
+ * re-running it found the counter already at the ceiling and stopped before
+ * the first call. A person pressing Carry on after reading where it got to is
+ * a decision about this task, made once — so it buys half a run, and only
+ * once per time the cap is hit. See `endedBy` on the checkpoint.
+ */
+export const CAP_GRANT_TURNS = 8;
+
+/** An effort word read back off a checkpoint, or null for anything else. */
+function savedEffort(value: unknown): Effort | null {
+  return EFFORT_LADDER.includes(value as Effort) ? (value as Effort) : null;
+}
+
+/**
+ * Why a run stopped short, as a word a query can count.
+ *
+ * Written at the front of the BLOCKED or FAILED transition's reason, in
+ * brackets — `[truncated] The reply ran out of room…` — because the history is
+ * the one record that outlives a re-run: `retryReason` is cleared by every
+ * ending and drawn by the screens as "paused because", and `result` is
+ * overwritten by the next run. `failureClassOf` reads it back: the retry
+ * trace names it, and a view counting why runs stop can group by it with no
+ * column added.
+ *
+ * - `refusal` — the model declined, on content. Never routed around.
+ * - `truncated` — the reply ran out of room before it finished.
+ * - `iteration-cap` — every turn the task had was used.
+ * - `vendor-unavailable` — no model could be reached, or the account it would
+ *   bill could not pay: the far end, not the task.
+ * - `tool-error` — an exception from our own side of the run rather than from
+ *   a model vendor: a tool's bookkeeping, a database write.
+ * - `budget` — the task's own spending ceiling.
+ * - `other` — everything else: a request a vendor would not take (a 400, a
+ *   model that does not exist), an agent paused under its task, a run that kept
+ *   dying without getting any further.
+ *
+ * An agent that stopped to ask — `escalate`, a blocking `needSkill` — is not a
+ * failure and carries no class: its reason is the agent's own question.
+ */
+export const FAILURE_CLASSES = ["refusal", "truncated", "iteration-cap", "vendor-unavailable", "tool-error", "budget", "other"] as const;
+export type FailureClass = (typeof FAILURE_CLASSES)[number];
+
+/** The class off the front of a transition reason, or null for an untagged one. */
+export function failureClassOf(reason: string | null | undefined): FailureClass | null {
+  const match = /^\[([a-z-]+)\]/.exec(reason ?? "");
+  const named = match?.[1] as FailureClass | undefined;
+  return named && FAILURE_CLASSES.includes(named) ? named : null;
+}
+
+function tagged(failureClass: FailureClass, sentence: string): string {
+  return `[${failureClass}] ${sentence}`;
+}
 
 /**
  * How many colleagues one task may ask, and how many pieces it may hand away.
@@ -740,8 +798,12 @@ async function autoSyncToolLivingContext(
         sourceTaskId: task.id,
       });
     }
-  } catch {
-    // Non-blocking auto-sync
+  } catch (err) {
+    // Never fails the tool call it follows — the call itself succeeded. Said
+    // out loud, though: a sync that quietly stopped working is a living
+    // context that quietly stopped being true, and the next agent in the chain
+    // acts on the stale value with nothing anywhere to say why.
+    console.warn(`[agent] could not sync living context after ${toolKey} on ${task.id}:`, (err as Error).message);
   }
 }
 
@@ -870,14 +932,19 @@ async function priorConsult(taskId: string, colleagueKey: string, question: stri
 /**
  * Which of the workflow tools this agent could actually use, on this task, now.
  *
- * The nine tools every agent carries — escalate, remember, the two history
- * ones, delegate and the four collaboration ones — cost about 2,100 tokens of
- * schema. The agent's *own* granted tools average 711. So on a typical turn the
- * scaffolding for working with colleagues is three times the weight of the job,
- * and a good part of it is provably unusable before the turn begins:
+ * The ten tools every agent carries — escalate, remember, update_living_context,
+ * the two history ones, delegate and the four collaboration ones — are the
+ * heaviest single block a turn sends, several times the weight of a typical
+ * agent's own granted tools (`checks/agentToolBudget.ts` measures both). So the
+ * scaffolding for working with colleagues outweighs the job, and a good part of
+ * it is provably unusable before the turn begins:
  *
  * - `addToHistory` and `readHistory` both refuse outright when the task is not
- *   about a lead, a client or a project — there is no company to have a history.
+ *   about a lead, a client or a project and names none — there is no company
+ *   to have a history. **Standing work is the exception**: a scheduled task is
+ *   about a batch, so it has no subject of its own and names one per call with
+ *   `record`, and pruning the tools there would leave the daily chain unable to
+ *   read what the agent before it wrote about each lead.
  * - `consult` refuses once the task's allowance is spent.
  * - `handOff` refuses once `MAX_HANDOFFS` are gone.
  *
@@ -912,12 +979,14 @@ export const ALL_WORKFLOW: WorkflowAvailability = { history: true, consult: true
 
 export function workflowAvailability(
   agent: Pick<Agent, "tier">,
-  task: Pick<AgentTask, "leadId" | "clientId" | "projectId" | "proposalId" | "invoiceId">,
+  task: Pick<AgentTask, "leadId" | "clientId" | "projectId" | "proposalId" | "invoiceId" | "origin">,
   counters: Counters,
   consultLimit?: number,
 ): WorkflowAvailability {
   return {
-    history: taskSubjects(task).length > 0,
+    // Any other task about no record still has them pruned: an Owner's
+    // subject-less errand has no batch of records to name.
+    history: taskSubjects(task).length > 0 || task.origin === "SCHEDULE",
     // Undefined means the caller could not work the ceiling out — a sync caller,
     // or a check. Keeping the tool is the safe direction: the worst case is the
     // schema this was trying to save, and the alternative is an agent silently
@@ -928,7 +997,65 @@ export function workflowAvailability(
   };
 }
 
+/**
+ * The record a workflow tool was pointed at with `record`, checked.
+ *
+ * Standing work is the reason this exists. A scheduled task works a batch of
+ * leads and is about none of them, so every per-lead fact it wrote — the
+ * fault a letter will lead on, the demo link, the hook already used — fell
+ * back to the company subject, where the next lead's value overwrote it and
+ * the agent after it in the chain read one company's fault into another
+ * company's letter. Binding each write to a named record is what keeps the
+ * daily chain's handoffs apart.
+ *
+ * Three refusals, all before anything is written: a string that is not
+ * `lead:`, `client:` or `project:` an id; a record that does not exist; and,
+ * in a rehearsal, any record the task was not already about — a rehearsal is
+ * pointed at a scratch lead precisely so that it writes nowhere real.
+ */
+export async function resolveRecord(
+  task: Pick<AgentTask, "rehearsal" | "leadId" | "clientId" | "projectId" | "proposalId" | "invoiceId">,
+  raw: unknown,
+): Promise<{ subject: string; kind: "lead" | "client" | "project"; id: string } | { refused: string }> {
+  const text = String(raw ?? "").trim();
+  const parsed = parseSubject(text);
+  if (!parsed || parsed.kind === "company") {
+    return { refused: `“${text.slice(0, 80)}” is not a record. Name one as lead:<id>, client:<id> or project:<id>.` };
+  }
+  if (task.rehearsal && !taskSubjects(task).includes(parsed.key)) {
+    return { refused: `This is a rehearsal, so it may only touch the record it was given — not ${parsed.key}.` };
+  }
+  const found =
+    parsed.kind === "lead"
+      ? await prisma.lead.count({ where: { id: parsed.id } })
+      : parsed.kind === "client"
+        ? await prisma.client.count({ where: { id: parsed.id } })
+        : await prisma.project.count({ where: { id: parsed.id } });
+  if (found === 0) return { refused: `There is no ${parsed.kind} with the id ${parsed.id}.` };
+  return { subject: parsed.key, kind: parsed.kind, id: parsed.id };
+}
+
+/**
+ * The `record` argument, described once so the six tools that take it say the
+ * same thing. Short on purpose: it rides on every turn of every agent, and the
+ * refusal a task about no record gets back says the rest.
+ */
+const RECORD_ARG = z.string().optional().describe("lead:<id>, client:<id> or project:<id> — for a task about no one record.");
+
 export function workflowTools(agent: Agent, task: AgentTask, counters: Counters, consultLimit?: number): AgentTool[] {
+  /**
+   * Where a tool that takes `record` should write or read: the record it was
+   * given, else the task's own, else nothing — and nothing is an answer the
+   * caller must turn into a refusal rather than a quiet fall back to `company`.
+   */
+  const recordFor = async (raw: unknown): Promise<{ subject: string | null } | { refused: string }> => {
+    if (raw !== undefined && raw !== null && String(raw).trim() !== "") {
+      const resolved = await resolveRecord(task, raw);
+      return "refused" in resolved ? resolved : { subject: resolved.subject };
+    }
+    return { subject: taskSubjects(task)[0] ?? null };
+  };
+
   const escalate: AgentTool = {
     name: "escalate",
     description:
@@ -963,19 +1090,36 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
             "'this task' files it against the record this task is about for you. 'this record (shared)' shares this finding with every agent that works on this lead/client/project. 'myself' files it as a standing lesson only you will be shown. 'the whole company' shares it company-wide with every agent across all tasks.",
           ),
         importance: z.number().int().min(1).max(5).default(3).describe("5 only for something that should always outrank other memories."),
+        record: RECORD_ARG,
       }),
       { target: "jsonSchema7", $refStrategy: "none" },
     ) as Record<string, unknown>,
     run: async (input) => {
-      const subjects = taskSubjects(task);
       const isCompanyWide = input.about === "the whole company";
       const isRecordShared = input.about === "this record (shared)";
       const shared = isCompanyWide || isRecordShared;
-      const about = isCompanyWide
-        ? subjectOf.company()
-        : input.about === "myself" || subjects.length === 0
-          ? subjectOf.self()
-          : subjects[0];
+      let about: string;
+      let noRecord = false;
+      if (isCompanyWide) {
+        about = subjectOf.company();
+      } else if (input.about === "myself") {
+        about = subjectOf.self();
+      } else {
+        const target = await recordFor(input.record);
+        if ("refused" in target) return { content: target.refused, isError: true };
+        if (!target.subject && isRecordShared) {
+          // It used to be filed against `self` with shared on — a row recall can
+          // never return to anybody, under a reply promising every agent would
+          // see it. Refused instead, so the agent names the record or says
+          // where else this belongs.
+          return {
+            content: "This task is not about one record, so there is nothing to share this against. Pass record: lead:<id> (or client:<id>, project:<id>), or use 'the whole company' if it is a house rule.",
+            isError: true,
+          };
+        }
+        noRecord = !target.subject;
+        about = target.subject ?? subjectOf.self();
+      }
       try {
         await remember({
           agentKey: agent.key,
@@ -996,7 +1140,9 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
       return {
         content: shared
           ? `Kept for the whole workforce, against ${about}. Every agent will be shown this.`
-          : `Kept, against ${about}.`,
+          : noRecord
+            ? `Kept, against ${about} — this task is not about one record, so it is filed as a lesson about your own work. To keep it against a lead, client or project, pass record.`
+            : `Kept, against ${about}.`,
       };
     },
   };
@@ -1026,13 +1172,29 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
           .max(200)
           .optional()
           .describe("Short evidence or reason why this state was set or changed."),
+        record: RECORD_ARG,
       }),
       { target: "jsonSchema7", $refStrategy: "none" },
     ) as Record<string, unknown>,
     run: async (input) => {
-      const subjects = taskSubjects(task);
-      const targetSubject =
-        input.scope === "the whole company" ? subjectOf.company() : (subjects[0] ?? subjectOf.company());
+      let targetSubject: string;
+      if (input.scope === "the whole company") {
+        targetSubject = subjectOf.company();
+      } else {
+        // No fall back to `company`. A per-lead key written there is read as
+        // the company's own state by every agent on every task, and the next
+        // lead's value overwrites it — which is how one company's fault came to
+        // be a letter's opening line to another.
+        const target = await recordFor(input.record);
+        if ("refused" in target) return { content: target.refused, isError: true };
+        if (!target.subject) {
+          return {
+            content: "This task is not about one record: pass record: lead:<id> (or client:<id>, project:<id>) for the one this is about, or scope 'the whole company' if it really is company-wide.",
+            isError: true,
+          };
+        }
+        targetSubject = target.subject;
+      }
       try {
         const updated = await upsertLivingContext({
           subject: targetSubject,
@@ -1081,14 +1243,17 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
           .boolean()
           .default(false)
           .describe("Put it at the top for every agent that opens this company, above the timeline. For the two or three facts that change how anyone should approach them — not for ordinary events."),
+        record: RECORD_ARG,
       }),
       { target: "jsonSchema7", $refStrategy: "none" },
     ) as Record<string, unknown>,
     run: async (input) => {
-      const [subject] = taskSubjects(task);
+      const target = await recordFor(input.record);
+      if ("refused" in target) return { content: target.refused, isError: true };
+      const subject = target.subject;
       if (!subject) {
         return {
-          content: "This task isn't about a particular lead, client or project, so there is no company history to add to. Use `remember` for a general lesson instead.",
+          content: "This task isn't about a particular lead, client or project, so there is no company history to add to. Pass record: lead:<id> for the one this happened with, or use `remember` for a general lesson.",
           isError: true,
         };
       }
@@ -1126,12 +1291,15 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
           .describe(
             `How many entries back to go. ${HISTORY_DEFAULT} is usually plenty and is what you get by default; ask for more only when you know the thing you are looking for is older than that.`,
           ),
+        record: RECORD_ARG,
       }),
       { target: "jsonSchema7", $refStrategy: "none" },
     ) as Record<string, unknown>,
     run: async (input) => {
-      const [subject] = taskSubjects(task);
-      if (!subject) return { content: "This task isn't about a particular company, so there is no history to read.", isError: true };
+      const target = await recordFor(input.record);
+      if ("refused" in target) return { content: target.refused, isError: true };
+      const subject = target.subject;
+      if (!subject) return { content: "This task isn't about a particular company, so there is no history to read. Pass record: lead:<id> to read one.", isError: true };
       const limit = typeof input.limit === "number" ? input.limit : HISTORY_DEFAULT;
       // `moreAvailable` names this tool rather than the Owner's, so an agent
       // told there are older entries is told how *it* can get them.
@@ -1160,6 +1328,57 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
       select: { id: true },
     });
 
+  /**
+   * What a child task is about, and what it will be judged against.
+   *
+   * `record` binds it to one lead, client or project, and the child is then
+   * about that record alone — which is what standing work over a batch needs,
+   * because the task handing it on is about none of them. Without it the child
+   * inherits the parent's records exactly as it always did.
+   *
+   * `acceptance` is the handoff's definition of done: up to four checks the
+   * taker is shown and asked to answer one by one. It lives on the child's
+   * `input` and nowhere else, so a delegation without one is the same row,
+   * with the same brief, as before. Cleaned here rather than trusted to the
+   * schema, because the loop hands a tool the model's arguments unvalidated.
+   */
+  const childScope = async (
+    args: Record<string, unknown>,
+  ): Promise<
+    | { refused: string }
+    | {
+        records: Pick<AgentTask, "leadId" | "clientId" | "projectId" | "proposalId" | "invoiceId">;
+        input: { acceptance: string[] } | undefined;
+      }
+  > => {
+    let records: Pick<AgentTask, "leadId" | "clientId" | "projectId" | "proposalId" | "invoiceId"> = {
+      leadId: task.leadId,
+      clientId: task.clientId,
+      projectId: task.projectId,
+      proposalId: task.proposalId,
+      invoiceId: task.invoiceId,
+    };
+    if (args.record !== undefined && args.record !== null && String(args.record).trim() !== "") {
+      const resolved = await resolveRecord(task, args.record);
+      if ("refused" in resolved) return resolved;
+      records = { leadId: null, clientId: null, projectId: null, proposalId: null, invoiceId: null, [`${resolved.kind}Id`]: resolved.id };
+    }
+    const acceptance = (Array.isArray(args.acceptance) ? args.acceptance : [])
+      .filter((line): line is string => typeof line === "string" && line.trim().length > 0)
+      .map((line) => line.trim().slice(0, 160))
+      .slice(0, 4);
+    return { records, input: acceptance.length > 0 ? { acceptance } : undefined };
+  };
+
+  const HANDOFF_ARGS = {
+    record: RECORD_ARG,
+    acceptance: z
+      .array(z.string().max(160))
+      .max(4)
+      .optional()
+      .describe("Up to four yes-or-no checks that say the work is done."),
+  };
+
   const delegate: AgentTool = {
     name: "delegate",
     description:
@@ -1169,6 +1388,7 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
         agentKey: z.string().max(64).describe("The key of the agent to hand it to. It must report to you."),
         title: z.string().min(3).max(120),
         brief: z.string().min(20).max(2000).describe("Everything they need. They cannot see your conversation — write it as if to somebody who was not here."),
+        ...HANDOFF_ARGS,
       }),
       { target: "jsonSchema7", $refStrategy: "none" },
     ) as Record<string, unknown>,
@@ -1189,6 +1409,8 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
       if (target.status === "RETIRED" || target.status === "PAUSED") {
         return { content: `${target.name} is ${target.status.toLowerCase()} and cannot take work.`, isError: true };
       }
+      const scope = await childScope(input);
+      if ("refused" in scope) return { content: scope.refused, isError: true };
       // In a rehearsal, a report that was never switched on is woken rather
       // than left holding a task that will never start, and put back when the
       // run ends. Without it the most interesting thing a rehearsal can show —
@@ -1202,14 +1424,11 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
           agentKey: target.key,
           title: String(input.title ?? "").slice(0, 120),
           brief: String(input.brief ?? "").slice(0, 2000),
+          input: scope.input,
           origin: "AGENT",
           parentId: task.id,
           priority: task.priority,
-          leadId: task.leadId,
-          clientId: task.clientId,
-          projectId: task.projectId,
-          proposalId: task.proposalId,
-          invoiceId: task.invoiceId,
+          ...scope.records,
           // Inherited, always. A rehearsal that could only hold its first agent
           // would be a rehearsal whose second agent sends the letter.
           rehearsal: task.rehearsal,
@@ -1404,6 +1623,7 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
         title: z.string().min(3).max(120),
         brief: z.string().min(20).max(2000).describe("Everything they need. They cannot see your conversation — write it as if to somebody who was not here."),
         why: z.string().min(10).max(400).describe("Why this is their craft and not yours. One sentence, and it goes on the record."),
+        ...HANDOFF_ARGS,
       }),
       { target: "jsonSchema7", $refStrategy: "none" },
     ) as Record<string, unknown>,
@@ -1422,6 +1642,8 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
       if (target.status === "RETIRED" || target.status === "PAUSED") {
         return { content: `${target.name} is ${target.status.toLowerCase()} and cannot take work. Try findAgent again, or use needSkill if nobody else can.`, isError: true };
       }
+      const scope = await childScope(input);
+      if ("refused" in scope) return { content: scope.refused, isError: true };
       // Same as `delegate`, and this is the one that needs it most: a hand-off
       // goes sideways to anybody on the roster, so it is far likelier than a
       // delegation to land on a specialist nobody has switched on yet.
@@ -1432,14 +1654,11 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
           agentKey: target.key,
           title: String(input.title ?? "").slice(0, 120),
           brief: `${String(input.brief ?? "").slice(0, 2000)}\n\n--- Handed over by ${agent.name} ---\n${String(input.why ?? "")}`,
+          input: scope.input,
           origin: "AGENT",
           parentId: task.id,
           priority: task.priority,
-          leadId: task.leadId,
-          clientId: task.clientId,
-          projectId: task.projectId,
-          proposalId: task.proposalId,
-          invoiceId: task.invoiceId,
+          ...scope.records,
           // Same reason as `delegate`. Handing work sideways must not be a way
           // out of a rehearsal.
           rehearsal: task.rehearsal,
@@ -2006,6 +2225,106 @@ export interface RunOutcome {
   summary: string | null;
 }
 
+/** The failed run a claim is the retry of. See `lastFailure`. */
+export interface LastFailure {
+  /** Who wrote the FAILED — `runner`, or `reaper`/`boot` for a run that kept dying. */
+  actor: string;
+  /** The FAILED transition's reason, with its class tag taken off. */
+  reason: string;
+  failureClass: FailureClass | null;
+  /**
+   * How many runs in a row the runner itself ended FAILED, this one included.
+   * A reaper or boot failure neither adds to the streak nor breaks it; any
+   * other ending — done, waiting on approval, blocked, cancelled — ends it.
+   */
+  inARow: number;
+  /**
+   * When the run that failed was claimed, so the trace reads that run's steps
+   * and not an older run's. Null when the history does not reach back to it.
+   */
+  runStartedAt: Date | null;
+}
+
+/**
+ * Whether the claim that has just been made is the retry of a failed run.
+ *
+ * Read from the transitions rather than from the claim's own `from`, because
+ * the claim nearly always says QUEUED: Run again, an answer, Slack and the API
+ * role all requeue a FAILED task before anything claims it, which left the
+ * retry ladder reachable from one button in one deployment shape. The history
+ * remembers the way out of FAILED whichever road it took.
+ *
+ * Two shapes count, and only when they are the newest thing before this claim:
+ * a claim straight out of FAILED, and a claim out of QUEUED whose requeue came
+ * out of FAILED. Anything else is not a retry — in particular a pause (RUNNING
+ * to QUEUED for a busy vendor), so a rate-limited resume halfway through a
+ * retry neither steps up again nor is told about the failure twice.
+ *
+ * Called after the claim, so the newest transition is the claim itself.
+ */
+export async function lastFailure(taskId: string): Promise<LastFailure | null> {
+  // Newest first, with the id breaking a tie: a claim and the requeue before it
+  // can land inside the same millisecond, and cuids sort in creation order.
+  const history = await prisma.agentTaskTransition.findMany({
+    where: { taskId },
+    orderBy: [{ at: "desc" }, { id: "desc" }],
+    take: 60,
+    select: { from: true, to: true, actor: true, reason: true, at: true },
+  });
+  const [claim, ...before] = history;
+  if (!claim || claim.to !== "RUNNING") return null;
+
+  let at: number;
+  if (claim.from === "FAILED") at = 0;
+  else if (claim.from === "QUEUED" && before[0]?.from === "FAILED" && before[0]?.to === "QUEUED") at = 1;
+  else return null;
+  const failed = before[at];
+  if (!failed || failed.to !== "FAILED") return null;
+
+  let inARow = 0;
+  for (const entry of before.slice(at)) {
+    if (entry.to === "FAILED") {
+      if (!NOT_THE_MODELS_FAULT.has(entry.actor)) inARow += 1;
+      continue;
+    }
+    if (entry.to === "QUEUED" || entry.to === "RUNNING") continue;
+    break;
+  }
+
+  return {
+    actor: failed.actor,
+    reason: failed.reason.replace(/^\[[a-z-]+\]\s*/, ""),
+    failureClass: failureClassOf(failed.reason),
+    inARow: Math.max(1, inARow),
+    runStartedAt: before.slice(at + 1).find((entry) => entry.to === "RUNNING")?.at ?? null,
+  };
+}
+
+/**
+ * What a retry is told about the run before it, in three short parts.
+ *
+ * How it ended, why, and the last call that went wrong on the way — because
+ * "do not repeat the call that failed" means nothing to a model that cannot
+ * see which call it was. Never the raw logs: the timeline holds those, and a
+ * stack trace in the conversation is paid for on every turn after it.
+ */
+export async function failureTrace(taskId: string, failure: LastFailure): Promise<string> {
+  // Only the run that failed. A call that went wrong three runs ago, and was
+  // put right since, is not what this retry needs warning about.
+  const lastBad = await prisma.agentTaskStep.findFirst({
+    where: { taskId, ok: false, kind: { in: ["TOOL_CALL", "REFUSED"] }, ...(failure.runStartedAt ? { createdAt: { gte: failure.runStartedAt } } : {}) },
+    orderBy: { seq: "desc" },
+    select: { message: true },
+  });
+  const why = failure.reason.replace(/\s+/g, " ").trim().slice(0, 400);
+  const lines = [
+    `Your last run on this task ended FAILED${failure.failureClass ? ` (${failure.failureClass})` : ""}: ${why}`,
+    ...(lastBad ? [`The last call that went wrong: ${lastBad.message.replace(/\s+/g, " ").slice(0, 200)}`] : []),
+    "Do not repeat the call that failed. Work out what to do differently, then carry on from here.",
+  ];
+  return lines.join("\n");
+}
+
 /**
  * Claims one task and works it — or picks up where the last runner left it.
  *
@@ -2082,10 +2401,36 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
     // decides what is allowed.
     return await withRunContext({ taskId: task.id, traceId: task.traceId, agentKey: task.agentKey }, async () => {
       const agent = await prisma.agent.findUnique({ where: { key: task.agentKey } });
-      if (!agent) return finishTask(task.id, "FAILED", { error: `No agent called ${task.agentKey}.` });
+      if (!agent) return finishTask(task.id, "FAILED", { error: `No agent called ${task.agentKey}.`, failureClass: "other" });
       if (agent.status === "RETIRED" || agent.status === "PAUSED") {
-        return finishTask(task.id, "BLOCKED", { blockedReason: `${agent.name} is ${agent.status.toLowerCase()} and cannot work.` });
+        return finishTask(task.id, "BLOCKED", { blockedReason: `${agent.name} is ${agent.status.toLowerCase()} and cannot work.`, failureClass: "other" });
       }
+
+      // Is this a retry of a run that failed? Read from the transitions rather
+      // than from `claim.from`, which says QUEUED whenever a person, Slack or
+      // the API role put the task back in the queue first — which is almost
+      // always — and so left the retry ladder below reachable only from one
+      // button in one deployment shape. A failure the reaper or a restart wrote
+      // is not the model's, and buys neither a retry rung nor a trace.
+      const failure = await lastFailure(task.id);
+      const retryOf = failure && !NOT_THE_MODELS_FAULT.has(failure.actor) ? failure : null;
+
+      // Told why before anything else changes, and told once: this claim is the
+      // only one whose newest transition is the way out of FAILED, so a pause
+      // and resume later in the same retry does not say it again. On the end
+      // of the conversation it will rejoin — or, when there is none, on the end
+      // of the brief this run starts from.
+      const trace = retryOf ? await failureTrace(task.id, retryOf) : null;
+      // Never in front of a turn the model has already answered. A run that
+      // died half-way through a turn keeps that turn outside `messages`, so the
+      // last user message there is one the model has replied to, and adding to
+      // it is an edit to history rather than an append — which the newer Claude
+      // models refuse, because a thinking block is bound to everything before
+      // it. That rare retry rejoins untold; the ROUTED step still says why.
+      const halfway = trace
+        ? await prisma.agentTaskCheckpoint.findUnique({ where: { taskId: task.id }, select: { pendingAssistant: true } })
+        : null;
+      const traceInConversation = trace && !halfway?.pendingAssistant ? await appendToConversation(task.id, trace) : false;
 
       const saved = await loadCheckpoint(task.id);
       let counters: Counters = saved
@@ -2105,7 +2450,33 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       // task would go straight back to BLOCKED without doing anything. What the
       // Owner answered is already in the conversation by this point.
       counters.escalated = null;
-      const startedFrom = saved?.state.iteration ?? 0;
+
+      // **"Carry on" after the cap buys `CAP_GRANT_TURNS` more, once.** The
+      // checkpoint of a run that used every turn says so (`endedBy`), and a
+      // task in that state is only ever claimed again because a person put it
+      // back — nothing requeues a BLOCKED task on its own. Without this the
+      // claim resumed at the ceiling, stopped before its first call and blocked
+      // again, so "Carry on" on a task that ran out of turns did nothing at all.
+      const resume = saved ? { ...saved.state } : null;
+      const capGranted = Boolean(saved && saved.counters.endedBy === "iteration-cap" && saved.state.iteration >= MAX_ITERATIONS);
+      if (resume && capGranted) resume.iteration = MAX_ITERATIONS - CAP_GRANT_TURNS;
+      const startedFrom = resume?.iteration ?? 0;
+
+      // Where this claim starts, written onto the checkpoint now rather than at
+      // the first save. The boot pass and the reaper judge a dead run by
+      // whether its checkpoint got further than the claim did, and a run that
+      // dies inside its first model call writes nothing — so without this they
+      // would compare against the claim *before* it, call the death progress,
+      // and hand a task that kills its process back for ever. The grant lands
+      // here too, and `endedBy` goes: the turns are given once, by this claim,
+      // whether or not it lives to use them.
+      if (saved) {
+        const { endedBy: _spent, ...kept } = saved.counters;
+        await prisma.agentTaskCheckpoint.updateMany({
+          where: { taskId: task.id, task: { is: { runOwner } } },
+          data: { iteration: startedFrom, counters: { ...kept, claimIteration: startedFrom } as Prisma.InputJsonValue },
+        });
+      }
 
       // Only on a resume, because only a resume can be behind. A first run has
       // no ledger to be out of step with, and asking for one would be two
@@ -2130,6 +2501,16 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
             { data: { corrections: reconciled.corrections } },
           );
         }
+        // The exception to the cap, recorded where the task's own history is
+        // read. Who pressed it is on the transition just before the claim.
+        if (capGranted) {
+          await step(
+            task.id,
+            "NOTED",
+            `The Owner allowed ${CAP_GRANT_TURNS} more turns after it used all ${MAX_ITERATIONS}. The cap still counts across resumes; this is the one exception to it, given once each time the cap is reached.`,
+            { data: { capGrant: CAP_GRANT_TURNS, from: saved.state.iteration, to: startedFrom } },
+          );
+        }
       } else {
         await step(task.id, "STARTED", `${agent.name} picked this up.`);
       }
@@ -2150,7 +2531,9 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       // Appended to the brief rather than woven into it, so the task's own
       // words stay first and a reader can see where ours begin.
       const hint = likelyToolsLine(granted.likely);
-      const brief = hint ? `${described}\n\n${hint}` : described;
+      // A retry with no conversation to rejoin is told on its brief instead,
+      // after everything else, where a reader can see it is ours.
+      const brief = [described, hint, trace && !traceInConversation ? trace : ""].filter(Boolean).join("\n\n");
 
       // How demanding this is, which decides the paid model and how hard every
       // model thinks. See `complexity.ts`. Written down before the run so a
@@ -2163,7 +2546,14 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
         toolkit: catalogue.filter((tool) => agent.toolkit.includes(tool.key)).map((tool) => ({ key: tool.key, scope: tool.scope })),
         likely: granted.likely.map((tool) => tool.key),
         resuming: Boolean(saved),
-        previousStatus: claim.from,
+        // FAILED when the history says this is the retry of a failed run,
+        // whichever road it came back by; the claim's own word otherwise.
+        previousStatus: failure ? "FAILED" : claim.from,
+        previousActor: failure?.actor ?? null,
+        failuresInARow: failure?.inARow ?? 0,
+        // A rung of the ladder the conversation was already on, so a pause in
+        // the middle of a retry comes back thinking as hard as it left.
+        savedEffortFloor: savedEffort(saved?.counters.effortFloor),
       });
       if (sized.level && sized.decidedBy !== "stored") {
         await prisma.agentTask.update({
@@ -2173,9 +2563,31 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       }
       if (sized.sentence) {
         await step(task.id, "ROUTED", sized.sentence, {
-          data: { level: sized.level, decidedBy: sized.decidedBy, score: sized.score, reasons: sized.reasons, cappedByBudget: sized.cappedByBudget },
+          data: {
+            level: sized.level,
+            decidedBy: sized.decidedBy,
+            score: sized.score,
+            reasons: sized.reasons,
+            cappedByBudget: sized.cappedByBudget,
+            effortFloor: sized.effortFloor,
+            ...(retryOf ? { retryOf: { failureClass: retryOf.failureClass, inARow: retryOf.inARow } } : {}),
+          },
         });
       }
+
+      // The tallies as the checkpoint keeps them, with the two facts about this
+      // claim that outlive it: where it started, which is how the boot pass and
+      // the reaper tell a run that died getting further from one that died in
+      // the same place again; and the effort a retry was raised to, so a pause
+      // halfway through comes back on the same rung. Neither is a counter, so
+      // neither goes into the live `Counters` — which is also why `endedBy`,
+      // written once at the cap, is gone again from the first save after it.
+      const checkpointCounters = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+        ...counters,
+        claimIteration: startedFrom,
+        ...(sized.effortFloor ? { effortFloor: sized.effortFloor } : {}),
+        ...extra,
+      });
 
       // Flipped by a checkpoint that finds the row no longer belongs to this run.
       // The only correct response is to stop touching it.
@@ -2195,6 +2607,8 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
           // A level when the task was sized, which sets the effort with it; the
           // old effort-only answer when sizing is switched off.
           ...(sized.level ? { level: sized.level } : { effort: sized.effort }),
+          // The first rung of the retry ladder: the same model, thinking harder.
+          ...(sized.effortFloor ? { effortFloor: sized.effortFloor } : {}),
           // The same ceiling `shouldStop` enforces, read one step earlier.
           //
           // A task's budget used to be a cliff: sixteen turns at full effort
@@ -2213,7 +2627,7 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
             const spentUsd = await spendOn(task.id);
             return spentUsd / ceiling >= EASE_OFF_AT ? "medium" : null;
           },
-          resume: saved?.state ?? null,
+          resume,
           // What it said on the way, written down as it says it.
           //
           // `AgentStepKind.THOUGHT` has existed since the runtime shipped and
@@ -2240,7 +2654,7 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
             await step(task.id, "SERVING", note);
           },
           onCheckpoint: async (state) => {
-            const held = await saveCheckpoint(task.id, runOwner, state, { ...counters });
+            const held = await saveCheckpoint(task.id, runOwner, state, checkpointCounters());
             if (!held) lostOwnership = true;
           },
           shouldStop: async () => {
@@ -2296,6 +2710,7 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
             blockedReason: `This task has spent $${ceiling.spentUsd.toFixed(2)}, which is at or past the $${(ceiling.hardLimitUsd ?? 0).toFixed(2)} ceiling set on it. Its place is kept — raise the ceiling and carry on, or leave it here.`,
             toolCalls: counters.toolCalls,
             dryRunCalls: counters.dryRun,
+            failureClass: "budget",
           });
         }
 
@@ -2305,6 +2720,55 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
             toolCalls: counters.toolCalls,
             dryRunCalls: counters.dryRun,
             progressed: result.state.iteration > startedFrom,
+          });
+        }
+
+        // Three endings the loop reports instead of throwing, and not one of
+        // them is a finished task. All three used to fall through to the
+        // summary below and finish DONE — the last thing the model said read
+        // as the account of a job it had not done, the checkpoint went with
+        // it, and the autonomy evidence counted each one as a success.
+        //
+        // An escalation outranks them: an agent that asked has said what it
+        // needs, and that is the more useful card. Each of the three outranks a
+        // prepared action, which is still there and is named on the card.
+        if (!counters.escalated && result.stoppedBecause === "refusal") {
+          // BLOCKED, because a person has to change the brief or do it, and
+          // never retried on another model — see `claudeAgent.ts`: a content
+          // refusal is not routed around, by this loop or by anything above it.
+          const why = refusalDetails(result);
+          return endedShort(task.id, runOwner, result, counters, checkpointCounters(), {
+            status: "BLOCKED",
+            failureClass: "refusal",
+            sentence:
+              `${result.model} declined this task${why ? ` (${why})` : ""}. ` +
+              `It was not retried on another model — a refusal about the content is never routed around. ` +
+              `Reword the brief and carry on, or do this one by hand.${prepared(counters)}`,
+          });
+        }
+        if (!counters.escalated && result.stoppedBecause === "truncated") {
+          // FAILED rather than BLOCKED: nothing about it needs a person's
+          // answer, and failure cards are the ones held back when a vendor
+          // degrades and fails everything at once — questions never are.
+          return endedShort(task.id, runOwner, result, counters, checkpointCounters(), {
+            status: "FAILED",
+            failureClass: "truncated",
+            sentence:
+              `The reply ran out of room before it finished, on ${result.model}. ` +
+              `Its place is kept at the last complete turn, so running it again carries on from there.${prepared(counters)}`,
+          });
+        }
+        if (!counters.escalated && result.stoppedBecause === "iteration-cap") {
+          // BLOCKED, not QUEUED: requeued, it would be claimed on the next tick,
+          // find no turns left and stop again, for ever. Saved with `endedBy` so
+          // "Carry on" knows to buy it `CAP_GRANT_TURNS` more.
+          const lastNote = (result.text || result.narration.at(-1) || "nothing").replace(/\s+/g, " ").trim().slice(0, 200);
+          return endedShort(task.id, runOwner, result, counters, checkpointCounters({ endedBy: "iteration-cap" }), {
+            status: "BLOCKED",
+            failureClass: "iteration-cap",
+            sentence:
+              `Used all ${MAX_ITERATIONS} turns without finishing. Last note: ${lastNote}. ` +
+              `Carry on allows ${CAP_GRANT_TURNS} more.${prepared(counters)}`,
           });
         }
 
@@ -2423,16 +2887,91 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
             blockedReason: plan.reason,
             error: message,
             toolCalls: counters.toolCalls,
+            failureClass: "vendor-unavailable",
           });
         }
 
-        return finishTask(task.id, "FAILED", { error: message, toolCalls: counters.toolCalls });
+        // A model-layer error that reached here is not a busy vendor — those
+        // wait — so a 5xx is the far end being down and anything else (a 400, a
+        // model that does not exist) is a request it would not take, which is
+        // `other`. A plain exception came from our own side of the run: a
+        // tool's bookkeeping, a write that did not land.
+        return finishTask(task.id, "FAILED", {
+          error: message,
+          toolCalls: counters.toolCalls,
+          failureClass: err instanceof AnalystError ? (err.status >= 500 ? "vendor-unavailable" : "other") : "tool-error",
+        });
       }
     });
   } finally {
     running.delete(taskId);
     if (claimedAgent) busyAgents.delete(claimedAgent);
   }
+}
+
+/** The line a short ending adds when the run also left prepared work behind. */
+function prepared(counters: Counters): string {
+  const n = counters.dryRun;
+  return n > 0 ? ` ${n} prepared action${n === 1 ? " is" : "s are"} waiting under Approvals.` : "";
+}
+
+/**
+ * Why the model declined, when the loop carried the vendor's own words back.
+ *
+ * A refusal arrives with `stop_details` — a category, sometimes an explanation
+ * — and is meant to be shown rather than branched on. The loop does not hand it
+ * on yet; this reads it when it is there and says nothing when it is not,
+ * rather than inventing a reason.
+ */
+function refusalDetails(result: AgentRunResult): string | null {
+  const details = (result as AgentRunResult & { stopDetails?: { category?: unknown; explanation?: unknown } | null }).stopDetails;
+  if (!details) return null;
+  const said = [
+    typeof details.category === "string" && details.category ? `category: ${details.category}` : "",
+    typeof details.explanation === "string" ? details.explanation.replace(/\s+/g, " ").trim().slice(0, 300) : "",
+  ].filter(Boolean);
+  return said.length > 0 ? said.join(" — ") : null;
+}
+
+/**
+ * Ends a run that stopped short of finishing — refused, cut off, or out of turns.
+ *
+ * The conversation is saved first, as every BLOCKED and FAILED ending keeps
+ * one: the loop does not checkpoint on its way out of these three, so a
+ * refusal or a truncation on the first turn would otherwise leave nothing for
+ * "Carry on" or an answer to rejoin. The step and the result both carry
+ * `stoppedBecause`, so the timeline says which of the three it was without
+ * anybody parsing a sentence.
+ */
+async function endedShort(
+  taskId: string,
+  runOwner: string,
+  result: AgentRunResult,
+  counters: Counters,
+  saved: Record<string, unknown>,
+  ending: { status: "BLOCKED" | "FAILED"; failureClass: FailureClass; sentence: string },
+): Promise<RunOutcome> {
+  await saveCheckpoint(taskId, runOwner, result.state, saved);
+  await step(taskId, ending.status, ending.sentence, {
+    ok: false,
+    data: { stoppedBecause: result.stoppedBecause, failureClass: ending.failureClass, model: result.model, iteration: result.state.iteration },
+  });
+  return finishTask(taskId, ending.status, {
+    ...(ending.status === "BLOCKED" ? { blockedReason: ending.sentence } : { error: ending.sentence }),
+    result: {
+      narration: result.narration,
+      stoppedBecause: result.stoppedBecause,
+      failureClass: ending.failureClass,
+      model: result.model,
+      delegated: counters.delegated,
+      handedOff: counters.handedOff,
+      consulted: counters.consulted,
+      gapsRaised: counters.gapsRaised,
+    },
+    toolCalls: counters.toolCalls,
+    dryRunCalls: counters.dryRun,
+    failureClass: ending.failureClass,
+  });
 }
 
 /**
@@ -2613,6 +3152,11 @@ async function finishTask(
     error?: string;
     toolCalls?: number;
     dryRunCalls?: number;
+    /**
+     * Why a BLOCKED or FAILED run stopped, as a word a query can count. Goes on
+     * the front of the transition's reason — see `FAILURE_CLASSES`.
+     */
+    failureClass?: FailureClass;
   },
 ): Promise<RunOutcome> {
   // What this run actually burned, summed from the ledger.
@@ -2645,9 +3189,10 @@ async function finishTask(
 
   if (FINISHED_FOR_GOOD.includes(status)) await clearCheckpoint(taskId);
 
+  const sentence = endingReason(status, data);
   const moved = await transition(taskId, {
     to: status,
-    reason: endingReason(status, data),
+    reason: data.failureClass && (status === "BLOCKED" || status === "FAILED") ? tagged(data.failureClass, sentence) : sentence,
     actor: "runner",
     // Only over a task still running. A run whose task was reaped and requeued
     // while it was working must not write its outcome over the run that took
@@ -2704,8 +3249,61 @@ async function finishTask(
       .catch((err: Error) => console.error("[agent] could not post the escalation card:", err.message));
   }
 
+  if (moved.moved) await tellParent(taskId);
+
   const task = await prisma.agentTask.findUnique({ where: { id: taskId }, select: { status: true, summary: true } });
   return { status: task?.status ?? status, summary: task?.summary ?? null };
+}
+
+/**
+ * One line on the parent's timeline when a delegated or handed-off task ends.
+ *
+ * `delegate` and `handOff` queue the work and say "you are not waiting on
+ * it", which is right while the manager is working — and left nothing
+ * anywhere to say what became of it. So whoever opens the parent afterwards
+ * reads that the piece it handed out came back done, blocked or failed.
+ *
+ * Only on a parent that is not running: a step written into a live run's
+ * timeline from outside it lands between that run's own steps, and the run is
+ * not waiting to read it anyway. Written once per ending — the same child
+ * finishing the same way twice, after a Run again, is not news. Nothing reads
+ * these back into a prompt and nothing wakes the parent; a person reads them.
+ */
+async function tellParent(taskId: string): Promise<void> {
+  try {
+    const child = await prisma.agentTask.findUnique({
+      where: { id: taskId },
+      select: {
+        parentId: true,
+        title: true,
+        status: true,
+        summary: true,
+        blockedReason: true,
+        error: true,
+        agent: { select: { name: true } },
+        parent: { select: { status: true } },
+      },
+    });
+    if (!child?.parentId || !child.parent || child.parent.status === "RUNNING") return;
+    const already = await prisma.agentTaskStep.findFirst({
+      where: {
+        taskId: child.parentId,
+        kind: "NOTED",
+        AND: [{ data: { path: ["childTaskId"], equals: taskId } }, { data: { path: ["status"], equals: child.status } }],
+      },
+      select: { id: true },
+    });
+    if (already) return;
+    const said =
+      child.status === "BLOCKED" ? child.blockedReason : child.status === "FAILED" ? child.error : child.summary;
+    const gist = (said ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+    await step(child.parentId, "NOTED", `${child.agent.name} finished "${child.title}": ${child.status}${gist ? ` — ${gist}` : ""}`, {
+      data: { childTaskId: taskId, status: child.status },
+    });
+  } catch (err) {
+    // A courtesy to whoever reads the parent. Never worth failing the child's ending over.
+    console.warn(`[agent] could not note ${taskId}'s ending on its parent:`, (err as Error).message);
+  }
 }
 
 // --- The queue --------------------------------------------------------------
@@ -2760,54 +3358,107 @@ async function reapAbandoned(now: Date): Promise<number> {
       status: "RUNNING",
       OR: [{ heartbeatAt: { lt: silent } }, { heartbeatAt: null, startedAt: { lt: ancient } }],
     },
-    select: { id: true, agentKey: true, attempts: true, checkpoint: { select: { iteration: true } } },
+    select: { id: true, agentKey: true, attempts: true, checkpoint: { select: { iteration: true, counters: true } } },
   });
 
   const orphans = abandoned.filter((task) => !running.has(task.id));
   if (orphans.length === 0) return 0;
 
-  for (const task of orphans) {
-    const at = task.checkpoint?.iteration ?? 0;
-    await step(
-      task.id,
-      "INTERRUPTED",
-      at > 0
-        ? `The process working on this stopped without finishing. ${at} step(s) were saved, and it carries on from there.`
-        : "The process working on this stopped before it had done anything. It starts again from the brief.",
-    );
-    // Requeued rather than failed while it still has attempts left: a deploy
-    // landing mid-task is the common cause, and the work is still wanted.
-    const retryable = task.attempts < MAX_ATTEMPTS;
-    await transition(
-      task.id,
-      retryable
-        ? {
-            to: "QUEUED",
-            reason: `Heartbeat quiet and no live process owns it; requeued (attempt ${task.attempts} of ${MAX_ATTEMPTS}).`,
-            actor: "reaper",
-            data: {
-              startedAt: null,
-              runOwner: null,
-              interruptRequested: false,
-              error: "Picked up again after the previous run was interrupted.",
-            },
-          }
-        : {
-            to: "FAILED",
-            reason: `Interrupted ${task.attempts} time(s) without getting any further.`,
-            actor: "reaper",
-            data: {
-              finishedAt: now,
-              runOwner: null,
-              error: `Interrupted ${task.attempts} time(s) without getting any further. Something is stopping this run rather than it failing.`,
-            },
-          },
-    );
-    busyAgents.delete(task.agentKey);
-  }
+  for (const task of orphans) await handBack(task, "reaper", now);
 
   console.warn(`[agent] recovered ${orphans.length} abandoned task(s)`);
   return orphans.length;
+}
+
+/**
+ * Did a dead run get any further than the claim that started it?
+ *
+ * The checkpoint answers: the runner stamps `claimIteration` on it as it
+ * claims, and every save after that moves `iteration` on. Three answers, and
+ * the third is why this is not a boolean:
+ *
+ * - `progressed` — it got further. That run was work, not a failure, and the
+ *   attempts start again: a task that keeps meeting deploys is not the task
+ *   the cap is for.
+ * - `stuck` — no further than it started, or no checkpoint at all. Counted, and
+ *   the third such run fails the task: a run that kills its process at the same
+ *   point every time would otherwise be handed back on every boot for ever.
+ * - `unknown` — a checkpoint written before claims were stamped. No evidence
+ *   either way, so it is requeued and never failed on it.
+ */
+export function abandonedRun(checkpoint: { iteration: number; counters: unknown } | null): "progressed" | "stuck" | "unknown" {
+  if (!checkpoint) return "stuck";
+  const claimIteration = (checkpoint.counters as Record<string, unknown> | null)?.claimIteration;
+  if (typeof claimIteration !== "number") return "unknown";
+  return checkpoint.iteration > claimIteration ? "progressed" : "stuck";
+}
+
+/**
+ * Hands a run whose process is gone back to the queue — or, the third time it
+ * died without getting anywhere, fails it.
+ *
+ * One rule for both of the places that find such a run, because they were two
+ * and only one of them had a cap: the reaper failed a task at its third death,
+ * while the boot pass requeued every RUNNING row it found with no question
+ * asked. The road that actually runs after a crash is the boot pass, so a task
+ * that took the process down with it came back on every restart, for ever.
+ */
+async function handBack(
+  task: { id: string; agentKey: string; attempts: number; checkpoint: { iteration: number; counters: unknown } | null },
+  actor: "reaper" | "boot",
+  now: Date,
+): Promise<void> {
+  const at = task.checkpoint?.iteration ?? 0;
+  const verdict = abandonedRun(task.checkpoint);
+  const failing = verdict === "stuck" && task.attempts >= MAX_ATTEMPTS;
+  const lost = actor === "boot" ? "The service restarted mid-run." : "The process working on this stopped without finishing.";
+
+  if (failing) {
+    const sentence = `Interrupted ${task.attempts} time(s) without getting any further.`;
+    await step(task.id, "INTERRUPTED", `${lost} ${sentence} Stopped here rather than handed back again.`);
+    await transition(task.id, {
+      to: "FAILED",
+      reason: tagged("other", sentence),
+      actor,
+      data: {
+        finishedAt: now,
+        runOwner: null,
+        error: `${sentence} Something is stopping this run rather than it failing.`,
+      },
+    });
+    busyAgents.delete(task.agentKey);
+    return;
+  }
+
+  await step(
+    task.id,
+    "INTERRUPTED",
+    at > 0
+      ? `${lost} ${at} step(s) were saved, and it carries on from there.`
+      : actor === "boot"
+        ? "The service restarted before this had got anywhere. It starts again from the brief."
+        : "The process working on this stopped before it had done anything. It starts again from the brief.",
+  );
+  await transition(task.id, {
+    to: "QUEUED",
+    reason:
+      actor === "boot"
+        ? "The service restarted while this was running; handed back to the queue."
+        : `Heartbeat quiet and no live process owns it; requeued (attempt ${task.attempts} of ${MAX_ATTEMPTS}).`,
+    actor,
+    data: {
+      startedAt: null,
+      runOwner: null,
+      interruptRequested: false,
+      error:
+        actor === "boot"
+          ? "The service restarted while this was running. It was picked up again."
+          : "Picked up again after the previous run was interrupted.",
+      // It got further, so the next death is counted from here.
+      ...(verdict === "progressed" ? { attempts: 0 } : {}),
+    },
+  });
+  busyAgents.delete(task.agentKey);
 }
 
 /**
@@ -2819,38 +3470,20 @@ async function reapAbandoned(now: Date): Promise<number> {
  * row at this moment is by definition abandoned. Without it, the first minute
  * after every deploy has each interrupted agent standing at its desk unable to
  * take the task it is already holding.
+ *
+ * The same cap as the reaper's — see `handBack`.
  */
 export async function resumeInterruptedTasks(): Promise<number> {
   const stranded = await prisma.agentTask.findMany({
     where: { status: "RUNNING" },
-    select: { id: true, agentKey: true, checkpoint: { select: { iteration: true } } },
+    select: { id: true, agentKey: true, attempts: true, checkpoint: { select: { iteration: true, counters: true } } },
   });
   if (stranded.length === 0) return 0;
 
-  for (const task of stranded) {
-    const at = task.checkpoint?.iteration ?? 0;
-    await step(
-      task.id,
-      "INTERRUPTED",
-      at > 0
-        ? `The service restarted mid-run. ${at} step(s) were saved, and this carries on from there.`
-        : "The service restarted before this had got anywhere. It starts again from the brief.",
-    );
-    await transition(task.id, {
-      to: "QUEUED",
-      reason: "The service restarted while this was running; handed back to the queue.",
-      actor: "boot",
-      data: {
-        startedAt: null,
-        runOwner: null,
-        interruptRequested: false,
-        error: "The service restarted while this was running. It was picked up again.",
-      },
-    });
-    busyAgents.delete(task.agentKey);
-  }
+  const now = new Date();
+  for (const task of stranded) await handBack(task, "boot", now);
 
-  console.log(`  → ${stranded.length} interrupted agent task(s) returned to the queue, each from its own checkpoint`);
+  console.log(`  → ${stranded.length} interrupted agent task(s) handed back, each from its own checkpoint`);
   return stranded.length;
 }
 

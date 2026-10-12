@@ -38,13 +38,14 @@ downgraded — so checking the refusal first files prepared work as refused,
 leaves `dryRunCalls` at zero, and finishes the task `DONE`. The Owner then
 reads "done" about work that never happened. This shipped broken once.
 
-**Seven tools exist outside the catalogue** and every agent has them regardless
+**Ten tools exist outside the catalogue** and every agent has them regardless
 of its toolkit, because they are how an agent takes part in the system rather
-than things it does to the business. Three are about the agent itself:
-`escalate` (stop and ask → `BLOCKED`), `remember` (write a memory), and
-`delegate` (hand work to a *direct report* only — never sideways or upward; a
-specialist does not get this one). Four are about working with the rest of the
-workforce.
+than things it does to the business. Six are about the agent and the records it
+works on: `escalate` (stop and ask → `BLOCKED`), `remember` (write a memory),
+`update_living_context` (set one named piece of current state — below),
+`addToHistory` and `readHistory` (a company's timeline), and `delegate` (hand
+work to a *direct report* only — never sideways or upward; a specialist does
+not get this one). Four are about working with the rest of the workforce.
 
 **Agents can reach each other now** — `workflowTools()` in `agents/runner.ts`.
 Before Aug 2026 an agent had exactly two ways out of work it could not do: hand
@@ -72,8 +73,10 @@ prompt teaches four steps and says to stop at the first one that answers:
    it could spend money the asking agent never budgeted for. The colleague
    answers from *its own* prompt layers and *its own* recalled memories of this
    lead — which is the entire value, and is asserted in `tmp/collaboration.ts`
-   with a shibboleth planted in the colleague's prompt. Capped at
-   `MAX_CONSULTS` (3).
+   with a shibboleth planted in the colleague's prompt. Capped per task by
+   its priority — `CONSULT_LIMITS` is `{1: 5, 2: 3, 3: 2}`, overridable in
+   `agents.consultLimits` — and `MAX_CONSULTS` (3) is only the fallback for a
+   priority the table does not name.
 3. **`handOff`** — the work itself is somebody else's craft. Goes *sideways*
    where `delegate` only goes down, so it demands a `why` that lands on the
    brief and on the timeline. Capped at `MAX_HANDOFFS` (2): a task with three
@@ -342,8 +345,39 @@ an agent's own conclusions lose to the record in front of it, a house rule
 does not. Shared memories get a point of importance in the recall ranking but
 not in the stored row, and `pruneMemories()` never sweeps them.
 
-**Agents come in two kinds.** The nineteen management agents recommend and
-decide; the thirty-one `SUB_AGENT` specialists make things — Web Developer,
+**Living context is the current value, not a conclusion** —
+`upsertLivingContext()` and `livingContextBlock()` in `agents/memory.ts`, the
+`update_living_context` tool. A shared row whose content is `[state:<key>]
+value`, kept against one subject and **superseded in place** for the same
+`(subject, key)`, so the next agent reads the latest fault, demo link or hook
+used rather than three contradicting conclusions. It is the daily chain's
+handoff channel, and it reaches a prompt through `livingContextBlock` on the
+task's subjects — `company` plus the records the task is about.
+
+- **A per-record key binds to a record or is refused.** Standing work
+  (`standingWork.ts`, `startTheDay.ts`) raises subject-less tasks over a batch
+  of leads, and the tool used to fall back to `company` when a task had no
+  subject — so `bleeding_neck_fault` for one lead was overwritten by the next,
+  read by every agent on every task as the company's own state, and a letter
+  could open on another company's fault. Now a task about no record must pass
+  `record: lead:<id>` (or `client:`, `project:`) for anything but scope "the
+  whole company", and gets an error saying so otherwise.
+- **`record` is on `remember`, both history tools, `delegate` and `handOff`
+  too** — `resolveRecord()`, which refuses a malformed string, a row that does
+  not exist, and in a rehearsal any record the task was not already about. A
+  `remember` "this record (shared)" with no record is refused for the same
+  reason: it used to file against `self` with shared on — a row recall can
+  never return — under a reply promising every agent would see it.
+- **Standing work keeps `readHistory` and `addToHistory`** (origin SCHEDULE), so
+  the agent after another in the chain can read what was written about each
+  lead; an Owner's subject-less errand still has them pruned.
+- The auto-sync after `demo.build`, `audit.website`, `proposal.draft` and
+  `lead.update` still writes only on a task with a subject, and says so with a
+  warning when it fails instead of swallowing it — a sync that quietly stopped
+  is a living context that quietly stopped being true.
+
+**Agents come in two kinds.** The twenty-three management agents recommend and
+decide; the thirty-four `SUB_AGENT` specialists make things — Web Developer,
 Graphic Designer, Video Editor, Ad Designer, Proposal Writer, Cold Lead Writer
 and the rest, each with `skills` (a client's words, matched by a router)
 separate from `toolkit` (a permission). Both kinds seed at autonomy 1 with dry
@@ -426,7 +460,7 @@ it — which is what a deployment nobody clicked through actually was.
 
 - **Level 2 is what makes "switch the workforce on" and "approve everything
   that leaves the building" the same setting** rather than opposite ones. It is
-  below both `EXECUTE_LEVEL` (3) and `SPEND_LEVEL` (4), so 46 of the 72 tools
+  below both `EXECUTE_LEVEL` (3) and `SPEND_LEVEL` (4), so 48 of the 77 tools
   do real work and **not one outward or spending tool acts unsupervised** —
   each is held, files an `ActionRequest`, and posts to Slack with an Approve
   button that carries it out exactly as prepared. Walked over the whole
@@ -462,14 +496,23 @@ means `reconcileSeedToolkits()` grants it on every existing database at the
 next boot.
 
 **An agent is not sent a tool it could not possibly use** —
-`workflowAvailability()` in `runner.ts`. Measured against the real roster, a
-turn costs ~5,430 tokens before anything happens: 2,482 of system prompt and
-2,948 of tool schema, of which the agent's *own* granted tools are 711 and the
-nine workflow tools are 2,118. The scaffolding for asking a colleague is three
-times the weight of the job, and part of it is provably dead before the turn
+`workflowAvailability()` in `runner.ts`. Measured over the 57 seeds on a task
+about a company (`checks/agentToolBudget.ts` prints it every run), a turn sends
+about 14,800 characters of tool schema per agent, of which the ten workflow
+tools are about 10,900 — nearly three quarters — beside about 11,100 of system
+prompt and another 3,700 of live business state. The scaffolding for asking a
+colleague outweighs the job, and part of it is provably dead before the turn
 begins: `addToHistory` and `readHistory` both refuse when the task is not about
-a lead, a client or a project, `consult` refuses once the allowance is spent,
-and `handOff` once `MAX_HANDOFFS` are gone.
+a lead, a client or a project and names none, `consult` refuses once the
+allowance is spent, and `handOff` once `MAX_HANDOFFS` are gone. **Standing work
+keeps the two history tools** although its tasks have no subject: it is about a
+batch, and names a record per call (see *Living context*, above).
+
+- **A tripwire holds the weight.** The same file records the per-agent system
+  and tool totals as constants and fails on more than 10% growth, so a change
+  that makes every turn of every agent heavier is a number somebody moved on
+  purpose. The `record` and `acceptance` arguments cost about 850 characters a
+  turn when they arrived; the recorded figures include them.
 
 - **The prompt is built from the same answer as the tool list**, and that half
   is the one that matters. A prompt naming a tool that was not sent spends a
@@ -508,10 +551,13 @@ created one. Both were green on the second run of the day and red on the first.
 nobody can read a new failure out of** — the same lesson `checks/roster.ts`'s
 own reconcile section carries a comment about.
 
-Five committed check files cover this module now, all database-only:
+Eight committed check files cover this module now, all database-only:
 `commissioning.ts` (34) walks the gate at the commissioned card over the whole
-catalogue; `agentToolBudget.ts` (46) holds the pruning to never removing a
-capability and never naming an absent tool; `agentCollaboration.ts` (37) runs
+catalogue; `agentToolBudget.ts` (61) holds the pruning to never removing a
+capability and never naming an absent tool, and carries the weight tripwire;
+`agentRunEndings.ts` (66), `agentResume.ts` (45) and `agentRecordBinding.ts`
+(48) hold the honest endings, the two recovery roads and the retry ladder, and
+record-bound state with its hand-offs — each below; `agentCollaboration.ts` (37) runs
 `findAgent`, `delegate`, `handOff`, `needSkill` and `consult`'s refusals
 against the **real seeded roster**, because the failure worth catching is a
 rename; `slackApprovals.ts` (48) drives the whole approval loop over real HTTP
@@ -562,9 +608,27 @@ conversation instead of starting one.
   conversation the API will accept — and a resume runs only the calls that
   genuinely never happened.
 - **The iteration cap counts across resumes**, or a task interrupted five times
-  gets five times the budget. `attempts` works the other way: it resets on any
-  run that *progressed*, so the cap catches a task that keeps dying in the same
-  place rather than one that keeps meeting deploys.
+  gets five times the budget. **One recorded exception:** a run that used every
+  turn ends BLOCKED with `endedBy: "iteration-cap"` on its checkpoint, and the
+  next claim — only ever a person's Carry on, Run or answer, because nothing
+  requeues a BLOCKED task on its own — resumes at `MAX_ITERATIONS -
+  CAP_GRANT_TURNS` (8 more turns) and writes a NOTED step saying so. The claim
+  strips `endedBy`, so the grant is given once per time the cap is reached; a
+  second cap blocks again. Without it Carry on on a capped task did nothing at
+  all: the claim found the counter at the ceiling and stopped before its first
+  call.
+- `attempts` works the other way: it resets on any run that *progressed*, so
+  the cap catches a task that keeps dying in the same place rather than one
+  that keeps meeting deploys. **Both roads that find a dead run apply it now**
+  (`handBack()`): the reaper, and the boot pass, which used to requeue every
+  RUNNING row with no question asked — and the boot pass is the road that
+  actually runs after a crash, so a task that took the process down with it
+  came back on every restart. "Progressed" is read off the checkpoint: the
+  claim stamps `claimIteration` on it *before* the first model call, so a run
+  that dies inside that call is compared against its own start, not the claim
+  before it. A checkpoint with no stamp (written before this) is no evidence
+  either way and is requeued, never failed. Three deaths without getting any
+  further is FAILED with actor `reaper` or `boot`.
 - **Every checkpoint write proves ownership** (`runOwner`, matched in the
   update) and touches the heartbeat in the same statement. A process reaped as
   dead that later wakes up finds its token replaced and stops rather than
@@ -582,6 +646,59 @@ conversation instead of starting one.
 - DONE and NEEDS_APPROVAL clear the checkpoint; BLOCKED, FAILED and CANCELLED
   keep it, which is what makes "Carry on" mean carry on. `pruneCheckpoints()`
   sweeps them after 30 days.
+
+**A run that did not finish does not finish DONE** — `endedShort()` in
+`runner.ts`. The loop reports three endings without throwing: the model
+declined (`refusal`), the reply ran out of room (`truncated`), and every turn
+was used (`iteration-cap`). All three used to fall through to the summary and
+finish DONE: the last thing the model said read as the account of a job it had
+not done, the checkpoint went with it, and the Agents screen's success rate —
+DONE over DONE plus FAILED, the evidence for raising an agent's autonomy —
+counted each one as a success.
+
+- **Refused is BLOCKED**, and the card names the model, says it was not retried
+  on another one, and quotes the vendor's `stop_details` when the loop hands
+  them on. A content refusal is never routed around, by the loop or by
+  anything above it.
+- **Truncated is FAILED**, not BLOCKED: nothing about it needs a person's
+  answer, and failure cards are the ones held back in weather.
+- **Out of turns is BLOCKED**, quoting the last thing it said and offering the
+  eight-turn grant above. Requeued instead, it would be claimed on the next tick,
+  find no turns left and stop again, for ever.
+- **Precedence**: an escalation outranks all three (an agent that asked has
+  said what it needs); each of the three outranks prepared work, which is named
+  on the card instead ("1 prepared action is waiting under Approvals").
+- Each saves the conversation first — the loop does not checkpoint on its way
+  out of these — and carries `stoppedBecause` on the step and on `result`.
+
+**Why a run stopped is a word a query can count.** Every BLOCKED or FAILED
+ending the runner, the reaper or the boot pass writes puts a class at the front
+of the transition's reason — `[truncated] The reply ran out of room…` — one of
+`refusal`, `truncated`, `iteration-cap`, `vendor-unavailable`, `tool-error`,
+`budget` or `other` (`FAILURE_CLASSES`, read back by `failureClassOf`). The
+transition rather than a column, because it is the one record that outlives a
+re-run: `retryReason` is cleared by every ending and `result` is overwritten.
+An escalation carries no class — asking is not failing.
+
+**The failure ladder is keyed on the history, not on the claim** —
+`lastFailure()` in `runner.ts`, the rungs in `complexity.ts`. It used to read
+`claim.from`, which says QUEUED whenever Run again, an answer, Slack or the API
+role requeued the task first — nearly always — so the ladder was reachable from
+one button in one deployment shape. A claim is a retry when the newest
+transition before it is the way out of FAILED, either directly or through a
+requeue. **Effort before model** (the Owner's rule): the first retry keeps the
+level, and so the model and its warm cache, and thinks one step harder; a
+second failure in a row is the evidence thinking was not enough, and only then
+does the level step up. A pause in the middle of a retry is not a retry — it
+comes back on the rung its checkpoint saved (`effortFloor`), and is not told
+twice. A failure the reaper or the boot pass wrote is not the model's and buys
+nothing. **The retry is told why**, once: a few lines naming the ending, its
+class, its reason and the failed run's last bad call, appended after the tool
+results of the conversation it rejoins — never raw logs, and never in front of
+a turn the model already answered (a run that died half-way through a turn
+rejoins untold, because that would be an edit to history). Any other ending
+between two failures starts the count again. See
+[09](09-costs-effort-and-tiers.md) for the rungs.
 
 **"Start the day" moves the time, and only the time** —
 `services/agents/startTheDay.ts`. Every ceiling still applies and a draft
@@ -742,6 +859,19 @@ spend are not outward.
   guard themselves: on a restored turn, a child task with the same parent, taker
   and title is already theirs and a second one is another agent waking up to do
   work that is done.
+
+**A hand-off can say what done looks like, and the parent hears how it
+ended.** `delegate` and `handOff` take an optional `acceptance` — up to four
+checks of up to 160 characters, cleaned in the handler because the loop hands
+a tool the model's arguments unvalidated — which lands on the child's `input`
+as `{ acceptance: [...] }` and nowhere else, so a hand-off without one is the
+same row with the same brief as before. With `record`, the child is about that
+one lead, client or project instead of inheriting the parent's records. When a
+child ends, `tellParent()` writes one NOTED step on the parent — *"<agent>
+finished "<title>": <STATUS> — <gist>"* — only when the parent is not running
+(a step written into a live run lands between that run's own) and only once per
+(child, status). Nothing reads it back into a prompt and nothing wakes the
+parent; it is for whoever opens the parent next.
 
 `checks/replayGuard.ts` (12) holds all three, and half of it is the negatives —
 a deliberate repeat must still run, a call with no run behind it must still run,
