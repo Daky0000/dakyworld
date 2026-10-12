@@ -103,8 +103,8 @@ async function main() {
   );
 
   const shippedCatalogue = await catalogueBlock();
-  check("the catalogue carries the current monthly rate", shippedCatalogue.includes("GHS 5,000/month"));
-  check("and the discount, as a separate thing from the rate", shippedCatalogue.includes("GHS 3,000") && shippedCatalogue.includes("first three months"));
+  check("the catalogue carries the current monthly rate", shippedCatalogue.includes("GHS 4,500/month"));
+  check("and the discount, as a separate thing from the rate", shippedCatalogue.includes("GHS 3,150") && shippedCatalogue.includes("first three months"));
   check("and the defined projects with their published floors", shippedCatalogue.includes("GHS 15,000") && shippedCatalogue.includes("GHS 35,000"));
   check("a retired service line is never in the catalogue", !/email-workspace|security-backups/.test(shippedCatalogue));
 

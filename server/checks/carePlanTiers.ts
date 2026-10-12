@@ -105,8 +105,8 @@ async function main() {
     "and a Founding Partner rate that is genuinely lower",
     shipped.tiers.every((tier) => tier.foundingMonthly !== null && tier.foundingMonthly < (tier.standardMonthly as number)),
   );
-  check("the site's own numbers, not a rounded retelling", JSON.stringify(shipped.tiers.map((tier) => [tier.foundingMonthly, tier.standardMonthly])) === "[[3000,5000],[7000,12500],[15000,25000]]");
-  check("Transformation is priced 'from', because the site prices it that way", shipped.tiers[2].fromPrice === true);
+  check("the site's own numbers, not a rounded retelling", JSON.stringify(shipped.tiers.map((tier) => [tier.foundingMonthly, tier.standardMonthly])) === "[[3150,4500],[8400,12000],[19600,28000]]");
+  check("Transformation is a set price, as the site has priced it since 9 Oct 2026", shipped.tiers[2].fromPrice === false);
   check("Foundation is not", shipped.tiers[0].fromPrice === false);
   check("nothing the site sells is left unaccounted for", shipped.unmatched.length === 0);
 
@@ -125,6 +125,7 @@ async function main() {
   const live = await carePlanCatalogue();
   check("the stored answer wins over the constant", live.source === "website" && live.tiers[1].standardMonthly === 14000);
   check("and its discount comes with it", live.tiers[1].foundingMonthly === 8000);
+  check("a plan the site prices 'from' is marked so", live.tiers[2].fromPrice === true && live.tiers[0].fromPrice === false);
   check("a tier is priced at the rate asked for", (await priceForTier("GROWTH", "STANDARD"))?.monthlyFee === 14000);
   check("and at the other one", (await priceForTier("GROWTH", "FOUNDING"))?.monthlyFee === 8000);
 
@@ -165,14 +166,14 @@ async function main() {
   });
   const extra = await carePlanCatalogue();
   check("the fourth plan is named", extra.unmatched.join(",") === "Enterprise");
-  check("and the three that do have a tier are unaffected", extra.tiers.length === 3 && extra.tiers[0].standardMonthly === 5000);
+  check("and the three that do have a tier are unaffected", extra.tiers.length === 3 && extra.tiers[0].standardMonthly === 4500);
 
   // ---------------------------------------------------------------------
   console.log("\nA tier the site could not be read for still has a price");
   await storeOffer({ ...SHIPPED_OFFER, syncedAt: new Date().toISOString(), plans: [{ tier: "Growth", monthly: 14000, discountedMonthly: 8000, discountNote: "", for: "" }] });
   const partial = await carePlanCatalogue();
   check("the tier that was read uses the site's price", partial.tiers[1].standardMonthly === 14000);
-  check("the two that were not fall back to the shipped ones", partial.tiers[0].standardMonthly === 5000 && partial.tiers[2].standardMonthly === 25000);
+  check("the two that were not fall back to the shipped ones", partial.tiers[0].standardMonthly === 4500 && partial.tiers[2].standardMonthly === 28000);
   check("no tier is missing from the picker", partial.tiers.length === 3);
 
   await resetOffer();
@@ -180,21 +181,21 @@ async function main() {
   // ---------------------------------------------------------------------
   // ---------------------------------------------------------------------
   console.log("\nThe tier decides the fee");
-  // Back on the shipped floor: Foundation 3,000/5,000, Growth 7,000/12,500,
-  // Transformation 15,000/25,000.
+  // Back on the shipped floor: Foundation 3,150/4,500, Growth 8,400/12,000,
+  // Transformation 19,600/28,000.
   const onStandard = { tier: "FOUNDATION" as const, standardMonthlyFee: null, foundingRateUntil: null };
 
   const created = await pricedFieldsFor({ tier: "GROWTH" }, null);
-  check("a new plan is priced from the website", created?.monthlyFee === 12500);
+  check("a new plan is priced from the website", created?.monthlyFee === 12000);
   check("at the standard rate unless the founding one is asked for", created?.standardMonthlyFee === null);
   check("and gets the tier's capacity allocation", created?.includedHours === 12);
 
   const moved = await pricedFieldsFor({ tier: "GROWTH" }, onStandard);
-  check("moving an existing plan up a tier moves its fee", moved?.monthlyFee === 12500);
+  check("moving an existing plan up a tier moves its fee", moved?.monthlyFee === 12000);
   check("and its capacity", moved?.includedHours === 12);
 
   const movedDown = await pricedFieldsFor({ tier: "FOUNDATION" }, { ...onStandard, tier: "TRANSFORMATION" });
-  check("moving down a tier moves the fee down", movedDown?.monthlyFee === 5000);
+  check("moving down a tier moves the fee down", movedDown?.monthlyFee === 4500);
 
   // ---------------------------------------------------------------------
   console.log("\nExcept where somebody actually agreed a number");
@@ -208,25 +209,25 @@ async function main() {
   check("editing a plan without moving its tier never reprices it", Object.keys(untouched ?? {}).length === 0);
 
   const hoursKept = await pricedFieldsFor({ tier: "GROWTH", includedHours: 20 }, onStandard);
-  check("a tier change reprices but keeps hours somebody typed", hoursKept?.monthlyFee === 12500 && hoursKept?.includedHours === 20);
+  check("a tier change reprices but keeps hours somebody typed", hoursKept?.monthlyFee === 12000 && hoursKept?.includedHours === 20);
 
   // ---------------------------------------------------------------------
   console.log("\nA rate can move without the tier moving");
   const toFounding = await pricedFieldsFor({ rate: "FOUNDING" }, onStandard);
-  check("asking for the founding rate applies it", toFounding?.monthlyFee === 3000);
-  check("with the standard rate waiting behind it", toFounding?.standardMonthlyFee === 5000);
+  check("asking for the founding rate applies it", toFounding?.monthlyFee === 3150);
+  check("with the standard rate waiting behind it", toFounding?.standardMonthlyFee === 4500);
   check("and a date for the step-up", toFounding?.foundingRateUntil instanceof Date);
 
   const clockRunning = new Date("2026-12-01T00:00:00.000Z");
-  const midDiscount = { tier: "FOUNDATION" as const, standardMonthlyFee: 5000, foundingRateUntil: clockRunning };
+  const midDiscount = { tier: "FOUNDATION" as const, standardMonthlyFee: 4500, foundingRateUntil: clockRunning };
 
   const upgraded = await pricedFieldsFor({ tier: "GROWTH" }, midDiscount);
-  check("a plan mid-discount stays on the founding rate when it moves tier", upgraded?.monthlyFee === 7000);
-  check("with the new tier's standard rate behind it", upgraded?.standardMonthlyFee === 12500);
+  check("a plan mid-discount stays on the founding rate when it moves tier", upgraded?.monthlyFee === 8400);
+  check("with the new tier's standard rate behind it", upgraded?.standardMonthlyFee === 12000);
   check("and the three months are not restarted by the move", (upgraded?.foundingRateUntil as Date).getTime() === clockRunning.getTime());
 
   const offFounding = await pricedFieldsFor({ rate: "STANDARD" }, midDiscount);
-  check("stepping off the founding rate by hand charges the standard one", offFounding?.monthlyFee === 5000);
+  check("stepping off the founding rate by hand charges the standard one", offFounding?.monthlyFee === 4500);
   check("and leaves nothing to step up to", offFounding?.standardMonthlyFee === null && offFounding?.foundingRateUntil === null);
 
   // ---------------------------------------------------------------------
@@ -239,7 +240,7 @@ async function main() {
   // Only Growth is unpriced: the other two are not in the stored answer at all,
   // so they fall back to the shipped prices rather than to nothing.
   check("a tier the site publishes no price for returns null", (await pricedFieldsFor({ tier: "GROWTH" }, null)) === null);
-  check("and a tier that still has one is unaffected", (await pricedFieldsFor({ tier: "FOUNDATION" }, null))?.monthlyFee === 5000);
+  check("and a tier that still has one is unaffected", (await pricedFieldsFor({ tier: "FOUNDATION" }, null))?.monthlyFee === 4500);
   await resetOffer();
 
   console.log("\nThe Founding Partner rate ends by itself");
