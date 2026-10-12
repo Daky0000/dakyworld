@@ -773,7 +773,9 @@ function unsupportedField(child: ElementNode, id: string): SiteField {
   return {
     id,
     kind: "unsupported",
-    label: `${child.tag.toUpperCase()} element (read-only)`,
+    // Not "(read-only)": these move, delete and take a style like anything
+    // else. Only what is inside is out of reach, and the editor says that.
+    label: `${child.tag.toUpperCase()} element`,
     tag: child.tag,
     value: "",
     preview: `${child.tag.toUpperCase()} element`,

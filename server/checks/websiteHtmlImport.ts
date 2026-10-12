@@ -326,6 +326,8 @@ async function runChecks() {
   assert.equal(formField.kind, "unsupported");
   assert.ok(formField.previewReadOnly, "Unsupported form marked previewReadOnly");
   assert.ok(formField.unsupportedReason?.includes("Interactive form"), "Form contains reason");
+  // It moves and deletes like anything else; its name must not say otherwise.
+  assert.equal(formField.label, "FORM element", "an unsupported element is not named read-only");
 
   const iframeField = fields.find((f) => f.tag === "iframe");
   assert.ok(iframeField, "Discovered <iframe> field as unsupported");

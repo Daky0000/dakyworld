@@ -49,6 +49,17 @@ if (!playwright) {
   process.exit(2);
 }
 
+// Before the harness starts, so a mistyped name cannot leave one running.
+const selected = new Set(process.argv.slice(2));
+const files = readdirSync(here)
+  .filter((name) => name.endsWith(".mjs") && name !== "run.mjs")
+  .filter((name) => selected.size === 0 || selected.has(name))
+  .sort();
+if (selected.size && files.length !== selected.size) {
+  console.error("One or more requested browser checks do not exist.");
+  process.exit(2);
+}
+
 const already = await fetch(`${BASE}/builder-harness.html`).then((response) => response.ok).catch(() => false);
 
 let vite = null;
@@ -56,10 +67,15 @@ if (already) {
   console.log(`Using the harness already serving on ${BASE}.`);
 } else {
   console.log(`Starting the harness on ${BASE}…`);
-  const command = windows ? (process.env.ComSpec || "cmd.exe") : "npm";
+  // Vite itself rather than `npm exec` where a kill reaches only the process
+  // it is sent to: `vite.kill()` stopped npm and left Vite serving on 5199, and
+  // the next run said "Using the harness already serving" and tested whatever
+  // that orphan was serving — another checkout's client, if it came from one.
+  // Windows keeps npm and stops the whole tree with taskkill at the end.
+  const command = windows ? (process.env.ComSpec || "cmd.exe") : process.execPath;
   const args = windows
     ? ["/d", "/s", "/c", `npm exec -- vite --port ${PORT} --strictPort --host ${HOST}`]
-    : ["exec", "--", "vite", "--port", String(PORT), "--strictPort", "--host", HOST];
+    : [join(client, "node_modules", "vite", "bin", "vite.js"), "--port", String(PORT), "--strictPort", "--host", HOST];
   vite = spawn(command, args, {
     // Vite serves its current directory. `npm --prefix client` still leaves the
     // process in `server/`, which makes builder-harness.html return 404.
@@ -78,16 +94,6 @@ if (already) {
     console.error(`The harness did not come up on ${BASE} within a minute.`);
     process.exit(1);
   }
-}
-
-const selected = new Set(process.argv.slice(2));
-const files = readdirSync(here)
-  .filter((name) => name.endsWith(".mjs") && name !== "run.mjs")
-  .filter((name) => selected.size === 0 || selected.has(name))
-  .sort();
-if (selected.size && files.length !== selected.size) {
-  console.error("One or more requested browser checks do not exist.");
-  process.exit(2);
 }
 
 let failed = 0;

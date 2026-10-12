@@ -181,7 +181,11 @@ table {
 .editor-controls input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]), .editor-controls select, .editor-controls textarea { min-height:36px; border-radius:10px; }
 .editor-controls [contenteditable] { min-height:100px; padding:12px; line-height:1.7; }
 .editor-controls fieldset[aria-label="Selected text formatting"] { margin:0 0 12px; border-radius:12px; }
-.editor-layers { display:flex; flex-direction:column; min-height:170px; max-height:35%; border-bottom:1px solid var(--editor-line); overflow:auto; }
+/* Docked, Layers fills its drawer. The 35% cap dates from when the list sat at
+   the top of the properties panel with controls under it; in a drawer of its
+   own it left two thirds of the drawer empty. Resized from its bottom edge it
+   keeps the height it was given (an inline height, remembered per browser). */
+.editor-layers { display:flex; flex-direction:column; min-height:170px; border-bottom:1px solid var(--editor-line); overflow:auto; }
 .editor-canvas { background:var(--editor-bg)!important; padding:24px; min-width:0; }
 
 /* Normal State Surfaces, Borders & Typography inside Website Editor */

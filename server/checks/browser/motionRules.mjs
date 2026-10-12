@@ -101,9 +101,29 @@ try {
   await page.mouse.move(900, 700);
 
   /* ------------------------------------------------------- the numbers it reads */
-  const opacity = Number(await style("custom", "opacity"));
-  assert.ok(opacity >= 0.25 && opacity < 0.3, `a custom effect starts from the element's own numbers (opacity ${opacity})`);
-  assert.match(await style("custom", "transform"), /matrix\(1, 0, 0, 1, (?:29|30)(?:\.\d+)?, 0\)/, "including its transform");
+  // Read on the animation's own clock, not the wall's. This used to sample the
+  // element whenever the line above had finished and expect 29–30px, which is
+  // "early in a 100-second animation" on a fast machine; a slower one got there
+  // later and read 28.7. The animation has to be running by itself first —
+  // a custom effect that never started fails here — and is then held at its
+  // first and last moments, where the element's own numbers are the answer
+  // exactly, whatever the machine.
+  const custom = (at) => page.locator("#custom").evaluate((element, time) => {
+    const animation = element.getAnimations().find((candidate) => candidate.animationName === "dw-fx-custom-enter");
+    if (!animation) return null;
+    const running = animation.playState === "running" && Number(animation.currentTime) > 0;
+    animation.pause();
+    animation.currentTime = time === "end" ? Number(animation.effect.getComputedTiming().endTime) : time;
+    const computed = getComputedStyle(element);
+    return { running, opacity: computed.opacity, transform: computed.transform };
+  }, at);
+  const start = await custom(0);
+  assert.ok(start?.running, "a custom effect plays on its own");
+  assert.equal(start.opacity, "0.25", "it starts from the element's own opacity");
+  assert.equal(start.transform, "matrix(1, 0, 0, 1, 30, 0)", "and its own transform");
+  const end = await custom("end");
+  assert.equal(end.opacity, "1", "and ends on the element's own numbers");
+  assert.equal(end.transform, "matrix(1, 0, 0, 1, 0, 0)");
   await page.waitForTimeout(300);
   assert.equal(await style("out", "opacity"), "0", "an Out effect ends hidden and stays there");
   assert.equal((await style("thrice", "animationIterationCount")).split(",")[0].trim(), "3", "a repeat count is honoured");

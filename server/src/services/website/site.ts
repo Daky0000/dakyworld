@@ -1197,6 +1197,19 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
         mark(null);
         post({ type: "select", id: null });
       }
+      // Delete too, for the same reason. The editor decides — the question
+      // for a form, what may not go at all — so this only says which element
+      // is marked. Never out of one of the page's own boxes (a click on a
+      // form's field puts the caret in it), and a held key is one press.
+      if (event.key === "Delete" && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+        var chosen = document.querySelector("[data-dw-selected]");
+        var active = document.activeElement;
+        var inBox = active && (active.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].indexOf(active.tagName) !== -1);
+        if (chosen && !inBox) {
+          event.preventDefault();
+          post({ type: "delete", id: chosen.getAttribute("data-dw-field") });
+        }
+      }
       return;
     }
     if (event.key === "Escape") { event.preventDefault(); stopEdit(); return; }

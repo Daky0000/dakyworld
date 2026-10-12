@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { FieldEdit, SiteFieldRow } from "../lib/types";
+import { mediaKind } from "../../../src/shared/websiteElementSettings";
 import { Badge } from "./ui";
 import { WebsiteRichText } from "./WebsiteRichText";
 import { WebsiteIconPicker } from "./WebsiteIconPicker";
@@ -149,6 +150,19 @@ export function FieldRow({
         <div className="mb-2">
           <Badge tone="warn">Changed</Badge>
         </div>
+      )}
+      {/* A form, an embed, a player, a canvas. Its label ended in "(read-only)"
+          until 12 Oct 2026 — the only thing in List mode saying why it has no
+          box, and no longer true of it as a whole: on the page it moves and
+          deletes like anything else. What cannot be touched is what is inside
+          it. Not in the inspector (`bare`), which says this in its own words
+          and has a player's settings right underneath. */}
+      {field.kind === "unsupported" && !bare && (
+        <p className="text-xs leading-relaxed text-muted">
+          {mediaKind(field.tag)
+            ? "Select it on the page to change its address and how it plays, to move it or to delete it."
+            : "What is inside it can't be edited here; it stays exactly as your site's code has it. Select it on the page to move it, delete it or change its style."}
+        </p>
       )}
 
       {(field.kind === "richtext" || (field.kind === "text" && field.tag !== "title" && field.tag !== "meta")) && (

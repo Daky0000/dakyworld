@@ -192,6 +192,19 @@ const INPUT =
  */
 const LIVE_KEYS = new Set(["value", "style", "responsive", "variant", "newTab", "icon", "iconPosition", "alt"]);
 
+/** The inspector's tabs, in the order the arrow keys walk them. */
+const INSPECTOR_TABS = ["general", "style", "interactions"] as const;
+
+/**
+ * Whether a key pressed with this element focused belongs to it. Delete in a
+ * box is somebody correcting a word; taking the selected block with it would
+ * be the editor answering a question nobody asked.
+ */
+function typingInto(element: Element | null): boolean {
+  if (!element) return false;
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName) || (element as HTMLElement).isContentEditable === true;
+}
+
 /**
  * A field with formatting inside it.
  *
@@ -214,7 +227,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const [designerMode, setDesignerMode] = useState(false);
   // The same three tabs for every element: General (its words, picture or
   // source, then its settings), Style and Interactions.
-  const [inspectorTab, setInspectorTab] = useState<"general" | "style" | "interactions">("general");
+  const [inspectorTab, setInspectorTab] = useState<(typeof INSPECTOR_TABS)[number]>("general");
   const [showLayers, setShowLayers] = useState(false);
   const [showPanel, setShowPanel] = useState(() => typeof window === "undefined" || window.innerWidth > 600);
   const [editorTheme, setEditorTheme] = useState(() => { try { return localStorage.getItem("website-editor-theme") || "dark"; } catch { return "dark"; } });
@@ -255,6 +268,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const [structureBusy, setStructureBusy] = useState(false);
   const structurePending = useRef(false);
   const structuralHistory = useRef<(step: number) => void>(() => {});
+  /** The Delete key: the menu's Delete, for whatever is selected. True when it acted. */
+  const keyboardDelete = useRef<(frameSelection?: string | null) => boolean>(() => false);
   const latestEdits = useRef(edits);
   latestEdits.current = edits;
   const [computed, setComputed] = useState<Record<string, string>>({});
@@ -610,8 +625,30 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
   /* ------------------------------------------------------------ the frame */
 
+  /**
+   * A message for the picker, addressed to this app's origin and nothing else.
+   * The editing frame keeps that origin (`allow-same-origin`) and its picker
+   * listens only to it, so `"*"` bought nothing there; all it meant was that a
+   * different document in the frame would have heard the editor too.
+   *
+   * A page drawn by its own scripts is shown in the isolated preview instead,
+   * served without `allow-same-origin`, so its origin is opaque and `"*"` is
+   * the only address that reaches it. Nothing is sent there: `previewDocument`
+   * gives it no picker, so the only listeners in it are the page's own
+   * scripts. Its document being out of reach from here is how the two are
+   * told apart.
+   */
   const tell = useCallback((message: Record<string, unknown>) => {
-    frame.current?.contentWindow?.postMessage({ source: "dakyworld-editor", ...message }, "*");
+    const target = frame.current;
+    if (!target?.contentWindow) return;
+    let reachable = false;
+    try {
+      reachable = Boolean(target.contentDocument);
+    } catch {
+      reachable = false;
+    }
+    if (!reachable) return;
+    target.contentWindow.postMessage({ source: "dakyworld-editor", ...message }, window.location.origin);
   }, []);
 
   /**
@@ -621,8 +658,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
    * message is the part that was going wrong. A `postMessage` can be dropped by
    * things outside this codebase; setting an attribute on a node the editor is
    * holding cannot. So the direct write is the way this works, and the message
-   * stays as the fallback for the day a preview is served from the site's own
-   * origin and `contentDocument` is null.
+   * stays as the fallback. It is only ever addressed to this app's origin (see
+   * `tell`), so the day a preview is served from the site's own origin and
+   * `contentDocument` is null, `tell` has to learn that origin first.
    *
    * Returns what happened, because the three answers need different things:
    * written, no element to write on, or no reachable document.
@@ -906,7 +944,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         // The frame hides them by default; somebody who chose to see them gets
         // them back on every reload.
         if (data.hiding && showSitePopupsRef.current) {
-          frame.current?.contentWindow?.postMessage({ source: "dakyworld-editor", type: "overlays", hide: false }, "*");
+          tell({ type: "overlays", hide: false });
           return;
         }
         setSitePopups({ hidden: data.hidden ?? 0, hiding: Boolean(data.hiding) });
@@ -914,6 +952,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       }
       if (data.type === "shortcut" && data.key && ["s", "z", "Z", "y", "Y", "Enter"].includes(data.key)) {
         window.dispatchEvent(new KeyboardEvent("keydown", { key: data.key, ctrlKey: true, shiftKey: !!data.shiftKey, cancelable: true }));
+      } else if (data.type === "delete") {
+        // Delete pressed on the page, where the keyboard is after a click. The
+        // frame says what it has marked; the editor decides, by the same rules
+        // as its own Delete.
+        keyboardDelete.current(data.id ?? null);
       } else if (data.type === "select") {
         setContextMenu(null);
         setPickedId(data.id ?? null);
@@ -983,7 +1026,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [commitHistory, writeInFrame, canEdit, reviewOpen, showVersions, page.data]);
+  }, [commitHistory, writeInFrame, tell, canEdit, reviewOpen, showVersions, page.data]);
 
   /* --------------------------------------------------------- server state */
 
@@ -1251,6 +1294,15 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         restore(1);
         return;
       }
+      // Delete, and never Backspace: Backspace is how somebody takes back the
+      // last letter they typed, and one press with the caret somewhere they did
+      // not expect would take a whole block instead. A held key is one press:
+      // after a delete the server selects the parent, and a repeat would take
+      // that, then its parent. With a modifier it is a different shortcut.
+      if (event.key === "Delete" && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+        if (keyboardDelete.current()) event.preventDefault();
+        return;
+      }
       if (event.key === "Escape" && !inField) {
         // Escape closes the thing on top, not everything underneath it. An open
         // menu is the top layer, so closing one must not also throw away the
@@ -1268,6 +1320,15 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [restore, pick, tell, showAI, reviewOpen, showVersions, canEdit, access.data, save]);
+
+  /**
+   * The looks again after a publish. They used to be left to fire whatever
+   * happened, so a minute and a half after somebody had left the editor they
+   * were still refetching a page nobody was looking at, and two publishes in a
+   * row reloaded the frame six times.
+   */
+  const lookAgain = useRef<number[]>([]);
+  useEffect(() => () => lookAgain.current.forEach((timer) => window.clearTimeout(timer)), []);
 
   const discard = useMutation({
     mutationFn: () => api.delete(`/website/pages/${pageId}/draft?ifRevision=${revision.current}`),
@@ -1308,14 +1369,17 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       void qc.invalidateQueries({ queryKey: ["demos"] });
       // The commit lands at once; the site it is read back from does not. Until
       // Pages has rebuilt, the editor is showing the page as it was, which
-      // looks exactly like a publish that did nothing. Keep looking.
-      for (const delay of [20000, 45000, 90000]) {
+      // looks exactly like a publish that did nothing. Keep looking — for this
+      // publish only: a newer one starts its own count, and leaving the editor
+      // stops it (see `lookAgain`).
+      lookAgain.current.forEach((timer) => window.clearTimeout(timer));
+      lookAgain.current = [20000, 45000, 90000].map((delay) =>
         window.setTimeout(() => {
           if (dirty.current) return;
           void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
           setPreviewToken((token) => token + 1);
-        }, delay);
-      }
+        }, delay),
+      );
     },
     onError: (err) => {
       setPublished(null);
@@ -1341,7 +1405,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   async function runStructure(kind: "remove" | "duplicate" | "before" | "after" | "undo" | "redo" | "settings", fieldId?: string, targetId?: string, force = false, settings?: ElementSettingsChange) {
     if (kind === "remove" && fieldId && !force) {
       const field = allFields.find(entry => entry.id === fieldId);
-      if (field && !field.structure?.remove && field.structure?.forceRemove) { setConfirmDelete({ id: fieldId, label: field.label.replace(/\s*\(read-only\)$/i, ""), warning: field.structure.removeWarning }); return; }
+      if (field && !field.structure?.remove && field.structure?.forceRemove) { setConfirmDelete({ id: fieldId, label: field.label, warning: field.structure.removeWarning }); return; }
     }
     if (!canEdit || save.isPending || publishPending.current || structurePending.current || reviewOpen || showVersions) return;
     if (typingId) { setFailure("Press Escape to finish typing on the page, then change its layout."); return; }
@@ -1867,6 +1931,26 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const changedCount = Object.values(edits).filter((edit) => Object.keys(edit).length > 0).length + (page.data.structure?.changed ? 1 : 0);
   const canPublish = access.data?.capabilities.publish === true;
   const readOnly = !canEdit || publish.isPending || reviewOpen || showVersions || structureBusy;
+  // The menu shows "Del" beside Delete, so the key does what the item does,
+  // through the same door: the one question for a block holding a form or
+  // scripts, and refused wherever the item is greyed out. Only on the canvas,
+  // where the selection can be seen, and never while anything is being typed
+  // into, while a modal is open, or from inside a panel of its own (the agent
+  // chat, a tour card) — "Delete Contact?" is answered with a button, not with
+  // a second Delete.
+  keyboardDelete.current = (frameSelection) => {
+    if (mode !== "visual" || !pickedId || typingId) return false;
+    // The page and the panel disagreeing about what is selected is a reason to
+    // do nothing: deleting the wrong block is worse than deleting none.
+    if (frameSelection !== undefined && frameSelection !== pickedId) return false;
+    const focused = document.activeElement;
+    if (typingInto(focused) || focused?.closest('[role="dialog"], [role="alertdialog"]') || document.querySelector('[aria-modal="true"], dialog[open]')) return false;
+    const field = allFields.find((entry) => entry.id === pickedId);
+    if (!field || readOnly || save.isPending || !(field.structure?.remove || field.structure?.forceRemove)) return false;
+    setContextMenu(null);
+    void runStructure("remove", field.id);
+    return true;
+  };
   const pickedScope = pickedId ? page.data.shared?.scope[pickedId] : undefined;
   const pickedShared = pickedScope ? page.data.shared?.elements.find((element) => element.instanceId === pickedScope.instanceId) : undefined;
   let pickedElement: HTMLElement | null = null;
@@ -3214,14 +3298,45 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   needs a yes asks when it is pressed. */}
               <p className="mt-2 text-xs text-muted">{picked.structure?.reason || "Drag layers to reorder within their container. Changes stay in the draft; Undo brings them back."}</p>
             </div>}
-            <div role="tablist" aria-label="Element settings" className="editor-tabs dx-tabs">
-              {(["general", "style", "interactions"] as const).map((tab) => (
-                <button type="button" role="tab" key={tab} aria-selected={inspectorTab === tab} onClick={() => setInspectorTab(tab)}>
+            {/* Tabs the way a screen reader and a keyboard expect them: one stop
+                in the Tab order, the chosen tab; the arrows move between them
+                and choose as they go, Home and End go to either end. The panel
+                under them is one element for all three, labelled by whichever
+                tab is chosen. */}
+            <div
+              role="tablist"
+              aria-label="Element settings"
+              className="editor-tabs dx-tabs"
+              onKeyDown={(event) => {
+                const at = INSPECTOR_TABS.indexOf(inspectorTab);
+                const next =
+                  event.key === "ArrowRight" ? INSPECTOR_TABS[(at + 1) % INSPECTOR_TABS.length]
+                  : event.key === "ArrowLeft" ? INSPECTOR_TABS[(at + INSPECTOR_TABS.length - 1) % INSPECTOR_TABS.length]
+                  : event.key === "Home" ? INSPECTOR_TABS[0]
+                  : event.key === "End" ? INSPECTOR_TABS[INSPECTOR_TABS.length - 1]
+                  : null;
+                if (!next) return;
+                event.preventDefault();
+                setInspectorTab(next);
+                event.currentTarget.querySelector<HTMLElement>(`#dx-insp-tab-${next}`)?.focus();
+              }}
+            >
+              {INSPECTOR_TABS.map((tab) => (
+                <button
+                  type="button"
+                  role="tab"
+                  key={tab}
+                  id={`dx-insp-tab-${tab}`}
+                  aria-selected={inspectorTab === tab}
+                  aria-controls="dx-insp-panel"
+                  tabIndex={inspectorTab === tab ? 0 : -1}
+                  onClick={() => setInspectorTab(tab)}
+                >
                   {tab[0].toUpperCase() + tab.slice(1)}
                 </button>
               ))}
             </div>
-            <div className="editor-controls min-h-0 flex-1 overflow-y-auto">
+            <div id="dx-insp-panel" role="tabpanel" aria-labelledby={`dx-insp-tab-${inspectorTab}`} className="editor-controls min-h-0 flex-1 overflow-y-auto">
                 <>
                   {/* Before the controls, not beside them: somebody about to
                       change a heading has to know whether they are changing one
@@ -3417,16 +3532,14 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                             </p>
                           </div>
                         )}
+                        {/* A form, an embed, a canvas or a custom component. It
+                            was labelled "read-only" until 12 Oct 2026, which
+                            stopped being true when these became movable and
+                            deletable: what is out of reach is what is inside. */}
                         {picked.kind === "unsupported" && !mediaKind(picked.tag) && (
-                          <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-ink">
-                            <div className="flex items-center gap-1.5 font-semibold text-amber-500">
-                              <IconLock size={12} />
-                              <span>Preserved Element ({picked.tag.toUpperCase()})</span>
-                            </div>
-                            <p className="mt-1 text-muted">
-                              This element ({picked.tag}) is preserved byte-for-byte from your original HTML. Visual editing is limited to maintain script and layout stability.
-                            </p>
-                          </div>
+                          <p className="dx-hint">
+                            What is inside this {picked.tag === "form" ? "form" : picked.tag === "iframe" ? "embed" : "element"} can't be edited here; it stays exactly as your site's code has it. You can still move it, delete it and change its style.
+                          </p>
                         )}
                         {/* Carousel / Ticker Item-by-Item Editor */}
                         {(() => {
