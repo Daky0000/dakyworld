@@ -6,7 +6,8 @@
  * person who looks at three pages is three views but one visitor. Where they
  * came from reads as words — "Search · Google", "Facebook", "Direct" — and a
  * click from one page of the site to another is not a source at all. Nothing
- * stored identifies anybody.
+ * stored identifies anybody. And the memory that tells visitors apart has a
+ * ceiling: past it, views are still counted and only uniques stop growing.
  *
  * Needs an isolated local database (name containing test, check or editor).
  *   npx tsx checks/websiteVisits.ts
@@ -16,6 +17,7 @@ import http from "node:http";
 import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import express from "express";
+import type { Request } from "express";
 
 const url = new URL(process.env.DATABASE_URL ?? "postgresql://invalid/invalid");
 if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || !/(test|check|editor)/i.test(url.pathname)) {
@@ -24,7 +26,7 @@ if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || !/(test|check
 process.env.WEBSITE_HOST_DOMAIN = "sites.visitscheck.test";
 const { prisma } = await import("../src/lib/prisma.js");
 const { publicSiteHosting } = await import("../src/services/websiteHosting.js");
-const { flushVisits, sourceOf } = await import("../src/services/websiteVisits.js");
+const { flushVisits, sourceOf, recordVisit, MAX_REMEMBERED_VISITORS } = await import("../src/services/websiteVisits.js");
 
 let passed = 0;
 const failures: string[] = [];
@@ -45,6 +47,7 @@ console.log("\nCounting");
 const mark = `visitscheck-${randomUUID().slice(0, 8)}`;
 const host = `${mark}.sites.visitscheck.test`;
 let server: http.Server | undefined;
+const siteIds: string[] = [];
 const site = await prisma.site.create({
   data: {
     slug: mark, name: "Visits Check", publicUrl: "https://example.test", hostedEnabled: true, hostedSlug: mark,
@@ -99,9 +102,32 @@ try {
   await flushVisits();
   const after = await prisma.siteVisitDay.findUniqueOrThrow({ where: { siteId_day_path: { siteId: site.id, day: (await prisma.siteVisitDay.findFirstOrThrow({ where: { siteId: site.id, path: "*" } })).day, path: "*" } } });
   check("counts add up across writes, and a returning visitor is not new the same day", () => { assert.equal(after.views, 5); assert.equal(after.visitors, 2); });
+
+  console.log("\nA very busy day");
+  // More distinct visitors than one process will remember, straight into the
+  // counter the hosting middleware calls. Each new visitor costs two keys: the
+  // visitor, and the visitor on this page.
+  const busy = await prisma.site.create({ data: { slug: `${mark}-busy`, name: "Visits Busy", publicUrl: "https://busy.example.test", hostedEnabled: true, hostedSlug: `${mark}-busy` } });
+  siteIds.push(busy.id);
+  const busyHost = `${mark}-busy.sites.visitscheck.test`;
+  const person = (i: number) => ({ method: "GET", headers: { "user-agent": laptop }, ip: `10.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}` }) as unknown as Request;
+  const crowd = MAX_REMEMBERED_VISITORS / 2 + 5_000;
+  for (let i = 1; i <= crowd; i += 1) recordVisit(busy.id, person(i), "/", busyHost);
+  recordVisit(busy.id, person(1), "/", busyHost);
+  recordVisit(busy.id, person(crowd + 1), "/", busyHost);
+  await flushVisits();
+  const busyDay = await prisma.siteVisitDay.findFirstOrThrow({ where: { siteId: busy.id, path: "*" } });
+  check("every view is counted, past the ceiling too", () => assert.equal(busyDay.views, crowd + 2));
+  check("unique visitors stop growing at the ceiling instead of memory", () => {
+    assert.ok(busyDay.visitors <= MAX_REMEMBERED_VISITORS / 2, `${busyDay.visitors} visitors`);
+    assert.ok(busyDay.visitors >= MAX_REMEMBERED_VISITORS / 2 - 10, `${busyDay.visitors} visitors`);
+  });
+  const busyPage = await prisma.siteVisitDay.findFirstOrThrow({ where: { siteId: busy.id, path: "/" } });
+  check("and the page's own figures say the same", () => { assert.equal(busyPage.views, crowd + 2); assert.ok(busyPage.visitors <= busyDay.visitors); });
 } finally {
   if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
   await prisma.site.delete({ where: { id: site.id } }).catch(() => {});
+  await prisma.site.deleteMany({ where: { id: { in: siteIds } } });
   await prisma.$disconnect();
 }
 

@@ -12,6 +12,12 @@
  * driven over real HTTP through the real router, with the four Prisma models it
  * touches replaced by in-memory stand-ins, so the suite runs it with or without
  * a database.
+ *
+ * Only the browser that bought may be handed one, and the checkout key is how
+ * it proves that: a UUID the checkout page made and kept in sessionStorage. The
+ * Paystack reference rides in the callback address — browser history, Referer
+ * headers, the receipt — so a lookup by reference alone learns paid or unpaid
+ * and nothing else (12 Oct 2026).
  */
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
@@ -29,6 +35,9 @@ async function check(name: string, test: () => Promise<void> | void) {
 
 type Purchase = { id: string; setupPaidAt: Date | null; status: string; billingState: string; email: string; contactName: string; userId: string | null; invoiceId: string; accountCreated: boolean };
 type Account = { id: string; email: string; name: string; passwordHash: string | null; emailVerifiedAt: Date | null; accessRole: null };
+
+const CHECKOUT_KEY = "6f1b2a7e-3c1d-4f7a-9b2e-0c4d5e6f7a8b";
+const REFERENCE = "T123456789012";
 
 const state: {
   purchase: Purchase | null;
@@ -55,7 +64,17 @@ function replace(model: string, value: unknown) {
 }
 
 replace("websitePurchase", standIn("websitePurchase", {
-  findUnique: async () => state.purchase,
+  findUnique: async ({ where }: { where: { checkoutKey?: string } }) => (where.checkoutKey === CHECKOUT_KEY ? state.purchase : null),
+  findFirst: async ({ where }: { where: { invoiceId?: string } }) => (state.purchase && where.invoiceId === state.purchase.invoiceId ? state.purchase : null),
+}));
+// The reference path: one Paystack attempt on the purchase's invoice, already
+// paid, so settling it again is a no-op that never calls Paystack.
+replace("paymentAttempt", standIn("paymentAttempt", {
+  findUnique: async ({ where }: { where: { reference?: string } }) => (where.reference === REFERENCE ? { reference: REFERENCE, invoiceId: "invoice-1", provider: "paystack" } : null),
+}));
+replace("invoice", standIn("invoice", {
+  findUnique: async ({ where }: { where: { id?: string } }) => (where.id === "invoice-1" ? { id: "invoice-1", status: "PAID", paymentProvider: "paystack" } : null),
+  findFirst: async () => null,
 }));
 replace("user", standIn("user", {
   findUnique: async ({ where }: { where: { id?: string } }) => (state.account && where.id === state.account.id ? state.account : null),
@@ -89,11 +108,12 @@ app.use((error: Error, _req: express.Request, res: express.Response, _next: expr
 const server = app.listen(0);
 const port = (server.address() as AddressInfo).port;
 
-async function returnPage(): Promise<{ status: number; body: { paid?: boolean; token?: string | null; setPasswordUrl?: string | null } }> {
+type ReturnBody = { paid?: boolean; token?: string | null; setPasswordUrl?: string | null; email?: string; name?: string };
+async function returnPage(ask: { checkoutKey?: string; reference?: string } = { checkoutKey: CHECKOUT_KEY }): Promise<{ status: number; body: ReturnBody }> {
   const response = await fetch(`http://127.0.0.1:${port}/api/public/website-payment-status`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: "https://dakyx.com" },
-    body: JSON.stringify({ checkoutKey: "6f1b2a7e-3c1d-4f7a-9b2e-0c4d5e6f7a8b" }),
+    body: JSON.stringify(ask),
   });
   return { status: response.status, body: (await response.json()) as never };
 }
@@ -136,6 +156,57 @@ try {
     assert.equal(state.tokens.length, 1);
     assert.equal(state.tokens[0]!.data.viaBrowser, true, "the token must be marked as shown to a browser");
     assert.equal(state.tokens[0]!.data.kind, "SET_PASSWORD");
+  });
+
+  await check("the checkout key and the reference together still get the token", async () => {
+    reset();
+    state.purchase = paidPurchase(true);
+    state.account = account(null);
+    const { body } = await returnPage({ checkoutKey: CHECKOUT_KEY, reference: REFERENCE });
+    assert.equal(typeof body.token, "string");
+    assert.equal(body.email, "someone@example.com");
+    assert.equal(state.tokens.length, 1);
+  });
+
+  await check("a Paystack reference alone learns it was paid, and nothing that opens the account", async () => {
+    reset();
+    state.purchase = paidPurchase(true);
+    state.account = account(null);
+    const { status, body } = await returnPage({ reference: REFERENCE });
+    assert.equal(status, 200);
+    assert.equal(body.paid, true, "the reference still answers paid or unpaid");
+    assert.equal(body.token, null);
+    assert.equal(body.setPasswordUrl, null);
+    assert.equal(body.email, undefined, "nor who paid");
+    assert.equal(body.name, undefined);
+    assert.equal(state.tokens.length, 0, "no token row may even be written");
+  });
+
+  await check("a reference beside somebody else's checkout key gets no token", async () => {
+    reset();
+    state.purchase = paidPurchase(true);
+    state.account = account(null);
+    const { body } = await returnPage({ checkoutKey: "0d9c8b7a-6f5e-4d3c-8b2a-1f0e9d8c7b6a", reference: REFERENCE });
+    assert.equal(body.paid, true);
+    assert.equal(body.token, null);
+    assert.equal(body.setPasswordUrl, null);
+    assert.equal(state.tokens.length, 0);
+  });
+
+  await check("an unpaid purchase found by reference says so", async () => {
+    reset();
+    state.purchase = { ...paidPurchase(true), setupPaidAt: null, status: "PAYMENT_PENDING" };
+    state.account = account(null);
+    const { body } = await returnPage({ reference: REFERENCE });
+    assert.equal(body.paid, false);
+    assert.equal(state.tokens.length, 0);
+  });
+
+  await check("a reference that matches nothing finds nothing", async () => {
+    reset();
+    state.purchase = paidPurchase(true);
+    const { status } = await returnPage({ reference: "T000000000000" });
+    assert.equal(status, 404);
   });
 
   await check("an account that already has a password gets no token, even one the purchase made", async () => {

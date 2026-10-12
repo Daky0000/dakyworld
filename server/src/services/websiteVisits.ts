@@ -18,7 +18,9 @@ import { assertWebsiteSiteAccess } from "./websiteAccess.js";
  * every request; a deploy can lose the last few seconds, which is the right
  * trade for a page view. Restarting also re-salts, so somebody who comes back
  * after a deploy is counted twice that day — a small overcount, never a lost
- * visitor.
+ * visitor. The one undercount is deliberate: telling visitors apart needs
+ * memory, and past `MAX_REMEMBERED_VISITORS` in a day a process stops spending
+ * it (see `recordVisit`).
  */
 
 const BOT = /bot|crawl|spider|slurp|facebookexternalhit|whatsapp|telegram|preview|monitor|curl|wget|python|httpclient|go-http|java\/|okhttp|headless|lighthouse|pingdom|uptime|scan/i;
@@ -53,6 +55,13 @@ export function sourceOf(referer: string | undefined, host: string): string | nu
 type Pending = { views: number; visitors: number; phone: number };
 const pendingPages = new Map<string, Pending>();
 const pendingSources = new Map<string, number>();
+
+/**
+ * How many visitor and visitor-page keys one process remembers in a day, across
+ * every hosted site. Each is a 43-character hash, or that plus a page path, so
+ * the ceiling is tens of megabytes. Exported for checks.
+ */
+export const MAX_REMEMBERED_VISITORS = 200_000;
 const seen = new Set<string>();
 let salt = { day: "", value: "" };
 let timer: NodeJS.Timeout | null = null;
@@ -84,11 +93,14 @@ export function recordVisit(siteId: string, req: Request, path: string, host: st
   const day = new Date().toISOString().slice(0, 10);
   const visitor = crypto.createHash("sha256").update(`${dailySalt(day)}|${siteId}|${req.ip ?? ""}|${agent}`).digest("base64url");
   const phone = PHONE.test(agent) ? 1 : 0;
-  // A Set this size is a lot of visitors for one process; past it, stop
-  // telling them apart for the rest of the day rather than grow without end.
-  const newToSite = seen.size < 200_000 && !seen.has(visitor);
+  // Past the ceiling every view is still counted, but nobody new is told
+  // apart for the rest of the day, so on a day that big the unique-visitor
+  // figure is an undercount. That is the right way to be wrong: a Set with no
+  // ceiling grows with every visitor until the process runs out of memory, and
+  // then nothing is counted and no site is served.
+  const newToSite = seen.size < MAX_REMEMBERED_VISITORS && !seen.has(visitor);
   const pageKey = `${visitor}|${path}`;
-  const newToPage = seen.size < 200_000 && !seen.has(pageKey);
+  const newToPage = seen.size < MAX_REMEMBERED_VISITORS && !seen.has(pageKey);
   if (newToSite) seen.add(visitor);
   if (newToPage) seen.add(pageKey);
 

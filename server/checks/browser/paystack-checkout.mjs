@@ -26,6 +26,7 @@ try {
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   const payloads = [];
+  const statusChecks = [];
   let paid = false;
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -39,7 +40,10 @@ try {
       payloads.push(route.request().postDataJSON());
       return route.fulfill({ status: 503, headers, json: { error: "Payment status pending. Retry the same checkout." } });
     }
-    if (url.endsWith("/website-payment-status")) return route.fulfill({ headers, json: { paid, status: paid ? "SETUP_PAID" : "PAYMENT_PENDING" } });
+    if (url.endsWith("/website-payment-status")) {
+      statusChecks.push(route.request().postDataJSON());
+      return route.fulfill({ headers, json: { paid, status: paid ? "SETUP_PAID" : "PAYMENT_PENDING" } });
+    }
     return route.abort();
   });
   // The checkout is its own page. A product-page button has to get there
@@ -70,13 +74,21 @@ try {
   await page.waitForFunction(() => document.getElementById("builderFormStatus").textContent.includes("Payment status pending"));
   assert.equal(payloads.length, 2);
   assert.equal(payloads[0].checkoutKey, payloads[1].checkoutKey, "Retry must preserve checkout identity");
-  await page.goto(`${base}/website-builder?payment=returned`);
+  // Paystack sends the browser back with its reference on the address. The
+  // reference alone is never answered with a password token, so the return
+  // must also carry the checkout key this tab kept in sessionStorage.
+  await page.goto(`${base}/website-builder?payment=returned&reference=T123456789012&trxref=T123456789012`);
   assert.equal(await page.locator("#builderSuccess").evaluate(node => node.open), false, "Return URL must not claim success");
   assert.match(await page.locator(".builder-payment-return").textContent(), /pending/);
   paid = true;
   await page.waitForFunction(() => document.querySelector(".builder-payment-return")?.textContent.includes("Payment verified"));
+  assert.ok(statusChecks.length >= 1, "The return page must ask whether the payment landed");
+  for (const ask of statusChecks) {
+    assert.equal(ask.checkoutKey, payloads[0].checkoutKey, "Every payment check must carry this checkout's key");
+    assert.equal(ask.reference, "T123456789012");
+  }
   assert.ok(!errors.length, `Browser errors: ${errors.join(", ")}`);
-  console.log("Paystack browser checks passed: GHS quote, explicit consent, double-submit guard, stable retry key, verified return.");
+  console.log("Paystack browser checks passed: GHS quote, explicit consent, double-submit guard, stable retry key, verified return carrying the checkout key.");
 } finally {
   await browser?.close();
   await new Promise(resolve => server.close(resolve));

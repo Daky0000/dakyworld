@@ -253,6 +253,79 @@ export function resolvePackagePath(relativeUrl: string, sourceFilePath: string):
   }
 }
 
+const tooLargeInTotal = () =>
+  new WebsiteError(400, `The package exceeds the maximum uncompressed size of ${Math.round(MAX_UNCOMPRESSED_SIZE / (1024 * 1024))} MB.`);
+const tooLargeAlone = (name: string) =>
+  new WebsiteError(400, `The file ${name} exceeds the maximum single-file size of ${Math.round(MAX_SINGLE_FILE_SIZE / (1024 * 1024))} MB.`);
+
+/**
+ * The size an entry says it will be once inflated, from the archive's central
+ * directory. JSZip keeps it on the entry's private `_data` (its own typings
+ * name the field and leave it commented out); null when it is not there.
+ */
+function declaredSize(entry: JSZip.JSZipObject): number | null {
+  const size = (entry as unknown as { _data?: { uncompressedSize?: unknown } })._data?.uncompressedSize;
+  return typeof size === "number" && Number.isFinite(size) && size >= 0 ? size : null;
+}
+
+/**
+ * JSZip's StreamHelper, which `internalStream` returns. Both are in JSZip's
+ * documented API but not in its typings.
+ */
+type InflatingEntry = {
+  on(event: "data", listener: (chunk: Buffer) => void): InflatingEntry;
+  on(event: "error", listener: (error: Error) => void): InflatingEntry;
+  on(event: "end", listener: () => void): InflatingEntry;
+  pause(): InflatingEntry;
+  resume(): InflatingEntry;
+};
+
+/**
+ * Inflates one entry and stops the moment it outgrows what it may be.
+ *
+ * The declared sizes are checked before this runs, but they are only what the
+ * archive claims, and a hostile one claims a few bytes for an entry that
+ * inflates to gigabytes. JSZip does compare the two — after it has inflated
+ * the lot. So the bytes are counted as they come, and JSZip is paused at the
+ * first that is one too many: past the single-file or package limit, or past
+ * the size the archive gave for it, which an honest archive never is. What is
+ * inflated after that is the rest of one 16 KB block of input, and nothing
+ * keeps it.
+ */
+function inflateWithin(entry: JSZip.JSZipObject, name: string, packageBytesLeft: number): Promise<Buffer> {
+  const declared = declaredSize(entry);
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let settled = false;
+    const inflating = (entry as unknown as { internalStream(type: "nodebuffer"): InflatingEntry }).internalStream("nodebuffer");
+    const refuse = (error: WebsiteError) => {
+      if (settled) return;
+      settled = true;
+      inflating.pause();
+      chunks.length = 0;
+      reject(error);
+    };
+    inflating
+      .on("data", (chunk) => {
+        if (settled) return;
+        size += chunk.length;
+        if (size > MAX_SINGLE_FILE_SIZE) return refuse(tooLargeAlone(name));
+        if (size > packageBytesLeft) return refuse(tooLargeInTotal());
+        if (declared !== null && size > declared) return refuse(new WebsiteError(400, `The file ${name} inflates to more than the ZIP says it holds, so the package was refused.`));
+        chunks.push(chunk);
+      })
+      // Corrupt data, a bad checksum, or a size that does not match.
+      .on("error", () => refuse(new WebsiteError(400, "The ZIP file is corrupted or not a valid archive.")))
+      .on("end", () => {
+        if (settled) return;
+        settled = true;
+        resolve(Buffer.concat(chunks, size));
+      })
+      .resume();
+  });
+}
+
 /**
  * Unpacks and analyzes an incoming HTML file or ZIP package without persisting yet.
  */
@@ -297,20 +370,34 @@ export async function analyzeImportPackage(input: {
       throw new WebsiteError(400, `The package contains too many files (${zipFiles.length}). The maximum is ${MAX_FILE_COUNT}.`);
     }
 
-    let uncompressedTotal = 0;
+    const wanted: Array<{ entry: JSZip.JSZipObject; path: string }> = [];
     for (const entry of zipFiles) {
       if (entry.dir) continue;
       const sanitized = sanitizePackagePath(entry.name);
       if (isIgnoredPackageEntry(sanitized)) continue;
+      wanted.push({ entry, path: sanitized });
+    }
 
-      const content = await entry.async("nodebuffer");
+    // Sizes are judged before anything is inflated. This used to inflate each
+    // entry and then measure it, so a single entry of a few kilobytes that
+    // inflates to gigabytes had taken the memory before the check could run.
+    // An archive states every entry's size up front; a package that says it is
+    // too big is refused on its word.
+    let declaredTotal = 0;
+    for (const { entry, path: sanitized } of wanted) {
+      const declared = declaredSize(entry) ?? 0;
+      if (declared > MAX_SINGLE_FILE_SIZE) throw tooLargeAlone(sanitized);
+      declaredTotal += declared;
+      if (declaredTotal > MAX_UNCOMPRESSED_SIZE) throw tooLargeInTotal();
+    }
+
+    // And one that says it is small is held to it while it inflates.
+    let uncompressedTotal = 0;
+    for (const { entry, path: sanitized } of wanted) {
+      const content = await inflateWithin(entry, sanitized, MAX_UNCOMPRESSED_SIZE - uncompressedTotal);
       uncompressedTotal += content.length;
-      if (uncompressedTotal > MAX_UNCOMPRESSED_SIZE) {
-        throw new WebsiteError(400, `The package exceeds the maximum uncompressed size of ${Math.round(MAX_UNCOMPRESSED_SIZE / (1024 * 1024))} MB.`);
-      }
-      if (content.length > MAX_SINGLE_FILE_SIZE) {
-        throw new WebsiteError(400, `The file ${sanitized} exceeds the maximum single-file size of ${Math.round(MAX_SINGLE_FILE_SIZE / (1024 * 1024))} MB.`);
-      }
+      if (uncompressedTotal > MAX_UNCOMPRESSED_SIZE) throw tooLargeInTotal();
+      if (content.length > MAX_SINGLE_FILE_SIZE) throw tooLargeAlone(sanitized);
 
       rawEntries.push({ path: sanitized, content });
     }

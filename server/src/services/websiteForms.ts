@@ -8,6 +8,8 @@ import { attr, parseHtml, walk, type ElementNode } from "./website/parse.js";
 import { WebsiteError } from "./website/site.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
 import { customerAppUrl } from "./emailSender.js";
+import { clientIp } from "../middleware/security.js";
+import { localRateStore, rateBucketKey, rateLimitsShared, takeSharedRateBucket } from "../lib/rateLimitStore.js";
 
 /**
  * Forms on a website DakyX hosts, with somewhere for their messages to go.
@@ -22,7 +24,14 @@ import { customerAppUrl } from "./emailSender.js";
  * real address of its own is never touched.
  *
  * Nothing is stored that the visitor did not type, plus the page they were on.
- * No IP address is kept: the rate limit holds it in memory for ten minutes.
+ * No IP address is kept with a message. The flood limit counts per address
+ * for ten minutes: in production in the shared rate-limit table, under a hash
+ * of the site and the address that the scheduler prunes once it lapses, and in
+ * memory on a laptop.
+ *
+ * Managers are emailed at most `WEBSITE_FORM_EMAILS_PER_DAY` (50) messages a
+ * site a day. Past that a message is still kept and listed; it just is not
+ * mailed, and one last email says the rest of the day's are in the inbox.
  */
 
 export const FORM_ENDPOINT = "/__dakyx/forms";
@@ -88,16 +97,36 @@ export function routeFormsToInbox(html: string, pagePath: string): string {
 
 /* -------------------------------------------------------------- receiving -- */
 
-const recent = new Map<string, number[]>();
 const WINDOW_MS = 10 * 60_000;
 const PER_WINDOW = 8;
+const localFloods = localRateStore();
 
-function overLimit(key: string, now = Date.now()): boolean {
-  const kept = (recent.get(key) ?? []).filter((at) => now - at < WINDOW_MS);
-  kept.push(now);
-  recent.set(key, kept);
-  if (recent.size > 5000) for (const [entry, times] of recent) if (times.every((at) => now - at >= WINDOW_MS)) recent.delete(entry);
-  return kept.length > PER_WINDOW;
+/**
+ * Eight messages per site per address in ten minutes.
+ *
+ * Counted where every other limiter counts. This was a Map in each process, so
+ * with two replicas behind the balancer a flood got twice the allowance, and a
+ * deploy handed it a fresh one. The site is part of the key so one busy
+ * office network cannot use up another site's allowance.
+ */
+async function overLimit(siteId: string, req: Request): Promise<boolean> {
+  const key = `${siteId}:${clientIp(req)}`;
+  const bucket = rateLimitsShared()
+    ? await takeSharedRateBucket(rateBucketKey("website-forms", key), WINDOW_MS, PER_WINDOW)
+    : localFloods.take(key, WINDOW_MS, PER_WINDOW);
+  return bucket.count > PER_WINDOW;
+}
+
+/**
+ * How many form messages one site may email its managers in a UTC day.
+ *
+ * Without a ceiling, a form a bot has found — or one honest campaign that went
+ * further than expected — sends a manager hundreds of emails, from our sending
+ * domain, and it is our domain's reputation that pays for it.
+ */
+export function dailyFormEmailCap(): number {
+  const value = Number(process.env.WEBSITE_FORM_EMAILS_PER_DAY);
+  return Number.isInteger(value) && value >= 1 ? value : 50;
 }
 
 const parseForm = express.urlencoded({ extended: false, limit: "64kb", parameterLimit: MAX_FIELDS * 2 });
@@ -130,7 +159,17 @@ export async function receiveFormPost(site: { id: string; name: string }, req: R
   const body = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
   const back = samePath(body._page) ?? "/";
 
-  if (overLimit(`${site.id}:${req.ip ?? "?"}`)) {
+  let limited: boolean;
+  try {
+    limited = await overLimit(site.id, req);
+  } catch {
+    // The counter could not be read. Refusing is the limiter's own answer to
+    // that (see rateLimit in middleware/security.ts): an unlimited form is the
+    // thing it exists to prevent.
+    res.status(503).set("Retry-After", "15").set("Cache-Control", "no-store").type("html").send(page("Please try again in a moment", "Your message did not go through. Go back and send it again in a minute.", back));
+    return;
+  }
+  if (limited) {
     res.status(429).set("Cache-Control", "no-store").type("html").send(page("Please wait a few minutes", "A lot of messages have come from here just now. Try again shortly.", back));
     return;
   }
@@ -164,7 +203,7 @@ export async function receiveFormPost(site: { id: string; name: string }, req: R
     },
   });
   // A bot is told the same as a person, so it learns nothing from the answer.
-  if (!spam) void notifyManagers(site, saved.id, fields, email).catch((error) => console.warn(`[forms] ${site.name}: the notification did not send: ${(error as Error).message}`));
+  if (!spam) void notifyManagers(site, saved, fields, email).catch((error) => console.warn(`[forms] ${site.name}: the notification did not send: ${(error as Error).message}`));
 
   const next = samePath(body._next);
   if (next) {
@@ -174,15 +213,53 @@ export async function receiveFormPost(site: { id: string; name: string }, req: R
   res.status(200).set("Cache-Control", "no-store").type("html").send(page("Thank you — your message has been sent", `${site.name} has received it and will reply as soon as they can.`, back));
 }
 
-async function notifyManagers(site: { id: string; name: string }, submissionId: string, fields: Record<string, string>, email: string | null) {
+async function notifyManagers(site: { id: string; name: string }, submission: { id: string; createdAt: Date }, fields: Record<string, string>, email: string | null) {
   const managers = await prisma.siteMember.findMany({
     where: { siteId: site.id, role: "MANAGER", user: { active: true } },
     select: { user: { select: { email: true, name: true } } },
   });
   if (!managers.length) return;
-  const link = `${customerAppUrl()}/website/inbox?site=${encodeURIComponent(site.id)}&message=${encodeURIComponent(submissionId)}`;
+  const inbox = `${customerAppUrl()}/website/inbox?site=${encodeURIComponent(site.id)}`;
+  const link = `${inbox}&message=${encodeURIComponent(submission.id)}`;
+
+  // Where this message falls in the site's day, counted from the messages
+  // themselves rather than a counter of sends: the rows are already there and
+  // cannot drift from what the inbox shows. Spam is never emailed, so it does
+  // not count. Two posts saved at the same moment can land on the same place,
+  // so right at the line one may be held back a message early or the notice
+  // go out twice; either way every message is in the inbox.
+  const cap = dailyFormEmailCap();
+  const dayStart = new Date(submission.createdAt);
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const place = await prisma.formSubmission.count({
+    where: { siteId: site.id, spam: false, createdAt: { gte: dayStart, lte: submission.createdAt } },
+  });
+  if (place > cap + 1) return;
+
   if (!(await mailerConfigured())) {
     console.warn(`[forms] no mailer configured — a message for ${site.name} is in the inbox: ${link}`);
+    return;
+  }
+
+  if (place === cap + 1) {
+    const notice = await brandedNotice({
+      paragraphs: [
+        `${site.name} has had more than ${cap} messages through its forms today, which is as many as we email in one day.`,
+        "This one and any more that arrive today are waiting in your inbox, and none of them is lost. Emails start again tomorrow.",
+      ],
+      action: { label: "Open your inbox", url: inbox },
+      signOff: "DakyX",
+    });
+    for (const { user } of managers) {
+      await sendMail({
+        to: user.email,
+        toName: user.name,
+        subject: `More messages today are in your inbox — ${site.name}`,
+        html: notice.html,
+        text: notice.text,
+        category: "website:form-messages-held",
+      });
+    }
     return;
   }
   const rows = Object.entries(fields).map(([key, value]) => `<tr><td style="padding:8px 14px 8px 0;color:#5B6374;vertical-align:top;border-top:1px solid #E3E6EB;font-size:13px">${escapeHtml(key)}</td><td style="padding:8px 0;white-space:pre-wrap;border-top:1px solid #E3E6EB">${escapeHtml(value)}</td></tr>`).join("");

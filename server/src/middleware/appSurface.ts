@@ -2,6 +2,30 @@ import type { NextFunction, Request, Response } from "express";
 
 export type AppSurface = "os" | "editor" | "app";
 
+/** How much of the API each surface hides; the larger number wins. app's list is a subset of editor's. */
+const NARROWNESS: Record<AppSurface, number> = { os: 0, editor: 1, app: 2 };
+
+function surfaceOfHost(value: string): AppSurface {
+  const host = value.trim().toLowerCase().replace(/:\d+$/, "").replace(/\.$/, "");
+  if (host === "editor.dakyx.com") return "editor";
+  if (host === "app.dakyx.com") return "app";
+  return "os";
+}
+
+/**
+ * Which product a request is for, from the address it was sent to.
+ *
+ * Two headers can name that address and the caller writes both of them. The
+ * edge proxy may set `X-Forwarded-Host`, so it cannot simply be ignored, but
+ * reading it first — as this did — let a request to editor.dakyx.com send
+ * `X-Forwarded-Host: os.dakyx.com` and walk past the gate below into leads,
+ * invoices and agents. So `Host` and every entry of `X-Forwarded-Host` are each
+ * read, and the narrowest surface any of them names is the answer: a forged
+ * header can only ever take access away from the request that carries it.
+ *
+ * `req.hostname` is not used because Express fills it from `X-Forwarded-Host`
+ * once `trust proxy` is on, which is the very header in question.
+ */
 export function appSurface(req?: Request): AppSurface {
   const value = (process.env.APP_SURFACE ?? "").trim().toLowerCase();
   if (value) {
@@ -10,13 +34,15 @@ export function appSurface(req?: Request): AppSurface {
     }
     return value;
   }
+  let surface: AppSurface = "os";
   if (req) {
-    const rawHost = req.get("x-forwarded-host") || req.hostname || req.get("host") || "";
-    const host = rawHost.split(",")[0].trim().toLowerCase().split(":")[0];
-    if (host === "editor.dakyx.com") return "editor";
-    if (host === "app.dakyx.com") return "app";
+    const named = [req.get("host") ?? "", ...(req.get("x-forwarded-host") ?? "").split(",")];
+    for (const host of named) {
+      const candidate = surfaceOfHost(host);
+      if (NARROWNESS[candidate] > NARROWNESS[surface]) surface = candidate;
+    }
   }
-  return "os";
+  return surface;
 }
 
 const COMMON_PUBLIC_PATHS = [

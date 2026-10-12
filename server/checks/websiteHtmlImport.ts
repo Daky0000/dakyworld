@@ -4,6 +4,8 @@
  * Covers:
  *  1. Path sanitization and Zip Slip prevention.
  *  2. Multi-page ZIP package import engine (JSZip).
+ *  3. Hostile packages, zip bombs among them: refused on their declared sizes
+ *     before anything is inflated, and held to those sizes while inflating.
  *  3. Local asset discovery, MIME detection, external resources, and missing asset reporting.
  *  4. Standalone HTML import field discovery (backgrounds, metadata, responsive picture sources).
  *  5. Unsupported components (<form>, <iframe>, <canvas>, custom elements) marked read-only with reasons.
@@ -18,6 +20,8 @@ import {
   analyzeImportPackage,
   sanitizePackagePath,
   rewritePageAssetReferences,
+  MAX_SINGLE_FILE_SIZE,
+  MAX_UNCOMPRESSED_SIZE,
 } from "../src/services/websitePackageImport.js";
 import {
   discoverFields,
@@ -31,6 +35,38 @@ import {
 } from "../src/services/websitePrepublishReport.js";
 import { WebsiteError } from "../src/services/website/site.js";
 import { assetUrl } from "../src/services/websiteAssets.js";
+
+/**
+ * The same archive with one entry's uncompressed size rewritten in the central
+ * directory, which is where JSZip reads it from. This is how a hostile archive
+ * lies about its size, and how an honest-looking one claims to be enormous.
+ */
+function declareSize(zip: Buffer, name: string, size: number): Buffer {
+  const out = Buffer.from(zip);
+  const end = out.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const count = out.readUInt16LE(end + 10);
+  let at = out.readUInt32LE(end + 16);
+  for (let i = 0; i < count; i += 1) {
+    assert.equal(out.readUInt32LE(at), 0x02014b50, "central directory entry");
+    const nameLength = out.readUInt16LE(at + 28);
+    if (out.toString("utf8", at + 46, at + 46 + nameLength) === name) {
+      out.writeUInt32LE(size, at + 24);
+      return out;
+    }
+    at += 46 + nameLength + out.readUInt16LE(at + 30) + out.readUInt16LE(at + 32);
+  }
+  throw new Error(`${name} is not in the archive`);
+}
+
+async function refusal(buffer: Buffer): Promise<WebsiteError> {
+  try {
+    await analyzeImportPackage({ buffer, filename: "bomb.zip" });
+  } catch (error) {
+    if (error instanceof WebsiteError) return error;
+    throw error;
+  }
+  throw new Error("the package was accepted");
+}
 
 async function runChecks() {
   console.log("Running websiteHtmlImport checks...\n");
@@ -185,6 +221,74 @@ async function runChecks() {
   }
   assert.ok(evilBlocked, "Malicious Zip archive with absolute path was rejected with 400 Bad Request");
   console.log("   ✓ Malicious Zip archive safely rejected\n");
+
+  console.log("3b. Zip bombs are refused before they are inflated");
+  const page = "<!doctype html><html><head><title>Bomb</title></head><body><h1>Hi</h1></body></html>";
+  const deflate = { type: "nodebuffer" as const, compression: "DEFLATE" as const };
+
+  const honestBomb = new JSZip();
+  honestBomb.file("index.html", page);
+  honestBomb.file("assets/blank.bin", Buffer.alloc(MAX_SINGLE_FILE_SIZE + 1024 * 1024));
+  const honestBombBuffer = await honestBomb.generateAsync(deflate);
+
+  const manyParts = new JSZip();
+  manyParts.file("index.html", page);
+  for (let i = 1; i <= 5; i += 1) manyParts.file(`assets/part-${i}.bin`, "x");
+  let manyPartsBuffer = await manyParts.generateAsync(deflate);
+  const eachClaims = 14 * 1024 * 1024;
+  assert.ok(eachClaims <= MAX_SINGLE_FILE_SIZE && eachClaims * 5 > MAX_UNCOMPRESSED_SIZE, "the parts must be allowed alone and too big together");
+  for (let i = 1; i <= 5; i += 1) manyPartsBuffer = declareSize(manyPartsBuffer, `assets/part-${i}.bin`, eachClaims);
+
+  const liarSize = 64 * 1024 * 1024;
+  const liar = new JSZip();
+  liar.file("index.html", page);
+  liar.file("assets/liar.bin", Buffer.alloc(liarSize));
+  const liarBuffer = declareSize(await liar.generateAsync(deflate), "assets/liar.bin", 1024);
+  assert.ok(liarBuffer.length < 1024 * 1024, "a 64 MB entry of zeros packs into well under a megabyte");
+
+  const honestLarge = new JSZip();
+  honestLarge.file("index.html", page);
+  honestLarge.file("assets/video-poster.bin", Buffer.alloc(10 * 1024 * 1024, 7));
+  const honestLargeBuffer = await honestLarge.generateAsync(deflate);
+
+  // Count every inflation JSZip starts, and every byte one produces. `async()`
+  // and `nodeStream()` both begin at `internalStream`, on a prototype that
+  // every loaded archive shares.
+  type Helper = { on(event: string, listener: (chunk: { length: number }) => void): Helper };
+  const entryPrototype = Object.getPrototypeOf(new JSZip().file("probe.txt", "x").file("probe.txt")!) as { internalStream: (this: unknown, ...args: unknown[]) => Helper };
+  const realInternalStream = entryPrototype.internalStream;
+  let inflations = 0;
+  let inflatedBytes = 0;
+  entryPrototype.internalStream = function (this: unknown, ...args: unknown[]) {
+    inflations += 1;
+    return realInternalStream.apply(this, args).on("data", (chunk) => { inflatedBytes += chunk.length; });
+  };
+  try {
+    let error = await refusal(honestBombBuffer);
+    assert.equal(error.status, 400);
+    assert.match(error.message, /assets\/blank\.bin exceeds the maximum single-file size/);
+    assert.equal(inflations, 0, "an entry that says it is too big is refused without inflating anything");
+
+    error = await refusal(manyPartsBuffer);
+    assert.match(error.message, /exceeds the maximum uncompressed size/);
+    assert.equal(inflations, 0, "so is a package whose entries together say they are too big");
+
+    inflatedBytes = 0;
+    error = await refusal(liarBuffer);
+    assert.equal(error.status, 400);
+    assert.match(error.message, /assets\/liar\.bin inflates to more than the ZIP says/);
+    assert.ok(inflatedBytes < liarSize / 2, `an entry that lied about its size is stopped early (${inflatedBytes} of ${liarSize} bytes inflated)`);
+
+    inflations = 0;
+    const large = await analyzeImportPackage({ buffer: honestLargeBuffer, filename: "large.zip" });
+    const poster = large.assets.find((asset) => asset.repoPath === "assets/video-poster.bin");
+    assert.equal(poster?.size, 10 * 1024 * 1024, "an honest 10 MB asset still comes through whole");
+    assert.ok(poster!.content.equals(Buffer.alloc(10 * 1024 * 1024, 7)), "byte for byte");
+    assert.equal(inflations, 2, "each entry inflated exactly once");
+  } finally {
+    entryPrototype.internalStream = realInternalStream;
+  }
+  console.log("   ✓ Declared sizes refused before inflating; a lying entry stopped mid-inflate; honest large files intact\n");
 
   // ────────────────────────────────────────────────────────────────────────────
   // 4. Extended Field Discovery (Backgrounds, Metadata, Pictures, Unsupported)

@@ -23,12 +23,25 @@ await once(); assert.equal(calls, 2);
 const failing = singleFlight(async () => { throw new Error("failed tick"); });
 await assert.rejects(failing(), /failed tick/);
 await assert.rejects(failing(), /failed tick/);
+// A full local store makes room rather than refusing: it used to throw, which
+// the limiter answered with a 503 for every caller, the legitimate one too.
 const local = localRateStore(2);
 local.take("a", 100, 10, 0); local.take("b", 100, 10, 0);
-assert.throws(() => local.take("c", 100, 10, 0), /capacity/);
+assert.equal(local.take("c", 100, 10, 0).count, 1, "a full store still answers a new caller");
 assert.equal(local.size, 2);
+assert.equal(local.take("b", 100, 10, 0).count, 2, "the newer bucket kept its count");
+assert.equal(local.take("a", 100, 10, 0).count, 1, "the oldest bucket was the one let go");
 local.take("c", 100, 10, 101);
 assert.ok(local.size <= 2);
+const expiring = localRateStore(2);
+expiring.take("live", 1_000, 10, 0); expiring.take("short", 10, 10, 0);
+expiring.take("newcomer", 1_000, 10, 20);
+assert.equal(expiring.take("live", 1_000, 10, 20).count, 2, "an expired bucket goes before a live one");
+const flooded = localRateStore(100);
+for (let i = 0; i < 10_000; i++) assert.equal(flooded.take(`caller-${i}`, 60_000, 5, 1).count, 1);
+assert.equal(flooded.size, 100, "ten thousand distinct callers never grow it past its bound");
+for (let i = 0; i < 5; i++) flooded.take("caller-9999", 60_000, 5, 1);
+assert.ok(flooded.take("caller-9999", 60_000, 5, 1).count > 5, "and the caller still sending is still limited");
 
 const suffix = randomUUID();
 const id = rateBucketKey("audit-check", suffix);

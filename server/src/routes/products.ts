@@ -144,11 +144,19 @@ publicProductsRouter.post("/website-payment-status", paymentStatusRateLimit, asy
 
     const purchaseFields = { id: true, setupPaidAt: true, status: true, billingState: true, email: true, contactName: true, userId: true, invoiceId: true, accountCreated: true } as const;
     let purchase = null;
+    // Whether the caller holds the checkout key. It is a UUID the checkout page
+    // made and kept in its own sessionStorage, and it never appears in a URL, so
+    // holding it means being the browser that bought. The Paystack reference is
+    // nothing like that: it rides in the callback address, so it sits in browser
+    // history, in Referer headers and on the receipt. It may ask whether a
+    // payment landed; it may not be handed the account.
+    let heldCheckoutKey = false;
     if (input.checkoutKey) {
       purchase = await prisma.websitePurchase.findUnique({
         where: { checkoutKey: input.checkoutKey },
         select: purchaseFields,
       });
+      heldCheckoutKey = Boolean(purchase);
     }
 
     if (!purchase && ref) {
@@ -169,6 +177,13 @@ publicProductsRouter.post("/website-payment-status", paymentStatusRateLimit, asy
     const isPaid = Boolean(purchase.setupPaidAt);
     if (!isPaid) {
       return res.json({ paid: false, status: purchase.status, billingState: purchase.billingState });
+    }
+
+    // A reference alone learns that it was paid, and nothing about who paid:
+    // no address, no name, no token. The buyer still has the set-password link
+    // that was emailed to them, and the page says to use it.
+    if (!heldCheckoutKey) {
+      return res.json({ paid: true, status: purchase.status, billingState: purchase.billingState, token: null, setPasswordUrl: null });
     }
 
     // A set-password token, straight to the browser, is only safe for the

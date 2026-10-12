@@ -129,19 +129,40 @@ export function forceHttps(req: Request, res: Response, next: NextFunction) {
 /**
  * The browser origins allowed to call the API with a session cookie. CORS in
  * index.ts reads the same list, so the two cannot drift apart.
+ *
+ * Only the hosts the app itself is served on. dakyx.com and www.dakyx.com were
+ * here until 12 Oct 2026, and they must not come back: the marketing site is
+ * edited with this very builder, so a script that lands on one of its pages
+ * runs in the Owner's browser. Same site, so the Lax cookie goes with its
+ * requests; trusted, so CORS would let it read every answer and this guard
+ * would let it write. The marketing site never needs a session — its price
+ * list, checkout and contact form all send `credentials: 'omit'` or the
+ * browser's cross-origin default, to routes mounted above this guard that set
+ * their own CORS (`publicCors` in routes/products.ts, `allowSiteOrigin` in
+ * routes/webhooks.ts).
  */
 const TRUSTED_ORIGINS = new Set([
   "https://os.dakyx.com",
   "https://app.dakyx.com",
   "https://editor.dakyx.com",
-  "https://dakyx.com",
-  "https://www.dakyx.com",
   "https://os.dakyworld.com",
 ]);
 
+/**
+ * `CLIENT_ORIGIN` as a list. Production sets it to the three app hosts joined
+ * by commas (.railway/railway.ts), and comparing an origin with that whole
+ * string matched nothing, so the variable only ever worked on a laptop.
+ */
+function configuredOrigins(): string[] {
+  return (process.env.CLIENT_ORIGIN ?? "")
+    .split(",")
+    .map((value) => value.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+}
+
 export function isTrustedOrigin(origin: string): boolean {
   if (TRUSTED_ORIGINS.has(origin)) return true;
-  if (process.env.CLIENT_ORIGIN && origin === process.env.CLIENT_ORIGIN) return true;
+  if (configuredOrigins().includes(origin)) return true;
   return !isProduction() && (origin.includes("localhost") || origin.includes("127.0.0.1"));
 }
 
