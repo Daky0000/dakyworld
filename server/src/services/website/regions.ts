@@ -1448,6 +1448,36 @@ function withLeadingSpace(source: string, span: Span): Span {
 }
 
 /** Escapes a string for use inside a double-quoted attribute value. */
+/**
+ * A value written into an existing attribute's value span, escaped for however
+ * the page quoted that attribute.
+ *
+ * `attrEscape` alone assumed double quotes. Imported pages quote with either,
+ * and a `'` left alone inside `content='…'` or `src='…'` ends the attribute: a
+ * description of `0;url=https://evil.example' http-equiv='refresh` became a
+ * second attribute, and every visitor of the published page was sent to that
+ * address. Only the quote the page used is escaped, so `We're` stays readable
+ * in a double-quoted description; a value the page left bare (`content=Shop`)
+ * gets double quotes of its own, because there a space alone starts a new
+ * attribute.
+ *
+ * `text` is for a field whose stored words are already HTML — the plain-text
+ * fields keep `&mdash;` as written — so existing entities are left alone rather
+ * than escaped a second time.
+ */
+function inAttribute(source: string, span: Span, value: string, text = false): string {
+  const escaped = text
+    ? value.replace(/&(?!(#x?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);)/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    : attrEscape(value);
+  const quote = source[span.start - 1];
+  if (quote === "'") return escaped.replace(/'/g, "&#39;");
+  if (quote === '"') return escaped.replace(/"/g, "&quot;");
+  const quoted = `"${escaped.replace(/"/g, "&quot;")}"`;
+  let at = span.start - 1;
+  while (at >= 0 && /\s/.test(source[at]!)) at -= 1;
+  return source[at] === "=" ? quoted : `=${quoted}`;
+}
+
 function attrEscape(value: string): string {
   return value.replace(/&/g, "&amp;").replace(new RegExp(String.fromCharCode(34), "g"), "&quot;").replace(/</g, "&lt;");
 }
@@ -1646,7 +1676,7 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
     if (edit.value !== undefined && edit.value !== field.value) {
       if (field.kind === "image" || field.kind === "background") {
         if (field.srcSpan) {
-          edits.push({ span: field.srcSpan, text: attrEscape(edit.value) });
+          edits.push({ span: field.srcSpan, text: inAttribute(source, field.srcSpan, edit.value) });
           if (field.srcsetSpan) edits.push({ span: field.srcsetSpan, text: "" });
           touched = true;
         } else if (field.styleSpan || field.attrInsert !== undefined) {
@@ -1661,7 +1691,7 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
           }
           const declarations = safeStyle(nextStyle, field.style);
           if (field.styleSpan) {
-            edits.push({ span: field.styleSpan, text: attrEscape(declarations) });
+            edits.push({ span: field.styleSpan, text: inAttribute(source, field.styleSpan, declarations) });
             touched = true;
           } else if (declarations && field.attrInsert !== undefined) {
             edits.push({ insertAt: field.attrInsert, text: ` style="${attrEscape(declarations)}"` });
@@ -1669,7 +1699,8 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
           }
         }
       } else if (field.content) {
-        edits.push({ span: field.content, text: edit.value });
+        // A meta field's words are an attribute value, not text between tags.
+        edits.push({ span: field.content, text: field.tag === "meta" ? inAttribute(source, field.content, edit.value, true) : edit.value });
         touched = true;
       }
     }
@@ -1678,7 +1709,7 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
         edits.push({ span: field.linkUnwrap.close, text: "" }, { span: field.linkUnwrap.open, text: "" });
         touched = true;
       } else if (field.hrefSpan) {
-        edits.push({ span: field.hrefSpan, text: attrEscape(edit.href) });
+        edits.push({ span: field.hrefSpan, text: inAttribute(source, field.hrefSpan, edit.href) });
         touched = true;
       } else if (field.linkWrap && edit.href.trim()) {
         edits.push({ insertAt: field.linkWrap.end, text: "</a>" }, { insertAt: field.linkWrap.start, text: LINK_WRAP_OPEN(edit.href.trim()) });
@@ -1686,7 +1717,7 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
       }
     }
     if (edit.alt !== undefined && field.kind === "image" && edit.alt !== field.alt) {
-      if (field.altSpan) edits.push({ span: field.altSpan, text: attrEscape(edit.alt) });
+      if (field.altSpan) edits.push({ span: field.altSpan, text: inAttribute(source, field.altSpan, edit.alt) });
       else if (field.altInsertAt !== undefined) {
         edits.push({ insertAt: field.altInsertAt, text: ` alt="${attrEscape(edit.alt)}"` });
       }
@@ -1698,7 +1729,7 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
         // An emptied style still leaves `style=""` behind rather than removing
         // the attribute: the span is what the next edit is written against, and
         // deleting it would move every offset after it.
-        edits.push({ span: field.styleSpan, text: attrEscape(declarations) });
+        edits.push({ span: field.styleSpan, text: inAttribute(source, field.styleSpan, declarations) });
         touched = true;
       } else if (declarations && field.attrInsert !== undefined) {
         edits.push({ insertAt: field.attrInsert, text: ` style="${attrEscape(declarations)}"` });
@@ -1736,7 +1767,7 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
       const change = resolveVariantChange(current, edit.variant);
       const next = change ? withVariant(current, change) : current;
       if (next !== current) {
-        edits.push({ span: field.classSpan, text: attrEscape(next) });
+        edits.push({ span: field.classSpan, text: inAttribute(source, field.classSpan, next) });
         touched = true;
       }
     }

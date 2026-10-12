@@ -1028,6 +1028,21 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   by the words on the page it is reading. Both client call sites send
   `documentHtmlUpdates` back whole, or the signatures cannot survive.
   `checks/websiteActiveContent.ts`.
+- **A value written into an attribute is escaped for the quote the page
+  used** — `inAttribute()` in `regions.ts`, for a meta field's words, a
+  picture's address, a link, alt text, a style and a class. A page's
+  description, social copy and keywords were written into `<meta content>`
+  with only `&`, `<` and `>` escaped, so any EDITOR could save a description
+  of `0;url=https://evil.example" http-equiv="refresh` and every visitor of
+  the published page was sent away — while the preview, which strips refresh
+  tags, looked normal. Pictures, links and alt text had the same gap on any
+  imported page that quotes with `'`. Only the quote the page used is escaped
+  (an apostrophe in a double-quoted description stays readable), a bare value
+  is given quotes, and it is done where the span is written rather than when
+  the draft is saved, so drafts saved before the fix are covered. **And** the
+  publish guard blocks a refresh, security-policy or cookie meta, or a
+  `<base>`, that the source page did not already have (`noNewPageControls`).
+  `checks/websiteAttributeFields.ts`, which fails 16 ways on the old code.
 - **Text that ends up inside `<script type="application/ld+json">` is escaped
   for the script, not just for JSON** (`<`, `>`, `&`, U+2028/9). Every SEO
   replacement that carries somebody's words is a function, because a string

@@ -5,7 +5,7 @@
  * the website, layout, accessibility, mobile responsiveness, or brand identity.
  */
 
-import { parseHtml, walk, attr, textOf, type ElementNode } from "./website/parse.js";
+import { parseHtml, walk, attr, decodeEntities, textOf, type ElementNode } from "./website/parse.js";
 import type { FieldValue } from "./website/index.js";
 
 export type GuardSeverity = "blocker" | "warning" | "info";
@@ -58,6 +58,7 @@ export type PublishGuardResult = {
     mobileSafety: boolean;
     accessibilityH1: boolean;
     brandGuard: boolean;
+    noNewPageControls: boolean;
   };
 };
 
@@ -118,7 +119,7 @@ function parseHexColor(color: string): { r: number; g: number; b: number } | nul
 }
 
 /**
- * Executes all 17 pre-flight publish guard checks against candidate HTML.
+ * Executes all 18 pre-flight publish guard checks against candidate HTML.
  */
 export function runPublishGuardChecks(input: {
   candidateHtml: string;
@@ -149,6 +150,7 @@ export function runPublishGuardChecks(input: {
     mobileSafety: true,
     accessibilityH1: true,
     brandGuard: true,
+    noNewPageControls: true,
   };
 
   const candHtml = input.candidateHtml || (input as any).html || "";
@@ -347,6 +349,45 @@ export function runPublishGuardChecks(input: {
       title: "Multiple <h1> Headings Detected",
       description: `Page contains ${h1Count} <h1> headings. Single H1 heading hierarchy is recommended.`,
       suggestion: "Change secondary headings to <h2>.",
+    });
+  }
+
+  // A redirect, a security policy, a cookie or a base address the page did
+  // not already have.
+  //
+  // Nothing typed into a field can add one — words are escaped for the
+  // attribute they sit in — and that is exactly why this is checked here as
+  // well: a field that once could (a `<meta content>` written with its quotes
+  // left alone) sent every visitor of the published page somewhere else, and
+  // the editor's preview strips refresh tags, so the publisher never saw it.
+  // Counted by kind against the source, so a page that always had one is not
+  // held up by it.
+  const pageControls = (root: ElementNode) => {
+    const counts = new Map<string, number>();
+    for (const node of walk(root)) {
+      let kind: string | null = null;
+      if (node.tag === "base") kind = "a <base> address";
+      else if (node.tag === "meta") {
+        const equiv = decodeEntities(attr(node, "http-equiv") ?? "").trim().toLowerCase();
+        if (equiv === "refresh") kind = "a refresh redirect";
+        else if (equiv === "content-security-policy") kind = "a security policy";
+        else if (equiv === "set-cookie") kind = "a cookie";
+      }
+      if (kind) counts.set(kind, (counts.get(kind) ?? 0) + 1);
+    }
+    return counts;
+  };
+  const controlsBefore = pageControls(sourceRoot);
+  for (const [kind, count] of pageControls(candidateRoot)) {
+    if (count <= (controlsBefore.get(kind) ?? 0)) continue;
+    checks.noNewPageControls = false;
+    blockers.push({
+      id: `new-page-control-${kind.replace(/\W+/g, "-")}`,
+      category: "safe_publish",
+      severity: "blocker",
+      title: "A page control the page did not have",
+      description: `These edits add ${kind} to the page, which nothing in the editor should be able to do.`,
+      suggestion: "Discard the draft and check who edited the page details. Nothing has been published.",
     });
   }
 
