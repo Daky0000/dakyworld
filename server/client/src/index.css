@@ -1061,3 +1061,88 @@ button.dx-ctr:hover { color:var(--editor-accent); }
 .dx-ldragging { outline:1.5px dashed var(--editor-accent); outline-offset:-2px; background:var(--editor-accent-soft); color:var(--editor-text); }
 .dx-lghost { background:var(--editor-panel)!important; color:var(--editor-text)!important; border:1px solid var(--editor-accent); box-shadow:var(--editor-shadow); opacity:1; }
 .dx-layers-foot:hover .dx-lgrip { background:var(--editor-accent); }
+
+/* ---- Inspector: General · Style · Interactions (11 Oct 2026) ---------------
+   The same three tabs for every element. Dots beside a label say where its
+   value comes from: filled = changed here, grey = set in the page's HTML,
+   ring = handed down from a wider screen. */
+.dx-general { display:flex; flex-direction:column; }
+.dx-lab { display:inline-flex; align-items:center; gap:6px; min-width:0; }
+.dx-lab label { font-size:12px; color:var(--editor-muted); }
+.dx-pdot { width:7px; height:7px; min-height:0; border-radius:50%; flex:none; padding:0; border:0; background:transparent; }
+.dx-pdot-changed { background:var(--editor-accent); cursor:pointer; }
+.dx-pdot-changed:hover:not(:disabled) { box-shadow:0 0 0 3px var(--editor-accent-soft); }
+.dx-pdot-page { background:var(--editor-faint); }
+.dx-pdot-inherited { box-shadow:inset 0 0 0 1.5px var(--editor-accent); }
+.dx-pdot:disabled { cursor:default; }
+.dx-sum-dot { display:inline-block; margin-left:2px; }
+.dx-scrub { cursor:ew-resize; color:var(--editor-faint); font-size:11px; user-select:none; padding:0 2px; touch-action:none; }
+.dx-scrub:hover { color:var(--editor-text); }
+.dx-more { align-self:flex-start; font-size:12px; font-weight:500; color:var(--editor-accent); padding:2px 0; }
+.dx-more:hover { text-decoration:underline; }
+.dx-editor select.dx-more-sel { height:28px!important; margin-top:6px; }
+.dx-btns { display:flex; background:var(--editor-input); border-radius:8px; padding:2px; gap:2px; }
+.dx-btns button { flex:1; min-width:0; height:28px; border-radius:6px; color:var(--editor-muted); font-size:11.5px; display:inline-flex; align-items:center; justify-content:center; gap:4px; white-space:nowrap; overflow:hidden; }
+.dx-btns button:hover:not(:disabled) { color:var(--editor-text); background:var(--editor-hover); }
+.dx-btns button.dx-eff { color:var(--editor-text); box-shadow:inset 0 0 0 1px var(--editor-faint); }
+.dx-btns button[aria-checked="true"] { background:var(--editor-accent); color:#fff; box-shadow:0 1px 2px rgba(0,0,0,.25); }
+.dx-g3 { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+.dx-linkrow { display:inline-flex; align-items:center; gap:4px; }
+.dx-link { width:26px; height:24px; border-radius:6px; display:inline-flex; align-items:center; justify-content:center; color:var(--editor-muted); }
+.dx-link[aria-pressed="true"] { color:var(--editor-accent); background:var(--editor-accent-soft); }
+.dx-sides { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; }
+.dx-sides:has(> :nth-child(2):last-child) { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.dx-side { display:flex; flex-direction:column; align-items:center; gap:3px; min-width:0; }
+.dx-editor .dx-side input[type=text] { width:100%; height:30px; text-align:center; border-radius:7px; border:1px solid transparent!important; background:var(--editor-input)!important; font:12px ui-monospace,Menlo,monospace; padding:0 4px; }
+.dx-side span { font-size:10px; color:var(--editor-faint); text-transform:uppercase; letter-spacing:.05em; white-space:nowrap; }
+.dx-rep { display:flex; flex-direction:column; gap:6px; }
+.dx-add { width:24px; height:24px; border-radius:6px; font-size:16px; line-height:1; color:var(--editor-muted); display:inline-flex; align-items:center; justify-content:center; }
+.dx-add:hover:not(:disabled) { color:var(--editor-accent); background:var(--editor-accent-soft); }
+.dx-raw { display:flex; align-items:center; gap:8px; background:var(--editor-input); border-radius:8px; padding:6px 8px; }
+.dx-raw code { flex:1; min-width:0; font:11px ui-monospace,Menlo,monospace; color:var(--editor-text); overflow-wrap:anywhere; }
+.dx-item { border:1px solid var(--editor-line); border-radius:8px; }
+.dx-item[data-open] { border-color:var(--editor-accent); }
+.dx-item-row { display:flex; align-items:center; gap:2px; padding:2px 2px 2px 0; }
+.dx-item-sum { flex:1; min-width:0; text-align:left; font-size:12px; padding:6px 9px; color:var(--editor-text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dx-item-ed { padding:8px 10px 10px; border-top:1px solid var(--editor-line); }
+.dx-nf { display:flex; flex-direction:column; gap:4px; min-width:0; }
+.dx-nf > span:first-child { font-size:11px; color:var(--editor-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dx-nf .dx-inp { padding-left:8px; }
+.dx-editor .dx-nf .dx-inp input[type=text] { height:28px; font:12px ui-monospace,Menlo,monospace; padding:0 4px 0 0; }
+.dx-inp em { font-style:normal; font-size:11px; color:var(--editor-faint); padding-right:8px; }
+.dx-panel { display:flex; flex-direction:column; gap:8px; background:var(--editor-input); border-radius:10px; padding:10px; }
+.dx-panel .dx-inp { background:var(--editor-panel); }
+.dx-gbar { position:relative; height:22px; border-radius:6px; border:1px solid var(--editor-line); cursor:copy; margin:6px 7px 4px; }
+.dx-gstop { position:absolute; top:50%; width:14px; height:14px; min-height:0; padding:0; border-radius:50%; border:2px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.35); transform:translate(-50%,-50%); cursor:grab; touch-action:none; }
+.dx-gstop[aria-pressed="true"] { box-shadow:0 0 0 2px var(--editor-accent); }
+.dx-thumb { height:96px; border-radius:8px; background:var(--editor-input) center/cover no-repeat; border:1px solid var(--editor-line); }
+.dx-code { display:flex; flex-direction:column; gap:2px; background:var(--editor-input); border-radius:8px; padding:8px 10px; font:12px ui-monospace,Menlo,monospace; color:var(--editor-muted); }
+.dx-editor .dx-code textarea { min-height:80px; resize:vertical; background:transparent!important; border:0!important; box-shadow:none!important; font:12px/1.55 ui-monospace,Menlo,monospace; color:var(--editor-text); padding:2px 0; width:100%; }
+.dx-note ul { margin:4px 0 0 16px; list-style:disc; }
+.dx-editor select.dx-preset { height:24px!important; width:auto!important; font-size:11px!important; padding:0 6px!important; border-radius:6px!important; }
+.dx-err { font-size:11.5px; color:#C2410C; }
+.editor-dark .dx-err { color:#F5A06B; }
+.dx-mono { font-family:ui-monospace,Menlo,monospace; }
+.dx-devs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+.dx-devs button { display:flex; flex-direction:column; align-items:center; gap:3px; padding:7px 4px; border-radius:8px; border:1px solid var(--editor-line); font-size:11px; color:var(--editor-faint); }
+.dx-devs button[aria-pressed="true"] { color:var(--editor-text); border-color:var(--editor-accent); background:var(--editor-accent-soft); }
+.dx-children { display:flex; flex-direction:column; gap:4px; max-height:180px; overflow-y:auto; }
+.dx-children button { display:flex; align-items:center; justify-content:space-between; gap:8px; text-align:left; font-size:12px; padding:6px 9px; border-radius:7px; border:1px solid var(--editor-line); color:var(--editor-text); }
+.dx-children button:hover { border-color:var(--editor-accent); color:var(--editor-accent); }
+.dx-children span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.dx-children em { font:10px ui-monospace,Menlo,monospace; font-style:normal; text-transform:uppercase; color:var(--editor-faint); }
+.dx-empty { display:flex; flex-direction:column; align-items:center; text-align:center; gap:8px; padding:28px 20px; }
+.dx-empty-ico { width:40px; height:40px; border-radius:12px; display:flex; align-items:center; justify-content:center; background:var(--editor-accent-soft); color:var(--editor-accent); }
+.dx-empty b { font-size:13px; }
+.dx-empty p { font-size:12px; color:var(--editor-muted); margin:0 0 6px; }
+.dx-ix { border:1px solid var(--editor-line); border-radius:10px; }
+.dx-ix[data-open] { border-color:var(--editor-accent); }
+.dx-ix-row { display:flex; align-items:center; gap:2px; padding:3px; }
+.dx-ix-sum { flex:1; min-width:0; text-align:left; font-size:12.5px; font-weight:600; padding:6px 8px; color:var(--editor-text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dx-ix-ed { display:flex; flex-direction:column; gap:12px; padding:8px 10px 12px; border-top:1px solid var(--editor-line); }
+/* Label text inside a field header reads as a label, not as the monospace value that .dx-fl span is for. */
+.dx-fl .dx-lab, .dx-fl .dx-lt { font:inherit; }
+.dx-fl .dx-lt { font-size:12px; color:var(--editor-muted); }
+/* A section with nothing to summarise still puts its chevron at the edge. */
+.dx-acc > summary:not(:has(small))::after { margin-left:auto; }
+.dx-fl .dx-opt, .dx-fl .dx-hint { font-family:inherit; color:var(--editor-faint); }

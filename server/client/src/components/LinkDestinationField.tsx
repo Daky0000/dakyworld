@@ -1,10 +1,10 @@
 import { useEffect, useId, useState } from "react";
 
 /**
- * Where clicking an element goes, in the Content tab.
+ * Where clicking an element goes, under Settings → Link.
  *
- * Links and buttons already have a destination; words and containers get one
- * by being wrapped in a link, which the server writes around the element when
+ * Links and buttons already have a destination; words, pictures and containers
+ * get one by being wrapped in a link, which the server writes around the element when
  * a destination is set and takes away again when it is cleared.
  */
 export function LinkDestinationField({
@@ -23,7 +23,7 @@ export function LinkDestinationField({
   const id = useId();
   const [text, setText] = useState(href);
   useEffect(() => setText(href), [href]);
-  const wraps = kind === "text" || kind === "richtext" || kind === "container";
+  const wraps = kind === "text" || kind === "richtext" || kind === "container" || kind === "image";
   const commit = (next: string) => {
     const value = next.trim();
     if (value !== href) onHref(value);
@@ -45,7 +45,7 @@ export function LinkDestinationField({
           list={`${id}-pages`}
           disabled={readOnly}
           value={text}
-          placeholder={kind === "container" ? "Make the whole block a link: /page or https://…" : "/page, https://…, mailto: or tel:"}
+          placeholder={kind === "container" ? "Make the whole block a link: /page or https://…" : kind === "image" ? "Where clicking the picture goes" : "/page, https://…, mailto: or tel:"}
           onChange={(event) => setText(event.target.value)}
           onBlur={(event) => commit(event.target.value)}
           onKeyDown={(event) => {

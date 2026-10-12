@@ -9,7 +9,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WebsiteImageFraming } from "./components/WebsiteImageFraming";
 import { WebsitePresetPicker, WebsitePresetRollout, WebsitePresetSettings } from "./components/WebsiteBrandPresets";
 import { PublishProgress, type PublishJobStatus } from "./components/PublishStatus";
-import { ElementInspector } from "./components/ElementInspector";
+import { WebsiteStyleTab } from "./components/WebsiteStyleTab";
 import type { BrandPreset } from "./lib/websiteBrandPresets";
 import "./index.css";
 import { InteractionHarness } from "./interaction-harness";
@@ -22,7 +22,7 @@ function Harness() {
   const [state, setState] = useState<PublishJobStatus["state"]>("VERIFYING");
   return <main className="mx-auto max-w-5xl space-y-6 p-6">
     <h1 className="text-2xl font-semibold">Website builder · editing controls</h1>
-    <div className="grid gap-6 md:grid-cols-2"><section className="rounded-xl border border-line bg-white p-4"><h2 className="mb-3 text-lg">Client editing</h2><label><input type="checkbox" checked={!simple} onChange={e => setSimple(!e.target.checked)} /> Designer controls</label><WebsitePresetPicker presets={presets} kind="button" tag="a" style={style} onApply={setStyle} /><ElementInspector simple={simple} facts={{ kind: "button", tag: "a", display: "inline-block", parentDisplay: "block", position: "static", hasText: true, childCount: 0 }} device="desktop" style={style} source={{ sourceStyle: "", baseStyle: "", computed: {} }} onChange={setStyle} onReset={() => setStyle("")} content={<label>Button text<input aria-label="Button text" defaultValue="Get started" /></label>} /><output data-testid="style" className="block break-words text-xs">{style}</output></section>
+    <div className="grid gap-6 md:grid-cols-2"><section className="rounded-xl border border-line bg-white p-4"><h2 className="mb-3 text-lg">Client editing</h2><label><input type="checkbox" checked={!simple} onChange={e => setSimple(!e.target.checked)} /> Designer controls</label><WebsitePresetPicker presets={presets} kind="button" tag="a" style={style} onApply={setStyle} /><div className="website-editor dx-editor"><WebsiteStyleTab style={style} sourceStyle="" inheritedStyle="" computed={{}} facts={{ kind: "button", tag: "a", display: "inline-block", parentDisplay: "block", position: "static" }} device="desktop" readOnly={false} designer={!simple} onChange={(next) => setStyle(next)} onCommit={() => {}} /></div><output data-testid="style" className="block break-words text-xs">{style}</output></section>
     <section className="rounded-xl border border-line bg-white p-4"><h2 className="mb-3 text-lg">Image framing</h2><WebsiteImageFraming src="/builder-fixture.svg" style={style} onApply={setStyle} /></section></div>
     <label>Publishing state<select aria-label="Publishing state" value={state} onChange={e => setState(e.target.value as PublishJobStatus["state"])}>{["QUEUED", "VERIFYING", "COMPLETED", "VERIFY_FAILED", "COMMIT_FAILED", "RECONCILIATION_REQUIRED"].map(value => <option key={value}>{value}</option>)}</select></label>
     <PublishProgress status={{ id: "job", state, label: state, verifyUrl: "https://example.com/", attempts: 0, lastError: null, deployedInSeconds: null }} />

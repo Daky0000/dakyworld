@@ -41,7 +41,7 @@ export type TourStep = {
   /** Put the editor in this mode before the step is shown. */
   mode?: "visual" | "edit" | "preview";
   /** Open this inspector tab before the step is shown. */
-  tab?: "content" | "style" | "interactions";
+  tab?: "general" | "style" | "interactions";
   /** The line in the "do this" box of a step that waits for an action. */
   doText?: string;
   /** A small hint row: what to do, and the keys for it. */
@@ -102,9 +102,9 @@ export const TOURS: Record<TourId, Tour> = {
         id: "inspector",
         target: '[data-tour="inspector"]',
         side: "left",
-        tab: "content",
+        tab: "general",
         title: "All the settings in one place",
-        body: "Content is the words, links and pictures. Style is how it looks. Interactions are animations and what happens on click.",
+        body: "General is the words or picture and the element's settings — its link, tag and where it shows. Style is how it looks. Interactions are animations.",
       },
       {
         id: "states",
@@ -287,7 +287,7 @@ export function requestTourMode(mode: "visual" | "edit" | "preview") {
 }
 
 /** Asks the editor to open an inspector tab before a step that points into it. */
-export function requestTourTab(tab: "content" | "style" | "interactions") {
+export function requestTourTab(tab: "general" | "style" | "interactions") {
   window.dispatchEvent(new CustomEvent(TAB_EVENT, { detail: { tab } }));
 }
 

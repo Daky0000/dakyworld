@@ -390,9 +390,9 @@
       <article class="spec-row spec-row--step" id="step-7">
         <div class="step-head"><span class="step-n">07</span><h3>Open a page</h3></div>
         <div class="spec-body">
-          <p>Sign in at <a href="https://editor.dakyx.com/" class="link">editor.dakyx.com</a> &mdash; or press <em>Sign in</em> at the top of this website &mdash; and choose <strong>Pages</strong>. Pick the page you want to change and it opens with your real website on the right and a panel on the left.</p>
+          <p>Sign in at <a href="https://editor.dakyx.com/" class="link">editor.dakyx.com</a> &mdash; or press <em>Sign in</em> at the top of this website &mdash; and choose <strong>Pages</strong>. Pick the page you want to change and it opens with your real website filling the screen and a rail of tools down the left.</p>
           <p>On a phone it opens in <strong>List</strong> instead: every word, picture and link on the page as a list you can edit with your thumb. <strong>Visual</strong>, one tap away in the bar, shows the page itself.</p>
-          <p>The panel has two halves. <strong>Layers</strong> lists everything on the page, in the order it appears, so you can reach something that is three screens down or has nothing visible to click. Below it, whatever you have selected.</p>
+          <p><strong>Layers</strong>, on the rail, lists everything on the page in the order it appears, so you can reach something that is three screens down or has nothing visible to click. Click anything on the page and its settings open on the right, in three tabs that are the same whatever you selected: <strong>General</strong>, <strong>Style</strong> and <strong>Interactions</strong>.</p>
         </div>
       </article>
 
@@ -401,8 +401,12 @@
         <div class="spec-body">
           <p><strong>Words:</strong> double-click any text on the page and type. The cursor is in the real heading, at the real size.</p>
           <p><strong>Pictures:</strong> select one and replace it, either from the files already on your site or by uploading. Always fill in the description &mdash; it is what somebody using a screen reader hears, and what search engines read.</p>
-          <p><strong>Links and buttons:</strong> select one to change its words, where it goes, whether it opens in a new tab, and which of your site&#39;s button styles it wears. The list of destinations offers your own pages, so a typo cannot send somebody nowhere.</p>
-          <p><strong>Making anything a link:</strong> a heading, a paragraph or a whole block such as a card can be made clickable from the <em>Link</em> field at the top of its Content tab. Clear the field, or press <em>Remove link</em>, to take the link off again. Something that already contains a link or button cannot be wrapped in another one.</p>
+          <p>All of this is on the <strong>General</strong> tab, which has two parts: <em>Content</em>, which is whatever the thing you selected holds &mdash; its words, its picture, its video &mdash; and <em>Settings</em>, which is the same short list for everything.</p>
+          <p><strong>Links and buttons:</strong> select one to change its words and which of your site&#39;s button styles it wears. Where it goes, and whether it opens in a new tab, is under <em>Settings &rarr; Link</em>. The list of destinations offers your own pages, so a typo cannot send somebody nowhere.</p>
+          <p><strong>Making anything a link:</strong> a heading, a paragraph, a picture or a whole block such as a card can be made clickable from the same <em>Link</em> field. Clear the field, or press <em>Remove link</em>, to take the link off again. Something that already contains a link or button cannot be wrapped in another one.</p>
+          <p><strong>Showing something on some screens only:</strong> <em>Display conditions</em>, also under Settings, has three switches &mdash; Desktop, Tablet, Phone. Switch one off and that element is not shown on that size of screen. Your pages are files rather than an app, so there are no rules about dates or signed-in visitors.</p>
+          <p><strong>Videos:</strong> select one to set its file, where it starts and ends, and whether it plays by itself, loops, is muted, shows its controls or can be downloaded. A video is added by its address: put the file where your site keeps its media and paste the path.</p>
+          <p><strong>The technical settings</strong> appear when <em>Designer controls</em> is switched on in the account menu: the heading level or tag, an ID to link to with <em>#name</em>, and extra attributes such as <em>aria-label</em> or <em>data-</em> values. Anything that could run code on your visitors&#39; browsers is refused, and the box says why.</p>
           <p class="spec-deliverable"><strong>If what you selected is shared</strong>, the panel says so above everything else &mdash; &ldquo;used on 7 pages&rdquo; &mdash; and asks whether the change is for all of them or only this page. Choosing &ldquo;only this page&rdquo; makes this copy independent; nothing on screen moves when it does.</p>
         </div>
       </article>
@@ -410,9 +414,11 @@
       <article class="spec-row spec-row--step" id="step-9">
         <div class="step-head"><span class="step-n">09</span><h3>Adjust the design, if you need to</h3></div>
         <div class="spec-body">
-          <p>The design controls show what your website already says. A heading might read <em>72px &middot; Website</em>: that is the size your site sets, not a blank box.</p>
-          <p>Change one and it is marked <em>Override</em> with an arrow beside it. Press the arrow and it goes back to what your website had. You can always get back to the original.</p>
-          <p>Switch between <strong>Desktop</strong>, <strong>Tablet</strong> and <strong>Phone</strong> at the top. Values shown are the ones that width actually uses, and a change made under Phone applies to phones only.</p>
+          <p>The <strong>Style</strong> tab has the same sections whatever you select: Layout, Spacing, Size, Position, Typography, Background, Border and Effects. A control that does not apply to what you selected simply does nothing; type styles set on a block are picked up by the words inside it.</p>
+          <p>The controls show what your website already says. An empty box means &ldquo;as my website has it&rdquo;, and the grey number in it &mdash; <em>72</em> on a big heading &mdash; is the value your site sets, not a blank.</p>
+          <p>Change one and a blue dot appears beside its name. Press the dot and it goes back to what your website had. You can always get back to the original.</p>
+          <p>Switch between <strong>Desktop</strong>, <strong>Tablet</strong> and <strong>Phone</strong> at the top. Values shown are the ones that width actually uses, and a change made under Phone applies to phones only. At the top of the Style tab, <strong>Hover</strong> sets how something looks while the mouse is over it.</p>
+          <p>The <strong>Interactions</strong> tab adds movement. Press <em>Create an interaction</em>, choose what starts it &mdash; the page loading, scrolling into view, scrolling, the mouse arriving, a press &mdash; and the effect: fade, slide, scale or your own. No code is added to your page, so a press plays while the element is held down rather than afterwards, and visitors who have asked their device for less motion are not shown animations at all.</p>
           <p class="spec-deliverable"><strong>A good habit:</strong> change the words first, publish, and only then adjust design. Two kinds of change in one publish are harder to review and harder to undo.</p>
         </div>
       </article>

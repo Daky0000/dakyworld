@@ -1,19 +1,17 @@
 /**
- * What the inspector actually draws, asked of a real browser.
+ * What the Style tab actually draws, asked of a real browser.
  *
  * A compile proves nothing about which controls a selected element gets, and a
  * unit test over the model proves the rules and not the wiring. This renders
- * the component and reads the panel back.
- */
-/*
- * Run it against the harness page:
+ * the component in `inspector-harness.html` and reads the panel back.
+ *
+ * Since 11 Oct 2026 the tab is the same for every element — Elementor's model,
+ * at Dan's request — so what this holds is: every element has every section;
+ * the few controls that depend on the element appear exactly when they should;
+ * a value shows where it comes from; and looking writes nothing.
  *
  *   npm --prefix client exec vite -- --port 5199 --strictPort --host 127.0.0.1
  *   node checks/browser/inspector.mjs
- *
- * Playwright is not a dependency of this project — the OS is not otherwise
- * browser-driven — so this finds an installed copy and says so plainly when it
- * cannot. `PLAYWRIGHT_URL` names one explicitly.
  */
 async function playwright() {
   const candidates = [process.env.PLAYWRIGHT_URL, "playwright"].filter(Boolean);
@@ -32,8 +30,10 @@ const { chromium } = await playwright();
 
 const url = process.argv[2] ?? "http://127.0.0.1:5199/inspector-harness.html";
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 420, height: 1400 } });
+const page = await browser.newPage({ viewport: { width: 420, height: 2400 } });
 const problems = [];
+const errors = [];
+page.on("pageerror", (error) => errors.push(error.message));
 let checks = 0;
 const check = (name, condition) => {
   checks += 1;
@@ -46,158 +46,160 @@ const select = async (name) => {
   await page.evaluate((next) => window.__harness.select(next), name);
   await page.waitForFunction((next) => document.querySelector('[data-testid="case"]').textContent === next, name);
 };
+const sections = () => page.$$eval("[data-section]", (nodes) => nodes.map((node) => node.getAttribute("data-section")));
+const open = async (name) => {
+  const section = page.locator(`[data-section="${name}"]`);
+  if (!(await section.evaluate((details) => details.open))) await section.locator(":scope > summary").click();
+  // A section draws its controls once it is open; count() does not wait for that.
+  await section.locator(":scope > .dx-accb > *").first().waitFor();
+  return section;
+};
+const showMore = async (name) => {
+  const button = page.locator(`[data-section="${name}"]`).getByRole("button", { name: "Show more" });
+  if (await button.count()) await button.click();
+};
+const named = (label) => page.getByLabel(label, { exact: true });
+const groups = () => page.$$eval('[role="radiogroup"]', (nodes) => nodes.map((node) => node.getAttribute("aria-label")));
+const writes = () => page.evaluate(() => window.__harness.writes.length);
+const lastWrite = () => page.evaluate(() => window.__harness.writes.at(-1) ?? "");
+const EVERY = ["layout", "spacing", "size", "position", "typography", "background", "border", "effects", "custom"];
 
-/**
- * Which groups the panel drew.
- *
- * Read from `data-section` rather than from the heading's classes: a check that
- * breaks when somebody restyles a heading is a check nobody trusts, and this one
- * is about which controls an element gets.
- */
-const sections = async () => page.$$eval("[data-section]", (nodes) => nodes.map((node) => node.getAttribute("data-section")));
+/* ------------------------------------------------- the same for everyone */
 
-/** Every control the panel drew, by its accessible name. */
-const labels = () => page.$$eval("input, select, [role=radiogroup]", (nodes) => nodes.map((node) => node.getAttribute("aria-label") ?? node.getAttribute("title") ?? ""));
-const valueOf = (label) =>
-  page.$$eval(
-    "input, select",
-    (nodes, wanted) => {
-      const found = nodes.find((node) => (node.getAttribute("aria-label") ?? "") === wanted);
-      return found ? found.value : null;
-    },
-    label,
-  );
-const originOf = (property) =>
-  page.$$eval("[data-origin]", (nodes, wanted) => {
-    const found = nodes.find((node) => node.getAttribute("data-origin") === wanted);
-    return found ? found.textContent.trim() : "";
-  }, property);
+for (const name of ["heading", "image", "flexRow", "gridWrap", "flexChild", "gridChild", "overlay", "tablet", "layered"]) {
+  await select(name);
+  check(`${name} has every section, in order`, JSON.stringify(await sections()) === JSON.stringify(EVERY));
+}
 
-/* ------------------------------------------------------------- a heading */
+/* ---------------------------------------------------------- a heading */
 
 await select("heading");
-let drawn = await sections();
-check("a heading is offered typography", drawn.includes("typography"));
-check("a heading is offered no image controls", !drawn.includes("image"));
-check("a heading is offered no flex arrangement", !drawn.includes("flexContainer"));
-check("a heading is offered no grid", !drawn.includes("gridContainer"));
-check("a static heading hides Position", !drawn.includes("position"));
-check("Advanced is present", drawn.includes("advanced"));
-check("the content slot is drawn", (await page.$('[data-testid="content-slot"]')) !== null);
+check("a heading opens on Typography", await page.locator('[data-section="typography"]').evaluate((details) => details.open));
+check("font size shows the website's 72 as its placeholder", (await named("Font size").getAttribute("placeholder")) === "72");
+check("and holds no value of its own", (await named("Font size").inputValue()) === "");
+check("weight names the website's own", (await page.locator("#dx-font-weight-s option").first().textContent()) === "Default (700 Bold)");
+await open("size");
+check("max width shows the site's 780", (await named("Max width").getAttribute("placeholder")) === "780");
+check("a block heading is offered no flex controls", !(await groups()).includes("Direction"));
+check("nor the flex-child ones", !(await groups()).includes("Flex size"));
+check("a static heading is offered no offsets", (await page.getByLabel("Top offset").count()) === 0);
+check("looking at an element writes nothing", (await writes()) === 0);
 
-// The point of the whole second phase: the control shows the site's own value.
-check("font size shows the website's 72px", (await valueOf("Size")) === "72px");
-check("and says the website is where it came from", (await originOf("font-size")) === "Website");
-check("the font reads as the family the site uses", (await valueOf("Font")) === '"Space Grotesk", sans-serif');
-check("weight comes back as the site's 700", (await valueOf("Weight")) === "700");
-check("max width shows the site's 780px", (await valueOf("Max width")) === "780px");
+await named("Width unit").selectOption("%");
+await named("Width").fill("50");
+check("a number takes the unit chosen", (await lastWrite()) === "width: 50%");
+await named("Width unit").selectOption("fx");
+await named("Width").fill("calc(100% - 2rem)");
+check("a half-typed value is not written while it is being typed", !(await lastWrite()).includes("calc"));
+await named("Width").blur();
+check("fx writes any value as typed", (await lastWrite()).includes("width: calc(100% - 2rem)"));
 
-let names = await labels();
-check("width and height appear once each", names.filter((name) => name === "Width").length === 1 && names.filter((name) => name === "Height").length === 1);
-check("a heading gets no image fit", !names.includes("Fit"));
+await open("spacing");
+await named("Padding top").fill("10");
+const linked = await lastWrite();
+check("linked padding writes all four sides", ["top", "right", "bottom", "left"].every((side) => linked.includes(`padding-${side}: 10px`)));
+await page.getByRole("button", { name: "Link padding" }).click();
+await named("Padding left").fill("4");
+check("unlinked, one side changes alone", (await lastWrite()).includes("padding-left: 4px") && (await lastWrite()).includes("padding-top: 10px"));
 
-// A control with nothing behind it must not claim the website decided it, and a
-// select must not offer its first option as the current state.
-check("an unmeasured width shows no origin", (await originOf("width")) === "");
-check("and reads as designed rather than as a number", (await valueOf("Width")) === "");
-check("a case control nothing has set is not showing UPPERCASE", (await valueOf("Case")) === "");
-// A group with nothing set starts shut, so opening it is also a check of the
-// toggle every group now has.
-await page.click('[data-section="spacing"] button[aria-expanded="false"]');
-names = await labels();
-check("a shut group opens when asked", names.includes("padding top"));
-check("the spacing boxes are named in full for a screen reader", names.includes("padding top") && names.includes("margin left"));
-check("and drawn as a box rather than four labelled lines", !(await page.textContent("body")).includes("padding top"));
-
-// Acceptance criterion: opening an element writes nothing.
-check("looking at an element does not touch the draft", (await page.evaluate(() => window.__harness.writes.length)) === 0);
-
-/* ---------------------------------------------------------------- a photo */
+/* ---------------------------------------------------------- a picture */
 
 await select("image");
-drawn = await sections();
-check("an image is offered image controls", drawn.includes("image"));
-check("an image is offered no typography", !drawn.includes("typography"));
-names = await labels();
-check("an image has a fit control", names.includes("Fit"));
-check("an image has no font control", !names.includes("Font"));
-check("object fit shows the site's cover", (await valueOf("Fit")) === "cover");
+check("a picture opens on Size, with Show more open", (await page.locator('[data-section="size"]').evaluate((details) => details.open)) && (await named("Object fit").count()) === 1);
+check("its fit is the site's cover", (await page.locator("#dx-object-fit-s option").first().textContent()) === "Default (Cover)");
+check("and it is still offered typography, like every element", (await page.locator('[data-section="typography"]').count()) === 1);
 
 /* ------------------------------------------------------------ containers */
 
 await select("flexRow");
-drawn = await sections();
-check("a flex container gets the arrangement controls", drawn.includes("flexContainer"));
-check("a flex container is not offered grid tracks", !drawn.includes("gridContainer"));
-check("a flex container is not treated as a flex child", !drawn.includes("flexChild"));
-names = await labels();
-check("direction is offered", names.includes("Direction"));
-check("grid columns are not", !names.includes("Columns"));
-check("the row gap shows the site's 24px", (await valueOf("Row gap")) === "24px");
+let drawn = await groups();
+check("a flex container gets the flex controls", ["Direction", "Justify content", "Align items", "Wrap"].every((name) => drawn.includes(name)));
+check("and not the grid ones", (await page.getByLabel("Columns", { exact: true }).count()) === 0);
+check("the gaps show the site's 24", (await named("Gaps column").getAttribute("placeholder")) === "24");
+check("align content waits for wrapping", (await page.getByLabel("Align content").count()) === 0);
+await page.getByRole("radio", { name: "Wrap", exact: true }).click();
+check("and appears once it wraps", (await page.getByLabel("Align content").count()) === 1);
 
 await select("gridWrap");
-drawn = await sections();
-check("a grid container gets grid controls", drawn.includes("gridContainer"));
-check("a grid container is not offered flex direction", !drawn.includes("flexContainer"));
-check("the track list shows what the site defines", (await valueOf("Columns")) === "repeat(3, 1fr)");
+check("a grid container gets columns, counted from what renders", (await named("Columns").getAttribute("placeholder")) === "3");
+check("and no flex direction", !(await groups()).includes("Direction"));
+await named("Columns").fill("4");
+check("a number of columns makes that many equal tracks", (await lastWrite()).includes("grid-template-columns: repeat(4, minmax(0, 1fr))"));
 
 /* --------------------------------------------------------- parent-aware */
 
 await select("flexChild");
-drawn = await sections();
-check("a child of a flex row gets flex-child controls", drawn.includes("flexChild"));
-check("and no grid placement", !drawn.includes("gridChild"));
-names = await labels();
-check("grow and shrink are offered", names.includes("Grow") && names.includes("Shrink"));
-check("grid column is not", !names.includes("Column"));
+drawn = await groups();
+check("a child of a flex row gets align self, order and flex size", ["Align self", "Order", "Flex size"].every((name) => drawn.includes(name)));
+check("and no grid placement", (await page.getByLabel("Column", { exact: true }).count()) === 0);
+await page.getByRole("radio", { name: "Grow", exact: true }).click();
+check("grow fills the spare space", (await lastWrite()).includes("flex-grow: 1") && (await lastWrite()).includes("flex-shrink: 1"));
 
 await select("gridChild");
-drawn = await sections();
-check("a child of a grid gets grid placement", drawn.includes("gridChild"));
-check("and not grow and shrink", !drawn.includes("flexChild"));
-names = await labels();
-check("grid column is offered", names.includes("Column"));
-check("grow is not", !names.includes("Grow"));
+check("a child of a grid gets its column and row", (await named("Column").count()) === 1 && (await named("Row").count()) === 1);
+check("and not flex size", !(await groups()).includes("Flex size"));
 
 /* ------------------------------------------------------ position offsets */
 
 await select("overlay");
-drawn = await sections();
-check("an absolutely positioned element shows Position", drawn.includes("position"));
-names = await labels();
-check("all four offsets are offered", ["top", "right", "bottom", "left"].every((side) => names.includes(side)));
-check("the stacking order is offered", names.includes("Stack order"));
-
-await select("sticky");
-names = await labels();
-check("a sticky element is offered top and bottom", names.includes("top") && names.includes("bottom"));
-check("and not left and right, which do nothing to it", !names.includes("left") && !names.includes("right"));
-
-await select("heading");
-names = await labels();
-check("a static element is offered no offsets at all", !["top", "right", "bottom", "left"].some((side) => names.includes(side)));
+check("a positioned element opens Position", await page.locator('[data-section="position"]').evaluate((details) => details.open));
+check("with all four offsets", (await Promise.all(["Top", "Right", "Bottom", "Left"].map((side) => page.getByLabel(`${side} offset`, { exact: true }).count()))).every((count) => count === 1));
 
 /* ------------------------------------------------------ origin and reset */
 
 await select("edited");
-check("an edited value shows the edit", (await valueOf("Size")) === "64px");
-check("and is marked as an override", (await originOf("font-size")) === "Override");
-check("a reset is offered", (await page.$('[aria-label="Reset font-size"]')) !== null);
-check("nothing has been written by looking", (await page.evaluate(() => window.__harness.writes.length)) === 0);
-await page.click('[aria-label="Reset font-size"]');
-check("resetting removes the declaration", (await page.evaluate(() => window.__harness.writes.at(-1))) === "");
+check("an edited value shows the edit", (await named("Font size").inputValue()) === "64");
+check("and offers its reset dot", (await page.getByRole("button", { name: "Reset Font size" }).count()) === 1);
+const before = await writes();
+await page.getByRole("button", { name: "Reset Font size" }).click();
+check("resetting removes a declaration the page never had", (await writes()) === before + 1 && !(await lastWrite()).includes("font-size"));
 
 await select("developerInline");
-check("a style attribute the developer wrote is shown", (await valueOf("Size")) === "60px");
-check("and is not called somebody's override", (await originOf("font-size")) === "Website");
-check("so no reset is offered for it", (await page.$('[aria-label="Reset font-size"]')) === null);
+check("a style the developer wrote is shown", (await named("Font size").inputValue()) === "60");
+check("and is not offered as somebody's change to reset", (await page.getByRole("button", { name: "Reset Font size" }).count()) === 0);
+check("its dot says where it came from", (await page.getByRole("button", { name: /^Font size: Set on this element/ }).count()) === 1);
+await named("Font size").fill("50");
+const kept = await lastWrite();
+check("editing one property leaves a developer's shorthand alone", kept.includes("margin: 0 auto") && kept.includes("font-size: 50px"));
 
-/* -------------------------------------------------------- browser noise */
+await select("tablet");
+check("on a smaller screen, the wider screen's value is the placeholder", (await named("Font size").getAttribute("placeholder")) === "48");
+check("and its dot says it is handed down", (await page.getByRole("button", { name: /^Font size: Comes from a wider screen/ }).count()) === 1);
 
-await select("heading");
-const text = await page.textContent("body");
-check("opacity 1 is not announced as a value somebody chose", !/Opacity[\s\S]{0,80}Website/.test(text));
+/* ----------------------------------------------------------- list values */
 
+await select("layered");
+await open("background");
+check("a background shorthand reads as its layers", (await page.getByRole("button", { name: "Image: hero.jpg", exact: true }).count()) === 1);
+check("with its colour as the base colour", (await named("Background color").inputValue()) === "#0D1526");
+await open("effects");
+check("two shadows read as two rows", (await page.getByRole("button", { name: /^Outset: / }).count()) === 1 && (await page.getByRole("button", { name: /^Inset: / }).count()) === 1);
+check("a transform reads as its moves", (await page.getByRole("button", { name: /^Move: 10, 0, 0 px/ }).count()) === 1 && (await page.getByRole("button", { name: /^Rotate: / }).count()) === 1);
+check("a filter reads as its row", (await page.getByRole("button", { name: "Blur: 2px", exact: true }).count()) === 1);
+await open("custom");
+check("what no control owns is in Custom CSS", (await page.getByLabel("Custom CSS").inputValue()).includes("text-shadow: 0 1px 2px #0003"));
+await page.getByRole("button", { name: "Remove Inset: 0px 1px 0px 0px" }).click();
+const shadow = await lastWrite();
+check("removing one shadow keeps the other", shadow.includes("box-shadow: 0px 2px 8px 0px rgba(0,0,0,.12)") && !shadow.includes("inset"));
+check("and leaves the background shorthand as written", shadow.includes("background: url('/hero.jpg') center/cover no-repeat, #0D1526"));
+await page.getByRole("button", { name: "Image: hero.jpg", exact: true }).click();
+await page.getByRole("button", { name: "Replace image" }).click();
+const layered = await lastWrite();
+check("replacing a layer's picture keeps its fit and position", layered.includes("background-image: url('/picked.jpg')") && layered.includes("background-size: cover") && layered.includes("background-color: #0D1526") && !layered.includes("background: "));
+
+await select("developerTransform");
+await open("effects");
+check("a transform the rows cannot express is shown as written", ((await page.locator(".dx-raw code").first().textContent()) ?? "").includes("matrix(1, 0, 0, 1, 10, 0)"));
+
+await open("custom");
+await page.getByLabel("Custom CSS").fill("cursor: pointer; color: red; background-image: url(x.png); --dw-enter: x");
+await page.getByLabel("Custom CSS").blur();
+const customWrite = await lastWrite();
+check("custom CSS keeps what it may", customWrite.includes("cursor: pointer"));
+check("and refuses what a control owns or the page may not carry", !customWrite.includes("color: red") && !customWrite.includes("url(") && !customWrite.includes("--dw-enter: x"));
+check("saying why", (await page.locator(".dx-note.warn").textContent()).includes("set it with its control above"));
+
+if (errors.length) problems.push(...errors.map((error) => `page error: ${error}`));
 await browser.close();
 
 if (problems.length) {
@@ -205,4 +207,4 @@ if (problems.length) {
   for (const problem of problems) console.error(`  ✗ ${problem}`);
   process.exit(1);
 }
-console.log(`inspectorBrowser: ${checks} checks — contextual sections, parent-aware controls, conditional offsets, effective values, origin and reset passed in Chromium`);
+console.log(`inspectorBrowser: ${checks} checks — the same sections for every element, context controls exactly when they apply, units and fx, linked sides, dots and resets, shorthands left alone, list values as rows, custom CSS refusals passed in Chromium`);

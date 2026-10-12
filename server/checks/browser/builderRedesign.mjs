@@ -45,10 +45,10 @@ try {
   await page.getByLabel('Hover text colour',{exact:false}).first().waitFor();
   await page.getByRole('button',{name:'Normal',exact:true}).click();
   await page.getByRole('tab',{name:'Interactions',exact:true}).click();
-  await page.getByRole('radiogroup',{name:'Entrance animation'}).waitFor();
-  await page.getByRole('radiogroup',{name:'Click effect'}).waitFor();
+  await page.getByRole('button',{name:'Create an interaction',exact:true}).waitFor();
+  assert.deepEqual(await page.getByRole('complementary',{name:'Element inspector'}).getByRole('tab').allTextContents(),['General','Style','Interactions']);
   assert.equal(writes.length,0,'Viewing tabs must not save anything');
-  await page.getByRole('tab',{name:'Content',exact:true}).click();
+  await page.getByRole('tab',{name:'General',exact:true}).click();
   await heading.fill('Changed heading');await page.keyboard.press('Control+s');
   await page.getByText('Draft saved · 1 unpublished change',{exact:true}).waitFor();
   assert.equal(document.draft.values['hero.title'].value,'Changed heading');

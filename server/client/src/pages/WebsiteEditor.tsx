@@ -3,9 +3,12 @@ import { applyTextFormat, editableInnerHtml, formatActiveText, type TextToggle }
 import { WebsiteCanvasOverlay } from "../components/WebsiteCanvasOverlay";
 import { WebsiteRichText } from "../components/WebsiteRichText";
 import { WebsiteTextFormatting } from "../components/WebsiteTextFormatting";
-import { WebsiteMotionPanel } from "../components/WebsiteMotionPanel";
+import { WebsiteInteractionsPanel } from "../components/WebsiteInteractionsPanel";
 import { WebsiteHoverPanel } from "../components/WebsiteHoverPanel";
-import { WebsiteStylePanel } from "../components/WebsiteStylePanel";
+import { WebsiteStyleTab } from "../components/WebsiteStyleTab";
+import { ElementSettings, MediaSettings, type Visibility } from "../components/WebsiteElementSettings";
+import { StyleSection } from "../components/StyleControls";
+import { mediaKind, type ElementSettingsChange } from "../../../src/shared/websiteElementSettings";
 import { Seg } from "../components/InspectorDesign";
 import { lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -23,13 +26,11 @@ import { PublishedToast } from "../components/PublishedToast";
 
 
 import { WebsiteImageFraming } from "../components/WebsiteImageFraming";
-import { ImagePositionControl } from "../components/ImagePositionControl";
 import { WebsitePresetPicker } from "../components/WebsiteBrandPresets";
 import type { BrandPreset } from "../lib/websiteBrandPresets";
 import { WebsiteAssetLibrary, WebsiteAssetPickerModal, type CapturedHtmlImage } from "../components/WebsiteAssetLibrary";
 import { MakeSharedPanel, SharedElementPanel, SharedPublishReview } from "../components/WebsiteShared";
 import { PublishReview, type WebsiteReview } from "../components/PublishReview";
-import { ElementInspector } from "../components/ElementInspector";
 import { ColorCodeInput, parseStyle, writeStyle } from "../components/InspectorControls";
 import { extractColorsFromMarkup } from "../lib/pageColors";
 import { INSPECTED_PROPERTIES, toHex, type ElementFacts } from "../lib/elementInspector";
@@ -41,7 +42,7 @@ import { WebsiteAssistant } from "../components/WebsiteAssistant";
 import { WebsiteAgentChat } from "../components/WebsiteAgentChat";
 import { WebsitePageSeoInspector } from "../components/WebsitePageSeoInspector";
 import { WebsitePlanChip, notifyTierStatusChanged, useWebsiteTierStatus } from "../components/WebsiteTierStatusBanner";
-import { FieldRow } from "../components/WebsiteFieldRow";
+import { Destination, FieldRow } from "../components/WebsiteFieldRow";
 import { ConflictDialog } from "../components/WebsiteConflictDialog";
 
 import {
@@ -95,7 +96,7 @@ import { useWebsiteAccess } from "../components/WebsiteMembers";
 import { responsivePreviewCss, safeResponsiveStyle, writeResponsivePreview } from "../lib/websiteResponsive";
 import { rewriteWebsiteMediaStyle, websiteMediaPreviewUrl, websiteMediaSourceUrl, type WebsiteMediaAsset } from "../lib/websiteMedia";
 import { WebsiteIconPicker } from "../components/WebsiteIconPicker";
-import { iconPreviewSrc, svgPreviewSrc } from "../lib/websiteIconPreview";
+import { iconPreviewSrc } from "../lib/websiteIconPreview";
 import { libraryIcon, libraryIconMarkup } from "../../../src/shared/websiteIcons";
 import type { IconChoice } from "../lib/types";
 import { setPageTitle } from "../lib/surface";
@@ -211,7 +212,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const qc = useQueryClient();
   const { user } = useAuth();
   const [designerMode, setDesignerMode] = useState(false);
-  const [inspectorTab, setInspectorTab] = useState<"content" | "layout" | "theme" | "seo" | "style" | "interactions">("content");
+  // The same three tabs for every element: General (its words, picture or
+  // source, then its settings), Style and Interactions.
+  const [inspectorTab, setInspectorTab] = useState<"general" | "style" | "interactions">("general");
   const [showLayers, setShowLayers] = useState(false);
   const [showPanel, setShowPanel] = useState(() => typeof window === "undefined" || window.innerWidth > 600);
   const [editorTheme, setEditorTheme] = useState(() => { try { return localStorage.getItem("website-editor-theme") || "dark"; } catch { return "dark"; } });
@@ -257,6 +260,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const [computed, setComputed] = useState<Record<string, string>>({});
   /** What the frame says the selected element is, as opposed to what it holds. */
   const [domFacts, setDomFacts] = useState<Omit<ElementFacts, "kind"> | null>(null);
+  /**
+   * How each element displays when it is shown, measured whenever it is. Showing
+   * an element again on a smaller screen than it is hidden on needs its real
+   * display — a flex row put back as a block is a different layout.
+   */
+  const naturalDisplays = useRef(new Map<string, string>());
   const [styleClipboard, setStyleClipboard] = useState<string | null>(null);
   const [textClipboard, setTextClipboard] = useState<string | null>(null);
   const [contextToast, setContextToast] = useState<string | null>(null);
@@ -432,6 +441,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         if (!element || !doc?.defaultView) { setComputed({}); setDomFacts(null); return; }
         const view = doc.defaultView;
         const style = view.getComputedStyle(element);
+        if (pickedId && style.display !== "none") naturalDisplays.current.set(pickedId, style.display);
         const computedMap = Object.fromEntries(INSPECTED_PROPERTIES.map(key => [key, style.getPropertyValue(key)]));
 
         // If this container's own background-image is "none", check ::before, ::after,
@@ -1324,7 +1334,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
   /** A delete that needs saying yes to: the block carries scripts or a form. */
   const [confirmDelete, setConfirmDelete] = useState<{ id: string; label: string } | null>(null);
-  async function runStructure(kind: "remove" | "duplicate" | "before" | "after" | "undo" | "redo", fieldId?: string, targetId?: string, force = false) {
+  async function runStructure(kind: "remove" | "duplicate" | "before" | "after" | "undo" | "redo" | "settings", fieldId?: string, targetId?: string, force = false, settings?: ElementSettingsChange) {
     if (kind === "remove" && fieldId && !force) {
       const field = allFields.find(entry => entry.id === fieldId);
       if (field && !field.structure?.remove && field.structure?.forceRemove) { setConfirmDelete({ id: fieldId, label: field.label }); return; }
@@ -1335,7 +1345,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     try {
       if (dirty.current) await save.mutateAsync(latestEdits.current);
       if (dirty.current) throw new Error("Some edits have not saved. Resolve them before changing the layout.");
-      const result = await api.post<{ revision: number; selectedId: string | null }>(`/website/pages/${pageId}/structure`, { kind, fieldId, targetId, ifRevision: revision.current, ...(force ? { force: true } : {}) });
+      const result = await api.post<{ revision: number; selectedId: string | null }>(`/website/pages/${pageId}/structure`, { kind, fieldId, targetId, ifRevision: revision.current, ...(force ? { force: true } : {}), ...(settings ? { settings } : {}) });
       dirty.current = false;
       try { sessionStorage.removeItem(localDraftKey); } catch { /* Server checkpoint is saved. */ }
       const refreshed = await qc.fetchQuery({ queryKey: ["website", "page", pageId], queryFn: ({ signal }) => api.get<SitePageDetail>(`/website/pages/${pageId}`, signal), staleTime: 0 });
@@ -1455,10 +1465,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       if (next) setMode(next);
     };
     const onTab = (event: Event) => {
-      const next = (event as CustomEvent<{ tab?: "content" | "style" | "interactions" }>).detail?.tab;
+      const next = (event as CustomEvent<{ tab?: "general" | "style" | "interactions" }>).detail?.tab;
       if (!next) return;
-      const field = pickedRef.current ? (page.data?.sections ?? []).flatMap((section) => section.fields).find((candidate) => candidate.id === pickedRef.current) : null;
-      setInspectorTab(next === "content" && field?.kind === "container" ? "layout" : next);
+      setInspectorTab(next);
       setStyleState("normal");
     };
     window.addEventListener(TOUR_EVENTS.mode, onMode);
@@ -1491,27 +1500,13 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   }, [design.data?.options.colours, pageColorTokens, allFields]);
   const [frameCapturedImages, setFrameCapturedImages] = useState<CapturedHtmlImage[]>([]);
   const [assetTargetMode, setAssetTargetMode] = useState<"image" | "background">("image");
+  /** A control that asked the media library for a picture of its own: a background layer, a video's poster. */
+  const assetCallback = useRef<((url: string) => void) | null>(null);
+  const pickImage = (apply: (url: string) => void) => {
+    assetCallback.current = apply;
+    setAssetModalOpen(true);
+  };
 
-  // Maintain valid active tab as selection changes between containers, elements, and page-level
-  useEffect(() => {
-    const pickedField = pickedId ? allFields.find((f) => f.id === pickedId) ?? null : null;
-    if (!pickedField) {
-      const allowed: Array<typeof inspectorTab> = ["content", "theme", "seo"];
-      if (!allowed.includes(inspectorTab)) {
-        setInspectorTab("content");
-      }
-    } else if (pickedField.kind === "container") {
-      const allowed: Array<typeof inspectorTab> = ["content", "layout", "style", "interactions"];
-      if (!allowed.includes(inspectorTab)) {
-        setInspectorTab("content");
-      }
-    } else {
-      const allowed: Array<typeof inspectorTab> = ["content", "style", "interactions"];
-      if (!allowed.includes(inspectorTab)) {
-        setInspectorTab("content");
-      }
-    }
-  }, [pickedId, allFields, inspectorTab]);
 
   const syncPageColorsFromFrame = useCallback(() => {
     try {
@@ -1891,6 +1886,66 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     }
   };
 
+  // A tag or an attribute changed on one page would make this copy of a
+  // shared element differ from the others without anybody deciding that.
+  const sharedMarkupLock = pickedShared?.state === "LINKED"
+    ? `This is part of “${pickedShared.name}”, shared across ${pickedShared.linkedPages} pages. Its tag and attributes are changed in the page's code so every copy stays the same; its words, link and style still change here for all of them.`
+    : undefined;
+  /** What a wider screen hands down to the one being edited: desktop to tablet, both to phone. */
+  const inheritedStyle = !picked || device === "desktop"
+    ? ""
+    : device === "tablet"
+      ? edits[picked.id]?.style ?? picked.style ?? ""
+      : writeStyle({ ...parseStyle(edits[picked.id]?.style ?? picked.style ?? ""), ...parseStyle(pickedResponsive.tablet ?? "") });
+  const displayOf = (style: string | undefined) => /(?:^|;)\s*display\s*:\s*([^;!]+)/i.exec(style ?? "")?.[1]?.trim();
+  /** Display conditions: which screens show the element, read off its own display at each size. */
+  const pickedVisibility: Visibility = (() => {
+    if (!picked) return { desktop: true, tablet: true, mobile: true };
+    const desktopHidden = displayOf(edits[picked.id]?.style ?? picked.style) === "none";
+    const tabletOwn = displayOf(pickedResponsive.tablet);
+    const tabletHidden = tabletOwn ? tabletOwn === "none" : desktopHidden;
+    const mobileOwn = displayOf(pickedResponsive.mobile);
+    const mobileHidden = mobileOwn ? mobileOwn === "none" : tabletHidden;
+    return { desktop: !desktopHidden, tablet: !tabletHidden, mobile: !mobileHidden };
+  })();
+  /**
+   * Hides and shows the element per screen with `display` alone, touching only
+   * what visibility needs: a tablet `display: flex` somebody set for layout is
+   * left as it is unless it would show the element where it should be hidden.
+   */
+  const setPickedVisibility = (next: Visibility) => {
+    if (!picked) return;
+    const baseStyle = edits[picked.id]?.style ?? picked.style ?? "";
+    const own = displayOf(baseStyle);
+    const fromPage = displayOf(picked.style);
+    const natural = (own && own !== "none" ? own : undefined) ?? (fromPage && fromPage !== "none" ? fromPage : undefined) ?? naturalDisplays.current.get(picked.id) ?? "block";
+    const base = parseStyle(baseStyle);
+    if (!next.desktop) base.display = "none";
+    else if (base.display === "none") {
+      if (fromPage && fromPage !== "none") base.display = fromPage;
+      else delete base.display;
+    }
+    const responsive = { ...pickedResponsive };
+    // set a value, null to remove it, undefined to keep what is there
+    const level = (current: string | undefined, shown: boolean, parentShown: boolean): string | null | undefined => {
+      if (!shown) return parentShown ? "none" : current && current !== "none" ? "none" : current === "none" ? null : undefined;
+      if (!parentShown) return current && current !== "none" ? undefined : natural;
+      return current === "none" ? null : undefined;
+    };
+    for (const [size, shown, parentShown] of [["tablet", next.tablet, next.desktop], ["mobile", next.mobile, next.tablet]] as const) {
+      const map = parseStyle(responsive[size] ?? "");
+      const wanted = level(map.display, shown, parentShown);
+      if (wanted === undefined) continue;
+      if (wanted === null) delete map.display;
+      else map.display = wanted;
+      const css = safeResponsiveStyle(writeStyle(map));
+      if (css) responsive[size] = css;
+      else delete responsive[size];
+    }
+    change(picked.id, { ...edits[picked.id], style: writeStyle(base), responsive }, { commit: true });
+    showQuickToast(next.desktop && next.tablet && next.mobile ? "Shown on every screen" : !next.desktop && !next.tablet && !next.mobile ? "Hidden on every screen" : "Visibility changed");
+  };
+
   const status = structureBusy ? "Updating layout…" : save.isPending
     ? "Saving…"
     : dirty.current
@@ -2049,7 +2104,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           onEdit={() => tell({ type: "edit", id: picked.id })}
           onBold={() => formatWhole("bold")}
           onItalic={() => formatWhole("italic")}
-          onLink={() => setInspectorTab("content")}
+          onLink={() => setInspectorTab("general")}
           onReplace={() => { setAssetTargetMode("image"); setAssetModalOpen(true); }}
           onParent={() => picked.parentId && pick(picked.parentId)}
           onAgent={() => setAgentOpen(true)}
@@ -2126,6 +2181,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const applyAsset = (asset: { url: string; alt?: string; preview?: string }, targetMode: "image" | "background") => {
     if (!picked) return;
     if (asset.preview) selectedMedia.current.set(asset.url, { url: asset.url, preview: asset.preview });
+    if (assetCallback.current) {
+      const apply = assetCallback.current;
+      assetCallback.current = null;
+      apply(asset.url);
+      return;
+    }
     const previewBackground = `url('${resolveImagePreview(asset.url).replace(/['"\\]/g, "")}')`;
     if (targetMode === "background") {
       const map = parseStyle(pickedStyle ?? "");
@@ -2487,7 +2548,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             applyAsset(asset, assetTargetMode);
             setAssetModalOpen(false);
           }}
-          onClose={() => setAssetModalOpen(false)}
+          onClose={() => {
+            assetCallback.current = null;
+            setAssetModalOpen(false);
+          }}
         />
       )}
       {/* ------------------------------------------------------------ bar
@@ -3144,7 +3208,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               <p className="mt-2 text-xs text-muted">{picked.structure?.reason || picked.structure?.duplicateReason || "Drag layers to reorder within their container. Changes stay in the draft; Undo brings them back."}</p>
             </div>}
             <div role="tablist" aria-label="Element settings" className="editor-tabs dx-tabs">
-              {(picked.kind === "container" ? (["content", "layout", "style", "interactions"] as const) : (["content", "style", "interactions"] as const)).map((tab) => (
+              {(["general", "style", "interactions"] as const).map((tab) => (
                 <button type="button" role="tab" key={tab} aria-selected={inspectorTab === tab} onClick={() => setInspectorTab(tab)}>
                   {tab[0].toUpperCase() + tab.slice(1)}
                 </button>
@@ -3189,7 +3253,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                       three actions that belong to the whole element rather than
                       to any one property. One line each: this bar sits above
                       every panel and is not what somebody came to read. */}
-                  <div hidden={inspectorTab !== "style" && inspectorTab !== "layout"} className="dx-scope-wrap">
+                  <div hidden={inspectorTab !== "style"} className="dx-scope-wrap">
                     {inspectorTab === "style" && (
                       <div className="dx-states" data-tour="style-states">
                         <Seg label="Pick a state to style" value={styleState} options={[{ value: "normal", label: "Normal" }, { value: "hover", label: "Hover" }]} onChange={setStyleState} />
@@ -3207,21 +3271,17 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     )}
                   </div>
 
-                  {/* One inspector, drawn from what the element is. The frame is
-                      what knows that — its display, its parent's, whether it has
-                      words of its own — and when the frame cannot be reached the
-                      field row is the only thing left to go on. */}
+                  {/* One panel for every element: the same sections, drawn from
+                      what the frame says the element is — its display, its
+                      parent's, whether it is positioned. */}
                   {!readOnly && inspectorTab === "style" && styleState === "normal" && <div className="dx-pad" style={{ paddingBottom: 4 }}><WebsitePresetPicker compact presets={design.data?.options.presets ?? []} kind={picked.kind} tag={picked.tag} style={pickedStyle ?? ""} onApply={next => changePickedStyle(next, true)} /></div>}
                   {inspectorTab === "interactions" && (
-                    <WebsiteMotionPanel
+                    <WebsiteInteractionsPanel
+                      key={picked.id}
                       element={pickedElement}
                       style={edits[picked.id]?.style ?? picked.style ?? ""}
-                      kind={picked.kind}
-                      href={edits[picked.id]?.href ?? picked.href ?? ""}
-                      pages={(links ?? []).map((link) => ({ label: link.title || link.path, href: link.path }))}
                       readOnly={readOnly}
                       onChange={(style) => change(picked.id, { ...edits[picked.id], style }, { commit: true })}
-                      onHref={(href) => change(picked.id, { ...edits[picked.id], value: edits[picked.id]?.value ?? picked.value, href }, { commit: true })}
                     />
                   )}
                   {inspectorTab === "style" && styleState === "hover" && (
@@ -3233,163 +3293,52 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     />
                   )}
                   {inspectorTab === "style" && styleState === "normal" && (
-                    <WebsiteStylePanel
+                    <WebsiteStyleTab
                       key={`${picked.id}:${device}`}
                       style={pickedStyle ?? ""}
+                      sourceStyle={device === "desktop" ? picked.style ?? "" : picked.responsive?.[device] ?? ""}
+                      inheritedStyle={inheritedStyle}
                       computed={computed}
+                      facts={{ kind: picked.kind, tag: domFacts?.tag ?? picked.tag, display: domFacts?.display ?? "block", parentDisplay: domFacts?.parentDisplay ?? "", position: domFacts?.position ?? "static" }}
+                      device={device}
                       fonts={design.data?.options.fonts}
-                      kind={picked.kind}
-                      tag={picked.tag}
                       readOnly={readOnly}
+                      designer={designerMode}
                       onChange={(next, commit) => changePickedStyle(next, commit)}
                       onCommit={() => commitHistory(latestEdits.current)}
-                      onPickBackgroundImage={() => {
-                        setAssetTargetMode("background");
-                        setAssetModalOpen(true);
-                      }}
+                      onPickImage={pickImage}
+                      resolveImage={resolveImagePreview}
                     />
                   )}
-                  <div hidden={inspectorTab === "interactions" || inspectorTab === "style"}><ElementInspector
-                    tab={inspectorTab === "layout" ? "layout" : inspectorTab === "style" ? "style" : "content"}
-                    simple={!designerMode}
-                    sitePublicUrl={page.data.page.url}
-                    resolveImagePreview={resolveImagePreview}
-                    onTextColour={colour => !readOnly && formatActiveText({ color: colour })}
-                    onPickBackgroundImage={() => {
-                      setAssetTargetMode("background");
-                      setAssetModalOpen(true);
-                    }}
-                    onSetBackgroundImageUrl={(nextUrl) => {
-                      const previewBackground = nextUrl ? `url('${resolveImagePreview(nextUrl).replace(/['"\\]/g, "")}')` : "none";
-                      try {
-                        const doc = frame.current?.contentDocument;
-                        const el = doc?.querySelector<HTMLElement>(`[data-dw-field="${CSS.escape(picked.id)}"]`);
-                        if (el && doc?.defaultView) {
-                          el.style.backgroundImage = previewBackground;
-                          el.querySelectorAll<HTMLElement>("*").forEach((desc) => {
-                            const bg = doc.defaultView!.getComputedStyle(desc).backgroundImage;
-                            if (bg && bg !== "none" && /url\(/i.test(bg)) {
-                              desc.style.backgroundImage = previewBackground;
-                            }
-                          });
-                        }
-                      } catch {}
-                    }}
-                    key={`${picked.id}:${device}`}
-                    facts={{
-                      kind: picked.kind,
-                      ...(domFacts ?? {
-                        tag: picked.tag,
-                        display: "block",
-                        parentDisplay: "",
-                        position: "static",
-                        hasText: picked.kind !== "container",
-                        childCount: picked.kind === "container" ? 1 : 0,
-                      }),
-                    }}
-                    device={device}
-                    style={pickedStyle}
-                    source={{
-                      sourceStyle: picked.style ?? "",
-                      // Only meaningful under a smaller viewport, where the base
-                      // edit is what a phone inherits until it overrides it.
-                      baseStyle: device === "desktop" ? "" : edits[picked.id]?.style ?? picked.style ?? "",
-                      computed,
-                    }}
-                    palette={pagePalette}
-                    fonts={design.data?.options.fonts}
-                    readOnly={readOnly}
-                    onChange={(next) => changePickedStyle(next)}
-                    onCommit={() => commitHistory(edits)}
-                    onReset={() => changePickedStyle(device === "desktop" ? picked.style ?? "" : picked.responsive?.[device] ?? "", true)}
-                    content={
-                      <>
-                        {picked.href !== undefined && picked.kind !== "image" && (
-                          <LinkDestinationField
-                            key={picked.id}
-                            href={edits[picked.id]?.href ?? picked.href ?? ""}
-                            kind={picked.kind}
-                            pages={(links ?? []).map((link) => ({ label: link.title || link.path, href: link.path }))}
-                            readOnly={readOnly}
-                            onHref={(href) => change(picked.id, { ...edits[picked.id], value: edits[picked.id]?.value ?? picked.value, href }, { commit: true })}
-                          />
+                  {inspectorTab === "general" && (
+                    <div className="dx-general">
+                      <StyleSection name="content" title="Content" open>
+                        {!canEdit && <p className="dx-note">You can look at this site's settings but not change them.</p>}
+                        {mediaKind(picked.tag) && (
+                          <MediaSettings field={picked} readOnly={readOnly} lockedReason={sharedMarkupLock} onSettings={(next) => void runStructure("settings", picked.id, undefined, false, next)} onPickPoster={pickImage} resolveImage={resolveImagePreview} />
                         )}
-                        {(picked.kind === "image" ||
-                          picked.kind === "icon" ||
-                          (picked.kind === "container" &&
-                            (/url\(/i.test(pickedStyle ?? "") ||
-                              /url\(/i.test(picked.style ?? "") ||
-                              /url\(/i.test(computed["background-image"] ?? "")))) &&
-                          (() => {
-                          const isContainer = picked.kind === "container";
-                          const isIcon = picked.kind === "icon";
-                          const bgMatch = /url\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(pickedStyle ?? picked.style ?? computed["background-image"] ?? "");
-                          const containerBgUrl = bgMatch?.[1] ?? "";
-                          const iconChoice = edits[picked.id]?.icon;
-                          const rawImgVal = isContainer
-                            ? containerBgUrl
-                            : isIcon
-                              ? (iconChoice && "src" in iconChoice ? iconChoice.src : (edits[picked.id]?.value ?? picked.value ?? ""))
-                              : (edits[picked.id]?.value ?? picked.value ?? "").trim();
-                          const resolvedImgUrl = (() => {
-                            if (isIcon && iconChoice && "library" in iconChoice) {
-                              const lib = libraryIcon(iconChoice.library);
-                              return lib ? svgPreviewSrc(libraryIconMarkup(lib)) : "";
-                            }
-                            if (isIcon && (!rawImgVal || !/^(?:https?:|\/|data:)/i.test(rawImgVal) || rawImgVal.includes("brand-face"))) {
-                              const iconSrc = iconPreviewSrc(picked.icon || picked.value, page.data?.page?.url || "");
-                              if (iconSrc) return iconSrc;
-                            }
-                            return resolveImagePreview(rawImgVal);
-                          })();
-                          const styleMap = parseStyle(pickedStyle ?? "");
-                          const currentFit = isContainer
-                            ? (styleMap["background-size"] ?? "cover")
-                            : (styleMap["object-fit"] ?? computed["object-fit"] ?? "cover");
-                          // Anything that is not one of the presets is a size somebody typed.
-                          const presetFits = isContainer ? ["cover", "contain", "100% 100%", "auto"] : ["cover", "contain", "fill", "scale-down", "none"];
-                          const customFit = isContainer ? !presetFits.includes(currentFit) : styleMap["object-fit"] === "fill" && Boolean(styleMap.width || styleMap.height) && styleMap.width !== "100%";
-                          const [customW, customH] = isContainer
-                            ? (customFit ? currentFit.split(/\s+/) : ["", ""])
-                            : [styleMap.width ?? "", styleMap.height ?? ""];
-                          const writeStyleKeys = (patch: Record<string, string | null>) => {
-                            const nextMap = { ...styleMap };
-                            for (const [key, val] of Object.entries(patch)) { if (val) nextMap[key] = val; else delete nextMap[key]; }
-                            changePickedStyle(writeStyle(nextMap), true);
-                          };
-                          const lengthOf = (raw: string) => { const t = raw.trim(); return !t ? "" : /^\d*\.?\d+$/.test(t) ? `${t}px` : t; };
-                          const writeCustom = (w: string, h: string) => {
-                            const W = lengthOf(w) || "auto", H = lengthOf(h) || "auto";
-                            if (isContainer) writeStyleKeys({ "background-size": `${W} ${H}` });
-                            else writeStyleKeys({ "object-fit": "fill", width: W === "auto" ? null : W, height: H === "auto" ? null : H });
-                          };
-                          const imageOpacity = Math.round(100 * Number.parseFloat(styleMap.opacity ?? computed.opacity ?? "1")) || 0;
+                        {picked.kind === "image" && (() => {
+                          const rawImgVal = (edits[picked.id]?.value ?? picked.value ?? "").trim();
+                          const resolvedImgUrl = resolveImagePreview(rawImgVal);
                           const currentAlt = edits[picked.id]?.alt ?? picked.alt ?? "";
-                          const currentHref = edits[picked.id]?.href ?? picked.href ?? "";
-
-                          const posKey = isContainer ? "background-position" : "object-position";
-                          const currentPos = styleMap[posKey] ?? "";
-                          const focal = /^(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%$/.exec(currentPos);
+                          const focal = /^(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%$/.exec(parseStyle(pickedStyle ?? "")["object-position"] ?? "");
+                          // The crop's focal point is style, but it is chosen by clicking
+                          // the picture, so it stays beside the picture.
                           const writePos = (next: string) => {
-                            const nextMap = { ...styleMap };
-                            if (next) nextMap[posKey] = next;
-                            else delete nextMap[posKey];
+                            const nextMap = parseStyle(pickedStyle ?? "");
+                            nextMap["object-position"] = next;
                             changePickedStyle(writeStyle(nextMap), true);
                             try {
                               const target = frame.current?.contentDocument?.querySelector<HTMLElement>(`[data-dw-field="${CSS.escape(picked.id)}"]`);
-                              if (target) {
-                                if (isContainer) target.style.backgroundPosition = next;
-                                else { target.style.objectPosition = next; target.querySelector<HTMLElement>("img, video")?.style.setProperty("object-position", next); }
-                              }
+                              if (target) { target.style.objectPosition = next; target.querySelector<HTMLElement>("img, video")?.style.setProperty("object-position", next); }
                             } catch { /* The frame may be reloading. */ }
                           };
                           const openLibrary = () => {
-                            setAssetTargetMode(isContainer ? "background" : "image");
+                            setAssetTargetMode("image");
                             setAssetModalOpen(true);
                           };
-
                           return (
-                            <div className="dx-stack" style={{ marginBottom: 12 }}>
+                            <div className="dx-stack">
                               <div
                                 className="dx-imgprev"
                                 role="button"
@@ -3406,7 +3355,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                                 }}
                                 onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !readOnly) { event.preventDefault(); openLibrary(); } }}
                               >
-                                {resolvedImgUrl ? <img src={resolvedImgUrl} alt={currentAlt || (isIcon ? "Selected icon" : "Selected image")} /> : <span className="dx-hint">No picture yet</span>}
+                                {resolvedImgUrl ? <img src={resolvedImgUrl} alt={currentAlt || "Selected image"} /> : <span className="dx-hint">No picture yet</span>}
                                 <span className="dx-fp" style={{ left: `${focal ? focal[1] : 50}%`, top: `${focal ? focal[2] : 50}%` }} />
                               </div>
                               {!readOnly && (
@@ -3418,124 +3367,26 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                                   <button type="button" className="dx-btn dx-soft dx-full" onClick={openLibrary}>Media library ({capturedHtmlImages.length})</button>
                                 </>
                               )}
-                              {!isContainer && !isIcon && (
-                                <>
-                                  <div className="dx-f">
-                                    <div className="dx-fl"><label htmlFor="dx-img-url">Image URL</label></div>
-                                    <input
-                                      id="dx-img-url"
-                                      type="text"
-                                      disabled={readOnly}
-                                      placeholder="/assets/… or https://…"
-                                      value={rawImgVal}
-                                      onChange={(e) => change(picked.id, { ...edits[picked.id], value: e.target.value })}
-                                    />
-                                  </div>
-                                  {picked.href !== undefined && (
-                                    <div className="dx-f">
-                                      <div className="dx-fl"><label htmlFor="dx-img-link">Link <span className="dx-opt">(optional)</span></label></div>
-                                      <div className="dx-inp">
-                                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1" /></svg>
-                                        <input
-                                          id="dx-img-link"
-                                          type="text"
-                                          disabled={readOnly}
-                                          value={currentHref}
-                                          placeholder="Where clicking the image goes"
-                                          onChange={(e) => change(picked.id, { ...edits[picked.id], value: edits[picked.id]?.value ?? picked.value, href: e.target.value })}
-                                        />
-                                      </div>
-                                    </div>
-                                  )}
-                                </>
-                              )}
-                              <div className="dx-sub">Fit &amp; crop</div>
                               <div className="dx-f">
-                                <div className="dx-fl"><label htmlFor="dx-img-fit">How it fills its box</label></div>
-                                <select
-                                  id="dx-img-fit"
+                                <div className="dx-fl"><label htmlFor="dx-img-url">Image URL</label></div>
+                                <input id="dx-img-url" type="text" disabled={readOnly} placeholder="/assets/… or https://…" value={rawImgVal} onChange={(e) => change(picked.id, { ...edits[picked.id], value: e.target.value })} />
+                              </div>
+                              <div className="dx-f">
+                                <div className="dx-fl"><label htmlFor="dx-img-alt">Alt text</label></div>
+                                <textarea
+                                  id="dx-img-alt"
+                                  className="dx-ta"
                                   disabled={readOnly}
-                                  value={customFit ? "custom" : currentFit}
-                                  onChange={(e) => {
-                                    if (e.target.value === "custom") { writeCustom(customW || "300", customH || "200"); return; }
-                                    const nextMap = { ...styleMap };
-                                    if (isContainer) nextMap["background-size"] = e.target.value;
-                                    else nextMap["object-fit"] = e.target.value;
-                                    changePickedStyle(writeStyle(nextMap), true);
-                                  }}
-                                >
-                                  <option value="cover">Full (cover)</option>
-                                  <option value="contain">Contain (whole image)</option>
-                                  {isContainer ? (
-                                    <>
-                                      <option value="100% 100%">Stretch (100% × 100%)</option>
-                                      <option value="auto">Original size</option>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <option value="fill">Stretch (100% × 100%)</option>
-                                      <option value="scale-down">Scale down</option>
-                                      <option value="none">Original size</option>
-                                    </>
-                                  )}
-                                  <option value="custom">Custom size</option>
-                                </select>
+                                  value={currentAlt}
+                                  placeholder={picked.decorative ? "Marked as decoration" : "Describe it for someone who can't see it"}
+                                  onChange={(e) => change(picked.id, { ...edits[picked.id], value: edits[picked.id]?.value ?? picked.value, alt: e.target.value })}
+                                />
                               </div>
-                              {customFit && (
-                                <div className="dx-g2">
-                                  <div className="dx-f">
-                                    <div className="dx-fl"><label htmlFor="dx-img-cw">Width</label></div>
-                                    <input id="dx-img-cw" type="text" disabled={readOnly} defaultValue={customW === "auto" ? "" : customW} key={`w${customW}`} placeholder="auto" onBlur={(e) => writeCustom(e.target.value, customH === "auto" ? "" : customH)} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
-                                  </div>
-                                  <div className="dx-f">
-                                    <div className="dx-fl"><label htmlFor="dx-img-ch">Height</label></div>
-                                    <input id="dx-img-ch" type="text" disabled={readOnly} defaultValue={customH === "auto" ? "" : customH} key={`h${customH}`} placeholder="auto" onBlur={(e) => writeCustom(customW === "auto" ? "" : customW, e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
-                                  </div>
-                                </div>
-                              )}
-                              {isContainer && (
-                                <div className="dx-f">
-                                  <div className="dx-fl"><label htmlFor="dx-img-repeat">Repeat</label></div>
-                                  <select id="dx-img-repeat" disabled={readOnly} value={styleMap["background-repeat"] ?? ""} onChange={(e) => writeStyleKeys({ "background-repeat": e.target.value || null })}>
-                                    <option value="">As designed</option>
-                                    <option value="no-repeat">No repeat</option>
-                                    <option value="repeat">Repeat (tile)</option>
-                                    <option value="repeat-x">Repeat across</option>
-                                    <option value="repeat-y">Repeat down</option>
-                                    <option value="space">Space evenly</option>
-                                    <option value="round">Round to fit</option>
-                                  </select>
-                                </div>
-                              )}
-                              <ImagePositionControl value={currentPos || computed[posKey]} device={device} disabled={readOnly} onChange={(next) => writePos(next ?? "")} onCommit={() => commitHistory(edits)} />
-                              <p className="dx-hint">Click the preview to set the crop's focal point.</p>
-                              <div className="dx-f">
-                                <div className="dx-fl"><label htmlFor="dx-img-opacity">Opacity</label><span className="dx-hint">{imageOpacity}%</span></div>
-                                <input id="dx-img-opacity" type="range" min={0} max={100} disabled={readOnly} value={imageOpacity} onChange={(e) => { const n = Number(e.target.value); writeStyleKeys({ opacity: n >= 100 ? null : String(n / 100) }); }} />
-                              </div>
-                              {!isContainer && !isIcon && (
-                                <>
-                                  <div className="dx-sub">Details</div>
-                                  <div className="dx-f">
-                                    <div className="dx-fl"><label htmlFor="dx-img-alt">Alt text</label></div>
-                                    <textarea
-                                      id="dx-img-alt"
-                                      className="dx-ta"
-                                      disabled={readOnly}
-                                      value={currentAlt}
-                                      placeholder={picked.decorative ? "Marked as decoration" : "Describe it for someone who can't see it"}
-                                      onChange={(e) => change(picked.id, { ...edits[picked.id], value: edits[picked.id]?.value ?? picked.value, alt: e.target.value })}
-                                    />
-                                  </div>
-                                </>
-                              )}
+                              <p className="dx-hint">Click the picture to choose the part that stays in view when it is cropped. Its fit, size and opacity are in Style.</p>
                             </div>
                           );
                         })()}
-
                         {picked.kind === "image" && !readOnly && <WebsiteImageFraming siteId={site.id} key={`${picked.id}:${device}:${edits[picked.id]?.value ?? picked.value}`} src={resolveImagePreview(edits[picked.id]?.value ?? picked.value)} style={pickedStyle ?? ""} onApply={next => changePickedStyle(next, true)} />}
-
-
                         {(absentIds.has(picked.id) || picked.id.startsWith("meta.") || picked.tag === "title" || picked.tag === "meta") && (
                           <div className="mb-3 rounded-xl border border-line bg-cream/70 p-3 text-xs leading-relaxed text-muted">
                             <div className="flex items-center justify-between gap-2">
@@ -3563,7 +3414,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                             </p>
                           </div>
                         )}
-                        {picked.kind === "unsupported" && (
+                        {picked.kind === "unsupported" && !mediaKind(picked.tag) && (
                           <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-ink">
                             <div className="flex items-center gap-1.5 font-semibold text-amber-500">
                               <IconLock size={12} />
@@ -3635,181 +3486,25 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                             </div>
                           );
                         })()}
-                        {/* Container / Sticky Header / Logo Icon Content & Appearance Quick Editor */}
-                        {picked.kind === "container" && !readOnly && (() => {
-                          const styleMap = parseStyle(pickedStyle ?? "");
-                          const rawBg = styleMap["background-image"] ?? styleMap.background ?? computed["background-image"] ?? "";
-                          const bgUrlMatch = /url\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(rawBg);
-                          const bgUrl = bgUrlMatch?.[1] ?? "";
-                          const posVal = (styleMap.position ?? computed.position ?? "static").trim();
-                          const compoundBgColorMatch = styleMap.background ? /,\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|[a-zA-Z]+)\s*$/i.exec(styleMap.background) : null;
-                          const bgCol = styleMap["background-color"] ?? compoundBgColorMatch?.[1] ?? computed["background-color"] ?? "";
-                          const txtCol = styleMap.color ?? computed.color ?? "";
+                        {picked.kind === "container" && (() => {
                           const childFields = allFields.filter((f) => f.parentId === picked.id);
-                          const updateProp = (prop: string, val: string) => {
-                            const nextMap = { ...styleMap };
-                            if (prop === "background-color") {
-                              if (val) {
-                                nextMap["background-color"] = val;
-                                if (nextMap.background && /,\s*(?:#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|[a-zA-Z]+)\s*$/i.test(nextMap.background)) {
-                                  nextMap.background = nextMap.background.replace(/,\s*(?:#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|[a-zA-Z]+)\s*$/i, `, ${val}`);
-                                }
-                              } else {
-                                delete nextMap["background-color"];
-                                if (nextMap.background && /,\s*(?:#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|[a-zA-Z]+)\s*$/i.test(nextMap.background)) {
-                                  nextMap.background = nextMap.background.replace(/,\s*(?:#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|[a-zA-Z]+)\s*$/i, "");
-                                }
-                              }
-                            } else if (prop === "background-image") {
-                              if (val && val !== "none") {
-                                nextMap["background-image"] = val;
-                              } else {
-                                delete nextMap["background-image"];
-                                if (nextMap.background) {
-                                  const colorMatch = /,\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|[a-zA-Z]+)\s*$/i.exec(nextMap.background);
-                                  if (colorMatch?.[1]) {
-                                    nextMap["background-color"] = colorMatch[1];
-                                  }
-                                  delete nextMap.background;
-                                }
-                              }
-                            } else {
-                              if (val) nextMap[prop] = val;
-                              else delete nextMap[prop];
-                            }
-                            changePickedStyle(writeStyle(nextMap), true);
-                          };
                           return (
-                            <div className="mb-3 space-y-3">
-                              {/* Sticky Header / Position Quick Switch */}
-                              {(picked.tag === "header" || picked.tag === "nav" || /header|nav|sticky|manifesto/i.test(picked.label) || posVal === "sticky" || posVal === "fixed") && (
-                                <div className="rounded-xl border border-line bg-surface-2/60 p-3 space-y-2">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className="text-xs font-semibold text-ink">Sticky / Fixed Header Behavior</span>
-                                    <span className="rounded bg-white px-1.5 py-0.5 font-mono text-[10px] uppercase text-muted">{posVal}</span>
-                                  </div>
-                                  <div className="grid grid-cols-3 gap-1">
-                                    {(["sticky", "fixed", "relative"] as const).map((modePos) => (
-                                      <button
-                                        key={modePos}
-                                        type="button"
-                                        onClick={() => {
-                                          const nextMap: Record<string, string> = { ...styleMap, position: modePos };
-                                          if ((modePos === "sticky" || modePos === "fixed") && !nextMap.top) nextMap.top = "0px";
-                                          if ((modePos === "sticky" || modePos === "fixed") && !nextMap["z-index"]) nextMap["z-index"] = "1000";
-                                          changePickedStyle(writeStyle(nextMap), true);
-                                        }}
-                                        className={`rounded-lg border py-1 text-[11px] font-semibold capitalize transition ${
-                                          posVal === modePos ? "border-blue bg-blue text-white" : "border-line bg-white text-ink hover:border-blue"
-                                        }`}
-                                      >
-                                        {modePos}
-                                      </button>
-                                    ))}
-                                  </div>
-                                  {(posVal === "sticky" || posVal === "fixed") && (
-                                    <div className="flex items-center justify-between gap-2 pt-1">
-                                      <span className="text-[11px] text-muted">Top Offset</span>
-                                      <input
-                                        type="text"
-                                        value={styleMap.top ?? computed.top ?? "0px"}
-                                        onChange={(e) => updateProp("top", e.target.value)}
-                                        className="w-24 rounded-lg border border-line bg-white px-2 py-1 text-right font-mono text-[11px] text-ink"
-                                      />
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-
-                              {/* Background / Logo Icon Image Quick Control */}
-                              <div className="rounded-xl border border-line bg-surface-2/60 p-3 space-y-2">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-xs font-semibold text-ink">
-                                    {/logo|icon|brand-face/i.test(picked.label) ? "Logo Icon / Graphic Image" : "Background Image"}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setAssetTargetMode("background");
-                                      setAssetModalOpen(true);
-                                    }}
-                                    className="rounded-lg bg-blue px-2.5 py-1 text-[11px] font-semibold text-white transition hover:opacity-90"
-                                  >
-                                    Choose / Upload Image
-                                  </button>
-                                </div>
-                                {bgUrl && (
-                                  <div
-                                    className="h-20 w-full rounded-lg border border-line bg-cover bg-center"
-                                    style={{ backgroundImage: `url("${resolveImagePreview(bgUrl).replace(/"/g, "")}")` }}
-                                  />
-                                )}
-                                <div className="flex items-center gap-1.5">
-                                  <input
-                                    type="text"
-                                    placeholder="Paste image URL (/assets/... or https://...)"
-                                    value={bgUrl}
-                                    onChange={(e) => {
-                                      const v = e.target.value.trim();
-                                      updateProp("background-image", v ? `url('${v.replace(/['"\\]/g, "")}')` : "");
-                                    }}
-                                    className="flex-1 rounded-lg border border-line bg-white px-2 py-1 font-mono text-[11px] text-ink outline-none focus:border-blue"
-                                  />
-                                  {bgUrl && (
-                                    <button
-                                      type="button"
-                                      onClick={() => updateProp("background-image", "none")}
-                                      className="rounded-lg border border-line bg-white px-2 py-1 text-[11px] text-muted hover:text-red"
-                                    >
-                                      Clear
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* Quick Color Pickers + #HEXCODE */}
-                              <div className="rounded-xl border border-line bg-surface-2/60 p-3 space-y-2">
-                                <span className="block text-xs font-semibold text-ink">Colors (Color Picker + #HEX)</span>
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-[11px] text-muted">Background Color</span>
-                                  <ColorCodeInput
-                                    label="Background color"
-                                    value={toHex(bgCol) ?? bgCol}
-                                    onChange={(nextHex) => updateProp("background-color", nextHex)}
-                                  />
-                                </div>
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-[11px] text-muted">Text / Icon Color</span>
-                                  <ColorCodeInput
-                                    label="Text or icon color"
-                                    value={toHex(txtCol) ?? txtCol}
-                                    onChange={(nextHex) => updateProp("color", nextHex)}
-                                  />
-                                </div>
-                              </div>
-
-                              {/* Child Elements inside this Container */}
+                            <>
                               {childFields.length > 0 && (
-                                <div className="rounded-xl border border-line bg-surface-2/60 p-3 space-y-1.5">
-                                  <span className="block text-xs font-semibold text-ink">
-                                    Elements Inside {picked.label} ({childFields.length})
-                                  </span>
-                                  <div className="max-h-40 space-y-1 overflow-y-auto">
+                                <div className="dx-f">
+                                  <div className="dx-fl"><label>Elements inside ({childFields.length})</label></div>
+                                  <div className="dx-children">
                                     {childFields.map((cf) => (
-                                      <button
-                                        key={cf.id}
-                                        type="button"
-                                        onClick={() => pick(cf.id)}
-                                        className="flex w-full items-center justify-between gap-2 rounded-lg border border-line bg-white px-2.5 py-1.5 text-left text-xs text-ink transition hover:border-blue hover:text-blue"
-                                      >
-                                        <span className="truncate font-medium">{cf.label}: {cf.preview || cf.tag}</span>
-                                        <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] uppercase text-muted">{cf.tag}</span>
+                                      <button key={cf.id} type="button" onClick={() => pick(cf.id)}>
+                                        <span>{cf.label}: {cf.preview || cf.tag}</span>
+                                        <em>{cf.tag}</em>
                                       </button>
                                     ))}
                                   </div>
                                 </div>
                               )}
-                            </div>
+                              <p className="dx-hint">A container holds the elements inside it. Its layout, background and spacing are in Style.</p>
+                            </>
                           );
                         })()}
                         {(() => {
@@ -3862,10 +3557,56 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                           computedBackgroundUrl={computed["background-image"]}
                           onTypeOnPage={() => tell({ type: "edit", id: picked.id })}
                           bare
+                          hideDestination
                         />}
-                      </>
-                    }
-                  /></div>
+                      </StyleSection>
+                      {/* The page title and description live in the document's head:
+                          there is no element to tag, link, identify or hide. The body is
+                          the page itself, and its markup belongs to the page's code. */}
+                      {!(picked.id.startsWith("meta.") || picked.tag === "title" || picked.tag === "meta" || picked.tag === "body") && <StyleSection name="settings" title="Settings" open>
+                        <ElementSettings
+                          key={picked.id}
+                          field={picked}
+                          readOnly={readOnly}
+                          designer={designerMode}
+                          visibility={pickedVisibility}
+                          onVisibility={setPickedVisibility}
+                          lockedReason={sharedMarkupLock}
+                          onSettings={(next) => void runStructure("settings", picked.id, undefined, false, next)}
+                          link={
+                            picked.kind === "link" || picked.kind === "button" ? (
+                              picked.href !== undefined ? (
+                                <>
+                                  <Destination id={picked.id} href={edits[picked.id]?.href ?? picked.href ?? ""} links={links ?? []} readOnly={readOnly || picked.sourceManaged === true} onChange={(href) => change(picked.id, { ...edits[picked.id], value: edits[picked.id]?.value ?? picked.value, href })} />
+                                  {picked.newTab !== undefined && (
+                                    <label className="dx-toggle">
+                                      <span>Open in a new tab</span>
+                                      <input type="checkbox" checked={edits[picked.id]?.newTab ?? picked.newTab ?? false} disabled={readOnly} onChange={(event) => change(picked.id, { ...edits[picked.id], newTab: event.target.checked }, { commit: true })} />
+                                    </label>
+                                  )}
+                                </>
+                              ) : (
+                                <p className="dx-hint">A button element goes where the page's script sends it, so it has no link to set here.</p>
+                              )
+                            ) : picked.href !== undefined ? (
+                              <LinkDestinationField
+                                key={picked.id}
+                                href={edits[picked.id]?.href ?? picked.href ?? ""}
+                                kind={picked.kind}
+                                pages={(links ?? []).map((link) => ({ label: link.title || link.path, href: link.path }))}
+                                readOnly={readOnly}
+                                onHref={(href) => change(picked.id, { ...edits[picked.id], value: edits[picked.id]?.value ?? picked.value, href }, { commit: true })}
+                              />
+                            ) : picked.kind === "unsupported" || picked.kind === "background" ? undefined : picked.kind === "icon" ? (
+                              <p className="dx-hint">To link an icon, select the block or button around it and give that a link.</p>
+                            ) : picked.tag === "body" ? undefined : (
+                              <p className="dx-hint">This sits inside a link or holds one, so it can't be made a link of its own.</p>
+                            )
+                          }
+                        />
+                      </StyleSection>}
+                    </div>
+                  )}
                 </>
             </div>
           </aside>
@@ -3906,7 +3647,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         return (
           <div role="menu" aria-label="Element actions" style={{ top: contextMenu.y, left: contextMenu.x }} onClick={(e) => e.stopPropagation()} className="dx-pop dx-ctx">
             <div className="dx-pop-pad"><b>{ctxField.label}</b></div>
-            {isText && !readOnly && item("Edit text", <IconEdit size={15} />, () => { setInspectorTab("content"); tell({ type: "edit", id: ctxField.id }); }, { keys: "Dbl-click" })}
+            {isText && !readOnly && item("Edit text", <IconEdit size={15} />, () => { setInspectorTab("general"); tell({ type: "edit", id: ctxField.id }); }, { keys: "Dbl-click" })}
             {isImage && !readOnly && item("Replace image", <IconImage size={15} />, () => { setAssetTargetMode("image"); setAssetModalOpen(true); })}
             {canEdit && (!tierStatus?.features || tierStatus.features.aiBuilderAgent) && item("Ask the agent about this", <IconSparkles size={15} />, () => setAgentOpen(true))}
             {item("Add a note", <IconMessageSquare size={15} />, () => setPanel("notes"))}

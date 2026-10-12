@@ -2,13 +2,13 @@
  * Automated Verification: Website Builder Prelaunch Property Inventory & Usability Audit
  *
  * Verifies:
- * 1. Complete Property Inventory across Content, Layout, Style, Interactions, Theme, SEO, Media, and Sections.
+ * 1. Complete Property Inventory across General, Style, Interactions, Theme, SEO, Media, and Sections.
  * 2. Field types, tiers, viewport scopes, preview actions, saved values, and published results.
  * 3. Clear units, current values, reset behaviors, and disabled reasons.
  * 4. Responsive override scope and reset inheritance semantics across desktop, tablet, and mobile.
  * 5. Controls requiring preview reload (metadata, structure) vs live updates.
  * 6. Elimination of stale hardcoded tier prices.
- * 7. Active tab validity and selection change stability.
+ * 7. The same three inspector tabs for every element.
  */
 
 import assert from "node:assert/strict";
@@ -44,8 +44,7 @@ check("Property inventory is non-empty", audit.valid);
 check("Property inventory contains at least 35 controls", audit.total >= 35);
 
 const categories: PropertyCategory[] = [
-  "content",
-  "layout",
+  "general",
   "style",
   "interactions",
   "theme",
@@ -92,7 +91,7 @@ for (const lp of lengthProperties) {
 }
 
 // Verify disabled reasons exist where editing is restricted
-const unsupportedComp = findPropertyControl("content_unsupported");
+const unsupportedComp = findPropertyControl("general_unsupported");
 check("Unsupported component exists in inventory", !!unsupportedComp);
 check("Unsupported component specifies disabledReason", typeof unsupportedComp?.disabledReason === "string" && unsupportedComp.disabledReason.length > 0);
 
@@ -115,7 +114,7 @@ const responsiveItems = PROPERTY_INVENTORY.filter((item) => item.viewportScope =
 check("Responsive override items exist in inventory", responsiveItems.length >= 15);
 
 // Ensure CSS properties that override per-viewport are responsive
-const sampleCssProps = ["layout_width", "style_font_size", "style_padding", "style_margin", "style_color"];
+const sampleCssProps = ["style_width", "style_font_size", "style_padding", "style_margin", "style_color", "general_display_conditions"];
 for (const prop of sampleCssProps) {
   const item = findPropertyControl(prop);
   check(`Property ${prop} is registered as responsive_override`, item?.viewportScope === "responsive_override");
@@ -132,14 +131,14 @@ const reloadItems = PROPERTY_INVENTORY.filter((item) => item.previewAction === "
 check("Reload-requiring items exist", reloadItems.length >= 4);
 
 // Page title, meta tags, and structure mutations must be marked as needing reload
-const expectedReloadProps = ["seo_page_title", "seo_meta_description", "section_reorder", "section_duplicate", "section_remove"];
+const expectedReloadProps = ["seo_page_title", "seo_meta_description", "section_reorder", "section_duplicate", "section_remove", "general_html_tag", "general_id", "general_attributes"];
 for (const exp of expectedReloadProps) {
   const item = findPropertyControl(exp);
   check(`${exp} is marked as needs_preview_reload`, item?.previewAction === "needs_preview_reload");
 }
 
 // Visual style controls must be live
-const liveStyleProps = ["layout_display", "style_color", "style_font_size", "style_background_color"];
+const liveStyleProps = ["style_display", "style_color", "style_font_size", "style_background_color", "style_background_layers", "style_custom_css"];
 for (const lsp of liveStyleProps) {
   const item = findPropertyControl(lsp);
   check(`${lsp} is marked as live_style`, item?.previewAction === "live_style");
@@ -175,23 +174,27 @@ for (const stale of stalePatterns) {
 console.log("   ✓ Zero stale hardcoded tier prices in WebsiteEditor.tsx");
 
 // ==========================================
-// 6. Active Tab Stability
+// 6. The same three tabs for every element
 // ==========================================
-console.log("\n6. Active Tab Stability");
+console.log("\n6. The same three tabs for every element");
 
-// Verify that WebsiteEditor supports layout, style, and interactions for containers
+// One list of tabs, not one per kind of element: a container used to get a
+// fourth (Layout), which is now a section of Style like everywhere else.
 check(
-  "WebsiteEditor defines container tabs with layout, style, and interactions",
-  /picked\.kind === "container"\s*\?\s*\(\["layout", "style", "interactions"\] as const\)/.test(websiteEditorSource),
+  "WebsiteEditor draws General, Style and Interactions for every element",
+  websiteEditorSource.includes('{(["general", "style", "interactions"] as const).map((tab) => (') &&
+  !/picked\.kind === "container"\s*\?\s*\(\[/.test(websiteEditorSource),
 );
-
-// Verify that switching elements retains valid tabs without resetting unnecessarily
+// With one set of tabs there is nothing to correct when the selection moves,
+// so the tab somebody chose stays chosen.
 check(
-  "WebsiteEditor synchronizes valid active tabs without unsolicited resetting",
-  websiteEditorSource.includes('const allowed: Array<typeof inspectorTab> = ["layout", "style", "interactions"];') &&
-  websiteEditorSource.includes('const allowed: Array<typeof inspectorTab> = ["content", "style", "interactions"];'),
+  "Switching elements keeps the tab that was open",
+  !websiteEditorSource.includes("const allowed: Array<typeof inspectorTab>"),
 );
+for (const category of ["general", "style", "interactions"] as const) {
+  check(`The inventory has a ${category} category`, getPropertyInventoryByCategory(category).length >= 5);
+}
 
-console.log("   ✓ Container interactions and active tab preservation verified");
+console.log("   ✓ One set of tabs, kept across selections");
 
 console.log(`\nAll websitePropertyAudit checks passed successfully (${checks} checks).\n`);

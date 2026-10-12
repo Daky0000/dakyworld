@@ -17,9 +17,11 @@ await page.route("**/api/website/**", async route => {
 try {
   await page.goto("http://127.0.0.1:5199/builder-harness.html");
   await page.getByLabel("Designer controls").waitFor();
-  assert.equal(await page.locator('[data-section="typography"]').count(), 0);
-  await page.getByLabel("Designer controls").check();
+  // The Style tab is the same for everyone; Designer controls add Custom CSS.
   await page.locator('[data-section="typography"]').waitFor();
+  assert.equal(await page.locator('[data-section="custom"]').count(), 0);
+  await page.getByLabel("Designer controls").check();
+  await page.locator('[data-section="custom"]').waitFor();
   await page.getByLabel("Designer controls").uncheck();
   await page.getByLabel("Brand style", { exact: true }).selectOption("primary");
   assert.match(await page.getByTestId("style").innerText(), /background-color: #3157ff/);

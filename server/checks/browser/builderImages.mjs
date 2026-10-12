@@ -153,8 +153,13 @@ try {
   });
   await assertImageLoaded("A ready message must replay the uploaded image without breaking its URL");
 
+  // A container's picture is a background layer, in Style → Background.
   await selectLayer("Hero background");
-  await page.getByRole("button", { name: "Choose / Upload Image", exact: true }).click();
+  await page.getByRole("tab", { name: "Style", exact: true }).click();
+  const backgroundSection = page.locator('[data-section="background"]');
+  if (!await backgroundSection.evaluate(details => details.open)) await backgroundSection.locator(":scope > summary").click();
+  await backgroundSection.getByRole("button", { name: /^Image: original\.svg/ }).click();
+  await backgroundSection.getByRole("button", { name: "Replace image", exact: true }).click();
   await library.getByRole("button", { name: /^Site Library & Upload/ }).click();
   await library.getByTitle("Use replacement.png", { exact: true }).click();
   await assertBackgroundLoaded();
@@ -171,17 +176,19 @@ try {
   await library.getByRole("button", { name: /^Site Library & Upload/ }).click();
   await library.getByTitle("Use replacement.png", { exact: true }).click();
   await assertImageLoaded("Selecting an existing uploaded asset must display immediately");
-  // Fit & crop lives on the Content tab, as the redesign places it.
-  // The focal point used to be one free-text box; it is a preset list with a
-  // Custom choice whose two axes take numbers. What this guards is the same:
-  // typing into a style control must not lose focus between keystrokes.
+  // Fit and crop are style: Style → Size, opened with "Show more" for a picture.
+  // The focal point is a preset list with a Custom choice whose two axes take
+  // numbers. What this guards: typing into a style control must not lose focus
+  // between keystrokes.
+  await page.getByRole("tab", { name: "Style", exact: true }).click();
+  const sizeSection = page.locator('[data-section="size"]');
+  if (!await sizeSection.evaluate(details => details.open)) await sizeSection.locator(":scope > summary").click();
   await page.getByRole("combobox", { name: "Focal point" }).selectOption("custom");
   const across = page.getByRole("spinbutton", { name: "Horizontal focal point value" });
   await across.fill("4");
   await across.type("0");
   assert.equal(await across.inputValue(), "40", "The focal point accepts continuous typing");
   assert.ok(await across.evaluate(input => document.activeElement === input), "Style input keeps focus after typing");
-  await page.getByRole("tab", { name: "Style", exact: true }).click();
   const width = page.locator(".dx-style").getByRole("textbox", { name: "Width", exact: true });
   await width.fill("2");
   await width.type("40");

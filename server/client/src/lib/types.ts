@@ -3364,6 +3364,13 @@ export type SiteFieldRow = {
   iconType?: "svg" | "img" | "font";
   /** A button with words and no icon, which may be given one. */
   iconAddable?: true;
+  // Settings, in the General tab.
+  /** The attributes the Settings section may show and change: id, the allowlist and a player's own. */
+  attributes?: Array<{ name: string; value: string }>;
+  /** The tags this element may become, its own included. Absent when its tag is fixed. */
+  tagOptions?: string[];
+  /** How many `<source>` files a video or audio player lists. */
+  mediaSources?: number;
 };
 
 export type SiteSectionRow = {

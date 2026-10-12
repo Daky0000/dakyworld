@@ -25,6 +25,7 @@ export function FieldRow({
   onOpenMediaLibrary,
   computedBackgroundUrl,
   onTypeOnPage,
+  hideDestination = false,
 }: {
   field: SiteFieldRow;
   edit: FieldEdit | undefined;
@@ -46,6 +47,8 @@ export function FieldRow({
   computedBackgroundUrl?: string;
   /** Puts the caret in this element on the page itself. */
   onTypeOnPage?: () => void;
+  /** Where it goes is drawn under Settings → Link instead. */
+  hideDestination?: boolean;
 }) {
   readOnly = readOnly || field.sourceManaged === true;
   const value = edit?.value ?? field.value;
@@ -108,11 +111,11 @@ export function FieldRow({
           </div>
           <WebsiteRichText plain label={field.label} html={value} readOnly={readOnly || ((field.kind === "link" || field.kind === "button") && !field.value)} onChange={(next) => onChange({ ...edit, value: next })} />
         </div>
-        {(field.kind === "link" || field.kind === "button") && field.href !== undefined && (
+        {(field.kind === "link" || field.kind === "button") && field.href !== undefined && !hideDestination && (
           <Destination id={field.id} href={href} links={links} readOnly={readOnly} onChange={(next) => onChange({ ...edit, href: next })} />
         )}
-        {field.kind === "button" && <ButtonControls field={field} edit={edit} siteId={siteId} publicUrl={publicUrl} onChange={onChange} readOnly={readOnly} compact />}
-        {field.kind === "link" && field.newTab !== undefined && (
+        {field.kind === "button" && <ButtonControls field={field} edit={edit} siteId={siteId} publicUrl={publicUrl} onChange={onChange} readOnly={readOnly} compact hideNewTab={hideDestination} />}
+        {field.kind === "link" && field.newTab !== undefined && !hideDestination && (
           <label className="dx-toggle">
             <span>Open in a new tab</span>
             <input type="checkbox" checked={edit?.newTab ?? field.newTab ?? false} disabled={readOnly} onChange={(event) => onChange({ ...edit, newTab: event.target.checked })} />
@@ -282,26 +285,45 @@ export function FieldRow({
 
 /**
  * Where a link goes, with the kinds of place it can go as chips. A chip only
- * starts the address in the right form — `mailto:`, `tel:`, `#`, `https://` —
- * the box is still the one place the destination is written, and the site's
- * own pages are offered as you type.
+ * starts the address in the right form — `mailto:`, `tel:`, `#`, `https://`,
+ * `https://wa.me/` — the box is still the one place the destination is written,
+ * and the site's own pages are offered as you type.
+ *
+ * WhatsApp is its own chip because it is how most of these businesses are
+ * reached, and its address is not something anybody remembers: a `wa.me` link
+ * takes the number as digits only, so what is typed after it is tidied to that
+ * when the box is left. A phone number loses its spaces the same way.
  */
 const KINDS: { label: string; prefix: string; test: (href: string) => boolean }[] = [
   { label: "Page", prefix: "/", test: (href) => href.startsWith("/") },
   { label: "Section", prefix: "#", test: (href) => href.startsWith("#") },
   { label: "Email", prefix: "mailto:", test: (href) => /^mailto:/i.test(href) },
   { label: "Phone", prefix: "tel:", test: (href) => /^tel:/i.test(href) },
+  // Before URL: a wa.me address is also an https one.
+  { label: "WhatsApp", prefix: "https://wa.me/", test: (href) => /^https:\/\/wa\.me\//i.test(href) },
   { label: "URL", prefix: "https://", test: (href) => /^https?:\/\//i.test(href) },
 ];
 
-function Destination({ id, href, links, readOnly, onChange }: { id: string; href: string; links: Array<{ path: string; title: string }>; readOnly: boolean; onChange: (href: string) => void }) {
+/** The address as a browser needs it: digits for WhatsApp, no spaces in a phone number. */
+function tidyDestination(href: string): string {
+  const whatsapp = /^https:\/\/wa\.me\/(.*)$/i.exec(href.trim());
+  if (whatsapp) {
+    const [number = "", query = ""] = whatsapp[1]!.split("?");
+    return `https://wa.me/${number.replace(/\D/g, "")}${query ? `?${query}` : ""}`;
+  }
+  const phone = /^tel:(.*)$/i.exec(href.trim());
+  if (phone) return `tel:${phone[1]!.replace(/[^\d+]/g, "")}`;
+  return href;
+}
+
+export function Destination({ id, href, links, readOnly, onChange }: { id: string; href: string; links: Array<{ path: string; title: string }>; readOnly: boolean; onChange: (href: string) => void }) {
   const active = KINDS.find((kind) => kind.test(href))?.label;
   return (
     <div className="dx-f">
       <div className="dx-fl"><label htmlFor={`${id}-href`}>Where it goes</label></div>
       <div className="dx-inp">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1" /></svg>
-        <input id={`${id}-href`} type="text" aria-label="Where it goes" value={href} readOnly={readOnly} list={`${id}-links`} onChange={(event) => onChange(event.target.value)} />
+        <input id={`${id}-href`} type="text" aria-label="Where it goes" value={href} readOnly={readOnly} list={`${id}-links`} onChange={(event) => onChange(event.target.value)} onBlur={(event) => { const tidy = tidyDestination(event.target.value); if (tidy !== event.target.value) onChange(tidy); }} />
         <datalist id={`${id}-links`}>
           {links.map((link) => <option key={link.path} value={link.path}>{link.title}</option>)}
         </datalist>

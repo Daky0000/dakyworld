@@ -19,6 +19,7 @@ export function ButtonControls({
   onChange,
   readOnly,
   compact = false,
+  hideNewTab = false,
 }: {
   field: SiteFieldRow;
   edit: FieldEdit | undefined;
@@ -30,6 +31,8 @@ export function ButtonControls({
   readOnly: boolean;
   /** The redesigned inspector: chips and a switch. */
   compact?: boolean;
+  /** The new-tab switch is drawn with the destination, under Settings → Link. */
+  hideNewTab?: boolean;
 }) {
   const variant = edit?.variant !== undefined ? edit.variant : (field.variant ?? null);
   const newTab = edit?.newTab ?? field.newTab ?? false;
@@ -52,7 +55,7 @@ export function ButtonControls({
             </div>
           </div>
         )}
-        {field.newTab !== undefined && (
+        {field.newTab !== undefined && !hideNewTab && (
           <label className="dx-toggle">
             <span>Open in a new tab</span>
             <input type="checkbox" checked={newTab} disabled={readOnly} onChange={(event) => onChange({ ...edit, newTab: event.target.checked })} />

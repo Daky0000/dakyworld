@@ -312,21 +312,19 @@ reach the page title, a picture's description, or a heading three screens down.
   rule in a stylesheet — a rule applies to every page at once and to elements
   nobody was editing. Anything the panel has no control for is left as the
   developer wrote it and named on screen, so it is visible that it survived.
-- **The panel is a fixed set of controls, in three sections.** *Appearance*
-  (background, width, height, opacity, radius, overflow, padding on four sides,
-  and shadow / text shadow / transform / filter behind an "Add" link),
-  *Typography* (face, size, colour, weight, italic/underline/strike, alignment,
-  leading, tracking, case) and *Border*. Numbers scrub — drag a field's label.
-  Every colour opens one popover: the brand swatches first because they are the
-  right answer nearly every time, then a picker, a hex box and an alpha slider.
-  Blank means "as designed" everywhere, which is why they are text fields
-  holding numbers rather than `<input type="number">` with a zero sitting in it.
-  Filter is the one hand-typed CSS string and the one place the no-text-box rule
-  is bent; it is behind the "Add" link, and a value that does not parse does
-  nothing rather than breaking the layout.
-- **`padding` shorthand is expanded on the way in and written as longhands.**
-  A developer's `padding: 4px 8px` and the panel's four sides would otherwise
-  fight, and the shorthand would win.
+- **The panel is the same three tabs for every element** — General, Style,
+  Interactions — since 11 Oct 2026; see "The inspector" at the end of this
+  file. Two things from the panel it replaced still hold. Every colour opens
+  one popover: the brand swatches first because they are the right answer
+  nearly every time, then a picker, a hex box and an alpha slider. And blank
+  means "as designed" everywhere, which is why sizes are text fields holding
+  numbers rather than `<input type="number">` with a zero sitting in it.
+- **A shorthand is expanded only when one of its sides is written.** A
+  developer's `padding: 4px 8px` and the panel's four sides would otherwise
+  fight, and the shorthand would win — so writing `padding-top` takes the
+  shorthand apart first. But it is *read* as four sides without being touched:
+  changing a colour must not turn `margin: 0 auto` into four lines of diff
+  (`writeProperty` in `client/src/lib/websiteStyleValues.ts`).
 - **A refusal from GitHub is a setting, and settings say what to do.**
   `publishPage` translated only "no token" and "repo not on the writable list";
   a token that exists but cannot write raised a bare `GitHubError`, which the
@@ -478,15 +476,16 @@ reach the page title, a picture's description, or a heading three screens down.
   `--dw-hover-*` properties the published page already understood; the element
   is shown in its hover state while the view is open. Shadow presets are tiles
   in both (`SHADOW_PRESETS`, `InspectorDesign.tsx`).
-- **Interactions are motion, chosen by name** (`WebsiteMotionPanel`): entrance,
-  click effect, loop, scroll effect. The inspector stores a keyframe *name* in
-  `--dw-enter` / `--dw-loop` / `--dw-scroll` (plus durations); `MOTION_CSS` in
-  `shared/websiteInteraction.ts` is the only CSS that turns them into animation,
-  published by the same `regenerateInteractionStyles` as hover. Scroll-linked
-  entrances use `animation-timeline: view()` where supported and play on load
-  elsewhere; everything stops under reduced motion. "When clicked" on a link or
-  button rewrites its real `href` (page, URL, `wa.me`, `tel:`, `mailto:`) — no
-  script is ever added. `checks/websiteInteractions.ts` holds it.
+- **Interactions are motion, chosen by name.** The inspector stores a keyframe
+  *name* in `--dw-enter` / `--dw-loop` / `--dw-scroll` (plus durations);
+  `motionCss()` in `shared/websiteInteraction.ts` is the only CSS that turns
+  them into animation, published by the same `regenerateInteractionStyles` as
+  hover. Scroll-linked entrances use `animation-timeline: view()` where
+  supported and play on load elsewhere; everything stops under reduced motion.
+  No script is ever added. The panel became a list of interactions with two
+  more slots (hover, click) on 11 Oct 2026 — see "The inspector" below — and
+  the "When clicked" destination it used to hold is Settings → Link, with
+  WhatsApp, phone and email as chips. `checks/websiteInteractions.ts` holds it.
 - **The canvas overlay** (`WebsiteCanvasOverlay`) draws the selection label, the
   mini toolbar and the dark format bar for highlighted words over the frame, in
   the editor — nothing in it can reach the page's HTML. The format bar replaced
@@ -781,3 +780,176 @@ changed is where `pageSource` gets its bytes and what a publish writes.
   saw. A plan whose changes could not be applied now says why instead of
   showing the model's "Done", and every plan logs one `[website agent]` line:
   model, level, proposed, applied, and what was dropped.
+
+## The inspector: General · Style · Interactions (11 Oct 2026)
+
+The reference — every element, every control, where each value is stored — is
+[server/docs/website-inspector.md](../../server/docs/website-inspector.md). What
+is here is why it is built this way, and what cost time.
+
+- **The same three tabs for every element, and Style is no longer tailored.**
+  A container used to get a fourth tab (Layout), and the Style panel was drawn
+  from what the element was, so a heading was never offered an image fit. Dan
+  asked for the model of Elementor's V4 panel, which customers already know: one
+  Style tab that is identical everywhere, where a control that does not apply
+  simply has no effect and type set on a block is inherited by the words in it.
+  That reverses the "contextual inspector" this file used to describe, on
+  purpose. What still depends on the element is only what has to: the flex
+  controls once it *is* a flex container, a Flex child group once its parent is
+  one, offsets once it is positioned. The one per-element part is General →
+  Content. `lib/elementInspector.ts` kept only the facts and the measured
+  property list; the ownership model went with the panel it described.
+- **Settings that are markup are a structure change, not a field value.** Tag,
+  ID, attributes and a video's playback go to `POST /pages/:id/structure` as
+  `{ kind: "settings", settings: { tag?, attributes? } }` and are written by
+  `applyElementSettings` in `structure.ts`. The reason is the field ids: they
+  are positional, and turning a top-level `<div>` into a `<section>` makes it a
+  section of its own and renumbers every field after it. `identifyFields` pins
+  each field to its element first, which is exactly what it exists for
+  (`checks/websiteElementSettings.ts` proves four ids would move without it).
+  The costs follow from that and are deliberate: a box saves when it is left
+  rather than on each keystroke, every change reloads the preview, undo is the
+  structure undo, and none of it is offered on a framework page (no structure
+  there) or inside a linked shared element (a page-local tag change would make
+  the copies drift; the lock is in the panel, as it is for moves).
+- **The allowlist is the security boundary** — `shared/websiteElementSettings.ts`,
+  used by the panel to say why and by the server to refuse again. Never
+  reachable: script (`on*`, and `data-` names libraries run as code, such as
+  `data-hx-*`), addresses (`href`, `src`, `action`…, which the link, picture and
+  video controls validate), the design system (`class`) and the editor's own
+  marks (`data-dw-*`). Values may not hold `<`, `>`, a backtick or a script
+  address anywhere; a `data-` value may not hold brackets or semicolons. A tag
+  moves only within its family, and `main` is never a target. This is narrower
+  than a builder that owns its runtime, because here an invited editor must not
+  be able to run script on the site's visitors.
+- **A video's settings are attributes through the same door.** `<video>` is
+  still kind `unsupported` and cannot be moved or removed, but settings answer
+  to their own rule (`settingsReason`), so its typed controls work. The address
+  may sit on one `<source>` child and is written there; several sources are a
+  file per browser and are refused. Autoplay is sent with `muted`, because a
+  browser will not start an unmuted video on its own and a switch that does
+  nothing reads as broken.
+- **Every settings change is an edit on the plan, so a video's switches are
+  sent together.** The structure route counts one edit against the monthly
+  allowance (30 on the entry plan) and shares a 20-a-minute limit with publish.
+  Eight switches sent one at a time would be eight edits and eight reloads for
+  what somebody thinks of as setting up one video, so `MediaSettings` gathers
+  them and sends one change on Apply. Tag, ID and each attribute are single,
+  deliberate actions and are sent as they are made.
+- **A number is written as it is typed; anything else when the box is left**
+  (`useTyped`). The first version wrote every keystroke, so `width: 1.` and
+  `margin-top: au` went into the draft on the way to `1.5` and `auto`, were
+  pushed to the frame, and would have been autosaved if the timer fired
+  mid-word. The box shows what is being typed while it has the caret and what
+  the element really has once it does not.
+- **A removal and an insertion at one offset: the removal goes first.** Taking
+  away the first attribute while adding another just past the tag name gave two
+  splices starting at the same place; applied the other way round, the removal
+  cut into the text just inserted. `splice` sorts by start, then by end.
+- **`withoutAnchors` dropped a pending icon change** whenever anything on the
+  page was moved, duplicated or removed: values are folded into the document
+  and only the document is kept, and `icon` was not in the list that is folded.
+  Found while adding settings to that path.
+- **The Style tab reads through one context** (`StyleCtx` in
+  `StyleControls.tsx`): what this draft sets at this screen size, what the
+  page's own HTML says, what a wider screen hands down, and what the browser
+  rendered — the last shown as the placeholder. The dot beside a label says
+  which: filled is changed here (press it to put back what the page had), grey
+  is the page's own inline style, a ring is handed down. **Looking writes
+  nothing**, and `checks/browser/inspector.mjs` counts the writes.
+- **List values are rows, and "cannot read this" is an answer.** Shadows,
+  transforms, filters, transitions, background layers and gradients are taken
+  apart in `lib/websiteStyleValues.ts`. Every reader returns `null` for what it
+  cannot express, and the panel then shows the value as written with a Clear,
+  never a near miss: a developer's `matrix()` rewritten as the closest rows is a
+  different design. The first version read `background: element(#x)` as a
+  colour called `element(#x)`; only something that is certainly a colour is one
+  now.
+- **Every value the panel writes must survive `safeStyle` unchanged, and that
+  is a check** (`checks/websiteInspector.ts`). It is the seam where a panel
+  looks right and the page is wrong, because the frame is pushed the raw value
+  and the server stores the filtered one. It caught a real one before it
+  shipped: `validFramingDeclaration` only knew a single position, so a
+  two-layer background's `background-position: 0% 0%, center center` was
+  dropped on save without a word. It is validated per layer now. The same seam
+  is why list-valued properties and the editor's `--dw-*` numbers get 400
+  characters where everything else gets 120 (`LIST_VALUED`): three shadows do
+  not fit in 120. And why the frame is asked for `border-style` — the Border
+  type control showed a blank for a border the site really draws.
+- **A tablet or phone rule carries less than an inline style**
+  (`safeResponsiveStyle`): no `-webkit-` property, no custom property, no
+  `url()`. So text stroke, Clipping → Text and picture layers are offered on
+  Desktop only (`allowedAt`), rather than accepted and refused at save. A
+  colour or gradient layer added on a smaller screen *replaces* the desktop
+  layers there — that is what a `background-image` override is — and the panel
+  says so.
+- **Custom CSS is the declarations no control owns.** One inline style holds
+  everything, so the box shows what is left over (a `text-shadow`, a `cursor`)
+  and refuses, with the reason, anything a control owns, anything `--dw-*`, and
+  anything the server would drop. Designer controls only.
+- **Display conditions are `display` per screen size and nothing else**
+  (`setPickedVisibility`). It touches `display` only where visibility needs it:
+  a tablet `display: flex` somebody set for layout survives unless it would
+  show the element where it should be hidden. Showing something again on a
+  smaller screen than it is hidden on needs its real display — a flex row put
+  back as `block` is a different layout — so the frame's value is remembered
+  whenever the element is visible (`naturalDisplays`), and switching Desktop
+  back on restores the page's own `display` rather than deleting it.
+- **Interactions are five slots and one animation list.** `enter` (page load,
+  or scroll into view), `loop`, `scroll`, `onhover`, `onclick`, each a layer of
+  one `animation-*` list. Separate rules cannot do this: the cascade lets one
+  `animation` erase another's, and an animation removed and put back starts
+  again. Hover and click only switch a `--dw-…-live` property on, so an
+  entrance carries on while the pointer arrives — `checks/browser/motionRules.mjs`
+  reads the animation's clock across a hover to prove it. `--dw-enter`,
+  `--dw-loop` and `--dw-scroll` predate the layers and are on published pages;
+  every value they could hold reads back as an interaction (`dw-enter-up` is a
+  fade from the bottom) and animates as before. An old scroll fade keeps its own
+  keyframe until somebody chooses another effect, so opening an element never
+  rewrites it.
+- **An element that only animates on hover or click is left exactly as the site
+  made it the rest of the time.** The at-rest rule matches only elements with
+  an entrance, loop or scroll effect. For somebody who asked for reduced motion
+  the hover and click layers do not exist (`prefers-reduced-motion:
+  no-preference` around them) rather than being forced to `animation: none`,
+  which would also stop a spinner the site animates itself.
+- **A per-screen switch overrides the property.** `--dw-onhover-no-m: 1` plus a
+  media rule setting `--dw-onhover: none !important`. An important declaration
+  in a stylesheet beats a normal inline one, which is the only way a rule can
+  win over a `style` attribute.
+- **A custom effect is still one of a fixed set**: `dw-fx-custom-<slot>` are
+  fixed keyframes over numbers the element carries (`--dw-<slot>-o0`, `-t0`…).
+  Both states always write the same list of transform functions, so each one
+  interpolates on its own instead of collapsing into a matrix that loses a full
+  turn.
+- **A click cannot replay an animation, and the panel says so.** With no script
+  on the page the only hooks are `:active` (while pressed) and `:focus` (links
+  and buttons, until focus moves). Likewise scroll into view is scrubbed by the
+  scroll where the browser can, not "played once when seen".
+- **The panel adds the preview rules to the frame if they are missing**, as the
+  Hover view does, so Play works on a frame the server did not prepare. Play on
+  hover and click marks the element `data-dw-play`, which only the preview's
+  copy of the rules knows; the published copy never mentions it.
+- **A control that needs a picture asks for one**: `pickImage(apply)` opens the
+  media library and hands the address to whoever asked (a background layer, a
+  poster) instead of to the selected element's `src`.
+- **The link moved to Settings, and took WhatsApp with it.** The old
+  Interactions tab held "when clicked: WhatsApp / call / email". Destination is
+  Settings → Link for everything now; `Destination` grew a WhatsApp chip that
+  tidies a typed number to the digits a `wa.me` address needs.
+
+Checks: `websiteElementSettings` (server half of Settings), `websiteInspector`
+(the pure rules and the seams to the server), `websiteInteractions`,
+`websitePropertyAudit` (the inventory, and one set of tabs), and in a browser
+`inspector.mjs`, `inspectorTabs.mjs`, `motionRules.mjs`, `stylePanel.mjs`.
+
+Three things that cost time writing them:
+
+- **`count()` does not wait.** A section draws its controls only once open, so
+  counting straight after clicking its summary reads zero. Wait for a child.
+- **Playwright will not hover something that never stops moving.** Its
+  `hover()` waits for the element to be stable, and one fixture spins for ever
+  on purpose. Move the mouse to the element's centre instead.
+- **A heredoc eats backslashes here, and a `\n` pattern matches nothing on a
+  CRLF file.** Write a patch script with the Write tool, read the file as LF,
+  and write it back with the endings it had.
