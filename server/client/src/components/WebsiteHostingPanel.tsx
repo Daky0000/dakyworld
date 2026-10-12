@@ -26,8 +26,23 @@ type Hosting = {
   dnsInstructions: {
     txt: { name: string; value: string | null };
     cname: { name: string; value: string } | null;
+    /** The domain is the root of its zone, where DNS forbids a plain CNAME. */
+    apex: boolean;
+    /** For a root domain: the record that makes www.<domain> reach the site too. */
+    www: { name: string; value: string } | null;
+    guidance: string | null;
   } | null;
 };
+
+/**
+ * Said whether the domain is verified or not, because it is true in both
+ * states. A domain reaches this app, and gets its certificate, only once
+ * somebody on the DakyX team adds it to the service in Railway — a manual step
+ * (server/docs/website-builder-launch.md). The badge used to say "serving" the
+ * moment DNS checked out, which was not yet true.
+ */
+const CERTIFICATE_NOTE =
+  "Once the domain is verified, the DakyX team connects it on our side and switches on its secure certificate (https). That step is done by hand today, so until it is done the domain may not open, or browsers may warn that the connection is not private.";
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
@@ -62,7 +77,7 @@ export function WebsiteHostingPanel({ siteId }: { siteId: string }) {
     onSuccess: (result) => {
       setMessage(
         result.verified
-          ? "Verified. Your domain is now serving this website."
+          ? "Verified. The DakyX team will now connect your domain and switch on its secure certificate."
           : "The record is not visible yet. DNS can take up to an hour to spread — try again shortly.",
       );
       void qc.invalidateQueries({ queryKey: ["website", "hosting", siteId] });
@@ -108,25 +123,32 @@ export function WebsiteHostingPanel({ siteId }: { siteId: string }) {
                   data.customDomainVerifiedAt ? "bg-ok-surface text-ok-text" : "bg-warn-surface text-warn-text"
                 }`}
               >
-                {data.customDomainVerifiedAt ? "Verified and serving" : "Waiting for DNS"}
+                {data.customDomainVerifiedAt ? "Verified" : "Waiting for DNS"}
               </span>
             </div>
 
             {!data.customDomainVerifiedAt && data.dnsInstructions && (
               <div className="space-y-2">
                 <p className="text-sm text-muted">
-                  Add these two records at whoever manages your domain, then press Verify. The TXT record proves the
-                  domain is yours; the CNAME is what points it here.
+                  {data.dnsInstructions.apex
+                    ? "Add these records at whoever manages your domain, then press Verify. The TXT record proves the domain is yours; the other two point it here."
+                    : "Add these two records at whoever manages your domain, then press Verify. The TXT record proves the domain is yours; the CNAME is what points it here."}
                 </p>
                 <Row label="TXT" value={`${data.dnsInstructions.txt.name} → ${data.dnsInstructions.txt.value ?? ""}`} />
                 {data.dnsInstructions.cname && (
                   <Row
-                    label="CNAME"
+                    label={data.dnsInstructions.apex ? "ALIAS" : "CNAME"}
                     value={`${data.dnsInstructions.cname.name} → ${data.dnsInstructions.cname.value}`}
                   />
                 )}
+                {data.dnsInstructions.www && (
+                  <Row label="CNAME" value={`${data.dnsInstructions.www.name} → ${data.dnsInstructions.www.value}`} />
+                )}
+                {data.dnsInstructions.guidance && <Notice tone="info">{data.dnsInstructions.guidance}</Notice>}
               </div>
             )}
+
+            <p className="text-sm leading-relaxed text-muted">{CERTIFICATE_NOTE}</p>
 
             <div className="flex flex-wrap gap-3">
               {!data.customDomainVerifiedAt && (

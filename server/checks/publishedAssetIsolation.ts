@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import express from "express";
 import type { AddressInfo } from "node:net";
 import { prisma } from "../src/lib/prisma.js";
-import { legacyPublishedAsset, readPublishedAsset } from "../src/services/publishedAssets.js";
+import { legacyPublishedAsset, publishedAssetBytes, readPublishedAsset } from "../src/services/publishedAssets.js";
 
 const suffix = randomUUID();
 const first = await prisma.site.create({ data: { name: "Asset check", slug: `audit-${suffix}`, publicUrl: "https://one.example.invalid" } });
@@ -30,7 +30,9 @@ try {
   assert.equal(await response.text(), "first", "legacy URL resolves only the configured site");
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.ok(response.headers.get("content-security-policy"));
-  assert.equal((await readPublishedAsset(second, repoPath, path))?.content?.toString(), "second");
+  // Metadata only now; the size is what tells the two sites' rows apart ("first" is 5 bytes, "second" 6).
+  assert.equal((await readPublishedAsset(second, repoPath, path))?.size, "second".length);
+  assert.equal((await publishedAssetBytes(second.id, repoPath))?.toString(), "second");
   assert.equal(await readPublishedAsset(first, repoPath, "/wrong/path"), null);
   await prisma.sitePage.update({ where: { id: page.id }, data: { publishedHtml: "<p>Image removed</p>" } });
   assert.equal((await fetch(url)).status, 404);

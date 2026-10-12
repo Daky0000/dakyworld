@@ -4419,7 +4419,10 @@ model Site {
 
   /// The customer's own domain. Served only once `customDomainVerifiedAt` is
   /// set, so nobody can claim a hostname they do not control by typing it in.
-  customDomain           String?   @unique
+  /// Unique only among *verified* domains — a partial unique index that the
+  /// migration 20261012100000_custom_domain_verified_unique creates and Prisma
+  /// cannot express — so an unproved claim never locks the real owner out.
+  customDomain           String?
   /// The value they publish as a TXT record at `_dakyworld.<domain>`.
   customDomainToken      String?
   customDomainVerifiedAt DateTime?
@@ -4443,6 +4446,7 @@ model Site {
   updatedAt DateTime @updatedAt
 
   @@index([deletionScheduledFor])
+  @@index([customDomain])
 }
 
 /// A message somebody sent through a form on a website DakyX hosts
