@@ -372,9 +372,9 @@ spent it.
 **An agent turn is priced by what the task is, not by what the agent is** (as
 of 9 Oct 2026). Before a run starts, `services/agents/complexity.ts` sizes the
 task — simple, standard or complex — and the level picks the paid model on
-**all three** vendors of the floor (`TIER_MODELS`: Haiku 4.5 / Sonnet 5 / Opus 5,
-gpt-5.6-luna / terra / sol, Gemini 2.5 Flash / 3.7 Flash / 3.1 Pro) and the
-effort with it (`effortForLevel`: low / medium / high). It used to be
+**all three** vendors of the floor (`TIER_MODELS`: Haiku 5.5 / Sonnet 5.5 /
+Opus 5.5, gpt-5.6-luna / terra / sol, Gemini 2.5 Flash / 3.7 Flash / 3.1 Pro)
+and the effort with it (`effortForLevel`: low / medium / high). It used to be
 `effortFor(agent)` — the board and anybody writing to a stranger on Opus,
 everyone else on Sonnet, ChatGPT and Gemini on one model each whatever the task.
 Free NVIDIA rungs still serve first; the level decides who catches the work when
@@ -382,6 +382,25 @@ they cannot. A run started without a level (any caller but the runner, or sizing
 switched off) keeps the old answer exactly: `modelForEffort()` for Claude,
 `providerModel()` for the others. The full story is in
 [09-costs-effort-and-tiers.md](09-costs-effort-and-tiers.md).
+
+**The Claude half moved to the 5.5 family on 12 Oct 2026, and the simple level
+had been broken until it did.** It named Haiku 4.5, which takes no `effort` and
+no adaptive thinking — and every Claude request here carries both — so a simple
+task that reached Claude was refused with a 400 and handed to the next vendor
+as "refused the request shape", or failed where there was none. Haiku 4.5 stays
+priced for the calls it served and is refused as a choice
+(`CLAUDE_WITHOUT_EFFORT`). On this family a disabled thinking block, a
+thinking budget, a non-default sampling parameter, a forced `tool_choice` or an
+assistant prefill is a 400 with the same quiet consequence; none is sent, and
+`checks/claudeFamily.ts` holds both halves to that against a fake that refuses
+them. Fable 5.1 is offered and ships on nothing. Pricing carries Opus 5.5's and
+Fable 5.1's cheaper cache reads (`cacheReadPerMTok`) and Haiku 5.5's second rate
+card above a 100K-token prompt (`longPrompt`), which covers the whole call. **A
+model is admitted by its rate**: a rate declared under `models.pricing`
+(`PUT /settings/models/pricing/:model`) or the older `anthropic.pricing` lets a
+new id be chosen for a job or a level without a deploy, and is what
+`rateForModel` bills it at — one parser, `readOverrides` in `claudePricing.ts`,
+reads both rows for both halves.
 
 **A tool result is not paid for once.** It goes into the conversation and is
 re-sent with every turn after it, so a 16,000-character blob on turn two is

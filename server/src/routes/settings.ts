@@ -18,9 +18,10 @@ import { TASK_KINDS, describeTasks, writeActorOverride, type CaptureTask } from 
 import { describeCapabilities, maxRunsPerTask, writeCapabilityOverride } from "../services/actorCapabilities.js";
 import { isValidTimezone } from "../services/scheduler.js";
 import { AnalystError, verifyKey } from "../lib/anthropic.js";
-import { JOBS, MODEL_JOBS, FREE_LADDER_MAX, PROVIDERS, describeProviders, describeRouting, IMAGE_MODELS, LADDER_KEYS, freeLadderFor, freeLadderSource, isLadderKey, needsSight, isModelJob, isPricedModel, isProviderKey, providerKey, ladderLabel, readFreeLadders, readJobModels, readRoutes, routeFor, type LadderKey, type ModelJob, type ProviderKey } from "../lib/models/registry.js";
+import { JOBS, MODEL_JOBS, FREE_LADDER_MAX, PROVIDERS, describeProviders, describeRouting, IMAGE_MODELS, LADDER_KEYS, freeLadderFor, freeLadderSource, isLadderKey, needsSight, isModelJob, isProviderKey, isShippedPricedModel, providerKey, ladderLabel, readFreeLadders, readJobModels, readRoutes, routeFor, type LadderKey, type ModelJob, type ProviderKey } from "../lib/models/registry.js";
 import { listNvidiaModels, verifyProviderKey, type NvidiaModel } from "../lib/models/call.js";
-import { PAID_AGENT_CHAIN, TASK_LEVELS, TIER_MODELS, describeTierModels, isPaidProvider, isTaskLevel, readTierModels } from "../lib/models/registry.js";
+import { PAID_AGENT_CHAIN, TASK_LEVELS, TIER_MODELS, describeTierModels, isPaidProvider, isTaskLevel, readTierModels, whyNotChoosable } from "../lib/models/registry.js";
+import { declaredRates, readOverrides } from "../lib/claudePricing.js";
 import { ROUTING_MODES, routingMode, type RoutingMode } from "../services/agents/complexity.js";
 import { GoogleError, buildAuthUrl, clearGoogleTokenCache, googleConfigured, googleConnected, redirectUri, rememberState } from "../lib/google.js";
 import { verifyStripeKey } from "../lib/stripe.js";
@@ -348,7 +349,24 @@ async function describeModels() {
     /** What each job is, so the screen doesn't have to hold its own copy. */
     jobs: MODEL_JOBS.map((job) => JOBS[job]),
     taskLevels: await describeTaskLevels(),
+    declaredRates: await describeDeclaredRates(),
   };
+}
+
+/**
+ * The rates the Owner has declared, from `models.pricing` and the older
+ * `anthropic.pricing` alike, so the screen can show what a model will be
+ * billed at and take a declaration back.
+ *
+ * `shipped` tells the two kinds apart: a correction to a rate the code already
+ * holds, or the only rate there is for an id the code has never heard of. The
+ * second is what lets that id be chosen for a job or a level, and taking it
+ * back puts any job or level using it back on what ships.
+ */
+async function describeDeclaredRates() {
+  return Object.entries(await declaredRates())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([model, rate]) => ({ model, inputPerMTok: rate.inputPerMTok, outputPerMTok: rate.outputPerMTok, shipped: isShippedPricedModel(model) }));
 }
 
 /**
@@ -363,7 +381,7 @@ async function describeTaskLevels() {
   const [mode, slots] = await Promise.all([routingMode(), describeTierModels()]);
   const offered = Object.fromEntries(
     PAID_AGENT_CHAIN.map((vendor) => {
-      const listed = PROVIDERS[vendor].models.filter((model) => isPricedModel(model));
+      const listed = PROVIDERS[vendor].models.filter((model) => isShippedPricedModel(model));
       const shipped = TASK_LEVELS.map((level) => TIER_MODELS[vendor][level]);
       return [vendor, [...new Set([...shipped, ...listed])]];
     }),
@@ -1316,7 +1334,8 @@ settingsRouter.put("/models/routes/:job", async (req, res, next) => {
  * A model with no published rate is refused here rather than dropped on read,
  * for the same reason a bad route is: an unpriced model prices at the most
  * expensive rate we know of, which is the safe direction for a budget and a
- * terrible place to discover a typo.
+ * terrible place to discover a typo. A rate the Owner declared under
+ * `models.pricing` (PUT /models/pricing/:model) counts as published.
  */
 settingsRouter.put("/models/jobs/:job", async (req, res, next) => {
   try {
@@ -1333,11 +1352,8 @@ settingsRouter.put("/models/jobs/:job", async (req, res, next) => {
     if (!trimmed) {
       delete chosen[job];
     } else {
-      if (!isPricedModel(trimmed)) {
-        return res.status(400).json({
-          error: `There is no published rate here for ${trimmed}, so what it costs could not be recorded. Add one under models.pricing first, or choose a listed model.`,
-        });
-      }
+      const refused = await whyNotChoosable(trimmed);
+      if (refused) return res.status(400).json({ error: refused });
       chosen[job] = trimmed;
     }
 
@@ -1389,11 +1405,8 @@ settingsRouter.put("/models/levels/:vendor/:level", async (req, res, next) => {
     if (!trimmed) {
       delete levels[level];
     } else {
-      if (!isPricedModel(trimmed)) {
-        return res.status(400).json({
-          error: `There is no published rate here for ${trimmed}, so what it costs could not be recorded. Add one under models.pricing first, or choose a listed model.`,
-        });
-      }
+      const refused = await whyNotChoosable(trimmed);
+      if (refused) return res.status(400).json({ error: refused });
       levels[level] = trimmed;
     }
     if (Object.keys(levels).length === 0) delete chosen[vendor];
@@ -1401,6 +1414,86 @@ settingsRouter.put("/models/levels/:vendor/:level", async (req, res, next) => {
 
     if (Object.keys(chosen).length === 0) await deleteSetting(SETTING.MODEL_TIER_MODELS);
     else await setSetting(SETTING.MODEL_TIER_MODELS, JSON.stringify(chosen));
+
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * The dearest rate a person may declare, in dollars per million tokens, on
+ * either half. The dearest model any vendor here sells is $50 for output, so
+ * a thousand is a decimal point in the wrong place rather than a price — and
+ * stored, it would trip every ceiling the first time that model answered.
+ */
+const MAX_DECLARED_RATE = 1_000;
+
+/** A model id as vendors spell them: `claude-opus-5-5`, `gpt-5.6-sol`, `moonshotai/kimi-k3`. */
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@-]*$/;
+
+const declaredRate = z.number().finite().min(0).max(MAX_DECLARED_RATE);
+
+/**
+ * Declares what one model costs, in `models.pricing`.
+ *
+ * The two refusals above have always told the Owner to "add one under
+ * models.pricing first", and until Oct 2026 that could not be done: nothing
+ * wrote the setting, and the guard did not read it. So a model released after
+ * the price tables were written could not be chosen for a job or a level
+ * without a deploy — the one thing an override setting exists to avoid. A rate
+ * declared here is what `rateForModel` bills at, and what `isPricedModelAsync`
+ * admits on, so the bill and the guard read the same number.
+ *
+ * Checked harder than the reader checks, because this is where a typo arrives:
+ * a number, finite, not negative and under `MAX_DECLARED_RATE`. The reader
+ * still drops a negative or non-numeric value that got in some other way. A
+ * row that was not valid JSON is replaced rather than merged into — nothing
+ * could read it anyway.
+ */
+settingsRouter.put("/models/pricing/:model", async (req, res, next) => {
+  try {
+    const model = req.params.model.trim();
+    if (!model || model.length > 80 || !MODEL_ID.test(model)) {
+      return res.status(400).json({ error: "That doesn't look like a model id." });
+    }
+    const parsed = z.object({ inputPerMTok: declaredRate, outputPerMTok: declaredRate }).safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: `A rate is dollars per million tokens: a number from 0 to ${MAX_DECLARED_RATE.toLocaleString("en-GB")}, for input and for output.`,
+      });
+    }
+
+    const stored = readOverrides(await getSetting(SETTING.MODEL_PRICING), SETTING.MODEL_PRICING);
+    stored[model] = { inputPerMTok: parsed.data.inputPerMTok, outputPerMTok: parsed.data.outputPerMTok };
+    await setSetting(SETTING.MODEL_PRICING, JSON.stringify(stored));
+
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Takes a declared rate back, from whichever of the two settings holds it.
+ *
+ * A model the code prices goes back to its shipped rate. One it does not is
+ * unpriced again: a job or a level that chose it falls back to what ships on
+ * the next call, with a line in the log, rather than being billed at a guess.
+ */
+settingsRouter.delete("/models/pricing/:model", async (req, res, next) => {
+  try {
+    const model = req.params.model.trim();
+    let found = false;
+    for (const setting of [SETTING.MODEL_PRICING, SETTING.ANTHROPIC_PRICING]) {
+      const stored = readOverrides(await getSetting(setting), setting);
+      if (!Object.hasOwn(stored, model)) continue;
+      found = true;
+      delete stored[model];
+      if (Object.keys(stored).length === 0) await deleteSetting(setting);
+      else await setSetting(setting, JSON.stringify(stored));
+    }
+    if (!found) return res.status(404).json({ error: `No rate is declared here for ${model}.` });
 
     res.json(await describeAll(req));
   } catch (err) {

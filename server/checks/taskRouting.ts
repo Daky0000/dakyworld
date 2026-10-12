@@ -73,10 +73,10 @@ const {
   TASK_LEVELS,
   TIER_MODELS,
   effortForLevel,
-  isPricedModel,
+  isShippedPricedModel,
   levelForEffort,
 } = await import("../src/lib/models/registry.js");
-const { MODEL_PRICING } = await import("../src/lib/claudePricing.js");
+const { MODEL_DEFAULT, MODEL_ECONOMY, MODEL_PRICING } = await import("../src/lib/claudePricing.js");
 
 const NO_LINKS = { lead: false, client: false, project: false, proposal: false, invoice: false };
 
@@ -205,7 +205,7 @@ console.log("\nEvery level resolves to a model this app can price");
 {
   for (const vendor of PAID_AGENT_CHAIN) {
     const ids = TASK_LEVELS.map((level) => TIER_MODELS[vendor][level]);
-    check(`${vendor}: every level is priced`, ids.every(isPricedModel), ids.filter((id) => !isPricedModel(id)).join(", ") || "all priced");
+    check(`${vendor}: every level is priced`, ids.every(isShippedPricedModel), ids.filter((id) => !isShippedPricedModel(id)).join(", ") || "all priced");
     check(`${vendor}: three different models`, new Set(ids).size === 3, ids.join(", "));
     const rate = (id: string) => (PROVIDER_PRICING[id] ?? MODEL_PRICING[id])?.outputPerMTok ?? Infinity;
     check(
@@ -527,12 +527,17 @@ async function main() {
         ...(effort ? { effort } : {}),
       });
 
-    for (const level of ["simple", "complex"] as const) {
+    // All three, and by name as well as by table: the levels moved to the
+    // current Claude family in Oct 2026, and a table that quietly moved back
+    // would still agree with itself.
+    const CURRENT = { simple: "claude-haiku-5-5", standard: "claude-sonnet-5-5", complex: "claude-opus-5-5" } as const;
+    for (const level of TASK_LEVELS) {
       claudeSeen.length = 0;
       await run(level);
       const body = claudeSeen[0]?.body ?? {};
       check(`a ${level} task reaches Claude on ${TIER_MODELS.anthropic[level]}`, body.model === TIER_MODELS.anthropic[level], String(body.model));
       check(`with ${effortForLevel(level)} effort`, body.output_config?.effort === effortForLevel(level), JSON.stringify(body.output_config));
+      check(`which is ${CURRENT[level]}`, body.model === CURRENT[level], String(body.model));
     }
 
     claudeReply = claudeRefuses;
@@ -554,23 +559,26 @@ async function main() {
     openaiReply = chatgptDone;
     claudeSeen.length = 0;
     await run(undefined, "high");
-    check("a run nobody sized keeps the old answer", claudeSeen[0]?.body.model === "claude-opus-5", String(claudeSeen[0]?.body.model));
+    check("a run nobody sized keeps the old answer", claudeSeen[0]?.body.model === MODEL_DEFAULT, String(claudeSeen[0]?.body.model));
 
-    await setSetting(SETTING.MODEL_TIER_MODELS, JSON.stringify({ anthropic: { simple: "claude-sonnet-5", complex: "claude-made-up-9" } }));
+    await setSetting(SETTING.MODEL_TIER_MODELS, JSON.stringify({ anthropic: { simple: "claude-sonnet-5-5", complex: "claude-made-up-9" } }));
     clearSettingsCache();
     claudeSeen.length = 0;
     await run("simple");
-    check("the Owner's own model for a level reaches the wire", claudeSeen[0]?.body.model === "claude-sonnet-5", String(claudeSeen[0]?.body.model));
+    check("the Owner's own model for a level reaches the wire", claudeSeen[0]?.body.model === "claude-sonnet-5-5", String(claudeSeen[0]?.body.model));
     claudeSeen.length = 0;
     await run("complex");
     check("an unpriced one is ignored rather than billed at a guess", claudeSeen[0]?.body.model === TIER_MODELS.anthropic.complex, String(claudeSeen[0]?.body.model));
     await prisma.appSetting.deleteMany({ where: { key: SETTING.MODEL_TIER_MODELS } });
 
-    await setSetting(SETTING.ANTHROPIC_MODEL, "claude-opus-4-8");
+    // The previous default, which is what a deployment that pinned its model
+    // before the family moved is most likely to be holding. A pin is a decision
+    // and the move to 5.5 must not undo it.
+    await setSetting(SETTING.ANTHROPIC_MODEL, "claude-opus-5");
     clearSettingsCache();
     claudeSeen.length = 0;
     await run("complex");
-    check("a Claude model the Owner set before levels existed is still honoured", claudeSeen[0]?.body.model === "claude-opus-4-8", String(claudeSeen[0]?.body.model));
+    check("a Claude model the Owner set before levels existed is still honoured", claudeSeen[0]?.body.model === "claude-opus-5", String(claudeSeen[0]?.body.model));
     await prisma.appSetting.deleteMany({ where: { key: SETTING.ANTHROPIC_MODEL } });
     clearSettingsCache();
 
@@ -653,7 +661,7 @@ async function main() {
     const legacyRow = await prisma.agentTask.findUniqueOrThrow({ where: { id: legacy.id } });
     const legacySteps = await prisma.agentTaskStep.count({ where: { taskId: legacy.id, kind: "ROUTED" } });
     check("switched off, a task is not sized", legacyRow.level === null && legacySteps === 0, `${legacyRow.level}/${legacySteps}`);
-    check("and runs where it always did", loopTurn()?.body.model === "claude-sonnet-5", String(loopTurn()?.body.model));
+    check("and runs where it always did", loopTurn()?.body.model === MODEL_ECONOMY, String(loopTurn()?.body.model));
   } catch (err) {
     failures.push(`the run stopped: ${(err as Error).message}`);
     console.log(`\n  THREW  ${(err as Error).stack ?? (err as Error).message}`);

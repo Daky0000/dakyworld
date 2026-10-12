@@ -1,6 +1,6 @@
 import { SETTING, getSetting, isEnvManaged } from "../settings.js";
 import type { Effort } from "../claude.js";
-import { MODEL_DEFAULT, MODEL_ECONOMY, MODEL_PRICING, defaultModel, type ModelRate } from "../claudePricing.js";
+import { MODEL_DEFAULT, MODEL_ECONOMY, MODEL_PRICING, declaredRates, defaultModel, type ModelRate } from "../claudePricing.js";
 
 /**
  * The five model vendors, and which job each one does.
@@ -707,7 +707,11 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // fails and a candidate that cannot do the work is a wasted attempt with
     // a confusing error at the end of it.
     jobs: ["text", "outreach", "spreadsheet", "organise", "triage", "html", "factcheck", "research", "humanise", "vision", "redesign"],
-    models: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
+    // The current family first, then Fable 5.1 — offered so the Owner can
+    // choose it, never shipped on anything — then the previous Opus and
+    // Sonnet, so going back a generation is one dropdown rather than a deploy.
+    // Haiku 4.5 is not offered: see `CLAUDE_WITHOUT_EFFORT`.
+    models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"],
   },
   openai: {
     key: "openai",
@@ -938,9 +942,64 @@ export async function readJobModels(): Promise<Partial<Record<ModelJob, string>>
   return chosen;
 }
 
-/** True when we hold a published rate for this model, from either table. */
-export function isPricedModel(model: string): boolean {
-  return model in MODEL_PRICING || model in PROVIDER_PRICING;
+/**
+ * True when one of the two tables in the code holds a rate for this id.
+ *
+ * Only the code, and synchronous because of it: this is what every shipped id
+ * is held to (`checks/taskRouting.ts`) and what the Settings dropdowns are
+ * filtered by. Whether a model may be *chosen* is `isPricedModelAsync`, which
+ * also honours a rate the Owner declared.
+ */
+export function isShippedPricedModel(model: string): boolean {
+  return Object.hasOwn(MODEL_PRICING, model) || Object.hasOwn(PROVIDER_PRICING, model);
+}
+
+/**
+ * True when this id has a rate it can be billed at — shipped in the code, or
+ * declared by the Owner under `models.pricing` (or the older
+ * `anthropic.pricing`).
+ *
+ * The declared half is what this used to lack. The guard read the two code
+ * tables alone, and the sentence it refused with told the Owner to add a rate
+ * under `models.pricing` — a setting nothing here consulted and nothing could
+ * write. So no model released after the tables were written could be chosen
+ * for a job or a level without a deploy, which is exactly the change the
+ * overrides exist to make without one. A declared rate is now a rate: it is
+ * what `rateForModel` bills at, so the guard and the bill agree.
+ */
+export async function isPricedModelAsync(model: string): Promise<boolean> {
+  return isShippedPricedModel(model) || Object.hasOwn(await declaredRates(), model);
+}
+
+/**
+ * Claude models this app still prices but can no longer ask for anything.
+ *
+ * Every request this app sends Claude carries `output_config.effort` — the
+ * one-shot writers through `callClaude`, and every agent turn, with adaptive
+ * thinking besides — and Haiku 4.5 takes neither: both are a 400 on it. A 400
+ * is "refused the request shape", which `callModel` and the agent loop both
+ * read as a reason to hand the work to the next vendor, so the model the
+ * simple level shipped on until Oct 2026 did not fail loudly; every simple task
+ * that reached it was quietly passed on to ChatGPT or Gemini. It stays in the
+ * price table, because the ledger holds months of calls it served, and it is
+ * refused as a choice.
+ */
+export const CLAUDE_WITHOUT_EFFORT: readonly string[] = ["claude-haiku-4-5"];
+
+/**
+ * Why this id cannot be chosen for a job or a task level, or null when it can.
+ *
+ * One answer for the Settings screen refusing it and for the read path
+ * ignoring a value that got in some other way, so the two cannot disagree.
+ */
+export async function whyNotChoosable(model: string): Promise<string | null> {
+  if (CLAUDE_WITHOUT_EFFORT.includes(model)) {
+    return `${model} takes no effort setting, and every request this app sends Claude carries one, so it would refuse every call and hand the work to another vendor. Choose ${TIER_MODELS.anthropic.simple} instead.`;
+  }
+  if (!(await isPricedModelAsync(model))) {
+    return `There is no published rate here for ${model}, so what it costs could not be recorded. Add one under models.pricing first, or choose a listed model.`;
+  }
+  return null;
 }
 
 /**
@@ -960,8 +1019,9 @@ export function isPricedModel(model: string): boolean {
 export async function modelForJob(job: ModelJob, provider: ProviderKey): Promise<string> {
   const chosen = (await readJobModels())[job];
   if (chosen) {
-    if (isPricedModel(chosen)) return chosen;
-    console.warn(`[models] ${chosen} is set for ${job} but has no published rate here — using the tier instead. Add it to models.pricing to use it.`);
+    const refused = await whyNotChoosable(chosen);
+    if (!refused) return chosen;
+    console.warn(`[models] ${chosen} is set for ${job} but cannot be used — using the tier instead. ${refused}`);
   }
   if ((JOBS[job].tier ?? "standard") === "economy") return PROVIDERS[provider].economyModel;
   return providerModel(provider);
@@ -1366,9 +1426,16 @@ export function isTaskLevel(value: unknown): value is TaskLevel {
  * Only the paid floor is tiered. NVIDIA's ladder is free whatever the level
  * and still serves first; the level decides which paid model catches the work
  * when three free ones could not.
+ *
+ * **Claude is Haiku 5.5, Sonnet 5.5 and Opus 5.5** as of Oct 2026, and the
+ * move was a repair as much as an upgrade: the simple level was Haiku 4.5,
+ * which refuses the effort setting every Claude turn carries (see
+ * `CLAUDE_WITHOUT_EFFORT`). All three take adaptive thinking and an explicit
+ * effort, which is the only shape the loop and `callClaude` send. Fable 5.1 is
+ * deliberately on no level: it is the Owner's to choose for one.
  */
 export const TIER_MODELS: Record<PaidProvider, Record<TaskLevel, string>> = {
-  anthropic: { simple: "claude-haiku-4-5", standard: MODEL_ECONOMY, complex: MODEL_DEFAULT },
+  anthropic: { simple: "claude-haiku-5-5", standard: MODEL_ECONOMY, complex: MODEL_DEFAULT },
   openai: { simple: "gpt-5.6-luna", standard: "gpt-5.6-terra", complex: "gpt-5.6-sol" },
   gemini: { simple: "gemini-2.5-flash", standard: "gemini-3.7-flash", complex: "gemini-3.1-pro-preview" },
 };
@@ -1397,10 +1464,10 @@ export function levelForEffort(effort: Effort): TaskLevel {
  * The Owner's per-level model choices, holding only what has been changed.
  *
  * Validated the same way `readJobModels` is: an unknown vendor or level is
- * dropped, and so is **a model we cannot price**, with a line in the log.
- * Dropped rather than honoured because an unpriced id is billed at the dearest
- * rate known, and a budget ceiling reading a guess is the one place a typo
- * costs real money.
+ * dropped, and so is **a model we cannot price** or cannot ask
+ * (`whyNotChoosable`), with a line in the log. Dropped rather than honoured
+ * because an unpriced id is billed at the dearest rate known, and a budget
+ * ceiling reading a guess is the one place a typo costs real money.
  */
 export async function readTierModels(): Promise<Partial<Record<PaidProvider, Partial<Record<TaskLevel, string>>>>> {
   const raw = await getSetting(SETTING.MODEL_TIER_MODELS);
@@ -1421,8 +1488,9 @@ export async function readTierModels(): Promise<Partial<Record<PaidProvider, Par
     for (const [level, model] of Object.entries(levels as Record<string, unknown>)) {
       if (!isTaskLevel(level)) continue;
       if (typeof model !== "string" || !model.trim()) continue;
-      if (!isPricedModel(model.trim())) {
-        console.warn(`[models] ${model.trim()} is set for ${vendor} ${level} tasks but has no published rate here — using the shipped model instead.`);
+      const refused = await whyNotChoosable(model.trim());
+      if (refused) {
+        console.warn(`[models] ${model.trim()} is set for ${vendor} ${level} tasks but cannot be used — using the shipped model instead. ${refused}`);
         continue;
       }
       chosen[vendor] = { ...(chosen[vendor] ?? {}), [level]: model.trim() };

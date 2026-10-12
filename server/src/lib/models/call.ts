@@ -3,9 +3,9 @@ import { withModelCapacity } from "../modelCapacity.js";
 import { beforeWebsiteExternalAction, confirmWebsiteProviderResponse, currentWebsiteWork, UncertainExternalError, WorkCancelledError } from "../websiteWorkContext.js";
 import { AnalystError, callClaude, forStructuredOutput, type Effort, type FailureKind, type PromptImage } from "../claude.js";
 import { retryAfterMs } from "../retryAfter.js";
-import { costOf, rateFor, type ModelRate } from "../claudePricing.js";
+import { costOf, declaredRates, ownRate, rateFor, type ModelRate } from "../claudePricing.js";
 import { recordLlmCall } from "../llmLedger.js";
-import { SETTING, getSetting, setSetting } from "../settings.js";
+import { SETTING, setSetting } from "../settings.js";
 import {
   FREE_MODELS,
   JOBS,
@@ -206,39 +206,19 @@ export interface ModelResult<T> {
 
 // --- Pricing ----------------------------------------------------------------
 
-function readOverrides(raw: string | null): Record<string, ModelRate> {
-  if (!raw?.trim()) return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    console.warn("[models] models.pricing is not valid JSON — using the built-in rates.");
-    return {};
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-
-  const out: Record<string, ModelRate> = {};
-  for (const [model, value] of Object.entries(parsed as Record<string, unknown>)) {
-    if (!value || typeof value !== "object") continue;
-    const { inputPerMTok, outputPerMTok } = value as Record<string, unknown>;
-    if (typeof inputPerMTok !== "number" || typeof outputPerMTok !== "number") continue;
-    if (!Number.isFinite(inputPerMTok) || !Number.isFinite(outputPerMTok)) continue;
-    if (inputPerMTok < 0 || outputPerMTok < 0) continue;
-    out[model] = { inputPerMTok, outputPerMTok };
-  }
-  return out;
-}
-
 /**
  * The rate for any model from any vendor.
  *
- * Falls through to the Claude table last, which also supplies the "unknown
- * model costs the most we have ever seen" floor — an unpriced model reading as
- * free is how a budget ceiling gets bypassed without anybody choosing to.
+ * A rate the Owner declared comes first, from either override setting, read by
+ * the one parser in `claudePricing.ts` — this file used to carry its own copy
+ * of it, reading `models.pricing` alone. Falls through to the Claude table
+ * last, which also supplies the "unknown model costs the most we have ever
+ * seen" floor — an unpriced model reading as free is how a budget ceiling gets
+ * bypassed without anybody choosing to.
  */
 export async function rateForModel(model: string): Promise<ModelRate> {
-  const overrides = readOverrides(await getSetting(SETTING.MODEL_PRICING));
-  if (overrides[model]) return overrides[model];
+  const declared = ownRate(await declaredRates(), model);
+  if (declared) return declared;
   // A rung on the free ladder costs nothing, and has to be *known* to cost
   // nothing: an unpriced model falls through to the floor below, which is
   // deliberately the dearest rate we have ever seen. Left to that, a day's
@@ -247,7 +227,7 @@ export async function rateForModel(model: string): Promise<ModelRate> {
   // money nobody spent. See `isFreeModel` for why the stored list is the
   // authority rather than the shape of the id.
   if (await isFreeModel(model)) return { inputPerMTok: 0, outputPerMTok: 0 };
-  return PROVIDER_PRICING[model] ?? rateFor(model);
+  return ownRate(PROVIDER_PRICING, model) ?? rateFor(model);
 }
 
 // --- HTTP -------------------------------------------------------------------

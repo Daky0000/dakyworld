@@ -162,8 +162,8 @@ async function main() {
   await ask({ effort: "max" });
   check("an effort above high sends the headline model", lastModel() === MODEL_DEFAULT, `sent ${lastModel()}`);
 
-  await ask({ effort: "low", model: "claude-haiku-4-5" });
-  check("an explicit model wins over the effort", lastModel() === "claude-haiku-4-5", `sent ${lastModel()}`);
+  await ask({ effort: "low", model: "claude-haiku-5-5" });
+  check("an explicit model wins over the effort", lastModel() === "claude-haiku-5-5", `sent ${lastModel()}`);
 
   console.log("\ncallModel — the job's tier decides the model");
   await askJob("triage");
@@ -185,9 +185,9 @@ async function main() {
   check("a standard job at low effort still uses its tier's model", lastModel() === MODEL_DEFAULT, `sent ${lastModel()}`);
 
   console.log("\nThe Owner's per-job override");
-  await setSetting(SETTING.MODEL_JOB_MODELS, JSON.stringify({ triage: "claude-haiku-4-5" }));
+  await setSetting(SETTING.MODEL_JOB_MODELS, JSON.stringify({ triage: "claude-haiku-5-5" }));
   await askJob("triage");
-  check("an override reaches the wire", lastModel() === "claude-haiku-4-5", `sent ${lastModel()}`);
+  check("an override reaches the wire", lastModel() === "claude-haiku-5-5", `sent ${lastModel()}`);
 
   await askJob("organise");
   check("overriding one job leaves the others alone", lastModel() === MODEL_ECONOMY, `sent ${lastModel()}`);
@@ -199,9 +199,17 @@ async function main() {
   await askJob("triage");
   check("an unpriced override is ignored and the tier is used", lastModel() === MODEL_ECONOMY, `sent ${lastModel()}`);
 
-  await setSetting(SETTING.MODEL_JOB_MODELS, JSON.stringify({ notajob: "claude-haiku-4-5", triage: "" }));
+  await setSetting(SETTING.MODEL_JOB_MODELS, JSON.stringify({ notajob: "claude-haiku-5-5", triage: "" }));
   await askJob("triage");
   check("a blank or unknown entry is dropped rather than sent", lastModel() === MODEL_ECONOMY, `sent ${lastModel()}`);
+
+  // Priced, and still not choosable. Haiku 4.5 takes no effort setting and
+  // every request `callClaude` sends carries one, so honouring this would turn
+  // every triage into a 400 and a quiet handover to another vendor. It was the
+  // example in the setting's own comment until Oct 2026.
+  await setSetting(SETTING.MODEL_JOB_MODELS, JSON.stringify({ triage: "claude-haiku-4-5" }));
+  await askJob("triage");
+  check("a priced model the wire cannot ask is ignored too", lastModel() === MODEL_ECONOMY, `sent ${lastModel()}`);
 
   console.log("\nThe ledger records what actually served it");
   const rows = await prisma.llmCall.findMany({ where: { purpose: "check.modelChoice" }, select: { model: true } });
@@ -214,11 +222,13 @@ async function main() {
   // server-side fallback re-serves a declined request on another model, and a
   // ledger recording the request would attribute that spend to a model that
   // never ran and price it at the wrong rate.
-  answerAs = "claude-haiku-4-5";
+  // Opus 5 is where a declined Opus 5.5 request is re-served, so it is the
+  // realistic answer here.
+  answerAs = "claude-opus-5";
   await ask({ effort: "high", purpose: "check.modelChoice.fallback" });
   answerAs = null;
   const served = await prisma.llmCall.findFirst({ where: { purpose: "check.modelChoice.fallback" }, select: { model: true } });
-  check("the ledger records who answered, not who was asked", served?.model === "claude-haiku-4-5", `recorded ${served?.model}`);
+  check("the ledger records who answered, not who was asked", served?.model === "claude-opus-5", `recorded ${served?.model}`);
   check("...and the request really did ask for the other one", sent.at(-1)?.model === MODEL_DEFAULT, `sent ${sent.at(-1)?.model}`);
 
   console.log("\nThe sheet analyst's own model");
@@ -237,13 +247,13 @@ async function main() {
 
   // With nobody else connected the stand-in follows Claude's own model rather
   // than a frozen copy of the shipped default.
-  await setSetting(SETTING.ANTHROPIC_MODEL, "claude-sonnet-5");
-  check("the stand-in follows Claude's own model", (await routeFor("spreadsheet")).model === "claude-sonnet-5");
+  await setSetting(SETTING.ANTHROPIC_MODEL, "claude-sonnet-5-5");
+  check("the stand-in follows Claude's own model", (await routeFor("spreadsheet")).model === "claude-sonnet-5-5");
 
   // And the Owner can still pick the model for this one job from the Settings
   // screen, the same way as every other job.
-  await setSetting(SETTING.MODEL_JOB_MODELS, JSON.stringify({ spreadsheet: "claude-haiku-4-5" }));
-  check("the Owner's per-job override wins", (await routeFor("spreadsheet")).model === "claude-haiku-4-5");
+  await setSetting(SETTING.MODEL_JOB_MODELS, JSON.stringify({ spreadsheet: "claude-haiku-5-5" }));
+  check("the Owner's per-job override wins", (await routeFor("spreadsheet")).model === "claude-haiku-5-5");
 
   // It reaches the wire — asserted on the request body, never on the helper.
   // A perfectly correct resolution that analyzeGrids ignores is precisely the
@@ -256,7 +266,7 @@ async function main() {
     (await prisma.llmCall.findMany({ where: { purpose: "sheet.analyse" }, select: { id: true } })).map((row) => row.id),
   );
   const analysis = await analyzeGrids([{ name: "Leads", rows: [["Name"], ["Kofi"]], totalRows: 2, truncated: false }], []);
-  check("analyzeGrids sends the override to the wire", lastModel() === "claude-haiku-4-5");
+  check("analyzeGrids sends the override to the wire", lastModel() === "claude-haiku-5-5");
   check("a call served by the fallback says so", analysis.note !== null && analysis.note.includes(PROVIDERS.nvidia.name));
 
   await prisma.llmCall.deleteMany({

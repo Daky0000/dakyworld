@@ -190,7 +190,7 @@ export const SETTING = {
   MODEL_ROUTES: "models.routes",
   /**
    * Which *model* serves which job, as JSON, holding only what has been changed
-   * from the shipped tier: `{"triage":"claude-haiku-4-5"}`.
+   * from the shipped tier: `{"triage":"claude-haiku-5-5"}`.
    *
    * Separate from the four per-provider model settings because those answer
    * "which Gemini" and this answers "how much is this particular job worth
