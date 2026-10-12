@@ -182,7 +182,10 @@ console.log("\n6. The same three tabs for every element");
 // fourth (Layout), which is now a section of Style like everywhere else.
 check(
   "WebsiteEditor draws General, Style and Interactions for every element",
-  websiteEditorSource.includes('{(["general", "style", "interactions"] as const).map((tab) => (') &&
+  // The list is one constant since the tab strip gained arrow-key movement,
+  // which reads it too; the strip still maps that list and nothing else.
+  websiteEditorSource.includes('const INSPECTOR_TABS = ["general", "style", "interactions"] as const;') &&
+  websiteEditorSource.includes("{INSPECTOR_TABS.map((tab) => (") &&
   !/picked\.kind === "container"\s*\?\s*\(\[/.test(websiteEditorSource),
 );
 // With one set of tabs there is nothing to correct when the selection moves,
