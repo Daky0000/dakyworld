@@ -110,12 +110,25 @@ function definitionFor(server: McpServer, tool: McpToolInfo): ToolDefinition<any
     requires: "mcp",
     spends: server.spends,
     outward: server.outward,
+    // Always, whatever the server says about itself. Everything one returns is
+    // text a third party wrote — the shipped Apify preset hands back arbitrary
+    // web pages — and an agent whose only outside tool is a connected one was
+    // the agent never told that a result is data rather than instruction.
+    external: true,
     input: schemaFor(tool.inputSchema),
     run: async (input) => {
       if (!server.enabled) throw new McpError(409, `${server.name} is switched off. Turn it on under Settings → Connected tools.`);
       const result = await callTool(server.url, authHeader, tool.name, input);
       if (result.isError) throw new McpError(400, result.text || `${tool.name} reported that it failed.`);
-      return { text: result.text, parts: result.parts, structured: result.structured, server: server.key, tool: tool.name };
+      return {
+        text: result.text,
+        parts: result.parts,
+        structured: result.structured,
+        // Present only when something was cut — see `McpCallResult.cut`.
+        ...(result.cut ? { cut: result.cut } : {}),
+        server: server.key,
+        tool: tool.name,
+      };
     },
     // Every MCP tool gets one, because the Owner may set the connection to
     // `send` or `charge` — and the invoker refuses to dry-run a tool that

@@ -38,5 +38,9 @@ Three things are never taken from a remote server: its scope, whether it spends
 money, and whether it reaches outside the company. Those come from the
 `McpServer` row the Owner filled in, so a server cannot describe its way past
 the autonomy gate. Descriptions are shown to the Owner and passed to the model
-as descriptions; nothing in one is ever executed.
+as descriptions; nothing in one is ever executed. Every MCP tool is `external`
+(its output is a third party's text), and `callTool` hands back one copy of a
+result: `structuredContent` is dropped when the text already carries it — the
+spec asks servers to send both — and each half is cut at 20,000 characters
+with a `cut` sentence saying so, never summarised.
 

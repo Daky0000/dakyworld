@@ -283,6 +283,12 @@ capture.find / capture.read      the AI-facing tools: a phrase, or named targets
   harness hands the model and which nothing can wrap. Declared per tool rather
   than assumed, because the paragraph is ~110 tokens on every task of every
   agent that holds one and most of this roster never touches a scraped string.
+  The tools that were missing it until Oct 2026 are the easy ones to forget
+  because nothing about them says "scrape": `webhooks.read` (a payload is
+  whatever was posted to a public URL), `github.read` and `repo.read` (issues,
+  commits and files anybody with access wrote), and **every MCP tool**, set in
+  `definitionFor` whatever the server says about itself — the shipped Apify
+  preset returns arbitrary pages. `checks/toolShapes.ts` holds both halves.
 - The four new tools are `charge` scope and `spends: true`, so at the
   commissioned autonomy level (2) an agent **prepares** a capture and a person
   approves it — the same gate `capture.run` has always been behind. Granted to

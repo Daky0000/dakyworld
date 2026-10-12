@@ -243,10 +243,45 @@ export interface McpCallResult {
   text: string;
   /** Anything that wasn't text — images, audio, embedded resources. */
   parts: Array<{ type: string; mimeType?: string; uri?: string; name?: string }>;
-  /** The server's own structured result, when it returned one. */
+  /**
+   * The server's own structured result, when it returned one *and* it says
+   * something the text does not. Null when it is the text again, and the
+   * first `RESULT_CHARS` of its JSON, as a string, when it was longer.
+   */
   structured: unknown;
+  /**
+   * What was cut, in words, when anything was — absent otherwise. A result
+   * that stops at a fixed length without saying so reads as the server's last
+   * word, and an agent then reasons from half a page as if it were all of it.
+   */
+  cut?: string;
   /** True when the server reported the call itself failed. */
   isError: boolean;
+}
+
+/** How much of a result's text, and of its structured half, an agent is handed. */
+const RESULT_CHARS = 20_000;
+
+/**
+ * Whether the structured result is already in the text.
+ *
+ * The MCP spec asks a server that returns `structuredContent` to put the same
+ * JSON in a text block as well, for clients that only read text — so the
+ * common case is one answer twice, and a tool result is re-sent to the model
+ * on every turn after it. Compared as JSON rather than as strings, because the
+ * text copy is usually pretty-printed and the structured one is not.
+ */
+function alreadyInText(structured: unknown, texts: string[]): boolean {
+  const compact = JSON.stringify(structured);
+  if (compact === undefined) return true;
+  return texts.some((text) => {
+    if (text.includes(compact)) return true;
+    try {
+      return JSON.stringify(JSON.parse(text)) === compact;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /**
@@ -305,10 +340,24 @@ export async function callTool(
     });
   }
 
+  // Both halves capped at the same fixed length, deterministically and out
+  // loud: a cut is a slice and a sentence saying how much was there, never a
+  // summary — a digest of a third party's output is a model's paraphrase of
+  // it, which is the one version of it nobody can check.
+  const joined = text.join("\n");
+  const raw = result?.structuredContent ?? null;
+  const structuredJson = raw === null || alreadyInText(raw, text) ? null : JSON.stringify(raw);
+  const cut: string[] = [];
+  if (joined.length > RESULT_CHARS) cut.push(`text: the first ${RESULT_CHARS.toLocaleString("en")} of ${joined.length.toLocaleString("en")} characters`);
+  if (structuredJson && structuredJson.length > RESULT_CHARS) {
+    cut.push(`structured: the first ${RESULT_CHARS.toLocaleString("en")} of ${structuredJson.length.toLocaleString("en")} characters of its JSON`);
+  }
+
   return {
-    text: text.join("\n").slice(0, 20_000),
+    text: joined.slice(0, RESULT_CHARS),
     parts,
-    structured: result?.structuredContent ?? null,
+    structured: structuredJson === null ? null : structuredJson.length > RESULT_CHARS ? structuredJson.slice(0, RESULT_CHARS) : raw,
+    ...(cut.length ? { cut: `Cut to fit — ${cut.join("; ")}.` } : {}),
     isError: result?.isError === true,
   };
 }

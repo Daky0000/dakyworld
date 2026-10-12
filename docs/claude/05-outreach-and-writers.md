@@ -18,8 +18,10 @@ had already dropped. Four things in it **reverse** the playbook, so do not
 - **The letter opens on the reader, not on us.** The playbook opened every
   email with "Daky here from DakyXTech" *before* the observation. Leading with
   yourself is the commonest reason a stranger stops reading. DakyXTech is still
-  named inside the first three lines — `coldEmailChecks` blocks a send
-  otherwise — but it comes *after* the thing that was seen.
+  named inside the first three lines — `coldEmailChecks` flags it otherwise:
+  in red in the composer, on the agent's draft and the approval card, and as a
+  refusal for an agent-written first letter when `flags.deliverables` is on —
+  but it comes *after* the thing that was seen.
 - **There are no scenarios.** Eighteen numbered letters produced eighteen
   recognisable shapes. The writer now picks a framework from the evidence.
   `coldEmailScenarios.ts` survives as **evidence routing only** — which
@@ -205,6 +207,54 @@ the top of the composer in red. The other six are judgement and are listed for
 the reviewer, never ticked by code. The reply-based opt-out is appended by
 `emailRender` rather than asked of the model: a rule that must hold on every
 message cannot depend on a model remembering it.
+
+**The letters nobody typed are checked too** — `checklistFor()` in
+`emailSender.ts`, `checks/sendGuard.ts` (63). Until Oct 2026 the checklist ran
+only in the composer's two draft routes and nothing server-side read its
+verdict, so an agent's `email.draft`, its `email.send` and every sequence step
+went past it — the same agent-path-versus-route gap `message.draft` had with
+lead preparation. Now:
+
+- **One verdict, read off the stored row**, for the draft result, the approval
+  card and the send — three answers to one question is how a card says
+  "sendable" about a letter the send then refuses. The stored `bodyText` is
+  the body *plus* the opt-out, the signature and the footer, whose unsubscribe
+  link carries a `?`; run on that, every clean first letter has two questions
+  and is a "report, not a note". So the renderer's additions are taken back
+  off first (the footer at its `--` line, the signature on file now, the
+  renderer's own opt-out sentence), and the composer's arguments are used:
+  first-email, opt-out appended. The one deliberate difference: the opt-out
+  counts as appended for all five outreach purposes, because `renderEmail`
+  appends it to all five — the composer passes it for `COLD_OUTREACH` only.
+- **Advisory always, from the first day.** `email.draft` returns the verdict
+  (`checks`: sendable, the blocking and warning items, whether it holds the
+  send) instead of the whole row — `bodyHtml` and `bodyText` were the agent's
+  own words in the letterhead, re-sent every turn. `email.send`'s preview, and
+  so the `ActionRequest` and its card, ends with the verdict and says whether
+  it is advice; the send result and its `ToolCall` carry it too.
+  `message.draft` runs the same checklist with its channel.
+- **Enforced only for a first letter, only on a machine path, only behind
+  `flags.deliverables`** (default off, `FLAG_DELIVERABLES`). `email.send`, a
+  sequence step and the scheduler for a row no person composed pass
+  `enforceChecklist`; a failing `COLD_OUTREACH` letter is then FAILED with the
+  blocking items on the row — FAILED rather than SCHEDULED, or the scheduler
+  would refuse it every minute — before the concept claim and before SENDING,
+  so it takes no lead's first-letter slot. `email.send` then *fails*
+  (`CHECKLIST_HELD`) rather than returning `sent: false`: a quiet `sent: false`
+  is a successful call, which filed the approval behind it as EXECUTED and told
+  the task "carried out". A follow-up with no question in it would fail
+  "Exactly one question", and holding it would be inventing a rule, so every
+  other purpose is advice. **A person is never held**: the composer's Send
+  button does not enforce, and neither does the scheduler for a row a
+  signed-in person composed (`createdById`) — the composer stores its own
+  drafter's letters as `AI_DRAFT`, so the kind alone cannot say who decided.
+- **A client's letter answers to the merge field and nothing else**
+  (`scopedToPurpose`). An invoice reminder has no opt-out and no question by
+  design, and telling an agent it "must" add "reply stop" to one makes the
+  letter worse. A `{{token}}` the renderer could not fill holds on every
+  message whoever it is to — `fillPlaceholders` leaves it visible so a person
+  notices, and on these paths there may be no person. This selects from the
+  one checklist; it re-states none of it.
 
 The same doctrine lives in three places that must agree — the playbook, the
 drafter's `SHIPPED_DOCTRINE`, and the `outreach.writer` / `outreach.followup`

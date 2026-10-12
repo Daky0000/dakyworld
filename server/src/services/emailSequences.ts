@@ -4,7 +4,8 @@ import { safeZone, zonedDateParts, zonedTimeToUtc } from "../lib/timezone.js";
 import { AnalystError } from "../lib/anthropic.js";
 import { draftEmail } from "../lib/emailDrafter.js";
 import { resolveContext } from "./emailContext.js";
-import { composeMessage, isSuppressed, sendMessage } from "./emailSender.js";
+import { blockingLine, checklistFor, composeMessage, isSuppressed, sendMessage } from "./emailSender.js";
+import { FLAG, flagOn } from "../lib/featureFlags.js";
 
 /**
  * Sequences — the follow-up nobody remembers to send by hand, which is where
@@ -274,6 +275,10 @@ export async function runDueSequences(now = new Date(), limit = 10): Promise<num
   });
   if (due.length === 0) return 0;
 
+  // A sequence step is a letter nobody read before it left — the whole point
+  // of a sequence when `requireApproval` is off — so it is the path the
+  // checklist matters most on. Held only behind the flag; see `SendOptions`.
+  const enforceChecklist = await flagOn(FLAG.DELIVERABLES);
   let sent = 0;
   for (const enrollment of due) {
     const sequence = enrollment.sequence;
@@ -297,10 +302,20 @@ export async function runDueSequences(now = new Date(), limit = 10): Promise<num
     try {
       const message = await buildStepMessage(sequence, step, enrollment);
       if (sequence.requireApproval) {
-        console.log(`[email] "${sequence.name}" step ${step.position + 1} drafted for ${enrollment.toEmail} — waiting for approval`);
+        // The person approving it is the checklist's reader here, so it is
+        // advice and only said where somebody will look.
+        const report = await checklistFor(message).catch(() => null);
+        const advice = report && !report.sendable ? ` — the checklist flags: ${blockingLine(report)}` : "";
+        console.log(`[email] "${sequence.name}" step ${step.position + 1} drafted for ${enrollment.toEmail} — waiting for approval${advice}`);
       } else {
-        const result = await sendMessage(message.id);
+        // A held step is FAILED with the reason on the row, and the enrolment
+        // has already moved on above, so one bad letter neither goes out nor
+        // jams the sequence behind it.
+        const result = await sendMessage(message.id, { enforceChecklist });
         if (result.sent) sent += 1;
+        else if (result.checks?.holdsTheSend && !result.checks.sendable) {
+          console.warn(`[email] "${sequence.name}" step ${step.position + 1} for ${enrollment.toEmail} was held by the checklist: ${blockingLine(result.checks)}`);
+        }
       }
     } catch (err) {
       console.error(`[email] "${sequence.name}" step ${step.position + 1} failed for ${enrollment.toEmail}:`, (err as Error).message);

@@ -7,6 +7,7 @@ import { draftMessage } from "../../lib/messageDrafter.js";
 import { resolveContext } from "../emailContext.js";
 import { agentBranchName, commitFiles, createBranch, createRepo, getPullRequest, listTree, mergePullRequest, openPullRequest, readFile } from "../../lib/github.js";
 import type { ToolDefinition } from "./types.js";
+import type { EmailPurpose } from "@prisma/client";
 import { auditCompany } from "../companyAudit.js";
 import { caseStrength, isStale, latestAuditReport, prepareLead, prepareLeads, storedPrep } from "../leadPrep.js";
 import { lookAtHomepage } from "../homepageLook.js";
@@ -16,7 +17,19 @@ import { normaliseSiteUrl } from "../siteShot.js";
 import { polishEmail } from "../../lib/emailPolish.js";
 import { buildDemo, demoUrl, subjectFromLead } from "../demoBuilder.js";
 import { appUrl } from "../emailSender.js";
-import { composeMessage, sendMessage } from "../emailSender.js";
+import {
+  COLD_PURPOSES,
+  blockingLine,
+  checklistBinds,
+  checklistFor,
+  checklistVerdict,
+  composeMessage,
+  scopedToPurpose,
+  sendMessage,
+} from "../emailSender.js";
+import { preSendCheck } from "../coldEmailChecks.js";
+import { chooseScenario, exampleWording } from "../coldEmailScenarios.js";
+import { FLAG, flagOn } from "../../lib/featureFlags.js";
 import {
   composeMessage as composePhoneMessage,
   leadReachability,
@@ -85,6 +98,9 @@ import { closeGap, findOverlaps, hirePolicy, openGaps, proposeHire, searchRoster
 
 const idInput = z.object({ id: z.string().min(1).max(64) });
 const limit = z.number().int().min(1).max(100).default(20);
+
+/** How much of one inbound event's payload `webhooks.read` hands an agent. */
+const WEBHOOK_PAYLOAD_CHARS = 1_500;
 
 /**
  * An aspect ratio in the words an agent uses, as the size ChatGPT takes.
@@ -1056,7 +1072,7 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         const allowed = await outreachGate(input.leadId ?? null);
         if (!allowed.ok) throw new Error(allowed.reason ?? "The concept page for this lead has not been cleared.");
       }
-      return composeMessage({
+      const message = await composeMessage({
         subject: input.subject,
         body: input.body,
         purpose: input.purpose as any,
@@ -1068,6 +1084,37 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         createdById: ctx.userId,
         status: "DRAFT" as any,
       });
+      // The checklist the composer shows a person, handed to the agent that
+      // wrote the draft while it can still write it again — and the same
+      // verdict `email.send` will act on, because it is read off the same row.
+      // The draft exists by now, so a checklist that cannot run is reported
+      // rather than thrown: an error here reads as "nothing was drafted" and
+      // the agent drafts it a second time.
+      const report = await checklistFor(message).catch(() => null);
+      const holds = checklistBinds(message.purpose) && (await flagOn(FLAG.DELIVERABLES));
+      // The row less its two renderings. `bodyHtml` and `bodyText` are the
+      // agent's own words wrapped in the letterhead, and a tool result is
+      // re-sent on every turn after it: two copies of a letter the model has
+      // just written, each a few thousand characters, paid for until the task
+      // ends. The id is what every later step needs.
+      return {
+        id: message.id,
+        status: message.status,
+        subject: message.subject,
+        toEmail: message.toEmail,
+        purpose: message.purpose,
+        leadId: message.leadId,
+        checks: report
+          ? {
+              ...checklistVerdict(report, holds),
+              note: !report.sendable
+                ? holds
+                  ? "email.send will refuse this draft until it is written again without the blocking items."
+                  : "Advisory: nothing is held by the checklist yet, but each blocking item is a reason a person would not send this."
+                : undefined,
+            }
+          : { note: "The pre-send checklist could not run on this draft." },
+      };
     },
   },
   {
@@ -1083,12 +1130,33 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     preview: async (input) => {
       const message = await prisma.emailMessage.findUnique({
         where: { id: input.messageId },
-        select: { subject: true, toEmail: true, status: true },
+        select: { subject: true, toEmail: true, status: true, purpose: true, bodyText: true },
       });
       if (!message) return "That email doesn't exist, so nothing would be sent.";
-      return `Send “${message.subject}” to ${message.toEmail ?? "(no recipient)"} — currently ${message.status}.`;
+      const line = `Send “${message.subject}” to ${message.toEmail ?? "(no recipient)"} — currently ${message.status}.`;
+      // The person on the approval card sees what the checklist made of the
+      // letter before deciding, and whether it is advice or a refusal waiting
+      // to happen: approving a letter the send then refuses is a decision made
+      // without the one fact that settled it.
+      const verdict = await checklistLine(message, await flagOn(FLAG.DELIVERABLES));
+      return verdict ? `${line} ${verdict}` : line;
     },
-    run: async (input) => sendMessage(input.messageId),
+    run: async (input) => {
+      const result = await sendMessage(input.messageId, { enforceChecklist: await flagOn(FLAG.DELIVERABLES) });
+      // A letter the checklist held was refused, and a refusal is an error —
+      // as it is for `whatsapp.send`. Returned as `sent: false` it would be a
+      // successful call: the approval behind it filed as EXECUTED, the task
+      // told "carried out", and an agent free to report a letter as gone.
+      if (!result.sent && result.checks?.holdsTheSend && !result.checks.sendable) {
+        throw Object.assign(
+          new Error(
+            `Not sent — the pre-send checklist holds this first letter: ${blockingLine(result.checks)}. Draft it again without those, or leave it for a person to send.`,
+          ),
+          { code: "CHECKLIST_HELD" },
+        );
+      }
+      return result;
+    },
   },
   {
     key: "sequence.enrol",
@@ -1598,6 +1666,9 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     requires: "github",
     spends: false,
     outward: false,
+    // Issue bodies, commit messages and repository descriptions are written by
+    // whoever can open an issue or push — on a public repository, anybody.
+    external: true,
     input: z.object({
       what: z.enum(["repos", "commits", "issues"]).default("repos"),
       repo: z.string().max(140).optional(),
@@ -1689,13 +1760,33 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     requires: "database",
     spends: false,
     outward: false,
+    // A payload is whatever another system — or anybody who found the URL —
+    // chose to post, form messages included.
+    external: true,
     input: z.object({ source: z.string().max(60).optional(), unhandledOnly: z.boolean().default(false), limit }),
-    run: async (input) =>
-      prisma.webhookEvent.findMany({
+    run: async (input) => {
+      // Named columns, never the row. `headers` is the sender's request headers
+      // — signatures, user agents, forwarding chains — which no agent decision
+      // turns on, and `payload` is unbounded: twenty events from a form that
+      // posts a page of HTML is a tool result the size of a novel, re-sent on
+      // every turn after it.
+      const events = await prisma.webhookEvent.findMany({
         where: { ...(input.source ? { source: input.source } : {}), ...(input.unhandledOnly ? { handledAt: null } : {}) },
         orderBy: { createdAt: "desc" },
         take: input.limit,
-      }),
+        select: { id: true, source: true, event: true, verified: true, handledAt: true, error: true, createdAt: true, payload: true },
+      });
+      return events.map(({ payload, ...event }) => {
+        // Cut at a fixed length and said so: a cut payload comes back as the
+        // first stretch of its JSON with `payloadCut` set and `payloadChars`
+        // the whole size, so it reads as cut rather than as the sender's last
+        // word. Never summarised — a digest of a stranger's text is a model's
+        // paraphrase of it, which is the one version nobody can check.
+        const json = JSON.stringify(payload) ?? "null";
+        const cut = json.length > WEBHOOK_PAYLOAD_CHARS;
+        return { ...event, payload: cut ? json.slice(0, WEBHOOK_PAYLOAD_CHARS) : payload, payloadCut: cut, payloadChars: json.length };
+      });
+    },
   },
   // --- Getting paid ---------------------------------------------------------
   //
@@ -1909,6 +2000,20 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         brief: input.brief ?? null,
         caseStrength: strength,
       });
+      // The checklist `POST /messages/draft` runs, with the same arguments and
+      // its channel — one checklist, three sets of numbers, never a copy. Kept
+      // to what this purpose answers to (`scopedToPurpose`), and advice only:
+      // nothing holds a phone message on it.
+      const scenario = input.purpose === "COLD_OUTREACH" ? chooseScenario(context.findingIds ?? [], null) : null;
+      const report = preSendCheck({
+        subject: "",
+        channel: input.channel,
+        body: draft.body,
+        firstEmail: input.purpose === "COLD_OUTREACH",
+        // Appended by the phone composer at send, as it is for an email.
+        optOutAppended: COLD_PURPOSES.has(input.purpose),
+        exampleWording: scenario ? exampleWording(scenario.scenario) : [],
+      });
       return {
         body: draft.body,
         rationale: draft.rationale,
@@ -1922,6 +2027,7 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         lookedAtThemFirst: lookedNow,
         caseStrength: strength,
         couldNotLook: prepError,
+        checks: checklistVerdict(scopedToPurpose(report, input.purpose), false),
       };
     },
   },
@@ -2084,6 +2190,9 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     requires: "github",
     spends: false,
     outward: false,
+    // A file is text its author wrote — a README or a code comment can carry
+    // an instruction as easily as a homepage can.
+    external: true,
     input: z.object({
       repo: z.string().min(1).describe("owner/name, or just the name when a default owner is set."),
       path: z.string().max(300).default("").describe("A file to read, or a folder to list. Empty lists the root."),
@@ -3258,6 +3367,43 @@ export async function resolveTool(key: string): Promise<ToolDefinition | undefin
   return (await allMcpTools()).find((tool) => tool.key === key);
 }
 
+
+// --- The checklist on an approval card -------------------------------------
+
+/**
+ * What the pre-send checklist makes of a stored email, as the sentence an
+ * approval card appends to "Send … to …".
+ *
+ * A first letter always carries a verdict, clean or not, because "sendable" is
+ * itself the thing a person approving it wants to know. Any other purpose says
+ * something only when there is something to say, so a clean invoice
+ * reminder's card reads exactly as it always has. And the card says which kind
+ * of verdict it is: advice, or a refusal that will happen if they approve it
+ * as it stands.
+ */
+async function checklistLine(
+  message: { purpose: EmailPurpose; subject: string; bodyText: string },
+  enforcing: boolean,
+): Promise<string | null> {
+  // A checklist that cannot run leaves the card as it was rather than taking
+  // the whole preview down with it — the send runs it again regardless.
+  const report = await checklistFor(message).catch(() => null);
+  if (!report) return null;
+  const first = checklistBinds(message.purpose);
+  if (!first && report.blocking.length === 0 && report.warnings.length === 0) return null;
+
+  const holds = first && enforcing;
+  const head = holds
+    ? "Pre-send checklist:"
+    : first
+      ? "Pre-send checklist (advisory — nothing is held by it while flags.deliverables is off):"
+      : "Pre-send checklist (advisory — only a first letter is ever held by it):";
+  const verdict = report.sendable
+    ? "sendable."
+    : `${report.blocking.length} blocking — ${blockingLine(report)}.${holds ? " This will be refused unless the draft is edited." : ""}`;
+  const worth = report.warnings.length ? ` Worth a look: ${report.warnings.map((check) => check.label).join("; ")}.` : "";
+  return `${head} ${verdict}${worth}`;
+}
 
 // --- Helpers for the phone channels ----------------------------------------
 

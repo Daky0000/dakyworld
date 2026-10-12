@@ -6,10 +6,12 @@ import { SETTING, getSetting } from "../lib/settings.js";
 import { renderProposalPdf } from "./pdf.js";
 import { renderInvoicePdfFor } from "./invoicePdf.js";
 import { readFile } from "./fileStore.js";
-import { renderEmail } from "./emailRender.js";
+import { OPT_OUT_SENTENCE, renderEmail, signature } from "./emailRender.js";
 import { resolveContext } from "./emailContext.js";
 import { claimSend, settleSend } from "./concept/send.js";
 import { noteEmailDraft } from "./concept/progress.js";
+import { preSendCheck, type CheckResult, type PreSendReport } from "./coldEmailChecks.js";
+import { FLAG, flagOn } from "../lib/featureFlags.js";
 
 /**
  * Sending. Everything that decides whether an email actually leaves is here,
@@ -23,6 +25,10 @@ import { noteEmailDraft } from "./concept/progress.js";
  * **Status moves before the network call.** A message goes SENDING first, so a
  * crash mid-send leaves evidence rather than a message that looks unsent and
  * gets sent again.
+ *
+ * **The checklist runs here too**, on every send and on the stored text, and
+ * holds a first letter only when the caller is a machine path and
+ * `flags.deliverables` is on. See `checklistFor`.
  */
 
 /**
@@ -193,6 +199,189 @@ export interface SendResult {
   sent: boolean;
   reason?: string;
   messageId?: string;
+  /**
+   * What the pre-send checklist made of the letter. Advisory unless the caller
+   * asked for it to be enforced — see `SendOptions`.
+   */
+  checks?: ChecklistVerdict;
+}
+
+// --- The pre-send checklist, on the letter as it is stored -------------------
+//
+// `coldEmailChecks.preSendCheck` ran in exactly two places — the composer's
+// draft routes — and nothing server-side ever read its verdict. An agent's
+// `email.draft`, an agent's `email.send` and a sequence step all went past it,
+// so "the checklist blocks a send" was true of the screen and of nothing else.
+// A rule that must hold on every message cannot depend on whoever composed it,
+// which is the same reasoning — and the same failure — as the attachments
+// above and as `message.draft` never looking at the lead it was writing to.
+
+/**
+ * Which items of the checklist a letter of this purpose answers to.
+ *
+ * The checklist is the outreach doctrine's, and most of it is about
+ * approaching somebody: the opt-out, naming ourselves, the one question, the
+ * length of a note, no price. A client's invoice reminder answers to none of
+ * those, and telling an agent it "must" add "reply stop" to one is advice that
+ * makes the letter worse — so the outreach purposes get the whole checklist
+ * and every other letter gets the one item that holds whoever it is to.
+ * `fillPlaceholders` leaves an unknown `{{token}}` visible on purpose so a
+ * person notices it, and on an agent's or a sequence's letter there may be no
+ * person looking. This selects from the one checklist; it never re-states a
+ * rule of it, which is what forking it would be.
+ */
+const ANY_LETTER = new Set(["merge-fields"]);
+
+/**
+ * Whether a failing checklist can hold this letter at all.
+ *
+ * A first approach only. The composer runs the first-email arguments for
+ * `COLD_OUTREACH` alone, and a follow-up with no question in it would fail
+ * "Exactly one question" — holding it would be inventing a rule the doctrine
+ * does not have. Every other purpose is reported on and never held.
+ */
+export function checklistBinds(purpose: EmailMessage["purpose"]): boolean {
+  return purpose === "COLD_OUTREACH";
+}
+
+/**
+ * The words somebody wrote, with what the renderer added taken back off.
+ *
+ * `bodyText` is stored as `toText` builds it: the body, the reply-based
+ * opt-out on a cold letter, the signature, then the footer. The composer runs
+ * the checklist on the body alone, and the difference is not cosmetic — the
+ * footer's unsubscribe link carries a `?`, so every stored cold letter has one
+ * question more than it was written with, and the signature and footer push
+ * the word count past the band a clean note sits in.
+ *
+ * The footer always opens on a line reading `--` (`textFooter`), which is the
+ * one fixed point to cut at. The signature is taken off only when it is the
+ * one on file now, and the opt-out only when it is the renderer's own
+ * sentence; anything that does not match is left in, where it can only add a
+ * warning, never take one away.
+ */
+function writtenPart(text: string, sign: string | null, cold: boolean): string {
+  const footer = text.lastIndexOf("\n--\n");
+  let written = (footer >= 0 ? text.slice(0, footer) : text).trimEnd();
+  const signed = sign?.trim();
+  if (signed && written.endsWith(signed)) written = written.slice(0, -signed.length).trimEnd();
+  if (cold && written.endsWith(OPT_OUT_SENTENCE)) written = written.slice(0, -OPT_OUT_SENTENCE.length).trimEnd();
+  return written;
+}
+
+/**
+ * The checklist for one stored message, run the way the composer runs it.
+ *
+ * Same arguments as `POST /emails/draft` for a first letter — the email
+ * channel, `firstEmail`, and the opt-out counted as appended, because the
+ * renderer appends it. The one difference is deliberate: the composer passes
+ * `optOutAppended` for `COLD_OUTREACH` only, while `renderEmail` appends the
+ * sentence to all five outreach purposes, so this passes it for all five
+ * rather than reporting a follow-up as missing a sentence it carries.
+ *
+ * Run on the stored text, which is what will leave: placeholders filled, so a
+ * `{{first_name}}` the renderer resolved does not count against the draft and
+ * a `{{first_nme}}` it could not does. One verdict for the draft result, the
+ * approval card and the send — three answers to one question would be how a
+ * card says "sendable" about a letter the send then refuses.
+ *
+ * Never throws for a reason of its own — `preSendCheck` cannot — and never
+ * edits: a checker that rewrites is a second author nobody reviewed.
+ */
+export async function checklistFor(message: Pick<EmailMessage, "purpose" | "subject" | "bodyText">): Promise<PreSendReport> {
+  const cold = COLD_PURPOSES.has(message.purpose);
+  const report = preSendCheck({
+    subject: message.subject,
+    body: writtenPart(message.bodyText, await signature(), cold),
+    channel: "EMAIL",
+    firstEmail: message.purpose === "COLD_OUTREACH",
+    optOutAppended: cold,
+  });
+  return scopedToPurpose(report, message.purpose);
+}
+
+/**
+ * The report cut down to the items a letter of this purpose answers to — the
+ * whole of it for the five outreach purposes, `ANY_LETTER` for the rest.
+ * Exported for `message.draft`, which runs the same checklist on a phone
+ * message and must not tell an agent to put "reply stop" on an invoice either.
+ */
+export function scopedToPurpose(report: PreSendReport, purpose: string): PreSendReport {
+  if (COLD_PURPOSES.has(purpose)) return report;
+  const checks = report.checks.filter((check) => ANY_LETTER.has(check.id));
+  const blocking = checks.filter((check) => !check.passed && check.severity === "BLOCK");
+  return {
+    checks,
+    sendable: blocking.length === 0,
+    blocking,
+    warnings: checks.filter((check) => !check.passed && check.severity === "WARN"),
+    // The six judgement items are about writing to a stranger.
+    humanMustConfirm: [],
+  };
+}
+
+/** One checklist item, as much of it as a reader needs. */
+export interface ChecklistItem {
+  id: string;
+  label: string;
+  detail: string;
+}
+
+/**
+ * The verdict as a tool result, an approval card and a send result carry it.
+ *
+ * The passed items are left out: a list of ten ticks is ten lines a model
+ * re-reads every turn to learn nothing, and a tick for something the checklist
+ * did not actually look at reads as a check that happened.
+ */
+export interface ChecklistVerdict {
+  sendable: boolean;
+  /**
+   * True when a failing verdict stops the send: a first letter, with
+   * `flags.deliverables` on. False means the verdict is advice.
+   */
+  holdsTheSend: boolean;
+  blocking: ChecklistItem[];
+  warnings: ChecklistItem[];
+}
+
+export function checklistVerdict(report: PreSendReport, holdsTheSend: boolean): ChecklistVerdict {
+  const item = (check: CheckResult): ChecklistItem => ({ id: check.id, label: check.label, detail: check.detail });
+  return { sendable: report.sendable, holdsTheSend, blocking: report.blocking.map(item), warnings: report.warnings.map(item) };
+}
+
+/** The blocking items in one line, for an error, a log and a card. */
+export function blockingLine(report: { blocking: Array<{ label: string; detail: string }> }): string {
+  return report.blocking.map((check) => (check.detail ? `${check.label} (${check.detail})` : check.label)).join("; ");
+}
+
+/**
+ * Whether a person stands behind this letter. Theirs to send; the checklist
+ * only advises them.
+ *
+ * The kind alone is not enough: the composer stores a letter its drafter wrote
+ * as `AI_DRAFT`, and the person who read the red box above it and scheduled it
+ * anyway has made the same decision as one pressing Send. `createdById` is
+ * that person — the composer sets it, while an agent's `email.draft` (run with
+ * no user) and a sequence step leave it empty.
+ */
+function writtenByAPerson(message: Pick<EmailMessage, "kind" | "createdById">): boolean {
+  return message.kind === "MANUAL" || message.kind === "TEMPLATE" || message.createdById !== null;
+}
+
+export interface SendOptions {
+  /**
+   * Refuse a first letter the checklist says is not ready.
+   *
+   * Only the machine paths pass it — `email.send`, a sequence step, the
+   * scheduler for a row no person composed — and only when
+   * `flags.deliverables` is on, because holding letters that used to go is a
+   * change to work already in flight (`lib/featureFlags.ts`). The composer's
+   * Send button never does: a person who has read the red box above their
+   * draft and sends it anyway has made a decision, and the checklist was
+   * always advice to them.
+   */
+  enforceChecklist?: boolean;
 }
 
 /**
@@ -200,19 +389,60 @@ export interface SendResult {
  * returns without doing anything, which is what makes the scheduler and the
  * Send button unable to collide.
  */
-export async function sendMessage(id: string): Promise<SendResult> {
+export async function sendMessage(id: string, options: SendOptions = {}): Promise<SendResult> {
   const message = await prisma.emailMessage.findUnique({ where: { id } });
   if (!message) throw new Error("Email not found");
   if (message.status === "SENT") return { sent: false, reason: "already-sent", messageId: message.messageId ?? undefined };
   if (message.status === "SENDING") return { sent: false, reason: "in-flight" };
   if (message.status === "CANCELLED") return { sent: false, reason: "cancelled" };
 
+  // The checklist, beside suppression and the claim and before either of
+  // them, on the text exactly as it would leave. Before the claim because a
+  // refused letter must not take this lead's one first-letter slot, and
+  // before SENDING because a row that never went to the socket must not look
+  // as if it might have.
+  //
+  // A failure to *run* it sends the letter as it always went: the checklist is
+  // a judgement about the words, and a settings read falling over is not one.
+  let report: PreSendReport | null = null;
+  try {
+    report = await checklistFor(message);
+  } catch (err) {
+    console.warn(`[email] the pre-send checklist could not run for ${id}: ${(err as Error).message}`);
+  }
+  const holds = Boolean(options.enforceChecklist) && checklistBinds(message.purpose);
+  const checks = report ? checklistVerdict(report, holds) : undefined;
+
+  if (report && !report.sendable) {
+    if (holds) {
+      // FAILED rather than back to SCHEDULED: the scheduler picks up SCHEDULED
+      // rows every minute and would refuse this one every minute for ever.
+      // FAILED is the state an outbox already treats as "correct it and send
+      // again", and the Send button still sends it — a person is advisory.
+      const error = `Not sent — the pre-send checklist holds a first letter that fails it: ${blockingLine(report)}. Edit the draft, or send it yourself from the outbox.`;
+      const held = await prisma.emailMessage.updateMany({
+        where: { id, status: { in: ["DRAFT", "SCHEDULED", "FAILED"] } },
+        data: { status: "FAILED", failedAt: new Date(), error },
+      });
+      if (held.count !== 1) {
+        const now = await prisma.emailMessage.findUnique({ where: { id }, select: { status: true, messageId: true } });
+        return { sent: false, reason: now?.status === "SENT" ? "already-sent" : "in-flight", messageId: now?.messageId ?? undefined };
+      }
+      return { sent: false, reason: `checklist: ${report.blocking.map((check) => check.label).join("; ")}`, checks };
+    }
+    // Advice nobody asked to enforce still leaves a trace for a letter no
+    // person wrote, so "why did that go out like that" has an answer.
+    if (!writtenByAPerson(message)) {
+      console.warn(`[email] ${message.kind.toLowerCase()} ${message.purpose.toLowerCase()} to ${message.toEmail} fails the checklist (advisory, not held): ${blockingLine(report)}`);
+    }
+  }
+
   // What was approved, and whether this lead's one first letter is still
   // unclaimed. A lead outside the concept workflow passes straight through —
   // see services/concept/send.ts, which is also where the reason this is not
   // simply a status check is written down.
   const claim = await claimSend(message);
-  if (!claim.ok) return { sent: false, reason: claim.reason ?? "held" };
+  if (!claim.ok) return { sent: false, reason: claim.reason ?? "held", checks };
 
   const suppressed = await isSuppressed(message.toEmail);
   if (suppressed) {
@@ -220,7 +450,7 @@ export async function sendMessage(id: string): Promise<SendResult> {
       where: { id },
       data: { status: "CANCELLED", error: `Not sent — ${message.toEmail} is on the suppression list (${suppressed}).` },
     });
-    return { sent: false, reason: "suppressed" };
+    return { sent: false, reason: "suppressed", checks };
   }
 
   // Claim it before the network call, so a crash leaves a SENDING row to
@@ -268,7 +498,7 @@ export async function sendMessage(id: string): Promise<SendResult> {
     await logCommunication(message);
     // The Hostinger path answers a send with no body, so there is no
     // Message-ID to report; sent is still sent.
-    return { sent: true, messageId: result.messageId ?? undefined };
+    return { sent: true, messageId: result.messageId ?? undefined, checks };
   } catch (err) {
     const reason = err instanceof MailerError ? err.message : (err as Error).message;
 
@@ -288,7 +518,7 @@ export async function sendMessage(id: string): Promise<SendResult> {
         : { status: "FAILED", failedAt: new Date(), error: reason },
     });
     await settleSend(message.leadId, { sent: false, uncertain, reason });
-    return { sent: false, reason };
+    return { sent: false, reason, checks };
   }
 }
 
@@ -508,13 +738,18 @@ export async function dispatchDueEmails(now = new Date()): Promise<number> {
     where: { status: "SCHEDULED", scheduledFor: { lte: now } },
     orderBy: { scheduledFor: "asc" },
     take: 25,
-    select: { id: true },
+    select: { id: true, kind: true, createdById: true },
   });
   if (due.length === 0) return 0;
 
+  // A row a person scheduled is theirs, exactly as the Send button is — see
+  // `writtenByAPerson`. A row a model or a sequence wrote with nobody behind
+  // it is held to the checklist once the flag is on, and a held one is FAILED,
+  // so it is not picked up again here.
+  const enforce = await flagOn(FLAG.DELIVERABLES);
   let sent = 0;
   for (const message of due) {
-    const result = await sendMessage(message.id);
+    const result = await sendMessage(message.id, { enforceChecklist: enforce && !writtenByAPerson(message) });
     if (result.sent) sent += 1;
   }
   if (sent > 0) console.log(`[email] sent ${sent} scheduled message(s)`);
