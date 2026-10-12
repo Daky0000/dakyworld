@@ -186,6 +186,11 @@ function publicField(field: SiteField) {
     ...(field.iconType !== undefined ? { iconType: field.iconType } : {}),
     ...(field.iconAddable ? { iconAddable: true } : {}),
     ...(field.repeatable !== undefined ? { repeatable: field.repeatable } : {}),
+    // Settings. Only the attributes the panel may change travel — never the
+    // class list, the destination or anything the page's scripts read.
+    ...(field.attributes !== undefined ? { attributes: field.attributes } : {}),
+    ...(field.tagOptions !== undefined ? { tagOptions: field.tagOptions } : {}),
+    ...(field.mediaSources !== undefined ? { mediaSources: field.mediaSources } : {}),
   };
 }
 
@@ -759,8 +764,21 @@ websiteRouter.delete("/pages/:pageId/draft", async (req, res, next) => {
 
 websiteRouter.post("/pages/:pageId/structure", async (req, res, next) => {
   try {
-    const body = z.object({ ifRevision: z.number().int().nonnegative(), kind: z.enum(["remove", "duplicate", "before", "after", "undo", "redo"]), fieldId: z.string().min(1).max(200).optional(), targetId: z.string().min(1).max(200).optional(), force: z.boolean().optional() }).strict().parse(req.body);
+    const body = z.object({
+      ifRevision: z.number().int().nonnegative(),
+      kind: z.enum(["remove", "duplicate", "before", "after", "undo", "redo", "settings"]),
+      fieldId: z.string().min(1).max(200).optional(),
+      targetId: z.string().min(1).max(200).optional(),
+      force: z.boolean().optional(),
+      // The General tab's Settings: a tag and attribute writes. Shapes only —
+      // what may be written is decided by `applyElementSettings`, which says why.
+      settings: z.object({
+        tag: z.string().min(1).max(12).optional(),
+        attributes: z.record(z.string().min(1).max(64), z.string().max(400).nullable()).optional(),
+      }).strict().optional(),
+    }).strict().parse(req.body);
     if (!["undo", "redo"].includes(body.kind) && !body.fieldId) throw new WebsiteError(400, "Select an element first.");
+    if ((body.kind === "settings") !== Boolean(body.settings)) throw new WebsiteError(400, "Settings go with a settings change, and only with one.");
     const { page, site } = await loadPage(req, req.params.pageId);
     await assertEditAllowance(req, site.id);
     if (body.ifRevision !== page.draftRevision) throw new WebsiteError(409, "The draft changed in another session. Reload the page before changing its layout.");
@@ -768,11 +786,11 @@ websiteRouter.post("/pages/:pageId/structure", async (req, res, next) => {
     const values = draftValues(page);
     const problems = validateFieldChange(discoverFields(editingSource(source.html, values)).fields, values);
     if (problems.length) throw Object.assign(new WebsiteError(422, "Resolve the draft's validation problems before changing its layout."), { problems });
-    const result = changeStructure(source.html, values, body.kind === "undo" || body.kind === "redo" ? { kind: body.kind } : { kind: body.kind, fieldId: body.fieldId!, targetId: body.targetId, force: body.force });
+    const result = changeStructure(source.html, values, body.kind === "undo" || body.kind === "redo" ? { kind: body.kind } : body.kind === "settings" ? { kind: "settings", fieldId: body.fieldId!, settings: body.settings! } : { kind: body.kind, fieldId: body.fieldId!, targetId: body.targetId, force: body.force });
     await prisma.$transaction(async tx => {
       const changed = await tx.sitePage.updateMany({ where: { id: page.id, draftRevision: body.ifRevision }, data: { draft: result.values as unknown as Prisma.InputJsonValue, draftRevision: { increment: 1 }, draftSavedAt: new Date(), draftSavedById: req.dbUser?.id ?? null } });
-      if (!changed.count) throw new WebsiteError(409, "Another editor saved first. Nothing was moved or removed. Reload the page and try again.");
-      await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "LAYOUT_EDIT", summary: `${body.kind} · ${page.title}`, actorName: req.dbUser?.name ?? "Website editor", actorId: req.dbUser?.id, detail: { pageId: page.id, fieldId: body.fieldId, targetId: body.targetId, revision: body.ifRevision + 1 } } });
+      if (!changed.count) throw new WebsiteError(409, "Another editor saved first. Nothing was changed. Reload the page and try again.");
+      await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "LAYOUT_EDIT", summary: `${body.kind} · ${page.title}`, actorName: req.dbUser?.name ?? "Website editor", actorId: req.dbUser?.id, detail: { pageId: page.id, fieldId: body.fieldId, targetId: body.targetId, ...(body.settings ? { settings: body.settings } : {}), revision: body.ifRevision + 1 } } });
     });
     const renderedStructureHtml = applyValues(editingSource(source.html, result.values), fieldValues(result.values)).html;
     await syncDemoFromSitePage(site, page.id, renderedStructureHtml, false);

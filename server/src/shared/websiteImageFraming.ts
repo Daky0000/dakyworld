@@ -10,6 +10,12 @@ export function validFramingDeclaration(property: string, value: string): boolea
     return parts.length <= 2 && parts.every(n => Number.isFinite(n) && n > 0);
   }
   if (property === "object-position" || property === "background-position") {
+    // A background may have several layers, each with a position of its own:
+    // `0% 0%, center center`. Each one is held to the same rule; an object has
+    // exactly one. Reading the list as one position refused every layered
+    // background, and the declaration was dropped on save without a word.
+    const layers = property === "background-position" ? clean.split(",").map(layer => layer.trim()) : [clean];
+    if (layers.length > 1) return layers.every(layer => layer !== "" && validFramingDeclaration(property, layer));
     const parts = clean.split(/\s+/);
     if (parts.length > 2) return false;
     const validPart = (part: string) => {

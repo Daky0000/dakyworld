@@ -1,5 +1,7 @@
 import { validFramingDeclaration } from "../../shared/websiteImageFraming.js";
+import { editableAttributes, mediaKind, tagOptions } from "../../shared/websiteElementSettings.js";
 import { regenerateInteractionStyles } from "./interaction.js";
+import { USES_INTERACTION_CSS } from "../../shared/websiteInteraction.js";
 import { createHash } from "node:crypto";
 import { iconChoiceMarkup, type IconChoice, type IconFrame } from "../../shared/websiteIcons.js";
 import { DOCUMENT_KEY, draftDocument, fieldValues, sourceHash, type DraftDocument } from "./document.js";
@@ -173,6 +175,20 @@ export type SiteField = {
   iconFrame?: IconFrame;
   /** A button with words and no icon, which may be given one. */
   iconAddable?: boolean;
+
+  // --- Settings: what the General tab may change as markup -----------------
+
+  /**
+   * The attributes on the element that the Settings section may show and
+   * change — its id, the allowlist in `shared/websiteElementSettings.ts`, and a
+   * player's own — decoded for display. Everything else on the element (class,
+   * href, event handlers…) is the page's and is not sent.
+   */
+  attributes?: Array<{ name: string; value: string }>;
+  /** The tags this element may be switched to, current one included. Absent when its tag is fixed. */
+  tagOptions?: string[];
+  /** A video or audio player's `<source>` children; its address is editable only when there is at most one. */
+  mediaSources?: number;
 };
 
 export type SiteSection = {
@@ -1341,8 +1357,20 @@ export function readPage(source: string): PageContent {
       field.confidence = "annotated";
     }
     if (node && field.tag !== "body") fieldAt.set(node.attrInsert, field);
-    // Words and containers can be made into links from the Content tab.
-    if (node && field.href === undefined && (field.kind === "text" || field.kind === "richtext" || field.kind === "container") && node.tag !== "body" && node.tag !== "a" && node.tag !== "button") {
+    if (node && node.tag !== "body") {
+      const attributes = editableAttributes(node.attrs.map((attr) => ({ name: attr.name, value: decodeEntities(attr.value) })), node.tag);
+      if (mediaKind(node.tag)) {
+        const sources = node.children.filter((child) => child.tag === "source");
+        field.mediaSources = sources.length;
+        const childSrc = sources.length === 1 ? attrNode(sources[0]!, "src") : undefined;
+        if (!attributes.some((attr) => attr.name === "src") && childSrc) attributes.push({ name: "src", value: decodeEntities(childSrc.value) });
+      }
+      if (attributes.length) field.attributes = attributes;
+      const tags = tagOptions(field.kind, node.tag);
+      if (tags.length > 1) field.tagOptions = tags;
+    }
+    // Words, pictures and containers can be made into links from Settings → Link.
+    if (node && field.href === undefined && (field.kind === "text" || field.kind === "richtext" || field.kind === "container" || field.kind === "image") && node.tag !== "body" && node.tag !== "a" && node.tag !== "button") {
       const wrapper = isLinkWrapper(node.parent) && node.parent!.children.length === 1 ? node.parent! : undefined;
       if (wrapper) {
         const href = attrNode(wrapper, "href");
@@ -1480,6 +1508,13 @@ export function splitDeclarations(style: string | undefined): string[] {
 
 const STYLE_PROPERTY = /^(?:--[a-z0-9_-]{1,48}|[a-z-]{2,40})$/i;
 const STYLE_FORBIDDEN = /url\s*\(|expression\s*\(|javascript:|[<>"'`\\]/i;
+/**
+ * Properties whose value is a list — several shadows, a stack of transforms or
+ * filters, a transition per property, a track list — plus the editor's own
+ * motion numbers, which hold a whole transform. Three shadows do not fit in 120
+ * characters, and refusing the third one silently is worse than a longer cap.
+ */
+const LIST_VALUED = /^(?:box-shadow|text-shadow|transform|filter|backdrop-filter|transition|grid-template-(?:columns|rows|areas)|font-family|--dw-[a-z0-9-]+)$/;
 function isSafeBackground(value: string): boolean {
   if (/javascript:|expression\s*\(|<script/i.test(value)) return false;
   const withoutUrls = value.replace(/url\(\s*(?:"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|([^)]*))\s*\)/gi, (token, d, s, u) => {
@@ -1526,7 +1561,7 @@ export function safeStyle(style: string, originalStyle = ""): string {
         validFramingDeclaration(property, value) &&
         STYLE_PROPERTY.test(property) &&
         value.length > 0 &&
-        value.length <= (isSafeAssetBg ? 500000 : 120) &&
+        value.length <= (isSafeAssetBg ? 500000 : LIST_VALUED.test(property) ? 400 : 120) &&
         (!STYLE_FORBIDDEN.test(declaration) ||
           (property === "font-family" && /^[a-zA-Z0-9 ,\x22\x27-]+$/.test(value)) ||
           isSafeAssetBg)
@@ -1780,6 +1815,6 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
   }
 
   if (responsiveChanged) html = regenerateResponsiveStyles(html);
-  if (/--dw-(?:hover-|focus-|active-|enter|loop|scroll)|data-dw-interaction-styles/.test(html)) html = regenerateInteractionStyles(html);
+  if (USES_INTERACTION_CSS.test(html) || html.includes("data-dw-interaction-styles")) html = regenerateInteractionStyles(html);
   return { html, changed, conflicts, missing };
 }

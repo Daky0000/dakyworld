@@ -9,6 +9,7 @@ import { siteRepo, WebsiteError } from "./website/site.js";
 import { invalidateRender, publicFolder } from "./website/index.js";
 import { invalidateSource } from "./website/sourceCache.js";
 import { websiteAssetFilesIn } from "./websiteAssets.js";
+import { USES_INTERACTION_CSS } from "../shared/websiteInteraction.js";
 import { failPublishJob, sourcePublishCommitted, startPublishJob } from "./websitePublishJobs.js";
 import { assertWebsiteSiteAccess, type WebsiteAction } from "./websiteAccess.js";
 
@@ -366,7 +367,7 @@ export function registerWebsiteSource(router: Router, access: Access, overrides:
     const current = await source(req, input.filePath);
     // Asked of the edit as well as the file: a hover colour being added right
     // now needs the stylesheet that the file, as it stands, does not yet want.
-    const addingHover = input.styles.some(style => /--dw-(?:hover|focus|active)-/.test(style.style));
+    const addingHover = input.styles.some(style => USES_INTERACTION_CSS.test(style.style));
     const wanted = input.devices.length > 0 || addingHover || needsStylesheet(current.content, current.path.relative);
     const sheet = wanted ? await stylesheetOf(current.site, current.repo) : null;
     if (wanted && !sheet) {

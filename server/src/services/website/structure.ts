@@ -1,4 +1,5 @@
 import { regenerateInteractionStyles } from "./interaction.js";
+import { USES_INTERACTION_CSS } from "../../shared/websiteInteraction.js";
 import { randomBytes } from "node:crypto";
 import { describeChanges } from "./index.js";
 import { attrNode, parseHtml, walk, type ElementNode } from "./parse.js";
@@ -6,8 +7,12 @@ import { applyValues, readPage, type FieldValue } from "./regions.js";
 import { regenerateResponsiveStyles } from "./responsive.js";
 import { WebsiteError } from "./site.js";
 import { DOCUMENT_KEY, boundedHistory, draftDocument, editingSource, fieldValues, sourceHash, type DraftDocument, type DocumentSnapshot } from "./document.js";
+import { BOOLEAN_ATTRIBUTES, MAX_ATTRIBUTE_CHANGES, TAG_LABEL, attributeProblem, mediaKind, tagOptions, type ElementSettingsChange } from "../../shared/websiteElementSettings.js";
 
-export type StructureAction = { kind: "remove" | "duplicate" | "before" | "after"; fieldId: string; targetId?: string; force?: boolean } | { kind: "undo" | "redo" };
+export type StructureAction =
+  | { kind: "remove" | "duplicate" | "before" | "after"; fieldId: string; targetId?: string; force?: boolean }
+  | { kind: "settings"; fieldId: string; settings: ElementSettingsChange }
+  | { kind: "undo" | "redo" };
 export type StructureControl = { remove: boolean; duplicate: boolean; repeatable?: boolean; previousId?: string; nextId?: string; group?: string; reason?: string; duplicateReason?: string; forceRemove?: boolean };
 /** A refusal written for the person, so the error handler passes its sentence through rather than "Something went wrong." */
 export class StructureError extends WebsiteError { constructor(message: string) { super(409, message); this.name = "StructureError"; } }
@@ -17,9 +22,13 @@ const BLOCKED = new Set(["html", "head", "body", "script", "style", "form", "inp
 const escapeAttribute = (value: string) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 const freshId = () => `node-${randomBytes(12).toString("hex")}`;
 type Splice = { start: number; end: number; text: string };
+// Backwards, so earlier offsets stay valid. Where a removal and an insertion
+// start at the same offset — taking away the first attribute while adding
+// another just past the tag name — the removal goes first; the other way round
+// it would cut into the text just inserted.
 function splice(source: string, edits: Splice[]): string {
   let result = source;
-  for (const edit of edits.sort((a, b) => b.start - a.start)) result = result.slice(0, edit.start) + edit.text + result.slice(edit.end);
+  for (const edit of edits.sort((a, b) => b.start - a.start || b.end - a.end)) result = result.slice(0, edit.start) + edit.text + result.slice(edit.end);
   return result;
 }
 function structuralReason(node: ElementNode | undefined): string | undefined {
@@ -62,9 +71,129 @@ function identifyFields(source: string): string {
   return splice(source, edits);
 }
 
+// Icons are written into the document like every other pending value. Leaving
+// them out used to drop an unpublished icon change whenever anything on the
+// page was moved, duplicated or removed, because the values are folded into the
+// document and only the document is kept.
 function withoutAnchors(values: Record<string, FieldValue>): Record<string, FieldValue> {
-  return Object.fromEntries(Object.entries(fieldValues(values)).map(([id, value]) => [id, { value: value.value, href: value.href, alt: value.alt, style: value.style, responsive: value.responsive, variant: value.variant, newTab: value.newTab }]));
+  return Object.fromEntries(Object.entries(fieldValues(values)).map(([id, value]) => [id, { value: value.value, href: value.href, alt: value.alt, style: value.style, responsive: value.responsive, variant: value.variant, newTab: value.newTab, icon: value.icon, iconPosition: value.iconPosition }]));
 }
+
+/** Elements whose markup is never the panel's to change, wherever they sit. */
+const SETTINGS_BLOCKED = new Set(["html", "head", "body", "script", "style", "template", "link", "meta", "base", "title", "noscript"]);
+
+/** Why this element's tag and attributes cannot be changed here, or nothing when they can. */
+export function settingsReason(node: ElementNode | undefined): string | undefined {
+  if (!node) return "This part of the page has no element of its own to change.";
+  if (SETTINGS_BLOCKED.has(node.tag)) return "This part of the page belongs to its code.";
+  for (let at = node.parent; at; at = at.parent) if (["head", "svg", "template"].includes(at.tag)) return "This part of the page belongs to its code.";
+  return undefined;
+}
+
+/** A whole attribute's span, with the whitespace before it, so taking it away leaves no gap. */
+function attributeSpan(source: string, attr: { start: number; end: number }): { start: number; end: number } {
+  let start = attr.start;
+  while (start > 0 && /\s/.test(source[start - 1]!)) start -= 1;
+  return { start, end: attr.end };
+}
+
+/**
+ * The General tab's Settings, written into the document: a new tag from the
+ * element's own family, and attribute writes from the shared allowlist.
+ *
+ * Everything is checked again here — the tag against `tagOptions`, every
+ * attribute against `attributeProblem` — because the request is the only thing
+ * this function can see, and a draft that would be refused at publish must
+ * never be stored. Each refusal is a sentence the person can act on.
+ *
+ * A tag change renames both ends and nothing between them. It runs through the
+ * structure path rather than the field values because the field ids are
+ * positional: turning a `<div>` into a `<section>` can make it a section of its
+ * own and renumber every field after it. `identifyFields` has already pinned
+ * each one to its element by the time this runs.
+ */
+export function applyElementSettings(
+  html: string,
+  label: string,
+  kind: string,
+  node: ElementNode,
+  allNodes: Iterable<ElementNode>,
+  settings: ElementSettingsChange,
+): { html: string; line: string } {
+  const reason = settingsReason(node);
+  if (reason) throw new StructureError(reason);
+  const edits: Splice[] = [];
+  const said: string[] = [];
+
+  if (settings.tag !== undefined) {
+    const wanted = settings.tag.trim().toLowerCase();
+    if (wanted !== node.tag) {
+      if (!tagOptions(kind, node.tag).includes(wanted)) {
+        throw new StructureError(`This ${TAG_LABEL[node.tag] ?? `<${node.tag}>`} can't be turned into ${TAG_LABEL[wanted] ? `a ${TAG_LABEL[wanted]}` : `<${wanted}>`}. Its tag can only change within its own family.`);
+      }
+      const closing = node.innerEnd + 2;
+      if (node.selfClosing || html.slice(node.innerEnd, closing) !== "</" || html.slice(closing, closing + node.tag.length).toLowerCase() !== node.tag) {
+        throw new StructureError("This element has no closing tag in the page's HTML, so its tag can't be changed safely. Fix its HTML first.");
+      }
+      edits.push({ start: node.start + 1, end: node.attrInsert, text: wanted });
+      edits.push({ start: closing, end: closing + node.tag.length, text: wanted });
+      said.push(`tag changed to <${wanted}>`);
+    }
+  }
+
+  const changes = Object.entries(settings.attributes ?? {}).map(([name, value]) => [name.trim().toLowerCase(), value] as const);
+  if (changes.length > MAX_ATTRIBUTE_CHANGES) throw new StructureError(`Change at most ${MAX_ATTRIBUTE_CHANGES} attributes at a time.`);
+  if (new Set(changes.map(([name]) => name)).size !== changes.length) throw new StructureError("Each attribute can be set once.");
+  const media = mediaKind(node.tag);
+  const touched: string[] = [];
+  // New attributes on one element go in as one insertion, in the order they
+  // were asked for, so the diff reads the way the panel listed them.
+  const inserts = new Map<number, string>();
+  for (const [name, value] of changes) {
+    const problem = attributeProblem(name, value, node.tag);
+    if (problem) throw new StructureError(`${name}: ${problem}`);
+    if (name === "id" && value !== null) {
+      for (const other of allNodes) {
+        if (other !== node && attrNode(other, "id")?.value === value) {
+          throw new StructureError(`Another element on this page already has the ID “${value}”. An ID has to be unique.`);
+        }
+      }
+    }
+    // A player's address can sit on one <source> inside it rather than on the
+    // element. More than one means a file per browser, which is the developer's
+    // decision and is left to them.
+    let target = node;
+    if (media && name === "src" && !attrNode(node, "src")) {
+      const sources = node.children.filter((child) => child.tag === "source");
+      if (sources.length > 1) throw new StructureError(`This ${media} lists ${sources.length} files for different browsers. Change them in the page's code.`);
+      if (sources.length === 1) target = sources[0]!;
+    }
+    const present = target.attrs.filter((attr) => attr.name === name);
+    const now = present[0]?.value;
+    const wanted = value;
+    if (wanted === null ? !present.length : now !== undefined && decodeAttr(now) === wanted && present.length === 1) continue;
+    const written = wanted === null ? "" : BOOLEAN_ATTRIBUTES.has(name) && wanted === "" ? name : `${name}="${escapeAttribute(wanted)}"`;
+    // Duplicates are malformed HTML; the first is rewritten and the rest go.
+    present.slice(wanted === null ? 0 : 1).forEach((attr) => edits.push({ ...attributeSpan(html, attr), text: "" }));
+    if (wanted !== null) {
+      if (present[0]) edits.push({ start: present[0].start, end: present[0].end, text: written });
+      else inserts.set(target.attrInsert, `${inserts.get(target.attrInsert) ?? ""} ${written}`);
+    }
+    touched.push(name);
+  }
+  for (const [at, text] of inserts) edits.push({ start: at, end: at, text });
+  if (touched.includes("id")) {
+    const id = changes.find(([name]) => name === "id")![1];
+    said.push(id === null ? "ID removed" : `ID set to “${id}”`);
+  }
+  const others = touched.filter((name) => name !== "id");
+  if (others.length) said.push(`${media && others.every((name) => [...BOOLEAN_ATTRIBUTES, "src", "poster", "preload", "controlslist"].includes(name)) ? `${media} settings` : "attributes"} changed (${others.join(", ")})`);
+  if (!edits.length) throw new StructureError("Nothing about this element would change.");
+  return { html: splice(html, edits), line: `Changed ${label}: ${said.join("; ")}` };
+}
+
+/** An attribute value as the page means it, for comparing with what was asked for. */
+const decodeAttr = (value: string) => value.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&amp;/g, "&");
 
 export function changeStructure(source: string, values: Record<string, FieldValue>, action: StructureAction): { values: Record<string, FieldValue>; selectedId: string | null } {
   const previous = draftDocument(values);
@@ -83,17 +212,24 @@ export function changeStructure(source: string, values: Record<string, FieldValu
   const rendered = applyValues(identified, withoutAnchors(values)).html;
   const controls = structureControls(rendered);
   const control = controls[action.fieldId];
-  const forced = action.kind === "remove" && action.force === true && control?.forceRemove === true;
-  if (!control?.remove && !forced) throw new StructureError(control?.reason ?? "This element is no longer available.");
-  if (action.kind === "duplicate" && !control.duplicate) throw new StructureError(control.duplicateReason!);
+  // Settings change one element in place, so they answer to their own rule
+  // rather than to the one that decides whether a block may move or go.
+  if (action.kind !== "settings") {
+    const forced = action.kind === "remove" && action.force === true && control?.forceRemove === true;
+    if (!control?.remove && !forced) throw new StructureError(control?.reason ?? "This element is no longer available.");
+    if (action.kind === "duplicate" && !control.duplicate) throw new StructureError(control.duplicateReason!);
+  }
   const fields = readPage(rendered).fields;
   const nodes = new Map([...walk(parseHtml(rendered))].map(node => [node.attrInsert, node]));
-  const field = fields.find(field => field.id === action.fieldId)!;
-  const node = nodes.get(field.attrInsert!)!;
+  const field = fields.find(field => field.id === action.fieldId);
+  const node = field?.attrInsert === undefined ? undefined : nodes.get(field.attrInsert);
+  if (!field || !node) throw new StructureError("This element is no longer available.");
   const block = rendered.slice(node.start, node.end);
   let html: string;
   let selectedId: string | null = action.fieldId;
-  if (action.kind === "remove") { html = splice(rendered, [{ start: node.start, end: node.end, text: "" }]); selectedId = field.parentId ?? null; }
+  let line: string | undefined;
+  if (action.kind === "settings") { ({ html, line } = applyElementSettings(rendered, field.label, field.kind, node, nodes.values(), action.settings)); }
+  else if (action.kind === "remove") { html = splice(rendered, [{ start: node.start, end: node.end, text: "" }]); selectedId = field.parentId ?? null; }
   else if (action.kind === "duplicate") {
     const edits: Splice[] = [];
     const cloneId = freshId();
@@ -114,11 +250,11 @@ export function changeStructure(source: string, values: Record<string, FieldValu
     html = splice(rendered, [{ start: node.start, end: node.end, text: "" }, { start: position, end: position, text: block }]);
   }
   html = regenerateResponsiveStyles(html);
-  if (/--dw-(?:hover-|focus-|active-|enter|loop|scroll)|data-dw-interaction-styles/.test(html)) html = regenerateInteractionStyles(html);
+  if (USES_INTERACTION_CSS.test(html) || html.includes("data-dw-interaction-styles")) html = regenerateInteractionStyles(html);
   // Only growth is refused. A page already over the ceiling must still be able
   // to lose a block or rearrange one, or the advice in the message cannot be followed.
   if (Buffer.byteLength(html) > 3 * 1024 * 1024 && Buffer.byteLength(html) > Buffer.byteLength(current.html)) throw new StructureError("This page is too large to duplicate more content. Remove unused blocks first.");
   const verb = action.kind === "remove" ? "Removed" : action.kind === "duplicate" ? "Duplicated" : "Moved";
-  const document: DraftDocument = { baseHash: previous?.baseHash ?? sourceHash(source), html, changes: [...current.changes, `${verb} ${field.label}`].slice(-100), summary: [...(current.summary ?? []), ...describeChanges(readPage(current.html).fields, current.values)], undo: boundedHistory([...(previous?.undo ?? []), current]), redo: [] };
+  const document: DraftDocument = { baseHash: previous?.baseHash ?? sourceHash(source), html, changes: [...current.changes, line ?? `${verb} ${field.label}`].slice(-100), summary: [...(current.summary ?? []), ...describeChanges(readPage(current.html).fields, current.values)], undo: boundedHistory([...(previous?.undo ?? []), current]), redo: [] };
   return { values: { [DOCUMENT_KEY]: { document } }, selectedId };
 }
