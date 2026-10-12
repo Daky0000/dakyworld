@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Request, Router } from "express";
 import { Prisma, type WebsiteWorkJob } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { capacity, CapacityError } from "../lib/capacity.js";
+import { capacity, CapacityError, dailyAiLimit } from "../lib/capacity.js";
 import { effectivePermissions } from "../lib/accessRoles.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
 import { WebsiteError } from "./website/site.js";
@@ -46,7 +46,11 @@ export async function enqueueWebsiteWork(req: Request, siteId: string, kind: Web
       tx.websiteWorkJob.count({ where: { state: "QUEUED", kind: { in: isAi ? aiKinds : publishKinds } } }),
       tx.websiteWorkJob.count({ where: { userId, state: "QUEUED", kind: { in: isAi ? aiKinds : publishKinds } } }),
     ]);
-    if (isAi && daily >= capacity.dailyJobs) throw new CapacityError("Your daily AI allowance is used. Ordinary editing remains available.", 429, Math.ceil((day.getTime() + 86_400_000 - Date.now()) / 1000));
+    // The plan's own daily number, named in the refusal — "your daily allowance
+    // is used" without one left a Business customer, sold unlimited runs, with
+    // no idea there was a number at all.
+    const dailyLimit = dailyAiLimit(entitlement.tier);
+    if (isAi && daily >= dailyLimit) throw new CapacityError(`You have used today's AI allowance on ${plan.name} (${dailyLimit} a day). It resets at midnight UTC; ordinary editing remains available.`, 429, Math.ceil((day.getTime() + 86_400_000 - Date.now()) / 1000));
     const budgetLimit = Number(process.env.RAILWAY_PROJECTED_MONTHLY_USD ?? 0) >= 40 ? Math.floor(capacity.pendingJobs / 2) : capacity.pendingJobs;
     if (pending >= (isAi ? budgetLimit : 200) || ownPending >= 2) throw new CapacityError(`${isAi ? "The AI" : "The publishing"} queue is full. Please try again later.`);
     if (isAi) {

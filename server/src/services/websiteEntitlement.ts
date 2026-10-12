@@ -1,6 +1,6 @@
 import type { WebsiteActor } from "./websiteActor.js";
 import type { Request } from "express";
-import type { WebsitePlanTier } from "@prisma/client";
+import type { Prisma, WebsitePlanTier } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { IS_PRODUCTION } from "../middleware/auth.js";
 
@@ -278,16 +278,20 @@ export async function readUsage(userId: string | null, now = new Date()): Promis
  * than reading the same number and writing it back twice. The whole point of
  * moving these out of process memory is that they survive a restart and agree
  * across instances; a read-modify-write would have given up half of that.
+ *
+ * `db` is a transaction when the count has to stand or fall with the write it
+ * counts — a page edit is spent in the same transaction as the save it pays for.
  */
 export async function bumpUsage(
   userId: string | null,
   field: keyof UsageCounters,
   by = 1,
   now = new Date(),
+  db: Pick<Prisma.TransactionClient, "websiteUsage"> = prisma,
 ): Promise<void> {
   if (!userId) return;
   const period = usagePeriod(now);
-  await prisma.websiteUsage.upsert({
+  await db.websiteUsage.upsert({
     where: { userId_period: { userId, period } },
     create: { userId, period, [field]: by },
     update: { [field]: { increment: by } },

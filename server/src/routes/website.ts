@@ -26,7 +26,7 @@ import { registerWebsiteReadiness } from "../services/websiteReadiness.js";
 import { registerWebsiteSurvey } from "../services/websiteSiteSurvey.js";
 import { registerWebsiteOnboarding } from "../services/websiteOnboarding.js";
 import { registerGithubAppRoutes, registerGithubConnectRoutes } from "../services/githubAppRoutes.js";
-import { assertEditAllowance, assertTierFeatureAccess, recordAiPromptUsed, recordEditUsed, registerWebsiteTierRoutes, websiteTierFeature } from "../services/websiteTierPlans.js";
+import { assertEditAllowance, assertTierFeatureAccess, recordAiPromptUsed, registerWebsiteTierRoutes, websiteTierFeature, writePageEdit } from "../services/websiteTierPlans.js";
 import { registerWebsitePublishJobs } from "../services/websitePublishJobs.js";
 import { hostedUrlFor, registerWebsiteHosting } from "../services/websiteHosting.js";
 import { registerSubscriberSelfService } from "../services/websiteSubscriberSelfService.js";
@@ -612,7 +612,7 @@ websiteRouter.put("/pages/:pageId/draft", async (req, res, next) => {
       );
     }
     const { page, site } = await loadPage(req, req.params.pageId);
-    await assertEditAllowance(req, site.id);
+    const allowance = await assertEditAllowance(req, site.id, page);
     const source = await pageSource(site, page);
     const existing = draftValues(page);
     const document = draftDocument(existing);
@@ -668,17 +668,17 @@ websiteRouter.put("/pages/:pageId/draft", async (req, res, next) => {
     // writing would be two, and between them is exactly the window this exists to
     // close — two people pressing save in the same second both read 8, both
     // consider themselves current, and the second one wins silently.
-    const written = await prisma.sitePage.updateMany({
-      where: { id: page.id, draftRevision: body.ifRevision },
-      data: {
-        // A nullable Json column clears with `Prisma.DbNull`; a plain `null`
-        // would be the JSON value `null`, which is not the same as no draft.
-        draft: empty ? Prisma.DbNull : (values as unknown as Prisma.InputJsonValue),
-        draftSavedAt: empty ? null : new Date(),
-        draftSavedById: empty ? null : req.dbUser?.id ?? null,
-        draftRevision: { increment: 1 },
-      },
-    });
+    // `writePageEdit` keeps that condition and adds the plan's: an edit is spent
+    // only by the first save of this page today, decided by the same write.
+    const target = { id: page.id, draftRevision: body.ifRevision };
+    const written = await prisma.$transaction((tx) => writePageEdit(tx, allowance, target, {
+      // A nullable Json column clears with `Prisma.DbNull`; a plain `null`
+      // would be the JSON value `null`, which is not the same as no draft.
+      draft: empty ? Prisma.DbNull : (values as unknown as Prisma.InputJsonValue),
+      draftSavedAt: empty ? null : new Date(),
+      draftSavedById: empty ? null : req.dbUser?.id ?? null,
+      draftRevision: { increment: 1 },
+    }));
 
     if (written.count === 0) {
       // Somebody else saved between this editor loading the page and pressing
@@ -726,7 +726,6 @@ websiteRouter.put("/pages/:pageId/draft", async (req, res, next) => {
 
     const renderedDraftHtml = applyValues(editingSource(source.html, values), fieldValues(values)).html;
     await syncDemoFromSitePage(site, page.id, renderedDraftHtml, false);
-    await recordEditUsed(req);
 
     res.json({
       savedAt: saved?.draftSavedAt ?? null,
@@ -780,7 +779,7 @@ websiteRouter.post("/pages/:pageId/structure", async (req, res, next) => {
     if (!["undo", "redo"].includes(body.kind) && !body.fieldId) throw new WebsiteError(400, "Select an element first.");
     if ((body.kind === "settings") !== Boolean(body.settings)) throw new WebsiteError(400, "Settings go with a settings change, and only with one.");
     const { page, site } = await loadPage(req, req.params.pageId);
-    await assertEditAllowance(req, site.id);
+    const allowance = await assertEditAllowance(req, site.id, page);
     if (body.ifRevision !== page.draftRevision) throw new WebsiteError(409, "The draft changed in another session. Reload the page before changing its layout.");
     const source = await pageSource(site, page, { fresh: true });
     const values = draftValues(page);
@@ -788,13 +787,12 @@ websiteRouter.post("/pages/:pageId/structure", async (req, res, next) => {
     if (problems.length) throw Object.assign(new WebsiteError(422, "Resolve the draft's validation problems before changing its layout."), { problems });
     const result = changeStructure(source.html, values, body.kind === "undo" || body.kind === "redo" ? { kind: body.kind } : body.kind === "settings" ? { kind: "settings", fieldId: body.fieldId!, settings: body.settings! } : { kind: body.kind, fieldId: body.fieldId!, targetId: body.targetId, force: body.force });
     await prisma.$transaction(async tx => {
-      const changed = await tx.sitePage.updateMany({ where: { id: page.id, draftRevision: body.ifRevision }, data: { draft: result.values as unknown as Prisma.InputJsonValue, draftRevision: { increment: 1 }, draftSavedAt: new Date(), draftSavedById: req.dbUser?.id ?? null } });
+      const changed = await writePageEdit(tx, allowance, { id: page.id, draftRevision: body.ifRevision }, { draft: result.values as unknown as Prisma.InputJsonValue, draftRevision: { increment: 1 }, draftSavedAt: new Date(), draftSavedById: req.dbUser?.id ?? null });
       if (!changed.count) throw new WebsiteError(409, "Another editor saved first. Nothing was changed. Reload the page and try again.");
       await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "LAYOUT_EDIT", summary: `${body.kind} · ${page.title}`, actorName: req.dbUser?.name ?? "Website editor", actorId: req.dbUser?.id, detail: { pageId: page.id, fieldId: body.fieldId, targetId: body.targetId, ...(body.settings ? { settings: body.settings } : {}), revision: body.ifRevision + 1 } } });
     });
     const renderedStructureHtml = applyValues(editingSource(source.html, result.values), fieldValues(result.values)).html;
     await syncDemoFromSitePage(site, page.id, renderedStructureHtml, false);
-    await recordEditUsed(req);
     res.json({ revision: body.ifRevision + 1, selectedId: result.selectedId });
   } catch (error) { next(error); }
 });

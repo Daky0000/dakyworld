@@ -16,6 +16,7 @@
  */
 import assert from "node:assert/strict";
 import { stillEntitled, type EntitlingRow } from "../src/services/websiteEntitlement.js";
+import { lockedForNonPayment, type UnpaidRow } from "../src/services/websiteDunning.js";
 
 let checks = 0;
 function check(name: string, condition: unknown) {
@@ -90,6 +91,34 @@ check(
   "...however long it has been past due",
   stillEntitled(row("PAST_DUE", inDays(-400)), NOW),
 );
+
+/* ------------------------------------------- when past due closes editing -- */
+
+// Keeping the plan is half of it; the other half is that editing does close
+// after a fortnight. It never did for a subscription with no paid-up date —
+// a missing date answered "not locked" — and that is exactly the date a
+// subscription the processor never confirmed is missing. The fallback is when
+// the row was last written, which is no earlier than when it went past due.
+const unpaid = (billingState: string, nextBillingAt: Date | null, updatedAt: Date): UnpaidRow => ({ billingState, nextBillingAt, updatedAt });
+check(
+  "past due with no paid-up date: editing closes a fortnight after it was marked past due",
+  lockedForNonPayment(unpaid("PAST_DUE", null, inDays(-15)), NOW),
+);
+check(
+  "...exactly at the fortnight",
+  lockedForNonPayment(unpaid("PAST_DUE", null, inDays(-14)), NOW),
+);
+check(
+  "...and not a day before it",
+  !lockedForNonPayment(unpaid("PAST_DUE", null, inDays(-13)), NOW),
+);
+check(
+  "a paid-up date, where there is one, is what the fortnight runs from",
+  lockedForNonPayment(unpaid("PAST_DUE", inDays(-15), NOW), NOW) && !lockedForNonPayment(unpaid("PAST_DUE", inDays(-3), inDays(-30)), NOW),
+);
+for (const state of ["ACTIVE", "NONE", "CANCELLED", "NON_RENEWING", "CANCELLING", "UNCERTAIN"]) {
+  check(`${state} is never locked for non-payment, however old the row`, !lockedForNonPayment(unpaid(state, null, inDays(-400)), NOW));
+}
 
 /* -------------------------------------------------------- the exact boundary -- */
 

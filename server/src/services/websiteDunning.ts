@@ -34,6 +34,33 @@ import { customerAppUrl } from "./emailSender.js";
  */
 export const DUNNING_DAYS_BEFORE_LOCK = 14;
 
+/** The parts of a purchase that say how long it has gone unpaid. */
+export type UnpaidRow = { billingState: string; nextBillingAt: Date | null; updatedAt: Date };
+
+/**
+ * The date a past-due subscription has been unpaid since.
+ *
+ * The date it was paid up to, when the processor gave one. When it did not,
+ * the last time the row was written — which is no earlier than the write that
+ * marked it past due, so a lock counted from it can come late but never early.
+ * Late in one way worth knowing: every later event from Paystack writes the row
+ * again, so without a paid-up date the fortnight runs from the last of them.
+ * The alternative was what this replaced — no date, no lock, ever.
+ */
+export function unpaidSince(row: Pick<UnpaidRow, "nextBillingAt" | "updatedAt">): Date {
+  return row.nextBillingAt ?? row.updatedAt;
+}
+
+/**
+ * The decision, kept pure so it can be checked with dates rather than trusted
+ * from a reading of the query. Only a past-due subscription is ever locked; a
+ * cancelled one is decided by `stillEntitled`, and a healthy one never.
+ */
+export function lockedForNonPayment(row: UnpaidRow, now = new Date()): boolean {
+  if (row.billingState !== "PAST_DUE") return false;
+  return now.getTime() - unpaidSince(row).getTime() >= DUNNING_DAYS_BEFORE_LOCK * 86_400_000;
+}
+
 type Notice = { subject: string; body: string; closing: string };
 
 function noticeFor(stage: number, planName: string, priceLabel: string, updateUrl: string): Notice {
@@ -79,23 +106,25 @@ export async function sendDunningNotice(purchaseId: string): Promise<void> {
       currency: true,
       billingState: true,
       nextBillingAt: true,
+      updatedAt: true,
       providerSubscriptionCode: true,
     },
   });
   if (!purchase) return;
 
   const plan = WEBSITE_TIER_PLANS[purchase.tier];
-  const price = priceFor(purchase.tier);
+  // In the currency the purchase is billed in. Left to its default this quoted
+  // cedis to a customer paying in dollars — twelve times their bill, in money
+  // they have never been charged.
+  const price = priceFor(purchase.tier, purchase.currency === "USD" ? "USD" : "GHS");
   const fallbackUrl = `${customerAppUrl()}/website/balance`;
   const updateUrl = purchase.providerSubscriptionCode
     ? await subscriptionManagementLink(purchase.providerSubscriptionCode).catch(() => fallbackUrl)
     : fallbackUrl;
   // How far past due, in whole days, decides which of the three notices this
   // is — the first the day it fails, the second a few days in, the third once
-  // editing is about to close.
-  const overdueDays = purchase.nextBillingAt
-    ? Math.max(0, Math.floor((Date.now() - purchase.nextBillingAt.getTime()) / 86_400_000))
-    : 0;
+  // editing is about to close. Counted from the same date the lock is.
+  const overdueDays = Math.max(0, Math.floor((Date.now() - unpaidSince(purchase).getTime()) / 86_400_000));
   const stage = overdueDays >= DUNNING_DAYS_BEFORE_LOCK ? 3 : overdueDays >= 4 ? 2 : 1;
   const notice = noticeFor(stage, plan.name, `${price.standardDisplay}/mo`, updateUrl);
 
@@ -127,9 +156,9 @@ export async function editingLockedForNonPayment(purchaseId: string | null): Pro
   if (!purchaseId) return false;
   const purchase = await prisma.websitePurchase.findUnique({
     where: { id: purchaseId },
-    select: { billingState: true, nextBillingAt: true },
+    select: { billingState: true, nextBillingAt: true, updatedAt: true },
   });
-  if (purchase?.billingState !== "PAST_DUE") return false;
-  if (!purchase.nextBillingAt) return false;
-  return Date.now() - purchase.nextBillingAt.getTime() >= DUNNING_DAYS_BEFORE_LOCK * 86_400_000;
+  // A missing paid-up date used to answer "not locked", for ever — and that
+  // date is exactly what a subscription the processor never confirmed lacks.
+  return purchase ? lockedForNonPayment(purchase) : false;
 }

@@ -1,9 +1,10 @@
 import type { WebsiteActor } from "./websiteActor.js";
 import type { Request, Response, Router } from "express";
 import { randomUUID } from "node:crypto";
-import type { WebsitePlanTier } from "@prisma/client";
+import type { Prisma, WebsitePlanTier } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
+import { dailyAiLimit } from "../lib/capacity.js";
 import { hashPassword } from "../lib/password.js";
 import { WebsiteError } from "./website/site.js";
 import { IS_PRODUCTION } from "../middleware/auth.js";
@@ -196,7 +197,7 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     importsLimit: 3,
     importsLimitLabel: "3 imports / mo",
     editsLimit: 30,
-    editsLimitLabel: "30 edits / mo",
+    editsLimitLabel: "30 page edits / mo (a page counts once a day)",
     aiPromptsLimit: 0,
     aiPromptsLimitLabel: "Not included",
     websiteLimit: 1,
@@ -221,7 +222,7 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     featureHighlights: [
       "50 MB Media Library storage (up to 2 MB/file)",
       "Up to 3 HTML page imports per month",
-      "Up to 30 page edits / saves per month",
+      "30 page edits a month — a page counts once a day, however many changes you make",
       "Visual Layout & Style Inspector",
       "1 website · up to 2 team members",
     ],
@@ -248,7 +249,7 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     importsLimit: 15,
     importsLimitLabel: "15 imports / mo",
     editsLimit: 200,
-    editsLimitLabel: "200 edits / mo",
+    editsLimitLabel: "200 page edits / mo (a page counts once a day)",
     aiPromptsLimit: 50,
     aiPromptsLimitLabel: "50 AI prompts / mo",
     websiteLimit: 3,
@@ -273,7 +274,7 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     featureHighlights: [
       "500 MB Media Library storage (up to 5 MB/file)",
       "Up to 15 HTML page imports per month",
-      "Up to 200 page edits / saves per month",
+      "200 page edits a month — a page counts once a day, however many changes you make",
       "Global Theme Color System & Brand Presets",
       "Full Page SEO Inspector & Metadata Auditor",
       "AI Copy & Section Assistant (50 runs/mo)",
@@ -301,7 +302,10 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     editsLimit: 999999,
     editsLimitLabel: "Unlimited edits",
     aiPromptsLimit: 999999,
-    aiPromptsLimitLabel: "Unlimited AI runs",
+    // Unlimited in the month, with a daily ceiling the queue enforces. Said
+    // here from the same number the queue reads, so the label cannot promise
+    // more than the refusal allows.
+    aiPromptsLimitLabel: `Unlimited AI runs (fair use: ${dailyAiLimit("MANAGED")} a day)`,
     websiteLimit: 10,
     userLimit: 15,
     supportPriority: "HIGHEST",
@@ -325,7 +329,7 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
       "5 GB Media Library storage (up to 10 MB/file)",
       "Unlimited HTML page imports & unlimited edits",
       "Global Theme System, Brand Presets & SEO Inspector",
-      "Autonomous AI Builder Agent & Unlimited AI Assistant",
+      `Autonomous AI Builder Agent & unlimited AI runs (fair use: ${dailyAiLimit("MANAGED")} a day)`,
       "Full Raw Source Code Editor & GitHub Pull Request publishing",
       "Up to 10 websites · 15 team members · Priority support",
     ],
@@ -637,12 +641,56 @@ export async function recordImportUsed(req: WebsiteActor): Promise<void> {
   await bumpUsage(identity.userId, "imports");
 }
 
+/* -------------------------------------------------------- page edits ----- */
+
 /**
- * Enforces monthly Page Edit / Save allowance for the user's tier plan.
+ * What one edit on the plan is: one page, changed on one UTC day.
+ *
+ * It was one save, and the editor saves by itself about a second after typing
+ * stops — so every pause in a sentence spent an edit, a Starter customer's
+ * thirty a month were gone inside their first sitting, and they were told
+ * "Monthly page edit limit reached" having changed one heading. Now the first
+ * change to a page on a day counts and nothing else on that page that day does.
+ *
+ * The page row is the record, and specifically its `updatedAt`, which every
+ * change to a page moves. `draftSavedAt` looks like the obvious field and is
+ * the wrong one: publishing clears it, discarding clears it, and so does a save
+ * that leaves the page's own draft empty — which is every save of a header or
+ * footer shared across pages, because those words are stored on the shared
+ * element instead. Counting from it would charge the typo fixed after a publish
+ * as a second edit, and charge every autosave of a shared header, which is the
+ * fault this exists to remove. The cost of `updatedAt` runs the other way: a
+ * page added, renamed or reordered today has its first edit today for free.
  */
-export async function assertEditAllowance(req: WebsiteActor, siteId?: string): Promise<void> {
+export type PageEditStamp = { updatedAt: Date };
+
+function startOfUtcDay(now: Date): Date {
+  const day = new Date(now.getTime());
+  day.setUTCHours(0, 0, 0, 0);
+  return day;
+}
+
+/** True when this page has already counted today, so saving it again is free. */
+export function pageEditedToday(page: PageEditStamp, now = new Date()): boolean {
+  return page.updatedAt.getTime() >= startOfUtcDay(now).getTime();
+}
+
+/** What `assertEditAllowance` hands to the write that follows it. */
+export type EditAllowance = { userId: string | null; now: Date };
+
+/**
+ * Enforces the monthly page-edit allowance, refusing only a save that would
+ * count: a page already changed today can always be saved again today, at the
+ * limit or not. Without a page, every save is treated as one that counts.
+ *
+ * Returns what `writePageEdit` counts with, taken at the same moment as the
+ * check, so a save checked a moment before midnight UTC is counted on the day
+ * it was allowed on.
+ */
+export async function assertEditAllowance(req: WebsiteActor, siteId?: string, page?: PageEditStamp): Promise<EditAllowance> {
   const status = await computeUserStorageAndUsage(req, siteId);
   const { plan, usage } = status;
+  const now = new Date();
 
   // Three declined renewals pause editing. The published website is untouched
   // and stays online — see services/websiteDunning.ts for why that line is
@@ -654,17 +702,44 @@ export async function assertEditAllowance(req: WebsiteActor, siteId?: string): P
       "Editing is paused because the last three payment attempts were declined. Your website is still online and nothing has been deleted — update your card and editing comes back straight away.",
     );
   }
-  if (usage.editsUsed >= plan.editsLimit) {
+  const wouldCount = !(page && pageEditedToday(page, now));
+  if (wouldCount && usage.editsUsed >= plan.editsLimit) {
     throw new WebsiteError(
       403,
-      `Monthly page edit limit reached (${usage.editsUsed}/${plan.editsLimit}) on your ${yourPlan(status)} plan.${upgradeSentence(plan.tier, status.pricing.currency, (next) => next.editsLimitLabel)}`,
+      `Monthly page edit limit reached (${usage.editsUsed}/${plan.editsLimit}) on your ${yourPlan(status)} plan. Pages already changed today can still be edited.${upgradeSentence(plan.tier, status.pricing.currency, (next) => next.editsLimitLabel)}`,
     );
   }
+  return { userId: identity.userId, now };
 }
 
-export async function recordEditUsed(req: WebsiteActor): Promise<void> {
-  const identity = await resolveEntitlement(req);
-  await bumpUsage(identity.userId, "edits");
+/**
+ * Writes one save of a page, and spends an edit if — and only if — it is the
+ * first change to that page today.
+ *
+ * The question is asked by the write rather than before it. Two saves of one
+ * page arriving together would both read "not changed today" if they read
+ * first; as a condition on the update, the first to land moves `updatedAt` and
+ * the second no longer matches. A save that loses on the revision as well
+ * writes nothing and counts nothing, so the caller answers it as the conflict it
+ * always was.
+ *
+ * `where` is the caller's own compare-and-swap — the page, and the revision the
+ * editor was showing — and `data` is what it would have written anyway. Run it
+ * inside a transaction, so the edit is spent only if the save is kept.
+ */
+export async function writePageEdit(
+  tx: Prisma.TransactionClient,
+  allowance: EditAllowance,
+  where: { id: string; draftRevision: number },
+  data: Prisma.SitePageUncheckedUpdateManyInput,
+): Promise<{ count: number; counted: boolean }> {
+  const first = await tx.sitePage.updateMany({ where: { ...where, updatedAt: { lt: startOfUtcDay(allowance.now) } }, data });
+  if (first.count) {
+    await bumpUsage(allowance.userId, "edits", 1, allowance.now, tx);
+    return { count: first.count, counted: true };
+  }
+  const again = await tx.sitePage.updateMany({ where, data });
+  return { count: again.count, counted: false };
 }
 
 /**
