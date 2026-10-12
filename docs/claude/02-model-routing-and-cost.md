@@ -62,15 +62,15 @@ them is a system that costs nothing most days and never stops.
   key) at `modelForLevel(vendor, level)` — the same order and models as
   `runAgentLoop`. The Website Builder's agent uses it, so a model change made for
   the agents in Settings reaches the editor too.
-- **The assignment is the point.** `FREE_LADDER_BY_JOB` is eleven rows — every
-  `ModelJob`, plus `agent` for the loop that runs the workforce. Three rules
-  were applied to each: capability first (a model that cannot see is never in
-  the `vision` ladder), three houses where three exist (free capacity goes
-  short one provider at a time, and three models from one house is one rung
-  wearing three hats), and nothing that is currently down. The spreadsheet job
-  leads on the 1M-context model, triage and prompt-sorting lead on the smallest
-  fastest one, `vision` holds only the three models that can actually look at a
-  picture, and `agent` holds only verified tool-callers.
+- **The assignment is the point.** `FREE_LADDER_BY_JOB` is fourteen rows — the
+  thirteen `MODEL_JOBS`, plus `agent` for the loop that runs the workforce.
+  Three rules were applied to each: capability first (a model that cannot see
+  is never in the `vision` ladder), three houses where three exist (free
+  capacity goes short one provider at a time, and three models from one house
+  is one rung wearing three hats), and nothing that is currently down. The
+  spreadsheet job leads on the 1M-context model, triage and prompt-sorting lead
+  on the smallest fastest one, `vision` holds only the three models that can
+  actually look at a picture, and `agent` holds only verified tool-callers.
 - **Capabilities are written down, not read from the catalogue, and that is not
   laziness.** NVIDIA's `/v1/models` returns `id`, `object`, `created` and
   `owned_by` — no pricing, no `supported_parameters`, nothing about tools,
@@ -129,6 +129,16 @@ them is a system that costs nothing most days and never stops.
   the account, so climbing is three calls into the same wall and a slower
   failure. 400/404/429/5xx/silence are true of that model and say nothing about
   the next.
+- **An empty cut-off is silence, not a truncation.** A free reasoning rung that
+  spends the flat 16,000-token budget thinking answers `finish_reason:
+  "length"` with nothing in the message. The loop read that as `max_tokens`
+  and ended the run "truncated" with two rungs and the paid floor unasked; it
+  now takes the empty-answer branch — next rung, then next vendor — like any
+  other turn that said nothing and asked for nothing. A cut-off with *some*
+  text or a tool call in it still ends the run: that is half of something, and
+  the next model would be asked to agree with it. `max_tokens` is deliberately
+  not raised to dodge this — a model that rejects a larger value answers 400,
+  which climbs to a paid vendor instead. `checks/agentLoopNvidia.ts`.
 - **Both halves of the model layer had to be wired**, because they are two
   implementations of the same wire: `callModel` for one-shot work and
   `runAgentLoop` for an agent turn. A ladder in one and not the other works for
@@ -144,9 +154,9 @@ them is a system that costs nothing most days and never stops.
   schema, not serving, unchecked — beside the model, because those are the
   reason to pick one row over another and the vendor publishes none of them.
   The Settings panel is **Free AI models**, with a job dropdown and a summary
-  table of all eleven ladders underneath it: a dropdown that edits one row at a
-  time needs that table, or the thing being configured is only ever visible one
-  eleventh at a time.
+  table of all fourteen ladders underneath it: a dropdown that edits one row at
+  a time needs that table, or the thing being configured is only ever visible
+  one fourteenth at a time.
 
 `checks/freeModels.ts` (72) drives both paths against local fakes, including the
 whole floor — three free rungs, a refused Claude, a broken ChatGPT, and Gemini
@@ -334,6 +344,16 @@ spent it.
 - `checks/promptCache.ts` drives the real loop against a fake Anthropic on
   localhost and asserts on **what went over the wire**, because a correct
   `withCacheBreakpoints()` that nothing calls is precisely the bug that was here.
+- **Breakpoints are worth nothing if the text in front of them moves.** The
+  cache is an exact prefix match, and the loop trims the conversation in place
+  before each turn (`compactOldToolResults`, then `releaseOldAnswers`). The
+  shortening step used to run on *every* turn, rewriting the user turn that had
+  carried the previous request's breakpoint, so from about the fourth turn each
+  request re-paid the conversation at the write premium. Both steps now act in
+  bursts — see "The conversation is trimmed twice" below — and
+  `promptCache.ts` runs eight turns past the soft ceiling and asserts that,
+  between trims, every request re-sends exactly the prefix the last one cached,
+  with a trim at most once in any three turns.
 - **None of it applies to the chat-completions wire, and that is a finding
   rather than a fix.** `chatCompletionsTurn()` sends no `cache_control` and
   reads no cache figures back — it takes `prompt_tokens` and
@@ -369,7 +389,87 @@ still being billed on turn twelve. `TOOL_RESULT_MAX_CHARS` is 6,000 and
 `clipToolResult()` **says when it has cut**, because a silent `.slice()` hands
 the model half a record that reads as all of it — an agent concluding "there are
 four communications on this lead" from a list cut at four has been misled by its
-own tooling.
+own tooling. **It is applied twice and is safe to be**: the runner clips a
+catalogue tool's output and the loop clips every result again. The second pass
+used to cut the first notice off and report the *clipped* length, so a
+50,000-character answer told the model it had been 6,237 — the one number the
+notice exists to get right. An answer already carrying the notice comes back
+unchanged, and one cut at a wider ceiling is cut again under its true size.
+
+**The conversation is trimmed twice, and neither may move the prefix every
+turn** — `lib/claudeAgent.ts`, measured once per turn and in no other note
+until now.
+
+- **Shortening** (`compactOldToolResults`) waits until the serialised
+  conversation passes `COMPACT_SOFT_CHARS` (24,000) and then cuts **every**
+  eligible result at once to its first 260 characters: older than the last four
+  messages, over 350 characters, not an error (a refusal is short and the model
+  needs to keep knowing it happened), not already shortened or released. All at
+  once is what holds the prefix still between events; it used to move by one
+  result every turn. The stub says how long the answer was and to call again
+  for the rest — the one it replaced claimed the data "was extracted in
+  assistant turn above", which nothing guaranteed.
+- **Letting go** (`releaseOldAnswers`) fires at 48,000 and cuts back to
+  24,000, oldest first, and **never touches the newest user turn** — those are
+  answers the model has not read, and a long brief plus one turn of large
+  results could cross the ceiling alone and release them with a note saying
+  "you read it at the time".
+- Both say so on the timeline, both change only `tool_result` text (a
+  `tool_use` is never separated from its answer), and neither runs on a turn a
+  resume restored half-way through. Results so large that the protected tail is
+  over the soft ceiling on its own can still shorten on consecutive turns;
+  that only costs anything on Claude, where the next rule usually applies.
+- **On a run Claude has thought in, nothing above the last thinking block is
+  rewritten** (`editableFrom`). Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5
+  sign each thinking block against everything sent before it — tools, system and
+  every earlier message — so editing an old result invalidates that block and
+  every one after it. Replaying one is a 400 on any account created since
+  31 Aug 2026 (older accounts are let off for now; the guide says go append-only
+  regardless), and in this loop a 400 hands the run to the next paid vendor or
+  fails it. Anthropic's guidance for a harness that prunes old tool results is
+  to stop: size each result before it is first sent and never touch it again.
+  The alternative — `thinking.block_binding.prefix_mismatch_behavior:
+  "drop_block"` under the `thinking-binding-controls-2026-08-01` beta — keeps
+  the request alive by throwing the same reasoning away, and its guide calls it
+  a deliberate production setting, not a fix. So the choice is **append-only,
+  no `drop_block`**: the free and chat-completions wires never put a thinking
+  block in the conversation and are trimmed as before, and a thinking Claude
+  run grows to at most sixteen turns of results already clipped to 6,000
+  characters each, read back from the cache at a tenth of the rate.
+  `checks/promptCache.ts` pins the decision — eight thinking turns past the
+  ceiling, nothing rewritten, every signature sent back, no `block_binding` and
+  no thinking-binding beta on the wire — and `checks/conversationTrim.ts` pins
+  the boundary. `trimToFit` in
+  `agents/checkpoint.ts` can still release answers in the *stored* copy, but only
+  past 3 MB, which a clipped sixteen-turn run does not reach.
+
+**One `LlmCall` row per paid turn, written the moment the turn is priced** (12
+Oct 2026). The loop used to write one row when the run ended, holding the run's
+total, and that broke three things quietly. `shouldStop` and the 80% ease-off
+read `spendOn()` between turns, so **a task's own ceiling could not see the run
+it was meant to stop** — a $0.01 ceiling let a run spend whatever it liked until
+it finished. A process killed mid-run (the eight-second drain, against turns of
+up to two minutes) took every turn it had paid for with it. And the drawer's
+per-turn average divided by a row count that was one per run.
+
+- A turn that **refused, came back empty or was cut off** is written `ok:
+  false` with its own cost — spend is spend whatever came back — and carries
+  its `stopReason`.
+- A **vendor error** that ends the run (nobody left to ask) writes one
+  zero-cost `ok: false` marker carrying the error, so failed-call counts stay
+  truthful without counting a cent twice. An empty answer with nobody left
+  writes no marker: its own row is already the failure.
+- **Interrupted, capped, finished and stopped-by-tool runs write nothing
+  extra.** Each turn is on the ledger once, written by the process that paid for
+  it; the result and the checkpoint still carry the task's total across
+  resumes, and the rows add up to it.
+- Wall-clock per row is that one vendor call, capacity wait included.
+  Website-work `actualCostUsd` now increments per turn and sums the same.
+- `checks/agentTurnLedger.ts` drives it through a real `runTask`: a $0.01
+  ceiling stops BLOCKED after exactly one model turn, a task at nine tenths of
+  its ceiling finishes on the next level's model and says so, null and zero
+  ceilings change nothing, and a run killed after two turns leaves two rows
+  (it left none).
 
 A tool that routes declares `requires: "models"` and a `job`, never a vendor —
 naming one would make it refuse work the fallback could still do. What it must

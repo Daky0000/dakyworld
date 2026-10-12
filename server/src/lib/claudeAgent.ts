@@ -107,10 +107,6 @@ export interface AgentToolCallMeta {
 export interface AgentToolOutcome {
   /** What goes back to the model as the tool result. */
   content: string;
-  /** Reference to the canonical record this output relates to (e.g. "lead:/123", "pdf:/123/report.pdf"). */
-  contextRef?: string;
-  /** Tracks which context was read from prior stages for context-aware design. */
-  contextAggregration?: string;
   /** True when the tool failed or was refused — sets `is_error` on the result block. */
   isError?: boolean;
   /** Ends the loop after this result is delivered. Used by `escalate`. */
@@ -170,8 +166,10 @@ export interface AgentRunResult {
   /** Why the loop ended. */
   stoppedBecause: "finished" | "stopped-by-tool" | "iteration-cap" | "refusal" | "truncated" | "interrupted";
   /**
-   * Where it got to. Worth keeping only when `stoppedBecause` is
-   * "interrupted" — every other ending is a conversation nobody will rejoin.
+   * Where it got to. Worth keeping for any ending somebody may carry on from:
+   * "interrupted" above all, and "iteration-cap", which the Owner can lift
+   * once to let the same conversation finish. A conversation that finished,
+   * or that a tool stopped, is not rejoined.
    */
   state: AgentCheckpointState;
 }
@@ -246,12 +244,26 @@ export const TOOL_RESULT_MAX_CHARS = 6_000;
  * object that looks complete, and an agent that concludes "there are four
  * communications on this lead" from a list that was cut at four has been
  * misled by its own tooling rather than by anything anybody wrote.
+ *
+ * **Safe to apply twice, and it is.** The runner clips a catalogue tool's
+ * output and the loop clips every result again on the way into the
+ * conversation, so an answer arrives here already cut — six thousand
+ * characters plus the notice. Clipped a second time, that lost its own notice
+ * and announced the *clipped* length as the original, so a 50,000-character
+ * answer told the model it had been 6,237. An answer that already
+ * ends with this notice, and fits under the ceiling without it, comes back as
+ * it is; one cut at a larger ceiling is cut again, still naming the true size.
  */
-export function clipToolResult(content: string, max = TOOL_RESULT_MAX_CHARS): string {
-  if (content.length <= max) return content;
-  return `${content.slice(0, max)}
+const CUT_NOTICE = /\n\n\[Cut off here: this answer was ([\d,]+) characters and you have been shown the first [\d,]+\.[^\]]*\]$/;
 
-[Cut off here: this answer was ${content.length.toLocaleString("en-GB")} characters and you have been shown the first ${max.toLocaleString("en-GB")}. There is more that you have not seen. Ask again with a narrower filter, a smaller limit or a specific id rather than assuming this is all of it.]`;
+export function clipToolResult(content: string, max = TOOL_RESULT_MAX_CHARS): string {
+  const cut = CUT_NOTICE.exec(content);
+  const body = cut ? content.slice(0, cut.index) : content;
+  if (body.length <= max) return content;
+  const original = cut ? Number(cut[1].replace(/,/g, "")) : content.length;
+  return `${body.slice(0, max)}
+
+[Cut off here: this answer was ${original.toLocaleString("en-GB")} characters and you have been shown the first ${max.toLocaleString("en-GB")}. There is more that you have not seen. Ask again with a narrower filter, a smaller limit or a specific id rather than assuming this is all of it.]`;
 }
 
 /**
@@ -271,7 +283,7 @@ export function clipToolResult(content: string, max = TOOL_RESULT_MAX_CHARS): st
  *
  * The ceiling is characters rather than tokens because that is what can be
  * measured here without a second API call, and roughly four characters to the
- * token makes 120,000 about 30,000 tokens of conversation — well inside every
+ * token makes 48,000 about 12,000 tokens of conversation — well inside every
  * vendor's window, and well past the point where old tool output is earning its
  * place.
  */
@@ -283,31 +295,94 @@ const RELEASED =
   "[This answer has been let go of to keep the conversation affordable. You read it at the time and acted on it; " +
   "what you concluded is in your own replies above. If you need the detail again, call the tool again.]";
 
+/**
+ * The gentler step before letting go: older answers cut to their first lines.
+ *
+ * It ran on every turn, unconditionally, and that made it the opposite of what
+ * the two numbers above are for. Each turn a result aged past the protected
+ * tail and was rewritten — on the very user turn that had carried the previous
+ * request's cache breakpoint — so from about the fourth turn every request
+ * re-paid the conversation from that point at the write premium. Now it waits
+ * until the conversation is past `COMPACT_SOFT_CHARS` and then shortens
+ * **everything** eligible at once, so the prefix holds still between those
+ * moments rather than moving by one result every turn.
+ *
+ * Eligible means: older than the last four messages (the newest turn and the
+ * one before it, which the model is still reasoning from), longer than
+ * `COMPACT_TOOL_RESULT_THRESHOLD`, not an error (a refusal or a failure is
+ * short, and the model needs to keep knowing it happened), and not already
+ * shortened or released.
+ */
+const COMPACT_SOFT_CHARS = 24_000;
 const COMPACT_TOOL_RESULT_THRESHOLD = 350;
+const COMPACT_KEEP_CHARS = 260;
+const COMPACT_PROTECTED_TAIL = 4;
+const SHORTENED = "[Shortened from ";
 
 /**
- * Compacts older tool results (from turns earlier than the last 2 turns)
- * down to a concise excerpt and summary notice. This drastically cuts down
- * redundant token accumulation on multi-turn loops while preserving model coherence.
+ * The first message either trim may rewrite.
+ *
+ * **Preserved thinking.** Claude's newer models — Fable 5.1, Opus 5.5,
+ * Sonnet 5.5, Haiku 5.5 — sign each thinking block against everything sent
+ * before it: the system prompt, the tools and every earlier message. When the
+ * block comes back the API checks that record, so rewriting a tool result
+ * *above* a thinking block invalidates that block and every one after it. On
+ * an account created since 31 Aug 2026 replaying one is a 400 (older accounts
+ * are let off for now, and the guidance is append-only regardless) — and in
+ * this loop a 400 hands the run to the next paid vendor, or fails it.
+ *
+ * Anthropic's guidance for a harness that trims old tool results is to stop:
+ * bound each result before it is first sent (`clipToolResult`) and never touch
+ * it again, leaving any later clearing to the server. The alternative it
+ * offers — `prefix_mismatch_behavior: "drop_block"` under a beta header —
+ * keeps the request alive by throwing the same reasoning away, and is a
+ * production setting to be chosen deliberately rather than a fix. So both
+ * trims stop at the last thinking block. On a run Claude has thought in, the
+ * conversation is append-only; that is also the cheaper choice on that wire,
+ * because a rewrite restarts the prompt cache from the edit and pays the write
+ * premium on everything after it. The free and chat-completions wires never
+ * put a thinking block into the conversation, so nothing changes for them.
  */
-export function compactOldToolResults(messages: Anthropic.Beta.BetaMessageParam[]): number {
-  if (messages.length <= 4) return 0;
-  // Protect the last 4 messages (the most recent turn and the one immediately prior)
-  const cutoffIndex = messages.length - 4;
+function editableFrom(messages: Anthropic.Beta.BetaMessageParam[]): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const content = messages[index].content;
+    if (Array.isArray(content) && content.some((block) => block.type === "thinking" || block.type === "redacted_thinking")) {
+      return index + 1;
+    }
+  }
+  return 0;
+}
+
+/**
+ * Shortens older tool results once the conversation is past the soft ceiling.
+ *
+ * Mutates in place, for the same reason `releaseOldAnswers` does. The stub
+ * says how long the answer was and what to do about it, and nothing more: the
+ * one it replaced claimed the essential data "was extracted in assistant turn
+ * above", which nothing here guarantees and the model has no way to check.
+ *
+ * `size` is the conversation's serialised length when the caller has already
+ * measured it — the loop measures once and hands the number to both trims.
+ * Returns how many it shortened; 0 is the ordinary case.
+ */
+export function compactOldToolResults(messages: Anthropic.Beta.BetaMessageParam[], size = JSON.stringify(messages).length): number {
+  if (size <= COMPACT_SOFT_CHARS) return 0;
+  const before = messages.length - COMPACT_PROTECTED_TAIL;
   let compacted = 0;
 
-  for (let i = 0; i < cutoffIndex; i++) {
-    const message = messages[i];
-    if (!Array.isArray(message.content)) continue;
-    for (const block of message.content as { type?: string; content?: unknown }[]) {
-      if (block?.type !== "tool_result") continue;
-      if (typeof block.content !== "string") continue;
-      if (block.content === RELEASED) continue;
-      if (block.content.length <= COMPACT_TOOL_RESULT_THRESHOLD) continue;
-      if (block.content.startsWith("[Compacted tool output")) continue;
+  for (let index = editableFrom(messages); index < before; index += 1) {
+    const content = messages[index].content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content as { type?: string; content?: unknown; is_error?: boolean }[]) {
+      if (block?.type !== "tool_result" || block.is_error) continue;
+      if (typeof block.content !== "string" || block.content.length <= COMPACT_TOOL_RESULT_THRESHOLD) continue;
+      // The last prefix is the stub this one replaced, still sitting in
+      // checkpoints written before it went.
+      if (block.content === RELEASED || block.content.startsWith(SHORTENED) || block.content.startsWith("[Compacted tool output")) continue;
 
-      const preview = block.content.slice(0, 260).trim();
-      block.content = `[Compacted tool output (${block.content.length.toLocaleString("en-GB")} chars) — essential data was extracted in assistant turn above]:\n${preview}…`;
+      block.content =
+        `${SHORTENED}${block.content.length.toLocaleString("en-GB")} characters; first ${COMPACT_KEEP_CHARS} kept. ` +
+        `Call the tool again for the rest.]\n${block.content.slice(0, COMPACT_KEEP_CHARS)}`;
       compacted += 1;
     }
   }
@@ -326,25 +401,39 @@ export function compactOldToolResults(messages: Anthropic.Beta.BetaMessageParam[
  * rather than to what is stored.
  *
  * Oldest first, because the recent turns are the ones the model is still
- * reasoning from. Mutates in place: what is sent and what is checkpointed have
- * to be the same conversation, or a resume would restore text this just decided
- * was not worth re-sending.
+ * reasoning from — and **never the newest user turn**, which holds answers the
+ * model has not read yet. Without that guard, a long brief and a few large
+ * results could cross the ceiling on their own, and the results the model was
+ * about to see were released with a note saying "you read it at the time",
+ * which it had not. Mutates in place: what is sent and what is checkpointed
+ * have to be the same conversation, or a resume would restore text this just
+ * decided was not worth re-sending.
  *
  * Returns how many it released, or 0 when the conversation is small enough to
- * leave alone — which is the ordinary case and costs one `JSON.stringify`.
+ * leave alone. Each release is subtracted from a running total rather than the
+ * whole conversation being serialised again, which is how `trimToFit` does it.
  */
-export function releaseOldAnswers(messages: Anthropic.Beta.BetaMessageParam[]): number {
-  if (JSON.stringify(messages).length <= CONVERSATION_MAX_CHARS) return 0;
+export function releaseOldAnswers(messages: Anthropic.Beta.BetaMessageParam[], size = JSON.stringify(messages).length): number {
+  if (size <= CONVERSATION_MAX_CHARS) return 0;
+
+  let unread = messages.length - 1;
+  while (unread >= 0 && messages[unread].role !== "user") unread -= 1;
+  const replacement = JSON.stringify(RELEASED).length;
 
   let released = 0;
-  for (const message of messages) {
-    if (!Array.isArray(message.content)) continue;
-    for (const block of message.content as { type?: string; content?: unknown }[]) {
+  for (let index = editableFrom(messages); index < unread; index += 1) {
+    const content = messages[index].content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content as { type?: string; content?: unknown }[]) {
       if (block?.type !== "tool_result") continue;
       if (typeof block.content === "string" && block.content === RELEASED) continue;
+      // What this block costs as it is serialised, which is the only measure
+      // that matches the number being compared against.
+      const was = JSON.stringify(block.content ?? null).length;
       block.content = RELEASED;
       released += 1;
-      if (JSON.stringify(messages).length <= TRIM_DOWN_TO) return released;
+      size -= was - replacement;
+      if (size <= TRIM_DOWN_TO) return released;
     }
   }
   return released;
@@ -1128,10 +1217,12 @@ export interface AgentRunRequest {
  * Turns the loop until the model is done, a tool stops it, somebody asks it to
  * stop, or the cap is hit.
  *
- * Every exit records what it spent. A run that fails after ten tool calls has
- * cost real money and the ledger has to say so — and on a resumed task the
- * ledger gets **this run's** spend while the result reports the task's total,
- * because the first run's tokens were already billed by the first run.
+ * Every turn records what it spent the moment it is priced — one `LlmCall` row
+ * per paid turn, not one per run. The single row at the end meant a run's own
+ * ceiling, read from the ledger between turns, could not see a cent of what the
+ * run was spending, and a process killed mid-run took every turn it had paid
+ * for with it. The result still reports the task's total across resumes; each
+ * turn is on the ledger once, written by the process that paid for it.
  */
 export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunResult> {
   // The level, when there is one, and the effort that follows from it. Both
@@ -1243,7 +1334,6 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
   const model = serving === "nvidia" ? (ladder[0] ?? (await modelForVendor(serving, effort, level))) : await modelForVendor(serving, effort, level);
 
   let client: Anthropic | null = null;
-  const startedAt = Date.now();
 
   const byName = new Map(request.tools.map((tool) => [tool.name, tool]));
   const definitions: Anthropic.Beta.BetaToolUnion[] = request.tools.map((tool, index) => ({
@@ -1276,18 +1366,13 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
       .map((block) => block.id),
   );
 
-  // Carried in from earlier runs. These are the *task's* totals; the `run`
-  // ones below are this process's, and only those reach the ledger.
+  // Carried in from earlier runs: these are the *task's* totals. The ledger is
+  // written turn by turn, so it never needs them — an earlier process already
+  // recorded the turns it paid for.
   let toolCalls = resumed?.toolCalls ?? 0;
   let inputTokens = resumed?.inputTokens ?? 0;
   let outputTokens = resumed?.outputTokens ?? 0;
   let costUsd = resumed?.costUsd ?? 0;
-
-  let runInputTokens = 0;
-  let runOutputTokens = 0;
-  let runCacheReadTokens = 0;
-  let runCacheCreationTokens = 0;
-  let runCostUsd = 0;
 
   let servedBy = resumed?.model ?? model;
   let stoppedBecause: AgentRunResult["stoppedBecause"] = "iteration-cap";
@@ -1365,20 +1450,10 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
     }
   };
 
-  const finish = async (ok: boolean, error?: string): Promise<AgentRunResult> => {
-    await recordLlmCall({
-      purpose: request.purpose,
-      model: servedBy,
-      inputTokens: runInputTokens,
-      outputTokens: runOutputTokens,
-      cacheReadTokens: runCacheReadTokens,
-      cacheCreationTokens: runCacheCreationTokens,
-      costUsd: runCostUsd,
-      durationMs: Date.now() - startedAt,
-      effort,
-      ok,
-      error,
-    });
+  // Records nothing. Every turn wrote its own row as it was priced, so an
+  // ending — finished, stopped, capped or interrupted — has nothing left to add
+  // to the ledger.
+  const finish = (): AgentRunResult => {
     return {
       text: narration.at(-1) ?? "",
       narration,
@@ -1396,7 +1471,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
   const interrupted = async (): Promise<AgentRunResult> => {
     stoppedBecause = "interrupted";
     await checkpoint();
-    return finish(true, "interrupted");
+    return finish();
   };
 
   // Said before the first turn rather than after it. The first model call is
@@ -1434,12 +1509,22 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
     await easeOffIfAsked();
 
     // Before the turn is built, so what is sent and what is checkpointed are
-    // the same conversation. Compact older tool results first (saving 50-75% tokens),
-    // and let go of oldest answers entirely if still exceeding ceiling.
-    const compacted = compactOldToolResults(messages);
-    const released = releaseOldAnswers(messages);
-    if (released > 0) {
-      await saying(`Let go of ${released} older tool answer(s) to keep this conversation affordable — what was concluded from them is still in the replies.`);
+    // the same conversation. Measured once and handed to both trims: the
+    // shortening goes first because it is the gentler of the two, and letting
+    // go only has work left when shortening could not bring the pile under its
+    // own, higher ceiling. Neither runs for a turn restored half-way through —
+    // that turn was sized when it was sent, and its own reasoning sits on top
+    // of exactly the messages an edit would change.
+    if (!pendingAssistant) {
+      const size = JSON.stringify(messages).length;
+      const shortened = compactOldToolResults(messages, size);
+      if (shortened > 0) {
+        await saying(`Shortened ${shortened} older tool answer(s) to their first lines to keep this conversation affordable — what was concluded from them is still in the replies.`);
+      }
+      const released = releaseOldAnswers(messages, shortened > 0 ? undefined : size);
+      if (released > 0) {
+        await saying(`Let go of ${released} older tool answer(s) to keep this conversation affordable — what was concluded from them is still in the replies.`);
+      }
     }
 
     // Two ways into a turn: a fresh one from the model, or the half-finished
@@ -1451,6 +1536,9 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
       assistantContent = pendingAssistant;
     } else {
       let response: WireTurn;
+      // The wall clock of this one vendor call, for its ledger row — waiting
+      // for capacity included, because that is part of what the turn took.
+      const callStartedAt = Date.now();
 
       // One turn, from whoever is serving — and **one** place below that
       // decides what a failure means.
@@ -1593,12 +1681,8 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
           continue;
         }
 
-        const last = describeTurnFailure(
-          serving,
-          status,
-          climbing ? ladder[rung] : await modelForVendor(serving, effort, level),
-          err,
-        );
+        const askedFor = climbing ? ladder[rung] : await modelForVendor(serving, effort, level);
+        const last = describeTurnFailure(serving, status, askedFor, err);
         // Everybody who was asked, in one sentence, with the skipped free
         // vendor included. This is the string `retry.ts` classifies, and a
         // classification made on one rung of a four-rung chain is a guess.
@@ -1619,11 +1703,26 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
         // limit is a task that resumes in five minutes, not one that starts
         // again.
         await checkpoint();
-        await finish(false, message);
+        // One row saying the run ended on a failure, at no cost: nothing was
+        // paid for this call, and every turn before it already has its own
+        // row, so a sum over the ledger still comes to what was spent and a
+        // count of failed calls still sees this one.
+        await recordLlmCall({
+          purpose: request.purpose,
+          model: askedFor,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: 0,
+          durationMs: Date.now() - callStartedAt,
+          effort,
+          ok: false,
+          error: message,
+        });
         throw new AnalystError(status === 429 ? 429 : status === 503 ? 503 : 502, message);
       }
 
       // Priced before the answer is judged: everything from here has been paid for.
+      const durationMs = Date.now() - callStartedAt;
       servedBy = response.model;
       const { rate, fee } = await priceOf(response.model);
       const usage = {
@@ -1632,38 +1731,52 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
         cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
         cacheCreationTokens: response.usage.cache_creation_input_tokens ?? 0,
       };
-      runInputTokens += usage.inputTokens;
-      runOutputTokens += usage.outputTokens;
-      runCacheReadTokens += usage.cacheReadTokens;
-      runCacheCreationTokens += usage.cacheCreationTokens;
       // The per-request fee rides along for the vendors that charge one; zero
       // everywhere else.
       const turnCost = costOf(rate, usage) + fee;
-      runCostUsd += turnCost;
       inputTokens += usage.inputTokens;
       outputTokens += usage.outputTokens;
       costUsd += turnCost;
 
+      const sawToolUse = response.content.some((block) => block.type === "tool_use");
+      const sawText = response.content.some((block) => block.type === "text" && block.text.trim().length > 0);
+      // Said nothing and asked for nothing. Includes a turn cut off at
+      // `max_tokens` before it wrote a word — what a reasoning model does when
+      // its thinking spends the whole budget — which is the same empty answer
+      // as any other and is handled the same way, below.
+      const empty = !sawText && !sawToolUse && response.stop_reason !== "pause_turn";
+
+      // On the ledger now, before anything else can happen to the run: the
+      // task's own ceiling reads this table between turns, and a process that
+      // dies on the next line has still paid for this one. A turn that refused,
+      // came back empty or was cut off is written as a failure with its own
+      // cost — the money was spent whatever came back.
+      const turnFailure =
+        response.stop_reason === "refusal"
+          ? "refusal"
+          : empty
+            ? `answered with nothing (stop_reason: ${response.stop_reason})`
+            : response.stop_reason === "max_tokens"
+              ? "truncated"
+              : undefined;
+      await recordLlmCall({
+        purpose: request.purpose,
+        model: response.model,
+        ...usage,
+        costUsd: turnCost,
+        durationMs,
+        effort,
+        stopReason: response.stop_reason,
+        ok: turnFailure === undefined,
+        error: turnFailure,
+      });
+
       if (response.stop_reason === "refusal") {
         stoppedBecause = "refusal";
-        narration.push("Claude declined this task. Rephrase the brief, or do this one by hand.");
-        return finish(false, "refusal");
-      }
-      if (response.stop_reason === "max_tokens") {
-        stoppedBecause = "truncated";
-        narration.push("The reply ran out of room before finishing.");
-        return finish(false, "truncated");
-      }
-
-      // What it said this turn, before any tool it wants to call.
-      const sawToolUse = response.content.some((block) => block.type === "tool_use");
-      let sawText = false;
-      for (const block of response.content) {
-        if (block.type === "text" && block.text.trim()) {
-          sawText = true;
-          narration.push(block.text.trim());
-          await request.onText?.(block.text.trim());
-        }
+        // Whoever declined, by name. Never routed around — see
+        // `CANNOT_SERVE_STATUSES`.
+        narration.push(`${PROVIDERS[serving].name} declined this task. Rephrase the brief, or do this one by hand.`);
+        return finish();
       }
 
       // A turn that said nothing and asked for nothing is not a real answer —
@@ -1673,7 +1786,14 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
       // said, nothing at all. Treated exactly like a rung or vendor that
       // failed: climb the ladder, then hand to the floor, and only give up
       // when nobody is left to ask.
-      if (!sawText && !sawToolUse && response.stop_reason !== "pause_turn") {
+      //
+      // Before the `max_tokens` ending rather than after it. A free reasoning
+      // rung that spent the flat token budget thinking answers
+      // `finish_reason: "length"` with nothing in it, and that used to end the
+      // run as "truncated" with two more rungs and a paid floor unasked. The
+      // ceiling is not raised to avoid it: a model that rejects a larger
+      // `max_tokens` answers 400, which climbs to a paid vendor instead.
+      if (empty) {
         if (serving === "nvidia" && ladder.length > 0 && rung + 1 < ladder.length) {
           await saying(`${ladder[rung]} answered with nothing (stop_reason: ${response.stop_reason}) — trying ${ladder[rung + 1]}.`);
           rung += 1;
@@ -1696,15 +1816,32 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
         // Nobody left to ask. A quiet, empty "success" would be worse than
         // saying so: the conversation is kept, exactly as the other failures
         // above keep it, so running this again continues rather than starts over.
+        // No second ledger row: this turn's own row is already the failure.
         const message = `The model finished this turn without saying anything or calling a tool (stop_reason: ${response.stop_reason}). Likely a busy or degraded model rather than a real answer.`;
         await checkpoint();
-        await finish(false, message);
         throw new AnalystError(502, message);
+      }
+
+      // Cut off part-way through an answer or a tool call. Not handed on: what
+      // was written is half of something, and the next model would be asked to
+      // agree with it.
+      if (response.stop_reason === "max_tokens") {
+        stoppedBecause = "truncated";
+        narration.push("The reply ran out of room before finishing.");
+        return finish();
+      }
+
+      // What it said this turn, before any tool it wants to call.
+      for (const block of response.content) {
+        if (block.type === "text" && block.text.trim()) {
+          narration.push(block.text.trim());
+          await request.onText?.(block.text.trim());
+        }
       }
 
       if (response.stop_reason === "end_turn") {
         stoppedBecause = "finished";
-        return finish(true);
+        return finish();
       }
 
       // A server-side tool paused mid-turn: hand the turn back and continue.
@@ -1723,7 +1860,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
         // further will happen. (The empty case — neither text nor a tool —
         // was already handled above.)
         stoppedBecause = "finished";
-        return finish(true);
+        return finish();
       }
     }
 
@@ -1801,11 +1938,11 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
 
     if (stopAfterThisTurn) {
       stoppedBecause = "stopped-by-tool";
-      return finish(true);
+      return finish();
     }
   }
 
-  return finish(true, "hit the iteration cap");
+  return finish();
 }
 async function chatCompletionsTurn(args: Parameters<typeof chatCompletionsTurnUnbounded>[0]): Promise<WireTurn> {
   return withModelCapacity(async () => { await beforeWebsiteExternalAction(); return chatCompletionsTurnUnbounded(args); });

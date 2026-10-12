@@ -156,6 +156,9 @@ async function main() {
   const { clearSettingsCache, SETTING, setSetting } = await import("../src/lib/settings.js");
   const { runAgentLoop, reasoningEffortFor, clearNvidiaCooldown } = await import("../src/lib/claudeAgent.js");
   const { PROVIDERS } = await import("../src/lib/models/registry.js");
+  // Ledger rows this file reads and deletes are its own: a `check.agentLoop`
+  // purpose, written after this moment.
+  const since = new Date();
 
   // --- Isolation ---------------------------------------------------------------
   //
@@ -302,10 +305,16 @@ async function main() {
   );
 
   // --- The ledger ------------------------------------------------------------
-  const row = await prisma.llmCall.findFirst({ where: { purpose: "check.agentLoop.nvidia" }, orderBy: { createdAt: "desc" } });
-  check("the run was recorded under the model that served it", row?.model === "stealth/ox-alpha", String(row?.model));
-  check("both turns' tokens landed", row?.inputTokens === 150 && row?.outputTokens === 20, `in=${row?.inputTokens} out=${row?.outputTokens}`);
-  check("it recorded as a success", row?.ok === true, String(row?.ok));
+  //
+  // One row per turn, so the run's tokens are the sum of its rows.
+  const rows = await prisma.llmCall.findMany({ where: { purpose: "check.agentLoop.nvidia", createdAt: { gte: since } }, orderBy: { createdAt: "asc" } });
+  check("each turn was recorded on its own", rows.length === 2, `${rows.length} rows`);
+  check("under the model that served it", rows.every((row) => row.model === "stealth/ox-alpha"), rows.map((row) => row.model).join(", "));
+  const tokensIn = rows.reduce((sum, row) => sum + row.inputTokens, 0);
+  const tokensOut = rows.reduce((sum, row) => sum + row.outputTokens, 0);
+  check("both turns' tokens landed", tokensIn === 150 && tokensOut === 20, `in=${tokensIn} out=${tokensOut}`);
+  check("each with the stop reason it ended on", rows.map((row) => row.stopReason).join(",") === "tool_use,end_turn", rows.map((row) => row.stopReason).join(","));
+  check("and every turn recorded as a success", rows.every((row) => row.ok), rows.map((row) => String(row.ok)).join(", "));
 
   // --- Scenario B: a refused key hands the run to Claude ----------------------
 
@@ -560,13 +569,135 @@ async function main() {
     clearSettingsCache();
   }
 
+  // --- A rung that spent its whole budget thinking -----------------------------
+  //
+  // A free reasoning model given the flat token ceiling can spend all of it on
+  // reasoning and answer `finish_reason: "length"` with nothing in the message.
+  // That is an empty answer, the same as a rung that said nothing — and it used
+  // to end the whole run as "truncated" with the next rung and the paid floor
+  // never asked. A turn cut off part-way through something real is different,
+  // and must still end the run rather than be handed to somebody else to agree
+  // with.
+  {
+    const RUNGS = ["check/rung-one", "check/rung-two"];
+    const lengthBodies: Record<string, any>[] = [];
+    let rungTwo: "answers" | "length" = "answers";
+    const lengthServer = await httpServer((body, send) => {
+      const asked = body as Record<string, any>;
+      lengthBodies.push(asked);
+      const cutOff = asked.model === RUNGS[0] || rungTwo === "length";
+      send(200, {
+        id: "chatcmpl_check_length",
+        object: "chat.completion",
+        model: asked.model,
+        choices: [
+          cutOff
+            ? { index: 0, finish_reason: "length", message: { role: "assistant", content: "" } }
+            : { index: 0, finish_reason: "stop", message: { role: "assistant", content: "Done, from the second rung." } },
+        ],
+        usage: { prompt_tokens: 40, completion_tokens: cutOff ? 16_000 : 6 },
+      });
+    });
+    await setSetting(SETTING.NVIDIA_FREE_MODELS, JSON.stringify({ agent: RUNGS }));
+    process.env.NVIDIA_BASE_URL = lengthServer.url;
+    process.env.ANTHROPIC_BASE_URL = anthServer.url;
+    process.env.ANTHROPIC_API_KEY = "sk-ant-check-not-a-real-key";
+    clearSettingsCache();
+    clearNvidiaCooldown();
+
+    const anthBeforeLength = anthBodies.length;
+    const climbed = await runAgentLoop({
+      purpose: "check.agentLoop.emptyLength",
+      system: "You are a check.",
+      prompt: "Say you are done.",
+      tools: [lookUpTool],
+      effort: "medium",
+    });
+    check("an empty cut-off climbs to the next rung and finishes", climbed.stoppedBecause === "finished", climbed.stoppedBecause);
+    check("served by the second rung", climbed.model === RUNGS[1], climbed.model);
+    check("in exactly two chat-completions requests", lengthBodies.length === 2, lengthBodies.map((body) => body.model).join(", "));
+    check("with nobody paid troubled", anthBodies.length === anthBeforeLength, `${anthBodies.length - anthBeforeLength} Claude call(s)`);
+    const lengthRows = await prisma.llmCall.findMany({ where: { purpose: "check.agentLoop.emptyLength", createdAt: { gte: since } }, orderBy: { createdAt: "asc" } });
+    check(
+      "the empty turn is on the ledger as a failure, the answer as a success",
+      lengthRows.length === 2 && lengthRows[0].ok === false && lengthRows[0].stopReason === "max_tokens" && (lengthRows[0].error ?? "").includes("answered with nothing") && lengthRows[1].ok === true,
+      lengthRows.map((row) => `${row.model} ok=${row.ok} ${row.stopReason} ${row.error ?? ""}`).join(" | "),
+    );
+
+    // Every rung cut off with nothing: the paid floor finishes it.
+    rungTwo = "length";
+    lengthBodies.length = 0;
+    const toClaude = await runAgentLoop({
+      purpose: "check.agentLoop.emptyLength",
+      system: "You are a check.",
+      prompt: "Say you are done.",
+      tools: [lookUpTool],
+      effort: "medium",
+    });
+    check("with every rung cut off empty, Claude finishes the run", toClaude.stoppedBecause === "finished" && toClaude.model.startsWith("claude"), `${toClaude.stoppedBecause} / ${toClaude.model}`);
+    check("after both rungs were asked once each", lengthBodies.map((body) => body.model).join(",") === RUNGS.join(","), lengthBodies.map((body) => body.model).join(", "));
+    check("and Claude was really asked", anthBodies.length > anthBeforeLength, `${anthBodies.length - anthBeforeLength} Claude call(s)`);
+
+    // Cut off part-way through an answer: not empty, so not handed on — even
+    // with Claude connected and nobody else in the way.
+    const partialServer = await httpServer((_body, send) => {
+      send(200, {
+        id: "chatcmpl_check_partial",
+        object: "chat.completion",
+        model: "stealth/ox-alpha",
+        choices: [{ index: 0, finish_reason: "length", message: { role: "assistant", content: "The three things worth saying are, first," } }],
+        usage: { prompt_tokens: 40, completion_tokens: 16_000 },
+      });
+    });
+    await setSetting(SETTING.NVIDIA_FREE_MODELS, JSON.stringify({ agent: [] }));
+    process.env.NVIDIA_BASE_URL = partialServer.url;
+    clearSettingsCache();
+    clearNvidiaCooldown();
+    const anthBeforePartial = anthBodies.length;
+    const partialWithFloor = await runAgentLoop({
+      purpose: "check.agentLoop.truncated",
+      system: "You are a check.",
+      prompt: "Say three things.",
+      tools: [lookUpTool],
+      effort: "medium",
+    });
+    check("a half-written answer ends the run as truncated", partialWithFloor.stoppedBecause === "truncated", partialWithFloor.stoppedBecause);
+    check("and is not handed to Claude to finish", anthBodies.length === anthBeforePartial, `${anthBodies.length - anthBeforePartial} Claude call(s)`);
+
+    // And with nobody at all behind it, it still ends truncated rather than
+    // throwing as though nothing had come back.
+    const savedAnthKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    await prisma.appSetting.deleteMany({ where: { key: SETTING.ANTHROPIC_KEY } });
+    clearSettingsCache();
+    const partialAlone = await runAgentLoop({
+      purpose: "check.agentLoop.truncated",
+      system: "You are a check.",
+      prompt: "Say three things.",
+      tools: [lookUpTool],
+      effort: "medium",
+    });
+    check("with nobody left to hand to, it is still truncated", partialAlone.stoppedBecause === "truncated", partialAlone.stoppedBecause);
+    const truncatedRows = await prisma.llmCall.findMany({ where: { purpose: "check.agentLoop.truncated", createdAt: { gte: since } } });
+    check(
+      "each cut-off turn is one failed ledger row, and nothing more",
+      truncatedRows.length === 2 && truncatedRows.every((row) => !row.ok && row.stopReason === "max_tokens" && row.error === "truncated"),
+      truncatedRows.map((row) => `ok=${row.ok} ${row.stopReason} ${row.error}`).join(" | "),
+    );
+    if (savedAnthKey) process.env.ANTHROPIC_API_KEY = savedAnthKey;
+    clearSettingsCache();
+
+    lengthServer.server.close();
+    partialServer.server.close();
+  }
+
   goneServer.server.close();
   orServer.server.close();
   anthServer.server.close();
   refusedServer.server.close();
   emptyServer.server.close();
 
-  await prisma.llmCall.deleteMany({ where: { purpose: { startsWith: "check.agentLoop" } } });
+  await prisma.llmCall.deleteMany({ where: { purpose: { startsWith: "check.agentLoop" }, createdAt: { gte: since } } });
   // Put back exactly what was here: same rows, same encrypted values.
   //
   // Cleared first, and that is not belt and braces. This file *writes* one of
