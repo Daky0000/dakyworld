@@ -45,6 +45,7 @@ import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { prisma } from "../src/lib/prisma.js";
+import { ensureSystemRoles } from "../src/lib/accessRoles.js";
 import { attachUser, requireAuth } from "../src/middleware/auth.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import { websiteRouter } from "../src/routes/website.js";
@@ -101,6 +102,11 @@ async function reset() {
 }
 
 async function main() {
+  // The dev Owner `DEV_NO_AUTH` signs in as is pinned to the Owner role, and a
+  // fresh database has no roles until the server's boot seeds them. CI starts
+  // from a fresh database, so without this the first request is refused and
+  // every assertion below reads as an editor defect.
+  await ensureSystemRoles();
   await reset();
 
   const html = readFileSync(join(siteRoot, "about.html"), "utf8");
