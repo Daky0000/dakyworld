@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { reportRenderError } from "../lib/monitoring";
 
 /**
  * What the app shows when a render throws.
@@ -30,10 +31,11 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    // The console is the only place this can go until error reporting is wired
-    // up. It carries the reference the person on screen is being shown, so the
-    // two can be matched later.
+    // Both carry the reference the person on screen is being shown, so what
+    // they quote finds the report. Sentry is tagged with the boundary's label
+    // as well, which says which screen it was without reading the stack.
     console.error(`[ui ${this.state.reference ?? "?"}] ${this.props.label ?? "render"} failed:`, error, info.componentStack);
+    reportRenderError(error, this.props.label ?? "render", this.state.reference, info.componentStack);
   }
 
   render() {

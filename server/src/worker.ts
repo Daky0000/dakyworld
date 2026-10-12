@@ -1,3 +1,4 @@
+import "./instrument.js"; // first, so error tracking is running before anything it should see
 import { installShutdown } from "./lib/shutdown.js";
 import "dotenv/config";
 import http from "node:http";

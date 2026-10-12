@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import * as Sentry from "@sentry/node";
 import { AnalystError } from "../lib/claude.js";
 import { ApifyError } from "../lib/apify.js";
 import { WhatsAppError } from "../lib/whatsapp.js";
@@ -23,6 +24,37 @@ export function redactedRoute(method: string, originalUrl: string): string {
     .map((segment) => (/^[A-Za-z0-9_-]{24,}$/.test(segment) && !/^c[a-z0-9]{20,}$/.test(segment) ? ":token" : segment))
     .join("/");
   return `${method} ${path}`.slice(0, 200);
+}
+
+/**
+ * Whether the request itself was at fault, as Express's own middleware says
+ * so: body-parser's malformed JSON or oversized body arrives here as an
+ * http-errors object marked `expose` with a 4xx status. It still falls to the
+ * 500 below, but it is somebody's malformed request rather than our accident,
+ * and reporting it would let anyone spend the Sentry quota by posting `{`.
+ * A vendor's error carrying a 4xx `status` (GitHub's 404, Stripe's 400) is not
+ * marked `expose`, and is reported: our call failing is our accident.
+ */
+function isMalformedRequest(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const { expose, status } = err as { expose?: unknown; status?: unknown };
+  return expose === true && typeof status === "number" && status >= 400 && status < 500;
+}
+
+/**
+ * Hands an unexpected error to Sentry, tagged with the route and the reference
+ * the person was shown, so "it said something went wrong, reference k3x9q2mf" finds
+ * the event as well as the log line. A no-op when Sentry is off (see
+ * src/instrument.ts), and it cannot throw into the response: error tracking is
+ * never the reason a request fails.
+ */
+function reportUnexpected(err: unknown, route: string, reference: string): void {
+  if (isMalformedRequest(err)) return;
+  try {
+    Sentry.captureException(err, { level: "error", tags: { route, reference } });
+  } catch {
+    // Nothing to do: the log line below still has it.
+  }
 }
 
 /**
@@ -133,7 +165,15 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
   // Everything above is a sentence somebody composed. What reaches here is an
   // accident, and a run of accidents is somebody's problem: five in ten
   // minutes emails the Owner (at most hourly). See services/opsAlert.ts.
-  reportServerError({ at: Date.now(), reference, route: redactedRoute(req.method, req.originalUrl ?? req.url ?? ""), line: firstLine(err) });
+  //
+  // Sentry gets exactly these and nothing above. A refusal written for the
+  // person reading it is the product working; reported, it would bury the
+  // accidents under a GitHub setting somebody has not made yet. That includes
+  // the composed classes that answer with a 5xx: their status says who should
+  // act, not that something broke.
+  const route = redactedRoute(req.method, req.originalUrl ?? req.url ?? "");
+  reportServerError({ at: Date.now(), reference, route, line: firstLine(err) });
+  reportUnexpected(err, route, reference);
   if (process.env.NODE_ENV === "production") {
     return res.status(500).json({ error: "Something went wrong.", reference });
   }

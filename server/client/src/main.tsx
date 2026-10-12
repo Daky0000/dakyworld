@@ -10,9 +10,14 @@ import { AuthProvider, useAuth } from "./lib/auth";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ForgotPassword, SetPassword, VerifyEmail } from "./pages/AccountAccess";
 import { setPageTitle } from "./lib/surface";
+import { startMonitoring } from "./lib/monitoring";
 import "./index.css";
 
 const ClientApprovalReview = lazy(() => import("./pages/ClientApprovalReview").then((module) => ({ default: module.ClientApprovalReview })));
+
+// Before anything renders, so a render that fails on the way up is reported.
+// Off everywhere but the production hosts unless the build says otherwise.
+startMonitoring(window.location.hostname, import.meta.env.VITE_SENTRY_DSN);
 
 // index.html is shared by all three hosts and can only carry one title, so the
 // tab is named for the product it actually is before anything renders.

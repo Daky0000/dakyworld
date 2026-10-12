@@ -1,3 +1,4 @@
+import "./instrument.js"; // first, so error tracking is running before anything it should see
 import { startGeoDatabaseMonitor, reloadCityDatabase } from "./lib/geoCity.js";
 import { installShutdown } from "./lib/shutdown.js";
 import { legacyPublishedAsset } from "./services/publishedAssets.js";

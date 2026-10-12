@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import * as Sentry from "@sentry/node";
 import { prisma } from "../lib/prisma.js";
 import { acquireLease } from "../lib/leases.js";
 import { sendMail } from "../lib/mailer.js";
@@ -119,6 +120,28 @@ export function reportServerError(note: ServerErrorNote): void {
 
 /* ------------------------------------------------------ a crashing process -- */
 
+/** How long a crash waits for its Sentry event to leave before the process goes. */
+export const CRASH_FLUSH_MS = 2000;
+
+/**
+ * Hands a crash to Sentry and waits for it to be sent, at most
+ * `CRASH_FLUSH_MS`: an event still queued when the process exits is lost with
+ * it. Null when Sentry is off, which is what keeps a crash outside production
+ * exiting at once, as it always has. Never rejects.
+ */
+function reportCrash(service: string, kind: string, reason: unknown): Promise<void> | null {
+  try {
+    if (!Sentry.isEnabled()) return null;
+    Sentry.captureException(reason, { level: "fatal", tags: { crash: kind, process: service } });
+  } catch {
+    return null;
+  }
+  return Promise.race([
+    Sentry.flush(CRASH_FLUSH_MS).then(() => undefined, () => undefined),
+    new Promise<void>((resolve) => setTimeout(resolve, CRASH_FLUSH_MS)),
+  ]);
+}
+
 /**
  * Logs and reports a crash, then exits exactly as Node would have.
  *
@@ -126,8 +149,9 @@ export function reportServerError(note: ServerErrorNote): void {
  * service, and nobody hears about it until the restarts run out. The behaviour
  * is kept, because a process after an uncaught exception is in an unknown
  * state and restarting is the safe answer. What changes is that somebody is
- * told: once an hour per service at most, and never holding the exit for more
- * than three seconds.
+ * told: Sentry every time, the Owner by email once an hour per service at
+ * most, and never holding the exit for more than three seconds. The two are
+ * sent side by side, so neither waits on the other.
  */
 export function installCrashReporting(service: string): void {
   let exiting = false;
@@ -136,9 +160,14 @@ export function installCrashReporting(service: string): void {
     if (exiting) return;
     exiting = true;
     const exit = () => process.exit(1);
-    if (process.env.NODE_ENV !== "production") return exit();
+    const reported = reportCrash(service, kind, reason);
+    if (process.env.NODE_ENV !== "production") {
+      if (!reported) return exit();
+      void reported.finally(exit);
+      return;
+    }
     const deadline = setTimeout(exit, 3000);
-    void alertOwnerOnce(`crash-alert:${service}`, 3600, {
+    const emailed = alertOwnerOnce(`crash-alert:${service}`, 3600, {
       subject: `The OS ${service} crashed and is restarting`,
       paragraphs: [
         `The ${service} process stopped on an error nothing caught (${kind}). Railway restarts it on its own, so the cause matters more than the restart.`,
@@ -147,12 +176,11 @@ export function installCrashReporting(service: string): void {
       ],
       footnotes: ["If it keeps crashing you will hear again at most once an hour. Railway stops restarting a service that fails too many times in a row."],
       category: "ops:crash",
-    })
-      .catch(() => undefined)
-      .finally(() => {
-        clearTimeout(deadline);
-        exit();
-      });
+    }).catch(() => undefined);
+    void Promise.all([emailed, reported]).finally(() => {
+      clearTimeout(deadline);
+      exit();
+    });
   };
   process.on("uncaughtException", (error) => crash("uncaughtException", error));
   process.on("unhandledRejection", (reason) => crash("unhandledRejection", reason));

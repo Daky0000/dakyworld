@@ -57,7 +57,10 @@ const CSP = [
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' data: https://fonts.gstatic.com",
   "img-src 'self' data: blob: https:",
-  "connect-src 'self'",
+  // Sentry's EU ingest for this organisation, where the browser reports a
+  // crash (client/src/lib/monitoring.ts). The one host rather than
+  // *.sentry.io, so the policy still names exactly where data can go.
+  "connect-src 'self' https://o4511716208869376.ingest.de.sentry.io",
   "manifest-src 'self'",
   "worker-src 'self' blob:",
   "upgrade-insecure-requests",
