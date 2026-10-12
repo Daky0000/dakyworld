@@ -64,10 +64,17 @@ function decodeBasicEntities(str: string): string {
   return decodeEntities(str).trim();
 }
 
+/**
+ * Both quotes, because a page's own `<meta … content='…'>` is single-quoted as
+ * often as not and the value is written back between whichever quotes it had:
+ * an apostrophe left alone there ends the attribute, and the description that
+ * follows can add `http-equiv='refresh'` to every visitor's page.
+ */
 function escapeAttr(val: string): string {
   return val
     .replace(/&/g, "&amp;")
     .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
@@ -77,6 +84,41 @@ function escapeText(val: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+/**
+ * JSON to sit inside a `<script>` element. `JSON.stringify` leaves `<` alone,
+ * so an organisation named `</script><script>…` closed the structured-data
+ * block and opened a script of its own on the live page. `\u003c` is the same
+ * character to whatever reads the JSON and no character at all to the HTML
+ * parser; `>` and `&` go the same way, and U+2028/U+2029 because older
+ * JavaScript engines read them as line ends inside a string.
+ */
+function scriptJson(value: unknown): string {
+  return JSON.stringify(value, null, 2)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+/**
+ * A colour and nothing else: hex, `rgb()`/`hsl()` with plain numbers, a site
+ * variable, or a colour's name. These are written into a `style` attribute and
+ * a `<style>` element, where HTML escaping stops nothing that matters — a `;`
+ * or a `}` begins a declaration or a rule of the sender's choosing, including
+ * the `url(` that `safeStyle` keeps out of every other style on the page.
+ */
+const CSS_COLOUR = /^(?:#[0-9a-f]{3,8}|(?:rgb|hsl)a?\([0-9a-z.,%\s/+-]*\)|var\(--[a-z0-9_-]{1,60}\)|[a-z]{3,30})$/i;
+
+function cssColour(value: string, fallback: string, what: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  if (!CSS_COLOUR.test(trimmed)) {
+    throw new WebsiteError(400, `${what} must be a colour, such as #3157FF or rgb(49, 87, 255).`);
+  }
+  return trimmed;
 }
 
 function readMetaTag(html: string, attrName: "name" | "property", attrVal: string): string {
@@ -136,15 +178,20 @@ function upsertMetaTagInHtml(
 ): string {
   const escaped = escapeAttr(contentVal);
   const regex = new RegExp(`<meta\\b[^>]*\\b${attrName}\\s*=\\s*["']${attrVal}["'][^>]*>`, "gi");
+  // Every replacement in this file that carries somebody's words is a
+  // function, never a string: in a replacement string `String.replace` reads
+  // `$&`, `` $` `` and `$'` as the match and the text either side of it, so a
+  // description containing them pasted pieces of the page — quotes included —
+  // into the attribute being written.
   if (regex.test(html)) {
     return html.replace(regex, (fullTag) => {
       if (/\bcontent\s*=\s*"[^"]*"/i.test(fullTag)) {
-        return fullTag.replace(/\bcontent\s*=\s*"[^"]*"/i, `content="${escaped}"`);
+        return fullTag.replace(/\bcontent\s*=\s*"[^"]*"/i, () => `content="${escaped}"`);
       }
       if (/\bcontent\s*=\s*'[^']*'/i.test(fullTag)) {
-        return fullTag.replace(/\bcontent\s*=\s*'[^']*'/i, `content='${escaped}'`);
+        return fullTag.replace(/\bcontent\s*=\s*'[^']*'/i, () => `content='${escaped}'`);
       }
-      return fullTag.replace(/\/?>$/, ` content="${escaped}">`);
+      return fullTag.replace(/\/?>$/, () => ` content="${escaped}">`);
     });
   }
   const newTag = `  <meta ${attrName}="${attrVal}" content="${escaped}">\n`;
@@ -160,7 +207,7 @@ function upsertCanonicalInHtml(html: string, canonicalUrl: string): string {
   if (regex.test(html)) {
     return html.replace(regex, (fullTag) => {
       if (/\bhref\s*=\s*"[^"]*"/i.test(fullTag)) {
-        return fullTag.replace(/\bhref\s*=\s*"[^"]*"/i, `href="${escaped}"`);
+        return fullTag.replace(/\bhref\s*=\s*"[^"]*"/i, () => `href="${escaped}"`);
       }
       return fullTag;
     });
@@ -178,7 +225,7 @@ export function applyPageSeoToHtml(html: string, patch: Omit<PageSeoPatch, "page
   if (patch.title !== undefined) {
     const cleanTitle = patch.title.trim();
     if (/<title\b[^>]*>[\s\S]*?<\/title>/i.test(updated)) {
-      updated = updated.replace(/<title\b[^>]*>[\s\S]*?<\/title>/i, `<title>${escapeText(cleanTitle)}</title>`);
+      updated = updated.replace(/<title\b[^>]*>[\s\S]*?<\/title>/i, () => `<title>${escapeText(cleanTitle)}</title>`);
     } else if (/<\/head>/i.test(updated)) {
       updated = updated.replace(/<\/head>/i, (m) => `  <title>${escapeText(cleanTitle)}</title>\n${m}`);
     }
@@ -431,14 +478,19 @@ export function registerWebsiteSeoRoutes(
       const currentHtml = editingSource(source.html, existingDraft);
       const updatedHtml = applyPageSeoToHtml(currentHtml, body);
 
-      // Also sync meta.0 (title) and meta.1 (description) into page.draft when present
+      // Also sync meta.0 (title) and meta.1 (description) into page.draft when present.
+      // A field's value is spliced into the page exactly as stored — the title
+      // between its tags, the description between its quotes — so each is
+      // stored escaped for where it goes, as the document above was. Stored
+      // raw, a title of `</title><script>…` was markup waiting for whichever
+      // publish applied it.
       const { fields } = discoverFields(source.html);
       const nextDraft: Record<string, FieldValue> = { ...existingDraft };
       const titleField = fields.find((f) => f.id === "meta.0");
       if (titleField && body.title !== undefined) {
         nextDraft["meta.0"] = {
           ...(nextDraft["meta.0"] ?? {}),
-          value: body.title.trim(),
+          value: escapeText(body.title.trim()),
           original: titleField.value,
         };
       }
@@ -446,7 +498,7 @@ export function registerWebsiteSeoRoutes(
       if (descField && body.description !== undefined) {
         nextDraft["meta.1"] = {
           ...(nextDraft["meta.1"] ?? {}),
-          value: body.description.trim(),
+          value: escapeAttr(body.description.trim()),
           original: descField.value,
         };
       }
@@ -532,9 +584,14 @@ export function registerWebsiteSeoRoutes(
       const page = await prisma.sitePage.findFirst({ where: { id: body.pageId, siteId: site.id } });
       if (!page) throw new WebsiteError(404, "Page not found.");
 
+      // The sitemap lists what visitors are meant to find. A HIDDEN page is the
+      // plan document or the 404 — kept out of the page list on purpose — and
+      // naming it here invited every search engine to index it. Only the path
+      // is read: this used to load every page's whole HTML to use one field.
       const allPages = await prisma.sitePage.findMany({
-        where: { siteId: site.id },
+        where: { siteId: site.id, status: "LIVE" },
         orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+        select: { path: true },
       });
 
       const baseUrl = (site.publicUrl || "https://example.com").replace(/\/+$/, "");
@@ -557,13 +614,13 @@ export function registerWebsiteSeoRoutes(
 
       const schemaBlock = [
         "<!-- BEGIN JSON-LD SCHEMA -->",
-        `<script type="application/ld+json">${JSON.stringify(jsonLd, null, 2)}</script>`,
+        `<script type="application/ld+json">${scriptJson(jsonLd)}</script>`,
         "<!-- END JSON-LD SCHEMA -->",
       ].join("\n  ");
 
       currentHtml = currentHtml.replace(/<!--\s*BEGIN\s+JSON-LD\s+SCHEMA\s*-->[\s\S]*?<!--\s*END\s+JSON-LD\s+SCHEMA\s*-->\s*/gi, "");
       if (/<\/head\s*>/i.test(currentHtml)) {
-        currentHtml = currentHtml.replace(/<\/head\s*>/i, `  ${schemaBlock}\n</head>`);
+        currentHtml = currentHtml.replace(/<\/head\s*>/i, () => `  ${schemaBlock}\n</head>`);
       } else {
         currentHtml = `${schemaBlock}\n${currentHtml}`;
       }
@@ -656,13 +713,14 @@ export function registerWebsiteSeoRoutes(
         const cleanWa = body.whatsapp.replace(/[^0-9]/g, "");
         const waHref = cleanWa ? `https://wa.me/${cleanWa}` : "#contact";
         const telHref = body.phone.trim() ? `tel:${escapeAttr(body.phone.trim())}` : "";
+        const accent = cssColour(body.accentColor, "#16a34a", "The button colour");
         const widgetHtml = [
           "<!-- BEGIN CONVERSION BAR -->",
           `<div data-dw-conversion-bar="true" style="position:fixed;bottom:20px;right:20px;z-index:9990;display:flex;align-items:center;gap:10px;font-family:system-ui,-apple-system,sans-serif;">`,
           telHref
             ? `  <a href="${telHref}" style="display:inline-flex;align-items:center;gap:8px;padding:11px 16px;border-radius:999px;background:#0f172a;color:#ffffff;font-size:13px;font-weight:600;text-decoration:none;box-shadow:0 10px 25px rgba(15,23,42,0.22);">Call Now</a>`
             : "",
-          `  <a href="${escapeAttr(waHref)}" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:8px;padding:11px 18px;border-radius:999px;background:${escapeAttr(body.accentColor || "#16a34a")};color:#ffffff;font-size:13px;font-weight:600;text-decoration:none;box-shadow:0 10px 25px rgba(22,163,74,0.28);">${escapeText(body.ctaLabel || "Chat with us")}</a>`,
+          `  <a href="${escapeAttr(waHref)}" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:8px;padding:11px 18px;border-radius:999px;background:${escapeAttr(accent)};color:#ffffff;font-size:13px;font-weight:600;text-decoration:none;box-shadow:0 10px 25px rgba(22,163,74,0.28);">${escapeText(body.ctaLabel || "Chat with us")}</a>`,
           `</div>`,
           "<!-- END CONVERSION BAR -->",
         ]
@@ -670,7 +728,7 @@ export function registerWebsiteSeoRoutes(
           .join("\n");
 
         if (/<\/body\s*>/i.test(currentHtml)) {
-          currentHtml = currentHtml.replace(/<\/body\s*>/i, `${widgetHtml}\n</body>`);
+          currentHtml = currentHtml.replace(/<\/body\s*>/i, () => `${widgetHtml}\n</body>`);
         } else {
           currentHtml = `${currentHtml}\n${widgetHtml}`;
         }
@@ -823,12 +881,14 @@ export function registerWebsiteSeoRoutes(
       const existingDraft = (page.draft ?? {}) as Record<string, FieldValue>;
       let currentHtml = editingSource(source.html, existingDraft);
 
+      // Functions, not strings: the pricing section's "$299" sits one edit away
+      // from a `$&` that `String.replace` would expand.
       if (/<\/main\s*>/i.test(currentHtml)) {
-        currentHtml = currentHtml.replace(/<\/main\s*>/i, `\n${chosen.html}\n</main>`);
+        currentHtml = currentHtml.replace(/<\/main\s*>/i, () => `\n${chosen.html}\n</main>`);
       } else if (/<footer\b/i.test(currentHtml)) {
-        currentHtml = currentHtml.replace(/<footer\b/i, `${chosen.html}\n<footer`);
+        currentHtml = currentHtml.replace(/<footer\b/i, () => `${chosen.html}\n<footer`);
       } else if (/<\/body\s*>/i.test(currentHtml)) {
-        currentHtml = currentHtml.replace(/<\/body\s*>/i, `\n${chosen.html}\n</body>`);
+        currentHtml = currentHtml.replace(/<\/body\s*>/i, () => `\n${chosen.html}\n</body>`);
       } else {
         currentHtml = `${currentHtml}\n${chosen.html}`;
       }
@@ -1042,12 +1102,15 @@ export function registerWebsiteSeoRoutes(
       if (body.fontPairId !== "reset") {
         const pair = FONT_PAIRS[body.fontPairId] ?? FONT_PAIRS["space-dm"];
         label = `Applied Brand Theme: ${pair.label}`;
+        const primary = escapeAttr(cssColour(body.primaryColor, "#3157FF", "The primary colour"));
+        const surface = escapeAttr(cssColour(body.surfaceColor, "#FFFFFF", "The background colour"));
+        const ink = escapeAttr(cssColour(body.textColor, "#08101F", "The text colour"));
         const cssLines = [
-          `:root { --brand-primary: ${escapeAttr(body.primaryColor)}; --brand-surface: ${escapeAttr(body.surfaceColor)}; --brand-ink: ${escapeAttr(body.textColor)}; --font-heading: ${pair.headingFont}; --font-body: ${pair.bodyFont}; }`,
-          `body { font-family: ${pair.bodyFont} !important; ${body.applyColorOverrides ? `background-color: ${escapeAttr(body.surfaceColor)}; color: ${escapeAttr(body.textColor)};` : ""} }`,
+          `:root { --brand-primary: ${primary}; --brand-surface: ${surface}; --brand-ink: ${ink}; --font-heading: ${pair.headingFont}; --font-body: ${pair.bodyFont}; }`,
+          `body { font-family: ${pair.bodyFont} !important; ${body.applyColorOverrides ? `background-color: ${surface}; color: ${ink};` : ""} }`,
           `h1, h2, h3, h4, h5, h6 { font-family: ${pair.headingFont} !important; }`,
           body.applyColorOverrides
-            ? `a.btn, button[type="submit"], [data-dw-cta] { background-color: ${escapeAttr(body.primaryColor)} !important; color: #ffffff !important; }`
+            ? `a.btn, button[type="submit"], [data-dw-cta] { background-color: ${primary} !important; color: #ffffff !important; }`
             : "",
         ]
           .filter(Boolean)
@@ -1061,7 +1124,7 @@ export function registerWebsiteSeoRoutes(
         ].join("\n  ");
 
         if (/<\/head\s*>/i.test(html)) {
-          html = html.replace(/<\/head\s*>/i, `  ${themeBlock}\n</head>`);
+          html = html.replace(/<\/head\s*>/i, () => `  ${themeBlock}\n</head>`);
         } else {
           html = `${themeBlock}\n${html}`;
         }

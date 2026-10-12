@@ -167,7 +167,7 @@ async function execute(job: WebsiteWorkJob) {
   if (job.kind === "BUILDER_PLAN") {
     const { executeBuilderPlan } = await import("./websiteBuilderAgent.js");
     const site = await prisma.site.findUniqueOrThrow({ where: { id: job.siteId } });
-    return executeBuilderPlan(site, job.input);
+    return executeBuilderPlan(site, job.input, job.userId);
   }
   throw new WebsiteError(400, "Unsupported job type.");
 }

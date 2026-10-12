@@ -295,11 +295,18 @@ export function WebsiteAI() {
       // Filter plan to selected pages only
       const filteredPages = plan.pages.filter((p) => selectedPages.has(p.pageId));
       const pageRevisions = Object.fromEntries(filteredPages.map((p) => [p.pageId, p.draftRevision]));
+      // Whole-page rewrites are filtered by page and otherwise sent back as the
+      // server made them: each entry is signed over its HTML and label, and one
+      // rebuilt from its fields would arrive unsigned and be refused.
+      const documentHtmlUpdates = Object.fromEntries(
+        Object.entries(plan.documentHtmlUpdates ?? {}).filter(([pageId]) => selectedPages.has(pageId)),
+      );
       const payload = {
         pageRevisions,
         plan: {
           explanation: plan.explanation,
           pages: filteredPages,
+          ...(Object.keys(documentHtmlUpdates).length > 0 ? { documentHtmlUpdates } : {}),
         },
       };
       return api.post<SiteAgentApplyResult>(`/website/sites/${site.id}/agent/apply`, payload);

@@ -2,12 +2,13 @@ import { startPublishJob, advancePublishJob, publishJobCommitted } from "./websi
 import { beforeWebsiteExternalAction } from "../lib/websiteWorkContext.js";
 import { capacity } from "../lib/capacity.js";
 import { enqueueWebsiteWork } from "./websiteWorkQueue.js";
-import { randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Request, Response, Router } from "express";
 import type { Site, SitePage } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
+import { signingKey } from "../lib/secrets.js";
 import { callModel } from "../lib/models/call.js";
 import { AnalystError } from "../lib/claude.js";
 import { effortForLevel, type TaskLevel } from "../lib/models/registry.js";
@@ -33,6 +34,7 @@ import {
   validateFieldChange,
   restoreDocument,
   changeStructure,
+  introducedActiveContent,
   type FieldValue,
   type SiteField,
 } from "./website/index.js";
@@ -146,9 +148,14 @@ export const siteAgentApplyInputSchema = z.object({
       targetId: z.string().optional(),
       label: z.string(),
     })).optional(),
+    // The signature is optional here and required by `applyAgentSitePlan`, so a
+    // plan without one is refused in a sentence rather than as "Validation
+    // failed" — the usual reason is a plan made before signing existed, still
+    // sitting in somebody's chat.
     documentHtmlUpdates: z.record(z.string(), z.object({
       html: z.string(),
       label: z.string(),
+      signature: z.string().max(200).optional(),
     })).optional(),
   }),
 }).strict();
@@ -188,7 +195,8 @@ export type SiteAgentPlan = {
   };
   pages: SiteAgentPagePlan[];
   structuralActions?: SiteAgentStructuralAction[];
-  documentHtmlUpdates?: Record<string, { html: string; label: string }>;
+  /** Whole-page rewrites, signed by `executeBuilderPlan` for the person who asked. */
+  documentHtmlUpdates?: Record<string, { html: string; label: string; signature?: string }>;
   editorCommand?: "undo" | "redo" | "discard" | null;
   escalation?: {
     id: string;
@@ -322,6 +330,15 @@ export function serializeCssDeclarations(declarations: Record<string, string>): 
 
 function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function extractInlineStyleFonts(html: string): string[] {
@@ -1414,7 +1431,11 @@ export async function planAgentInstruction(
       };
       const currentHtml = editingSource(source.html, existingDraft);
       const sectionHtml = template.generateHtml({
-        siteName: site.name,
+        // The site's name is placed in the section as words, so it is escaped
+        // as words — and `$` with it, because `injectSectionIntoHtml` splices
+        // with `String.replace`, which reads `$&` and `` $` `` in what it is
+        // handed as "the match" and "everything before it".
+        siteName: escapeHtml(site.name).replace(/\$/g, "&#36;"),
       });
       const nextHtml = injectSectionIntoHtml(currentHtml, sectionHtml);
       const { fields: currentFields } = discoverFields(currentHtml);
@@ -2435,6 +2456,62 @@ export async function planAgentInstruction(
 }
 
 // ============================================================================
+// Signing Whole-Page Rewrites
+// ============================================================================
+
+/**
+ * A plan goes to the browser and comes back in the apply request, and a
+ * whole-page rewrite in it is the page's entire HTML. Unsigned, the apply route
+ * stored whatever HTML the request carried as the page's draft, unsanitised —
+ * the one way round the rule that `$document` is written only by the server.
+ * An editor could stage a `<script>` under a label reading "harmless" and leave
+ * it for somebody with publish rights to send live.
+ *
+ * So each rewrite carries an HMAC over the site, the page, the person the plan
+ * was made for, the HTML and the label. The label is in it because the label is
+ * what the publisher reads in place of the HTML. The key is derived from the
+ * app secret under its own purpose (`signingKey`), so it signs nothing else.
+ */
+const DOCUMENT_UPDATE_SIGNING = "website-agent-document-update";
+
+export function documentUpdateSignature(
+  siteId: string,
+  pageId: string,
+  userId: string | null | undefined,
+  update: { html: string; label: string },
+): string {
+  const html = createHash("sha256").update(update.html).digest("hex");
+  return createHmac("sha256", signingKey(DOCUMENT_UPDATE_SIGNING))
+    .update(JSON.stringify([siteId, pageId, userId ?? "", html, update.label]))
+    .digest("base64url");
+}
+
+function signatureHolds(expected: string, given: string | undefined): boolean {
+  if (!given) return false;
+  const want = Buffer.from(expected);
+  const got = Buffer.from(given);
+  return want.length === got.length && timingSafeEqual(want, got);
+}
+
+/** The plan as the person who asked for it will send it back. */
+function signDocumentUpdates(plan: SiteAgentPlan, siteId: string, userId: string | null | undefined): SiteAgentPlan {
+  if (!plan.documentHtmlUpdates) return plan;
+  const signed = Object.fromEntries(
+    Object.entries(plan.documentHtmlUpdates).map(([pageId, update]) => [
+      pageId,
+      { html: update.html, label: update.label, signature: documentUpdateSignature(siteId, pageId, userId, update) },
+    ]),
+  );
+  return { ...plan, documentHtmlUpdates: signed };
+}
+
+/** "a script, an onclick handler and an <iframe> element" */
+function listInWords(items: string[]): string {
+  if (items.length <= 1) return items.join("");
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+// ============================================================================
 // Applying the Site Agent Plan Safely to Page Drafts
 // ============================================================================
 
@@ -2454,47 +2531,93 @@ export async function applyAgentSitePlan(
   let totalChanges = 0;
 
   // 1. Process document HTML updates (such as section insertions generated by agent)
-  if (input.plan.documentHtmlUpdates) {
-    for (const [pageId, docUpdate] of Object.entries(input.plan.documentHtmlUpdates)) {
-      const page = pageMap.get(pageId);
-      if (!page) continue;
-      const ifRevision = input.pageRevisions[page.id] ?? page.draftRevision;
-      try {
-        const source = await pageSource(site, page);
-        const existingDraft = (page.draft ?? {}) as Record<string, FieldValue>;
-        const nextDraftValues = restoreDocument(source.html, existingDraft, docUpdate.html, docUpdate.label);
+  //
+  // Each one replaces a page's whole HTML and no sanitiser reads it, so every
+  // one is proved before any page is written: that the server made it, for
+  // this person (the signature), and that it adds nothing that runs (the
+  // page's own scripts and handlers are its business; a new one is not). One
+  // bad page refuses the whole plan, because a plan applied in part is not
+  // the plan anybody approved.
+  const documentUpdates: Array<{ page: SitePage; docUpdate: { html: string; label: string }; source: { html: string } }> = [];
+  for (const [pageId, docUpdate] of Object.entries(input.plan.documentHtmlUpdates ?? {})) {
+    if (!signatureHolds(documentUpdateSignature(site.id, pageId, userId, docUpdate), docUpdate.signature)) {
+      throw new WebsiteError(
+        400,
+        "This page change could not be matched to the one the assistant made for you: it was altered after it was made, or it came from an older screen. Nothing was changed. Ask the assistant for the change again.",
+      );
+    }
+  }
+  for (const [pageId, docUpdate] of Object.entries(input.plan.documentHtmlUpdates ?? {})) {
+    const page = pageMap.get(pageId);
+    if (!page) continue;
+    const source = await pageSource(site, page);
+    const current = editingSource(source.html, (page.draft ?? {}) as Record<string, FieldValue>);
+    const added = introducedActiveContent(current, docUpdate.html);
+    if (added.length) {
+      throw new WebsiteError(
+        400,
+        `The change to ${page.title} would add ${listInWords(added)}, which the page does not have now. The assistant never adds code to a page, so nothing was changed. Ask again for the change without it, or ask a developer below.`,
+      );
+    }
+    documentUpdates.push({ page, docUpdate, source });
+  }
 
-        const written = await prisma.sitePage.updateMany({
-          where: { id: page.id, draftRevision: ifRevision },
-          data: {
-            draft: nextDraftValues as unknown as Prisma.InputJsonValue,
-            draftSavedAt: new Date(),
-            draftSavedById: userId ?? null,
-            draftRevision: { increment: 1 },
-          },
+  for (const { page, docUpdate, source } of documentUpdates) {
+    const ifRevision = input.pageRevisions[page.id] ?? page.draftRevision;
+    // The checks above were made against the draft as it is now. A plan made
+    // against an older one would land on a page nobody checked it against.
+    if (ifRevision !== page.draftRevision) {
+      results.push({
+        pageId: page.id,
+        pageTitle: page.title,
+        success: false,
+        message: "Conflict: This page was modified in another session. Please reload and review.",
+      });
+      continue;
+    }
+    try {
+      const existingDraft = (page.draft ?? {}) as Record<string, FieldValue>;
+      const nextDraftValues = restoreDocument(source.html, existingDraft, docUpdate.html, docUpdate.label);
+
+      const written = await prisma.sitePage.updateMany({
+        where: { id: page.id, draftRevision: ifRevision },
+        data: {
+          draft: nextDraftValues as unknown as Prisma.InputJsonValue,
+          draftSavedAt: new Date(),
+          draftSavedById: userId ?? null,
+          draftRevision: { increment: 1 },
+        },
+      });
+
+      if (written.count > 0) {
+        appliedPages += 1;
+        totalChanges += 1;
+        page.draftRevision = ifRevision + 1;
+        page.draft = nextDraftValues as unknown as Prisma.JsonValue;
+        results.push({
+          pageId: page.id,
+          pageTitle: page.title,
+          success: true,
+          message: `Applied layout structure change: ${docUpdate.label}.`,
+          newRevision: ifRevision + 1,
         });
-
-        if (written.count > 0) {
-          appliedPages += 1;
-          totalChanges += 1;
-          page.draftRevision = ifRevision + 1;
-          page.draft = nextDraftValues as unknown as Prisma.JsonValue;
-          results.push({
-            pageId: page.id,
-            pageTitle: page.title,
-            success: true,
-            message: `Applied layout structure change: ${docUpdate.label}.`,
-            newRevision: ifRevision + 1,
-          });
-        }
-      } catch (err) {
+      } else {
+        // Said rather than skipped: a refused write that reports nothing reads
+        // as a change that worked.
         results.push({
           pageId: page.id,
           pageTitle: page.title,
           success: false,
-          message: err instanceof Error ? err.message : "Failed to update page structure.",
+          message: "Conflict: This page was modified in another session. Please reload and review.",
         });
       }
+    } catch (err) {
+      results.push({
+        pageId: page.id,
+        pageTitle: page.title,
+        success: false,
+        message: err instanceof Error ? err.message : "Failed to update page structure.",
+      });
     }
   }
 
@@ -2697,7 +2820,12 @@ const escalateDeveloperSchema = z.object({
 // Router Registration
 // ============================================================================
 
-export async function executeBuilderPlan(site: Site, input: unknown): Promise<SiteAgentPlan> {
+/**
+ * Every plan reaches a person through here — the plan route, and the work
+ * queue when admission is on — so here is where a plan is signed, for the
+ * person who will apply it: `userId` is whoever asked.
+ */
+export async function executeBuilderPlan(site: Site, input: unknown, userId: string | null | undefined): Promise<SiteAgentPlan> {
   const body = siteAgentCommandSchema.parse(input);
       const pages = await prisma.sitePage.findMany({
         where: { siteId: site.id },
@@ -2739,7 +2867,7 @@ export async function executeBuilderPlan(site: Site, input: unknown): Promise<Si
           break;
       }
 
-  return plan;
+  return signDocumentUpdates(plan, site.id, userId);
 }
 
 export function registerWebsiteBuilderAgent(
@@ -2871,7 +2999,7 @@ export function registerWebsiteBuilderAgent(
         const job = await enqueueWebsiteWork(req, site.id, "BUILDER_PLAN", body);
         res.status(202).json(job); return;
       }
-      const plan = await executeBuilderPlan(site, body);
+      const plan = await executeBuilderPlan(site, body, req.dbUser?.id);
       res.json(plan);
     } catch (err) {
       next(err);

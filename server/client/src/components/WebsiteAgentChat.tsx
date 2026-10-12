@@ -515,15 +515,24 @@ export function WebsiteAgentChat({
         })
         .filter((p) => p.changes.length > 0);
 
+      // A whole-page rewrite (an inserted section) goes back exactly as the
+      // server sent it: each entry carries a signature over its HTML and label,
+      // and an entry rebuilt from its fields would arrive unsigned and be
+      // refused. Never map these to `{ html, label }`.
+      const documentHtmlUpdates = plan.documentHtmlUpdates;
+      const hasDocumentUpdates = Boolean(documentHtmlUpdates && Object.keys(documentHtmlUpdates).length > 0);
+
       let result: SiteAgentApplyResult | null = null;
-      if (filteredPages.length > 0) {
+      if (filteredPages.length > 0 || hasDocumentUpdates) {
         const currentPagePlan = filteredPages.find((p) => p.pageId === pageId);
         if (currentPagePlan) {
           onApplyLocalEdits(currentPagePlan.edits);
         }
 
         const pageRevisions = Object.fromEntries(
-          filteredPages.map((p) => [p.pageId, p.draftRevision]),
+          plan.pages
+            .filter((p) => filteredPages.some((kept) => kept.pageId === p.pageId) || Boolean(documentHtmlUpdates?.[p.pageId]))
+            .map((p) => [p.pageId, p.draftRevision]),
         );
         result = await api.post<SiteAgentApplyResult>(
           `/website/sites/${siteId}/agent/apply`,
@@ -532,9 +541,16 @@ export function WebsiteAgentChat({
             plan: {
               explanation: plan.explanation,
               pages: filteredPages,
+              ...(hasDocumentUpdates ? { documentHtmlUpdates } : {}),
             },
           },
         );
+
+        // The server rewrote this page's draft, so what the editor holds is a
+        // revision behind; reload it rather than save over it.
+        if (documentHtmlUpdates?.[pageId]) {
+          onReloadPreview?.();
+        }
 
         // If any edit references an uploaded site asset (/assets/dw/...), reload preview so embedded assets render immediately
         const usesUploadedAsset = filteredPages.some((p) =>

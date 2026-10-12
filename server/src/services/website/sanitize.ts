@@ -1,5 +1,6 @@
 import { parseHtml, type ElementNode } from "./parse.js";
 import { safeStyle } from "./regions.js";
+import { isScriptDataAttribute } from "../../shared/websiteElementSettings.js";
 
 /**
  * What a client is allowed to put into their own website.
@@ -25,7 +26,8 @@ const ALLOWED_TAGS = new Set(["b", "strong", "i", "em", "u", "s", "small", "sup"
  * `class` and `data-*` are here because the design already uses them inside
  * copy — the count-up figures on the homepage are a `<strong class="count-up"
  * data-target="70">`, and dropping the attributes would leave the number frozen
- * at zero. They cannot execute anything; they select styling the developer wrote.
+ * at zero. They select styling and behaviour the developer wrote — except the
+ * `data-` names a library treats as code, which `render` drops by name.
  */
 const ALLOWED_ATTRS: Record<string, Set<string>> = {
   "*": new Set(["class", "style", "title", "lang", "dir"]),
@@ -111,14 +113,17 @@ function render(source: string, element: ElementNode, depth: number): string {
   const attrs: string[] = [];
   for (const attribute of element.attrs) {
     // `data-*` survives on purpose — the homepage figures are a
-    // `<strong class="count-up" data-target="70">`. `data-dw-*` is the one
-    // exception: those are the visual editor's own marks, injected into the
+    // `<strong class="count-up" data-target="70">`. Two kinds are dropped.
+    // `data-dw-*` are the visual editor's own marks, injected into the
     // preview, and a value typed in the browser comes back with them on its
-    // children. They are never part of anybody's page.
+    // children; they are never part of anybody's page. And the names a library
+    // runs as code (`data-bind`, `data-hx-get`…): on a Knockout or htmx site
+    // those are script in all but name, and the Settings panel already refuses
+    // them by the same rule, so rich text must not be the way round it.
     const permitted =
       ALLOWED_ATTRS["*"]!.has(attribute.name) ||
       ALLOWED_ATTRS[element.tag]?.has(attribute.name) ||
-      (attribute.name.startsWith("data-") && !attribute.name.startsWith("data-dw-"));
+      (attribute.name.startsWith("data-") && !attribute.name.startsWith("data-dw-") && !isScriptDataAttribute(attribute.name));
     if (!permitted) continue;
     if (attribute.name === "href") {
       const checked = checkLink(attribute.value);

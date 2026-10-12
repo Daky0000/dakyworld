@@ -104,6 +104,16 @@ const ADDRESS_ATTRIBUTES = new Set([
  */
 const SCRIPT_DATA = /^data-(?:hx-|on|x-|bind|v-|ng-|wire:|alpine)/;
 
+/**
+ * Whether a library would run this `data-` attribute as code. The one rule for
+ * it: the Settings panel refuses these names, and `sanitize.ts` drops them from
+ * rich text, because a `data-bind` typed into a paragraph runs on a Knockout
+ * site exactly as one set from this panel would.
+ */
+export function isScriptDataAttribute(rawName: string): boolean {
+  return SCRIPT_DATA.test(rawName.trim().toLowerCase());
+}
+
 export const ATTRIBUTE_NAME = /^[a-z][a-z0-9_.-]{0,59}$/;
 
 /** At most this many attributes may be changed in one go, and an element may carry this many of ours. */
@@ -126,7 +136,7 @@ export function attributeNameProblem(rawName: string, tag: string): string | nul
   if (media && MEDIA_ATTRIBUTES[media].includes(name)) return null;
   if (ADDRESS_ATTRIBUTES.has(name)) return "Addresses are set by the image, video and link controls, never typed in as an attribute.";
   if (name.startsWith("data-dw-")) return "Attributes starting data-dw- belong to the editor.";
-  if (SCRIPT_DATA.test(name)) return "Some libraries run that attribute as code, so it can't be set here.";
+  if (isScriptDataAttribute(name)) return "Some libraries run that attribute as code, so it can't be set here.";
   if (!ATTRIBUTE_NAME.test(name)) return "An attribute name uses lowercase letters, digits and dashes, and starts with a letter.";
   if (PLAIN_ATTRIBUTES.has(name)) return null;
   if (/^aria-[a-z]{2,40}$/.test(name)) return null;

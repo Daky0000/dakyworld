@@ -56,6 +56,24 @@ export function decryptSecret(payload: string): string | null {
   }
 }
 
+/**
+ * A key for signing something the server hands out and expects back unchanged,
+ * such as a change plan that travels through the browser before it is applied.
+ *
+ * Same material as the encryption key and derived the same way, but under its
+ * own purpose string, so a signing key never equals the key that encrypts the
+ * stored tokens and no two kinds of signature can be swapped for one another.
+ * Rotating APP_SECRET (or moving the database, when it is unset) only
+ * invalidates signatures still in flight: the person asks again.
+ */
+export function signingKey(purpose: string): Buffer {
+  const material = process.env.APP_SECRET || process.env.DATABASE_URL;
+  if (!material) {
+    throw new Error("Cannot sign: neither APP_SECRET nor DATABASE_URL is set");
+  }
+  return crypto.createHash("sha256").update(`dakyworld-os:signing:${purpose}:${material}`).digest();
+}
+
 /** What the UI is allowed to see: enough to recognise the token, not enough to use it. */
 export function maskSecret(value: string): string {
   if (value.length <= 8) return "••••••••";

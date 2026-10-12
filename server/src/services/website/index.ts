@@ -65,6 +65,8 @@ import { normalizeResponsive, responsiveEqual, type ResponsiveStyles } from "./r
 export const EDITOR_CORE_VERSION = 3;
 export { DOCUMENT_KEY, draftDocument, editingSource, fieldValues, sourceHash, documentChanged, versionValues, restoreDocument } from "./document.js";
 export { changeStructure, structureControls, StructureError } from "./structure.js";
+// A whole-document rewrite skips the sanitiser, so whoever accepts one asks this instead.
+export { introducedActiveContent } from "./activeContent.js";
 export type { StructureAction, StructureControl } from "./structure.js";
 
 // Literal React source editing stays behind the same core boundary as HTML.
