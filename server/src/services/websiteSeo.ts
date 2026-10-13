@@ -17,6 +17,7 @@ import {
 } from "./website/site.js";
 import { setSiteSetting, updateSiteSettings } from "./websiteSiteSettings.js";
 import { invalidateSource } from "./website/sourceCache.js";
+import { assertEditAllowance, writePageEdit } from "./websiteTierPlans.js";
 
 export interface PageSeoData {
   title: string;
@@ -770,6 +771,8 @@ export function registerWebsiteSeoRoutes(
           templateId: z.enum(["hero", "features", "pricing", "testimonials", "faq", "cta-banner"]),
         })
         .parse(req.body ?? {});
+      // A new section is an edit of the page like any other.
+      const allowance = await assertEditAllowance(req, site.id, page);
 
       const SECTION_TEMPLATES: Record<string, { label: string; html: string }> = {
         hero: {
@@ -894,16 +897,14 @@ export function registerWebsiteSeoRoutes(
       }
 
       const docDraft = restoreDocument(source.html, existingDraft, currentHtml, `Inserted section: ${chosen.label}`);
-      await prisma.sitePage.update({
-        where: { id: page.id },
-        data: {
-          ...(page.sourceHtml !== null ? { sourceHtml: currentHtml } : {}),
-          draft: { ...existingDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
-          draftRevision: { increment: 1 },
-          draftSavedAt: new Date(),
-          draftSavedById: req.dbUser?.id ?? null,
-        },
-      });
+      const written = await prisma.$transaction((tx) => writePageEdit(tx, allowance, { id: page.id, draftRevision: page.draftRevision }, {
+        ...(page.sourceHtml !== null ? { sourceHtml: currentHtml } : {}),
+        draft: { ...existingDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
+        draftRevision: { increment: 1 },
+        draftSavedAt: new Date(),
+        draftSavedById: req.dbUser?.id ?? null,
+      }));
+      if (!written.count) throw new WebsiteError(409, "The page was saved by somebody else while the section was being added. Reopen it and add the section again.");
 
       res.json({ ok: true, label: chosen.label });
     } catch (err) {

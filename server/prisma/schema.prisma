@@ -219,6 +219,8 @@ model WebsiteWorkJob {
   inputHash String
   usagePeriod String?
   usageState String @default("NONE")
+  /// Whose plan the run is counted against — the website's paying owner, not always `userId`.
+  chargedUserId String?
   externalStartedAt DateTime?
   actualCostUsd Decimal @default(0) @db.Decimal(12, 6)
   input Json
@@ -236,6 +238,7 @@ model WebsiteWorkJob {
   @@unique([userId, idempotencyKey])
   @@index([state, nextAttemptAt, createdAt])
   @@index([userId, createdAt])
+  @@index([chargedUserId, createdAt])
   @@index([siteId, state])
 }
 
@@ -4661,6 +4664,11 @@ model SitePage {
   draftSavedAt   DateTime?
   draftSavedBy   User?     @relation("SitePageDrafts", fields: [draftSavedById], references: [id], onDelete: SetNull)
   draftSavedById String?
+  /// The UTC day this page last spent one of the plan's page edits. Written by
+  /// `writePageEdit` and nothing else, so a rename, a discard or a publish can
+  /// neither charge an edit nor excuse the next one. `updatedAt` was the record
+  /// until 13 Oct 2026, and every one of those writes moved it.
+  editCountedOn  DateTime? @db.Date
 
   versions        SitePageVersion[]
   sharedInstances SharedElementInstance[]

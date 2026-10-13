@@ -12,6 +12,7 @@ import {
   bumpUsage,
   readUsage,
   resolveEntitlement,
+  resolveSiteEntitlement,
   setSwitchedUserEmail,
   getSwitchedUserEmail,
   usagePeriod,
@@ -174,8 +175,17 @@ function upgradeSentence(
  * cedi promotional price to everybody, so a customer paying in dollars was told
  * their plan cost GHS 300, and one past the promotion was quoted the old price.
  */
-function yourPlan(status: { plan: TierPlanDefinition; pricing: { currentDisplay: string } }): string {
+type PlanStatus = { plan: TierPlanDefinition; pricing: { currentDisplay: string }; websitePlan: boolean };
+function planLabel(status: PlanStatus): string {
   return `${status.plan.name} (${status.pricing.currentDisplay}/mo)`;
+}
+
+/**
+ * "your Pro (GHS 300/mo) plan" — or "this website's" to somebody working on a
+ * website under another account's plan, which is not theirs to call their own.
+ */
+function yourPlan(status: PlanStatus): string {
+  return `${status.websitePlan ? "this website's" : "your"} ${planLabel(status)} plan`;
 }
 
 export const MB = 1024 * 1024;
@@ -251,7 +261,10 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     editsLimit: 200,
     editsLimitLabel: "200 page edits / mo (a page counts once a day)",
     aiPromptsLimit: 50,
-    aiPromptsLimitLabel: "50 AI prompts / mo",
+    // And a daily ceiling the queue enforces, from the number it reads — the
+    // eleventh run of a day is refused, and a label that said only "a month"
+    // left that to be found out by being refused.
+    aiPromptsLimitLabel: `50 AI prompts / mo, up to ${dailyAiLimit("CARE")} a day`,
     websiteLimit: 3,
     userLimit: 5,
     supportPriority: "PRIORITY",
@@ -277,7 +290,7 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
       "200 page edits a month — a page counts once a day, however many changes you make",
       "Global Theme Color System & Brand Presets",
       "Full Page SEO Inspector & Metadata Auditor",
-      "AI Copy & Section Assistant (50 runs/mo)",
+      `AI Copy & Section Assistant (50 runs/mo, up to ${dailyAiLimit("CARE")} a day)`,
       "Up to 3 websites · 5 team members",
     ],
     restrictedFeatures: [
@@ -501,11 +514,16 @@ export async function resolveEffectiveUserIdentity(req: WebsiteActor): Promise<E
   return resolveEntitlement(req);
 }
 
+/**
+ * The plan, its prices, its counters and its storage, for somebody — on one
+ * website when `siteId` is given, which is the website's plan when it has a
+ * paying owner (`resolveSiteEntitlement`), and their own otherwise.
+ */
 export async function computeUserStorageAndUsage(req: WebsiteActor, siteId?: string) {
-  const identity = await resolveEntitlement(req);
+  const identity = await resolveSiteEntitlement(req, siteId);
   const plan = WEBSITE_TIER_PLANS[identity.tier];
   const simulateAfter3Months = identity.simulateAfter3Months;
-  const counters = await readUsage(identity.userId);
+  const counters = await readUsage(identity.chargedUserId);
   const pricing = resolveSubscriptionPricing({
     tier: identity.tier,
     subscribedAt: identity.subscribedAt,
@@ -516,7 +534,10 @@ export async function computeUserStorageAndUsage(req: WebsiteActor, siteId?: str
     currency: identity.currency === "USD" ? "USD" : "GHS",
   });
 
-  // A customer's storage is their account's: every site they belong to, and
+  // On a website with a paying owner, storage is the plan's: every website of
+  // that client, whoever is uploading — and not the other websites a colleague
+  // happens to belong to, which are on somebody else's plan. Otherwise a
+  // customer's storage is their account's: every site they belong to, and
   // nobody else's. Without a site this used to sum every asset in the system —
   // each customer's meter showed the whole platform's usage, and the quota was
   // checked against it. Staff have no quota; for them a site narrows it.
@@ -524,9 +545,11 @@ export async function computeUserStorageAndUsage(req: WebsiteActor, siteId?: str
   let dbAssetCount = 0;
   try {
     const external = Boolean(req.dbUser?.accessRole?.external);
-    const where = external
-      ? { site: { members: { some: { userId: req.dbUser!.id } } } }
-      : siteId ? { siteId } : {};
+    const where = identity.siteClientId
+      ? { site: { clientId: identity.siteClientId } }
+      : external
+        ? { site: { members: { some: { userId: req.dbUser!.id } } } }
+        : siteId ? { siteId } : {};
     const agg = await prisma.siteAsset.aggregate({ where, _sum: { size: true }, _count: { id: true } });
     dbAssetBytes = Number(agg._sum.size ?? 0);
     dbAssetCount = Number(agg._count.id ?? 0);
@@ -539,8 +562,14 @@ export async function computeUserStorageAndUsage(req: WebsiteActor, siteId?: str
   const remainingBytes = Math.max(0, quotaBytes - usedBytes);
   const percentUsed = Math.min(100, Math.round((usedBytes / quotaBytes) * 1000) / 10);
 
+  // Which account pays, and its purchase, are the owner's business: a
+  // colleague's screen names the plan and not the account behind it.
+  const { chargedUserId: _charged, siteClientId: _client, ...person } = identity;
+  const websitePlan = identity.source === "site" && identity.chargedUserId !== identity.userId;
   return {
-    user: identity,
+    user: { ...person, purchaseId: websitePlan ? null : identity.purchaseId },
+    /** True when this is a website's plan, paid for by another account. */
+    websitePlan,
     userId: identity.userId,
     userEmail: identity.email,
     userName: identity.name,
@@ -601,14 +630,14 @@ export async function assertMediaStorageAllowance(req: WebsiteActor, incomingByt
   if (incomingBytes > plan.maxUploadBytes) {
     throw new WebsiteError(
       413,
-      `This file (${formatBytes(incomingBytes)}) exceeds the maximum single-file upload size of ${plan.maxUploadLabel} on your ${yourPlan(status)} plan.${upgradeSentence(plan.tier, status.pricing.currency, (next) => `uploads up to ${next.maxUploadLabel}`) || " This is the largest plan."}`,
+      `This file (${formatBytes(incomingBytes)}) exceeds the maximum single-file upload size of ${plan.maxUploadLabel} on ${yourPlan(status)}.${upgradeSentence(plan.tier, status.pricing.currency, (next) => `uploads up to ${next.maxUploadLabel}`) || " This is the largest plan."}`,
     );
   }
 
   if (storage.usedBytes + incomingBytes > storage.quotaBytes) {
     throw new WebsiteError(
       403,
-      `Media Library storage quota reached on your ${yourPlan(status)} plan (${storage.usedFormatted} / ${storage.quotaFormatted} used). Delete unused images.${upgradeSentence(plan.tier, status.pricing.currency, (next) => `${next.storageQuotaLabel} of storage`)}`,
+      `Media Library storage quota reached on ${yourPlan(status)} (${storage.usedFormatted} / ${storage.quotaFormatted} used). Delete unused images.${upgradeSentence(plan.tier, status.pricing.currency, (next) => `${next.storageQuotaLabel} of storage`)}`,
     );
   }
 }
@@ -631,14 +660,15 @@ export async function assertImportAllowance(req: WebsiteActor, siteId?: string):
   if (usage.importsUsed >= plan.importsLimit) {
     throw new WebsiteError(
       403,
-      `Monthly HTML import limit reached (${usage.importsUsed}/${plan.importsLimit}) on your ${yourPlan(status)} plan.${upgradeSentence(plan.tier, status.pricing.currency, (next) => next.importsLimitLabel)}`,
+      `Monthly HTML import limit reached (${usage.importsUsed}/${plan.importsLimit}) on ${yourPlan(status)}.${upgradeSentence(plan.tier, status.pricing.currency, (next) => next.importsLimitLabel)}`,
     );
   }
 }
 
-export async function recordImportUsed(req: WebsiteActor): Promise<void> {
-  const identity = await resolveEntitlement(req);
-  await bumpUsage(identity.userId, "imports");
+/** Spends an import — the website's owner's, when `siteId` names a website that has one. */
+export async function recordImportUsed(req: WebsiteActor, siteId?: string): Promise<void> {
+  const identity = await resolveSiteEntitlement(req, siteId);
+  await bumpUsage(identity.chargedUserId, "imports");
 }
 
 /* -------------------------------------------------------- page edits ----- */
@@ -652,17 +682,16 @@ export async function recordImportUsed(req: WebsiteActor): Promise<void> {
  * "Monthly page edit limit reached" having changed one heading. Now the first
  * change to a page on a day counts and nothing else on that page that day does.
  *
- * The page row is the record, and specifically its `updatedAt`, which every
- * change to a page moves. `draftSavedAt` looks like the obvious field and is
- * the wrong one: publishing clears it, discarding clears it, and so does a save
- * that leaves the page's own draft empty — which is every save of a header or
- * footer shared across pages, because those words are stored on the shared
- * element instead. Counting from it would charge the typo fixed after a publish
- * as a second edit, and charge every autosave of a shared header, which is the
- * fault this exists to remove. The cost of `updatedAt` runs the other way: a
- * page added, renamed or reordered today has its first edit today for free.
+ * The record is `SitePage.editCountedOn`, the day the page last spent an edit,
+ * and nothing but a counted edit writes it. It was `updatedAt` until 13 Oct
+ * 2026, which every write to the row moves — so at the limit a rename to the
+ * same title, discarding a draft that was not there, or a publish made the
+ * page's next save look already paid for, and it went through free for the
+ * rest of the day. `draftSavedAt` was never a candidate: publishing clears it,
+ * discarding clears it, and so does every save of a shared header, whose words
+ * are stored on the shared element.
  */
-export type PageEditStamp = { updatedAt: Date };
+export type PageEditStamp = { editCountedOn: Date | null };
 
 function startOfUtcDay(now: Date): Date {
   const day = new Date(now.getTime());
@@ -670,76 +699,121 @@ function startOfUtcDay(now: Date): Date {
   return day;
 }
 
-/** True when this page has already counted today, so saving it again is free. */
-export function pageEditedToday(page: PageEditStamp, now = new Date()): boolean {
-  return page.updatedAt.getTime() >= startOfUtcDay(now).getTime();
+/** True when this page has already spent its edit today, so changing it again is free. */
+export function editCountedToday(page: PageEditStamp, now = new Date()): boolean {
+  return Boolean(page.editCountedOn && page.editCountedOn.getTime() >= startOfUtcDay(now).getTime());
 }
 
-/** What `assertEditAllowance` hands to the write that follows it. */
+/** The rows a counted edit may still be spent on: not counted today, or never. */
+function notCountedSince(day: Date): Prisma.SitePageWhereInput {
+  return { OR: [{ editCountedOn: null }, { editCountedOn: { lt: day } }] };
+}
+
+/** What `assertEditAllowance` hands to the write that follows it. `userId` is the account charged. */
 export type EditAllowance = { userId: string | null; now: Date };
 
+const PAUSED_FOR_NON_PAYMENT =
+  "Editing is paused because the last three payment attempts were declined. Your website is still online and nothing has been deleted — update your card and editing comes back straight away.";
+
 /**
- * Enforces the monthly page-edit allowance, refusing only a save that would
- * count: a page already changed today can always be saved again today, at the
- * limit or not. Without a page, every save is treated as one that counts.
+ * Refuses any change to a website while its plan is paused for non-payment —
+ * editing and publishing alike. The published website is untouched and stays
+ * online; see services/websiteDunning.ts for why that line is where it is.
+ */
+export async function assertEditingNotPaused(req: WebsiteActor, siteId?: string): Promise<void> {
+  const identity = await resolveSiteEntitlement(req, siteId);
+  if (await editingLockedForNonPayment(identity.purchaseId)) throw new WebsiteError(402, PAUSED_FOR_NON_PAYMENT);
+}
+
+/**
+ * The guard a change to a page's words goes through — the page save, a layout
+ * change, find & replace, putting a version back, copying a field out of one,
+ * inserting a section and saving a shared element — so that however a page is
+ * changed, it is the same edit.
+ *
+ * Refuses everything while editing is paused for non-payment, and refuses a
+ * change only when it would count and the month has no edits left for it: a
+ * page already changed today can always be changed again today, at the limit
+ * or not. `pages` are the pages the change would write — one, several for find
+ * & replace, none for a change that would alter nothing — and without them the
+ * change is treated as one that counts.
  *
  * Returns what `writePageEdit` counts with, taken at the same moment as the
  * check, so a save checked a moment before midnight UTC is counted on the day
  * it was allowed on.
  */
-export async function assertEditAllowance(req: WebsiteActor, siteId?: string, page?: PageEditStamp): Promise<EditAllowance> {
+export async function assertEditAllowance(req: WebsiteActor, siteId?: string, pages?: PageEditStamp | PageEditStamp[]): Promise<EditAllowance> {
   const status = await computeUserStorageAndUsage(req, siteId);
   const { plan, usage } = status;
   const now = new Date();
+  const identity = await resolveSiteEntitlement(req, siteId);
+  if (await editingLockedForNonPayment(identity.purchaseId)) throw new WebsiteError(402, PAUSED_FOR_NON_PAYMENT);
 
-  // Three declined renewals pause editing. The published website is untouched
-  // and stays online — see services/websiteDunning.ts for why that line is
-  // where it is.
-  const identity = await resolveEntitlement(req);
-  if (await editingLockedForNonPayment(identity.purchaseId)) {
-    throw new WebsiteError(
-      402,
-      "Editing is paused because the last three payment attempts were declined. Your website is still online and nothing has been deleted — update your card and editing comes back straight away.",
-    );
-  }
-  const wouldCount = !(page && pageEditedToday(page, now));
-  if (wouldCount && usage.editsUsed >= plan.editsLimit) {
+  const counting = pages === undefined ? 1 : (Array.isArray(pages) ? pages : [pages]).filter((page) => !editCountedToday(page, now)).length;
+  const left = Math.max(0, plan.editsLimit - usage.editsUsed);
+  if (counting > left) {
+    const upgrade = upgradeSentence(plan.tier, status.pricing.currency, (next) => next.editsLimitLabel);
+    // All of it or none of it: a replace that stopped at the second of three
+    // pages would leave a site saying two different things.
     throw new WebsiteError(
       403,
-      `Monthly page edit limit reached (${usage.editsUsed}/${plan.editsLimit}) on your ${yourPlan(status)} plan. Pages already changed today can still be edited.${upgradeSentence(plan.tier, status.pricing.currency, (next) => next.editsLimitLabel)}`,
+      left === 0
+        ? `Monthly page edit limit reached (${usage.editsUsed}/${plan.editsLimit}) on ${yourPlan(status)}. Pages already changed today can still be edited.${upgrade}`
+        : `This would change ${counting} pages that have not been changed today, and ${left} of this month's page edits ${left === 1 ? "is" : "are"} left (${usage.editsUsed}/${plan.editsLimit}) on ${yourPlan(status)}. Nothing was changed.${upgrade}`,
     );
   }
-  return { userId: identity.userId, now };
+  return { userId: identity.chargedUserId, now };
 }
 
 /**
- * Writes one save of a page, and spends an edit if — and only if — it is the
- * first change to that page today.
+ * Writes one change to a page, and spends an edit if — and only if — it is the
+ * first counted change to that page today.
  *
  * The question is asked by the write rather than before it. Two saves of one
- * page arriving together would both read "not changed today" if they read
- * first; as a condition on the update, the first to land moves `updatedAt` and
- * the second no longer matches. A save that loses on the revision as well
+ * page arriving together would both read "not counted today" if they read
+ * first; as a condition on the update, the first to land sets `editCountedOn`
+ * and the second no longer matches. A save that loses on the revision as well
  * writes nothing and counts nothing, so the caller answers it as the conflict it
  * always was.
  *
  * `where` is the caller's own compare-and-swap — the page, and the revision the
  * editor was showing — and `data` is what it would have written anyway. Run it
- * inside a transaction, so the edit is spent only if the save is kept.
+ * inside a transaction, so the edit is spent only if the change is kept.
+ * `counts: false` is a write that changes nothing anybody would see — putting a
+ * page back the way it already is — which neither spends an edit nor marks the
+ * page as having spent one.
  */
 export async function writePageEdit(
   tx: Prisma.TransactionClient,
   allowance: EditAllowance,
   where: { id: string; draftRevision: number },
   data: Prisma.SitePageUncheckedUpdateManyInput,
+  options: { counts?: boolean } = {},
 ): Promise<{ count: number; counted: boolean }> {
-  const first = await tx.sitePage.updateMany({ where: { ...where, updatedAt: { lt: startOfUtcDay(allowance.now) } }, data });
-  if (first.count) {
-    await bumpUsage(allowance.userId, "edits", 1, allowance.now, tx);
-    return { count: first.count, counted: true };
+  if (options.counts !== false) {
+    const today = startOfUtcDay(allowance.now);
+    const first = await tx.sitePage.updateMany({ where: { AND: [where, notCountedSince(today)] }, data: { ...data, editCountedOn: today } });
+    if (first.count) {
+      await bumpUsage(allowance.userId, "edits", 1, allowance.now, tx);
+      return { count: first.count, counted: true };
+    }
   }
   const again = await tx.sitePage.updateMany({ where, data });
   return { count: again.count, counted: false };
+}
+
+/**
+ * Spends a page's edit for today without writing the page, for a change whose
+ * words are stored elsewhere — a shared element, typed on this page. The same
+ * condition as `writePageEdit`, so it counts once a page a day however the
+ * page was changed; run it in the transaction that makes the change.
+ */
+export async function countPageEdit(tx: Prisma.TransactionClient, allowance: EditAllowance, pageId: string): Promise<boolean> {
+  const today = startOfUtcDay(allowance.now);
+  const marked = await tx.sitePage.updateMany({ where: { AND: [{ id: pageId }, notCountedSince(today)] }, data: { editCountedOn: today } });
+  if (!marked.count) return false;
+  await bumpUsage(allowance.userId, "edits", 1, allowance.now, tx);
+  return true;
 }
 
 /**
@@ -770,21 +844,37 @@ export async function assertTierFeatureAccess(
     const info = featureLabels[feature];
     throw new WebsiteError(
       403,
-      `${info.name} is not available on the ${yourPlan(status)} plan. Upgrade to ${info.minPlan} to unlock this feature.`,
+      `${info.name} is not available on the ${planLabel(status)} plan. Upgrade to ${info.minPlan} to unlock this feature.`,
     );
   }
 
   if (!options.skipUsageLimit && feature === "aiAssistant" && usage.aiPromptsUsed >= plan.aiPromptsLimit) {
     throw new WebsiteError(
       403,
-      `Monthly AI Assistant prompt limit reached (${usage.aiPromptsUsed}/${plan.aiPromptsLimit}) on your ${yourPlan(status)} plan.${upgradeSentence(plan.tier, status.pricing.currency, (next) => next.aiPromptsLimitLabel)}`,
+      `Monthly AI Assistant prompt limit reached (${usage.aiPromptsUsed}/${plan.aiPromptsLimit}) on ${yourPlan(status)}.${upgradeSentence(plan.tier, status.pricing.currency, (next) => next.aiPromptsLimitLabel)}`,
     );
   }
 }
 
-export async function recordAiPromptUsed(req: WebsiteActor): Promise<void> {
-  const identity = await resolveEntitlement(req);
-  await bumpUsage(identity.userId, "aiPrompts");
+/** Spends an AI prompt, against the same account `assertTierFeatureAccess` checked with this `siteId`. */
+export async function recordAiPromptUsed(req: WebsiteActor, siteId?: string | null): Promise<void> {
+  const identity = await resolveSiteEntitlement(req, siteId);
+  await bumpUsage(identity.chargedUserId, "aiPrompts");
+}
+
+/**
+ * The website a request is about, from its path — the same three shapes the
+ * access gate reads: `/sites/:id`, `/pages/:id` and `/shared/:id`. Null for a
+ * route about the account rather than one website.
+ */
+export async function websiteRequestSiteId(path: string): Promise<string | null> {
+  const site = /^\/sites\/([^/]+)(?:\/|$)/.exec(path);
+  if (site) return decodeURIComponent(site[1]!);
+  const page = /^\/pages\/([^/]+)(?:\/|$)/.exec(path);
+  if (page) return (await prisma.sitePage.findUnique({ where: { id: decodeURIComponent(page[1]!) }, select: { siteId: true } }))?.siteId ?? null;
+  const shared = /^\/shared\/([^/]+)(?:\/|$)/.exec(path);
+  if (shared) return (await prisma.sharedElement.findUnique({ where: { id: decodeURIComponent(shared[1]!) }, select: { siteId: true } }))?.siteId ?? null;
+  return null;
 }
 
 

@@ -13,6 +13,16 @@
  * - **A past-due subscription with no paid-up date was never locked.** A missing
  *   date answered "not locked", for ever.
  * - **A dollar customer's declined-payment notice quoted cedis.**
+ * - **A write that is not an edit excused the next one.** The counted day was
+ *   read from `updatedAt`, which a rename, a discard or any other write moves,
+ *   so at the limit one of those made the page free for the rest of the day.
+ *   The day is `editCountedOn` now, and only a counted edit writes it.
+ * - **Pro's ten AI runs a day were stated nowhere**, and the capacity runbook
+ *   still gave the two-a-day ceiling as the default.
+ *
+ * Every other way of changing a page's words is held to the same rule in
+ * `checks/websiteEditGuard.ts`; whose plan a colleague's edit is charged to is
+ * `checks/websitePlanScope.ts`.
  *
  * Needs Postgres and nothing else: mail goes to a sink on a local port, and the
  * AI jobs are only queued, never run. Every row it makes is removed at the end.
@@ -22,7 +32,7 @@ import express from "express";
 import net from "node:net";
 import type { AddressInfo } from "node:net";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -60,12 +70,13 @@ function boot(env: Record<string, string>, withLabel = false) {
   for (const key of ["AI_DAILY_USER_LIMIT", "AI_DAILY_LIMIT_EDITOR", "AI_DAILY_LIMIT_CARE", "AI_DAILY_LIMIT_MANAGED"]) delete childEnv[key];
   Object.assign(childEnv, env);
   const script = `const { dailyAiLimit } = await import(${JSON.stringify(capacityUrl)});
-    const label = ${withLabel} ? (await import(${JSON.stringify(tiersUrl)})).WEBSITE_TIER_PLANS.MANAGED.aiPromptsLimitLabel : null;
+    const plans = ${withLabel} ? (await import(${JSON.stringify(tiersUrl)})).WEBSITE_TIER_PLANS : null;
+    const label = plans ? { MANAGED: plans.MANAGED.aiPromptsLimitLabel, CARE: plans.CARE.aiPromptsLimitLabel, careHighlight: plans.CARE.featureHighlights.find((line) => /AI/.test(line)) } : null;
     console.log(JSON.stringify({ EDITOR: dailyAiLimit("EDITOR"), CARE: dailyAiLimit("CARE"), MANAGED: dailyAiLimit("MANAGED"), label }));
     process.exit(0);`;
   const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], { env: childEnv, encoding: "utf8", timeout: 60_000 });
   if (result.status !== 0) return { failed: result.stderr };
-  return JSON.parse(result.stdout.trim().split("\n").pop()!) as { EDITOR: number; CARE: number; MANAGED: number; label: string | null };
+  return JSON.parse(result.stdout.trim().split("\n").pop()!) as { EDITOR: number; CARE: number; MANAGED: number; label: { MANAGED: string; CARE: string; careHighlight: string } | null };
 }
 try {
   await check("unset, the plans get their own numbers: Starter 0, Pro 10, Business 50", () => {
@@ -85,14 +96,42 @@ try {
     const refused = boot({ AI_DAILY_LIMIT_MANAGED: "-1" });
     assert.ok("failed" in refused && /Invalid AI_DAILY_LIMIT_MANAGED/.test(refused.failed), JSON.stringify(refused));
   });
+  const labels = (env: Record<string, string>) => {
+    const booted = boot(env, true);
+    if ("failed" in booted) throw new Error(booted.failed);
+    return booted.label!;
+  };
   await check("Business's label states the number the queue enforces", () => {
-    const label = (env: Record<string, string>) => {
-      const booted = boot(env, true);
-      return "failed" in booted ? booted.failed : booted.label;
-    };
-    assert.equal(label({}), "Unlimited AI runs (fair use: 50 a day)");
-    assert.equal(label({ AI_DAILY_LIMIT_MANAGED: "30" }), "Unlimited AI runs (fair use: 30 a day)");
-    assert.equal(label({ AI_DAILY_USER_LIMIT: "5" }), "Unlimited AI runs (fair use: 5 a day)", "under the old ceiling, the label says the ceiling");
+    assert.equal(labels({}).MANAGED, "Unlimited AI runs (fair use: 50 a day)");
+    assert.equal(labels({ AI_DAILY_LIMIT_MANAGED: "30" }).MANAGED, "Unlimited AI runs (fair use: 30 a day)");
+    assert.equal(labels({ AI_DAILY_USER_LIMIT: "5" }).MANAGED, "Unlimited AI runs (fair use: 5 a day)", "under the old ceiling, the label says the ceiling");
+  });
+  await check("so does Pro's, in the label and in the plan's own list", () => {
+    // The eleventh run of a day is refused on Pro; a plan that said only "50 a
+    // month" let a customer find the daily number by being refused.
+    assert.equal(labels({}).CARE, "50 AI prompts / mo, up to 10 a day");
+    assert.equal(labels({}).careHighlight, "AI Copy & Section Assistant (50 runs/mo, up to 10 a day)");
+    assert.equal(labels({ AI_DAILY_LIMIT_CARE: "4" }).CARE, "50 AI prompts / mo, up to 4 a day");
+    assert.equal(labels({ AI_DAILY_USER_LIMIT: "3" }).careHighlight, "AI Copy & Section Assistant (50 runs/mo, up to 3 a day)");
+  });
+  // The public page and the runbook are not built from the numbers, so they are
+  // held to them here: each must say the defaults a deployment actually has.
+  const defaults = boot({});
+  if ("failed" in defaults) throw new Error(defaults.failed);
+  const repoFile = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
+  await check("the public Pro card states the daily number as well as the monthly one", () => {
+    const page = repoFile("../../website-builder.html");
+    assert.ok(page.includes(`AI assistant for copy and layout suggestions (50 requests a month, up to ${defaults.CARE} a day)`), "Pro's AI line on website-builder.html");
+    assert.ok(page.includes(`unlimited AI runs (fair use: ${defaults.MANAGED} a day)`), "Business's AI line on website-builder.html");
+  });
+  await check("the capacity runbook gives each plan's default, not the old two a day", () => {
+    const runbook = repoFile("../deploy/CAPACITY.md");
+    const step8 = /^8\. .*$/m.exec(runbook)?.[0] ?? "";
+    assert.ok(step8, "step 8 is where admission is switched on");
+    assert.ok(!/2\/user\/day/.test(runbook), "the two-a-day default is gone");
+    assert.ok(step8.includes(`Starter ${defaults.EDITOR}, Pro ${defaults.CARE}, Business ${defaults.MANAGED}`), "the per-plan defaults");
+    assert.ok(/AI_DAILY_LIMIT_EDITOR/.test(step8) && /AI_DAILY_LIMIT_CARE/.test(step8) && /AI_DAILY_LIMIT_MANAGED/.test(step8), "the variables that move them");
+    assert.ok(/`AI_DAILY_USER_LIMIT`[^.]*legacy[^.]*unset/i.test(step8), "the old variable is a legacy ceiling to leave unset");
   });
 } finally {
   rmSync(envDir, { recursive: true, force: true });
@@ -218,10 +257,11 @@ try {
   const editsUsed = async () => (await prisma.websiteUsage.findUnique({ where: { userId_period: { userId: owner.id, period: usagePeriod() } } }))?.edits ?? 0;
   const setEdits = (edits: number) => prisma.websiteUsage.upsert({ where: { userId_period: { userId: owner.id, period: usagePeriod() } }, create: { userId: owner.id, period: usagePeriod(), edits }, update: { edits } });
   const revisionOf = async (pageId: string) => (await prisma.sitePage.findUniqueOrThrow({ where: { id: pageId } })).draftRevision;
-  // "Yesterday", as far as the page row can tell: the stamp every change moves.
+  // A page whose last counted edit was yesterday, changed for the last time
+  // yesterday too.
   const lastChangedYesterday = (pageId: string) => {
     const lastNight = new Date(Date.now() - (Date.now() % 86_400_000) - 3_600_000);
-    return prisma.$executeRaw`UPDATE "SitePage" SET "updatedAt" = ${lastNight} WHERE "id" = ${pageId}`;
+    return prisma.$executeRaw`UPDATE "SitePage" SET "updatedAt" = ${lastNight}, "editCountedOn" = ${lastNight.toISOString().slice(0, 10)}::date WHERE "id" = ${pageId}`;
   };
   // Pages made a minute ago were changed today, and a page changed today edits
   // for free; these stand for pages a customer has had for a while.
@@ -346,6 +386,39 @@ try {
     assert.equal(await editsUsed(), 11);
     assert.equal((await restructure(pageB)).status, 200);
     assert.equal(await editsUsed(), 11);
+  });
+
+  /* ------------------------------- writes that are not edits excuse none -- */
+
+  console.log("\nWrites that are not edits unlock nothing at the limit");
+  await setEdits(30);
+  await check("discarding a draft does not make the page free today, whether or not there was one", async () => {
+    await lastChangedYesterday(pageB);
+    for (let i = 0; i < 2; i += 1) {
+      assert.equal((await call("DELETE", `/pages/${pageB}/draft`)).status, 204);
+      assert.equal((await save(pageB)).status, 403, "the save after it is still the page's first edit today");
+    }
+    assert.equal(await editsUsed(), 30);
+  });
+  await check("nor does renaming it to the name it already has", async () => {
+    const renamed = await call("PATCH", `/pages/${pageB}`, { title: "about" });
+    assert.equal(renamed.status, 200);
+    assert.equal((await save(pageB)).status, 403);
+    assert.equal(await editsUsed(), 30);
+  });
+  await check("nor any other write that moves the row's last-changed time", async () => {
+    await prisma.$executeRaw`UPDATE "SitePage" SET "updatedAt" = now() WHERE "id" = ${pageB}`;
+    assert.equal((await save(pageB)).status, 403);
+    assert.equal(await editsUsed(), 30);
+  });
+  await check("a page that did count today stays free today after its draft is discarded", async () => {
+    assert.equal((await call("DELETE", `/pages/${pageA}/draft`)).status, 204);
+    assert.equal((await save(pageA)).status, 200);
+    assert.equal(await editsUsed(), 30);
+  });
+  await check("the counted day is the edit's, and nothing else writes it", async () => {
+    const row = await prisma.sitePage.findUniqueOrThrow({ where: { id: pageB } });
+    assert.equal(row.editCountedOn?.toISOString().slice(0, 10), new Date(Date.now() - 86_400_000).toISOString().slice(0, 10), "still yesterday after a rename, two discards and a write");
   });
 
   /* ------------------------------------------- past due, with no date ---- */

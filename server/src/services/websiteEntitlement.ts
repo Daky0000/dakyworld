@@ -3,6 +3,7 @@ import type { Request } from "express";
 import type { Prisma, WebsitePlanTier } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { IS_PRODUCTION } from "../middleware/auth.js";
+import { assertWebsiteSiteAccess } from "./websiteAccess.js";
 
 /**
  * Who somebody is, what they are paying for, and what they have used.
@@ -57,17 +58,26 @@ const STAFF_TIER: WebsitePlanTier = "MANAGED";
 const STAFF_PERMISSION = "website.manage";
 
 export type Entitlement = {
+  /** The person signed in (or switched to, locally) — who the screens are about. */
   userId: string | null;
   email: string;
   name: string;
+  /**
+   * The account whose counters this plan's use is added to. The person
+   * themselves, except on a website with a paying owner: there it is the owner,
+   * because the plan is theirs and so is every edit made under it.
+   */
+  chargedUserId: string | null;
+  /** On a website's plan, the client whose websites share it — its storage is theirs. */
+  siteClientId: string | null;
   tier: WebsitePlanTier;
   /** When the paid subscription started, which is what the promotional window counts from. */
   subscribedAt: Date;
   /** The live subscription behind this tier, when the tier came from one. */
   purchaseId: string | null;
   currency: string;
-  /** "subscription", "staff", or "default" — worth showing on screen and in support. */
-  source: "subscription" | "staff" | "default" | "test-switch";
+  /** "subscription", "staff", "default", or "site" (the website owner's) — worth showing on screen and in support. */
+  source: "subscription" | "staff" | "default" | "test-switch" | "site";
   /** Local only: pretend the promotional months have passed. */
   simulateAfter3Months: boolean;
 };
@@ -196,6 +206,8 @@ async function loadEntitlement(req: WebsiteActor): Promise<Entitlement> {
         userId: target.id,
         email: target.email,
         name: target.name,
+        chargedUserId: target.id,
+        siteClientId: null,
         tier: subscription?.tier ?? DEFAULT_TIER,
         subscribedAt: subscription?.activatedAt ?? subscription?.createdAt ?? new Date(),
         purchaseId: subscription?.id ?? null,
@@ -213,6 +225,8 @@ async function loadEntitlement(req: WebsiteActor): Promise<Entitlement> {
       userId: null,
       email: "",
       name: "Not signed in",
+      chargedUserId: null,
+      siteClientId: null,
       tier: DEFAULT_TIER,
       subscribedAt: new Date(),
       purchaseId: null,
@@ -228,6 +242,8 @@ async function loadEntitlement(req: WebsiteActor): Promise<Entitlement> {
       userId: user.id,
       email: user.email,
       name: user.name,
+      chargedUserId: user.id,
+      siteClientId: null,
       tier: subscription.tier,
       subscribedAt: subscription.activatedAt ?? subscription.createdAt,
       purchaseId: subscription.id,
@@ -242,12 +258,96 @@ async function loadEntitlement(req: WebsiteActor): Promise<Entitlement> {
     userId: user.id,
     email: user.email,
     name: user.name,
+    chargedUserId: user.id,
+    siteClientId: null,
     tier: isStaff ? STAFF_TIER : DEFAULT_TIER,
     subscribedAt: user.createdAt ?? new Date(),
     purchaseId: null,
     currency: "GHS",
     source: isStaff ? "staff" : "default",
     simulateAfter3Months,
+  };
+}
+
+/* ------------------------------------------------- a website's plan ----- */
+
+/**
+ * Who pays for a website: the live subscription of the client it belongs to,
+ * and the account that subscription belongs to. Null when there is none — a
+ * site of DakyXTech's own, a client on a retainer rather than a subscription,
+ * or one whose subscription has run out.
+ *
+ * The same rows and the same grace rules as a person's own subscription
+ * (`liveSubscription`), found from the other end. A purchase made before its
+ * buyer had an account is matched to the account with that address, as it is
+ * there; with no account at all there is nobody to count against, so the
+ * website has no paying owner.
+ */
+export async function sitePayer(siteId: string, now = new Date()) {
+  const site = await prisma.site.findUnique({ where: { id: siteId }, select: { clientId: true } });
+  if (!site?.clientId) return null;
+  const rows = await prisma.websitePurchase.findMany({
+    where: { clientId: site.clientId, setupPaidAt: { not: null } },
+    orderBy: [{ activatedAt: "desc" }, { createdAt: "desc" }],
+    select: { id: true, tier: true, currency: true, activatedAt: true, createdAt: true, nextBillingAt: true, billingState: true, userId: true, email: true },
+  });
+  const purchase = rows.find((row) => stillEntitled(row, now));
+  if (!purchase) return null;
+  const userId = purchase.userId
+    ?? (await prisma.user.findFirst({ where: { email: { equals: purchase.email, mode: "insensitive" } }, select: { id: true } }))?.id
+    ?? null;
+  if (!userId) return null;
+  return { ...purchase, userId, clientId: site.clientId };
+}
+
+/**
+ * What somebody may do on one website, and whose counters it is added to.
+ *
+ * A website with a paying owner is on the owner's plan for the people working
+ * on it — a colleague the owner invited shares its limits, its AI and its
+ * storage — and the edits, imports, AI runs and storage used there are the
+ * owner's, whoever used them, DakyXTech staff included. Business sells fifteen
+ * team accounts, and until 13 Oct 2026 every one of them was on Starter here,
+ * because a colleague has no subscription of their own. A website with no
+ * paying owner is on the person's own plan, as before.
+ *
+ * Only whose plan applies is decided here. Who may act on the website is still
+ * the membership's alone, and the site must be one this person can see: a
+ * website id is something a request carries, and answering with its owner's
+ * plan for anybody who names it would tell them who pays for what.
+ */
+const siteEntitlements = new WeakMap<WebsiteActor, Map<string, Promise<Entitlement>>>();
+export function resolveSiteEntitlement(req: WebsiteActor, siteId?: string | null): Promise<Entitlement> {
+  if (!siteId) return resolveEntitlement(req);
+  let entries = siteEntitlements.get(req);
+  if (!entries) { entries = new Map(); siteEntitlements.set(req, entries); }
+  const key = JSON.stringify([req.dbUser?.id, siteId, req.headers["x-dw-test-user"], getSwitchedUserEmail(), req.headers["x-dw-simulate-months"]]);
+  const known = entries.get(key);
+  if (known) return known;
+  const result = loadSiteEntitlement(req, siteId);
+  entries.set(key, result);
+  // A refusal is not remembered; asking again on the same request asks again.
+  result.catch(() => entries.delete(key));
+  return result;
+}
+async function loadSiteEntitlement(req: WebsiteActor, siteId: string): Promise<Entitlement> {
+  await assertWebsiteSiteAccess(req, siteId);
+  const [own, payer] = await Promise.all([resolveEntitlement(req), sitePayer(siteId)]);
+  if (!payer) return own;
+  // Staff keep the whole product on a client's website — fixing something a
+  // client asked for must not stop at the client's limit, and a Pro client's
+  // included developer time is spent in tools Pro does not sell — but what they
+  // use there is the client's, as a colleague's is.
+  if (own.source === "staff") return { ...own, chargedUserId: payer.userId, siteClientId: payer.clientId };
+  return {
+    ...own,
+    chargedUserId: payer.userId,
+    siteClientId: payer.clientId,
+    tier: payer.tier,
+    subscribedAt: payer.activatedAt ?? payer.createdAt,
+    purchaseId: payer.id,
+    currency: payer.currency,
+    source: "site",
   };
 }
 

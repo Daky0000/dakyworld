@@ -850,7 +850,7 @@ export async function commitPackageToSite(input: {
   if (totalAssetBytes > 0) {
     recordMediaStorageAdded(req, totalAssetBytes);
   }
-  await recordImportUsed(req);
+  await recordImportUsed(req, siteId);
 
   return {
     siteId: site.id,

@@ -17,6 +17,7 @@ import { withWebsitePublishLocks, commitPublication } from "./websitePublishing.
 import { advancePublishJob, failPublishJob, publishJobCommitted, publishJobView, startPublishJob } from "./websitePublishJobs.js";
 import { createHash } from "node:crypto";
 import { ensureHostedAddress } from "./websiteHosting.js";
+import { assertEditAllowance, assertEditingNotPaused, countPageEdit } from "./websiteTierPlans.js";
 
 /**
  * Shared elements, from the database side.
@@ -534,7 +535,12 @@ export function registerWebsiteShared(router: Router, access: Access) {
     if (!instance) throw new WebsiteError(400, "This page does not carry that shared element.");
     if (instance.state !== "LINKED") throw new WebsiteError(409, "This page's copy is detached, so changes here are its own. Re-link it to edit the shared element.");
 
-    const source = await pageSource(site, await pageOf(instance.pageId));
+    // An edit of the page it was typed on, as the same words saved through that
+    // page's own draft are: once a page a day, and refused while editing is
+    // paused or the month has run out.
+    const typedOn = await pageOf(instance.pageId);
+    const allowance = await assertEditAllowance(req, site.id, typedOn);
+    const source = await pageSource(site, typedOn);
     const fields = discoverFields(source.html).fields;
     const slots = slotsOf(element);
     const next: Record<string, FieldValue> = { ...draftOf(element) };
@@ -550,16 +556,19 @@ export function registerWebsiteShared(router: Router, access: Access) {
       else next[slotKey] = cleaned;
     }
 
-    const saved = await prisma.sharedElement.updateMany({
-      where: { id: element.id, draftRevision: element.draftRevision },
-      data: {
-        draft: Object.keys(next).length ? (next as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
-        draftRevision: { increment: 1 },
-        draftSavedAt: new Date(),
-        draftSavedById: req.dbUser?.id ?? null,
-      },
+    await prisma.$transaction(async (tx) => {
+      const saved = await tx.sharedElement.updateMany({
+        where: { id: element.id, draftRevision: element.draftRevision },
+        data: {
+          draft: Object.keys(next).length ? (next as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
+          draftRevision: { increment: 1 },
+          draftSavedAt: new Date(),
+          draftSavedById: req.dbUser?.id ?? null,
+        },
+      });
+      if (!saved.count) throw new WebsiteError(409, `${element.name} was changed on another page while this was saving. Reopen this page to see it as it now is.`);
+      await countPageEdit(tx, allowance, typedOn.id);
     });
-    if (!saved.count) throw new WebsiteError(409, `${element.name} was changed on another page while this was saving. Reopen this page to see it as it now is.`);
 
     res.json({ revision: element.draftRevision + 1, values: next });
   }));
@@ -689,8 +698,11 @@ export function registerWebsiteShared(router: Router, access: Access) {
    * if any of them moved.
    */
   router.post("/shared/:sharedId/publish", handler(async (req, res) => {
+    // Paused for non-payment means nothing changes on the site; the queue
+    // checked this, publishing in the request did not.
+    const { element, site } = await loadShared(req, req.params.sharedId);
+    await assertEditingNotPaused(req, site.id);
     if (capacity.admission) {
-      const { element, site } = await loadShared(req, req.params.sharedId);
       res.status(202).json(await enqueueWebsiteWork(req, site.id, "PUBLISH_SHARED", { sharedId: element.id, body: req.body }));
       return;
     }

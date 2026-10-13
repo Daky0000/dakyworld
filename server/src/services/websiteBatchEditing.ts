@@ -11,9 +11,11 @@ import type { Request, Response, Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { setSiteSetting } from "./websiteSiteSettings.js";
-import { pageSource } from "./website/site.js";
+import type { Prisma, SitePage } from "@prisma/client";
+import { pageSource, WebsiteError } from "./website/site.js";
 import { applyValues, discoverFields, editingSource, fieldValues, type FieldValue } from "./website/index.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
+import { assertEditAllowance, writePageEdit } from "./websiteTierPlans.js";
 
 export type ContentMatchOccurrence = {
   pageId: string;
@@ -50,6 +52,31 @@ function readGlobalTokens(settings: unknown): GlobalContentToken[] {
     return s.globalContent as GlobalContentToken[];
   }
   return DEFAULT_GLOBAL_TOKENS;
+}
+
+/**
+ * Writes drafts across several pages as one change: every page an edit, once a
+ * page a day, through the same guard as a single save, and all of them or none.
+ *
+ * A replace that stopped on the second of three pages — the plan ran out, or
+ * somebody saved one of them meanwhile — would leave the site saying two
+ * different things, so either refuses the lot. Each page is written against
+ * the revision it was read at; this used to overwrite a colleague's save made
+ * while the pages were being read.
+ */
+async function writeDrafts(
+  req: Request,
+  siteId: string,
+  changes: Array<{ page: SitePage; data: Prisma.SitePageUncheckedUpdateManyInput }>,
+): Promise<void> {
+  if (!changes.length) return;
+  const allowance = await assertEditAllowance(req, siteId, changes.map(({ page }) => page));
+  await prisma.$transaction(async (tx) => {
+    for (const { page, data } of changes) {
+      const written = await writePageEdit(tx, allowance, { id: page.id, draftRevision: page.draftRevision }, { ...data, draftRevision: { increment: 1 } });
+      if (!written.count) throw new WebsiteError(409, `${page.title} was saved by somebody else while this was being applied. Nothing was changed — search again to see the pages as they are now.`);
+    }
+  }, { timeout: 30_000 });
 }
 
 export function registerWebsiteBatchEditingRoutes(router: Router): void {
@@ -145,7 +172,7 @@ export function registerWebsiteBatchEditingRoutes(router: Router): void {
         : null;
 
       let appliedCount = 0;
-      const modifiedPages: string[] = [];
+      const changes: Parameters<typeof writeDrafts>[2] = [];
 
       for (const page of site.pages) {
         const source = await pageSource(site, page, { fresh: true });
@@ -177,18 +204,11 @@ export function registerWebsiteBatchEditingRoutes(router: Router): void {
         }
 
         if (pageChanged) {
-          await prisma.sitePage.update({
-            where: { id: page.id },
-            data: {
-              draft: newDraft as any,
-              draftSavedAt: new Date(),
-              draftRevision: { increment: 1 },
-              draftSavedById: req.dbUser?.id ?? null,
-            },
-          });
-          modifiedPages.push(page.title);
+          changes.push({ page, data: { draft: newDraft as unknown as Prisma.InputJsonValue, draftSavedAt: new Date(), draftSavedById: req.dbUser?.id ?? null } });
         }
       }
+      await writeDrafts(req, site.id, changes);
+      const modifiedPages = changes.map(({ page }) => page.title);
 
       await prisma.siteAuditEvent.create({
         data: {
@@ -260,6 +280,7 @@ export function registerWebsiteBatchEditingRoutes(router: Router): void {
       // If syncToPages is true: find any occurrences of changed tokens and update draft
       const changedTokens = nextTokens.filter(t => oldMap.has(t.key) && oldMap.get(t.key) !== t.value);
       let syncedCount = 0;
+      const changes: Parameters<typeof writeDrafts>[2] = [];
 
       if (body.syncToPages && changedTokens.length > 0) {
         for (const page of site.pages) {
@@ -293,17 +314,12 @@ export function registerWebsiteBatchEditingRoutes(router: Router): void {
           }
 
           if (pageMutated) {
-            await prisma.sitePage.update({
-              where: { id: page.id },
-              data: {
-                draft: updatedDraft as any,
-                draftSavedAt: new Date(),
-                draftRevision: { increment: 1 },
-              },
-            });
+            changes.push({ page, data: { draft: updatedDraft as unknown as Prisma.InputJsonValue, draftSavedAt: new Date() } });
           }
         }
       }
+      // Changing the pages a value appears on is editing those pages.
+      await writeDrafts(req, site.id, changes);
 
       await setSiteSetting(site.id, "globalContent", nextTokens);
 

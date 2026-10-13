@@ -1163,13 +1163,44 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
 - **An edit is a page changed on a UTC day.** Every autosave used to spend one
   of the plan's monthly edits. `writePageEdit` decides inside the conditional
   update itself, so two saves arriving together cannot both count; the
-  allowance refuses only a save that would count. The day is read from
-  `updatedAt`, not `draftSavedAt`, which publishing, discarding and every
-  shared-element save clear. `checks/websitePlanLimits.ts`.
+  allowance refuses only a change that would count. **The day is
+  `SitePage.editCountedOn`, and only a counted edit writes it** — never
+  `updatedAt`, which a rename, a discard, a publish or any other write moves:
+  read from there, one of those at the limit made the page free for the rest
+  of the day (`checks/websitePlanLimits.ts`). Nor `draftSavedAt`, which
+  publishing, discarding and every shared-element save clear.
+- **Changing a page's words goes through that one guard** —
+  `assertEditAllowance` then `writePageEdit` (or `countPageEdit` when the words
+  live on a shared element): the page save, a layout change, find & replace and
+  the global-content sync (once for each page touched, all or nothing, each
+  page written against the revision it was read at), restoring a version (an
+  edit only when the page would read differently — emptying the draft is a
+  discard), copying a field out of a version, inserting a section, and saving a
+  shared element (an edit of the page it was typed on). Paused for non-payment
+  refuses all of them, and the publish routes too, which with admission off had
+  checked nothing. Publishing never counts. A route that writes a page's draft
+  without it is free at the limit and open while paused — give a new one the
+  guard. `checks/websiteEditGuard.ts`.
+- **On a website, the plan is the website's.** `resolveSiteEntitlement` finds
+  the site's paying owner (`Site.clientId` → the client's live purchase → its
+  account) and puts everybody on that website under that plan, with its edits,
+  imports, AI runs (`WebsiteWorkJob.chargedUserId`, daily and monthly, refunds
+  included) and storage (all of that client's websites) counted against the
+  owner. Business sells fifteen team accounts, and each colleague used to be on
+  Starter there — refused AI, refused at thirty edits, measured against 50 MB —
+  while every colleague on a Starter website had thirty edits of their own.
+  DakyX staff keep the whole product on a client's website (a fix the client
+  asked for must not stop at the client's limit or a payment pause) but what
+  they use is the client's. A website with no paying owner is on the person's
+  own plan, as before. It decides whose plan applies, never who may act: the
+  membership still does, and a site the person cannot see is a 404, not its
+  owner's plan. A colleague is told "this website's" plan, and is not shown the
+  owner's purchase. `checks/websitePlanScope.ts`.
 - **The daily AI allowance is the plan's** — Starter 0, Pro 10, Business 50
   (`AI_DAILY_LIMIT_EDITOR/_CARE/_MANAGED`); the legacy `AI_DAILY_USER_LIMIT`,
-  when set, still caps every plan. Business's label reads the same number the
-  queue enforces.
+  when set, still caps every plan. Pro's and Business's labels read the same
+  numbers the queue enforces; the public page states the defaults, and
+  `deploy/CAPACITY.md` step 8 gives them.
 - **dakyx.com is not a trusted origin.** It was on `TRUSTED_ORIGINS`, the one
   list behind the credentialed CORS grant *and* `refuseForeignWrites`, and the
   marketing site is edited with this very builder: script that landed there

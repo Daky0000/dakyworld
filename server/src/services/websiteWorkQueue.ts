@@ -6,7 +6,7 @@ import { capacity, CapacityError, dailyAiLimit } from "../lib/capacity.js";
 import { effectivePermissions } from "../lib/accessRoles.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
 import { WebsiteError } from "./website/site.js";
-import { resolveEntitlement, usagePeriod } from "./websiteEntitlement.js";
+import { resolveSiteEntitlement, usagePeriod } from "./websiteEntitlement.js";
 import { WEBSITE_TIER_PLANS } from "./websiteTierPlans.js";
 import { withWebsiteWork, WorkCancelledError, UncertainExternalError } from "../lib/websiteWorkContext.js";
 import { editingLockedForNonPayment } from "./websiteDunning.js";
@@ -21,9 +21,13 @@ export async function enqueueWebsiteWork(req: Request, siteId: string, kind: Web
   const isAi = !isPublish(kind);
   await assertWebsiteSiteAccess(req, siteId, isAi ? "edit" : "publish");
   const userId = req.dbUser!.id;
-  const entitlement = await resolveEntitlement(req);
+  // The website's plan: a colleague on a Business website has its AI runs, and
+  // they are counted against the account that pays for it (`chargedUserId`),
+  // daily and monthly. The job stays the colleague's, for its access checks.
+  const entitlement = await resolveSiteEntitlement(req, siteId);
   if (await editingLockedForNonPayment(entitlement.purchaseId)) throw new WebsiteError(403, "Editing is paused until the subscription payment is resolved.");
   if (entitlement.userId !== userId) throw new WebsiteError(409, "Sign in as this account before submitting queued work.");
+  const chargedUserId = entitlement.chargedUserId ?? userId;
   const plan = WEBSITE_TIER_PLANS[entitlement.tier];
   if (isAi && !plan.features[kind === "ASSISTANT" ? "aiAssistant" : "aiBuilderAgent"]) throw new WebsiteError(403, "Your plan does not include this AI feature.");
   const idempotencyKey = req.get("Idempotency-Key");
@@ -42,7 +46,8 @@ export async function enqueueWebsiteWork(req: Request, siteId: string, kind: Web
     if (isAi && Number(process.env.RAILWAY_PROJECTED_MONTHLY_USD ?? 0) >= 45) throw new CapacityError("New AI jobs are paused by the hosting budget. Editing remains available.", 429, 3600);
     const day = new Date(); day.setUTCHours(0, 0, 0, 0);
     const [daily, pending, ownPending] = await Promise.all([
-      tx.websiteWorkJob.count({ where: { userId, kind: { in: aiKinds }, createdAt: { gte: day } } }),
+      // Jobs from before `chargedUserId` existed were counted against whoever asked.
+      tx.websiteWorkJob.count({ where: { OR: [{ chargedUserId }, { chargedUserId: null, userId: chargedUserId }], kind: { in: aiKinds }, createdAt: { gte: day } } }),
       tx.websiteWorkJob.count({ where: { state: "QUEUED", kind: { in: isAi ? aiKinds : publishKinds } } }),
       tx.websiteWorkJob.count({ where: { userId, state: "QUEUED", kind: { in: isAi ? aiKinds : publishKinds } } }),
     ]);
@@ -55,11 +60,11 @@ export async function enqueueWebsiteWork(req: Request, siteId: string, kind: Web
     if (pending >= (isAi ? budgetLimit : 200) || ownPending >= 2) throw new CapacityError(`${isAi ? "The AI" : "The publishing"} queue is full. Please try again later.`);
     if (isAi) {
     const period = usagePeriod();
-    const usage = await tx.websiteUsage.upsert({ where: { userId_period: { userId, period } }, create: { userId, period }, update: {} });
+    const usage = await tx.websiteUsage.upsert({ where: { userId_period: { userId: chargedUserId, period } }, create: { userId: chargedUserId, period }, update: {} });
     if (usage.aiPrompts >= plan.aiPromptsLimit) throw new CapacityError("Your monthly AI allowance is used.", 429, 3600);
     await tx.websiteUsage.update({ where: { id: usage.id }, data: { aiPrompts: { increment: 1 } } });
     }
-    const job = await tx.websiteWorkJob.create({ data: { userId, siteId, kind, idempotencyKey, inputHash,
+    const job = await tx.websiteWorkJob.create({ data: { userId, chargedUserId, siteId, kind, idempotencyKey, inputHash,
       usagePeriod: isAi ? usagePeriod() : null, usageState: isAi ? "RESERVED" : "NONE", input: JSON.parse(serialized) as Prisma.InputJsonValue } });
     return { queued: true as const, jobId: job.id, siteId, state: job.state };
   });
@@ -71,7 +76,7 @@ async function jobPrincipal(job: WebsiteWorkJob) {
   if (!user?.active) throw new WebsiteError(403, "This account no longer has access.");
   const req = { dbUser: user, permissions: effectivePermissions(user), headers: {}, params: { siteId: job.siteId } } as unknown as Request;
   await assertWebsiteSiteAccess(req, job.siteId, isPublish(job.kind) ? "publish" : "edit");
-  const entitlement = await resolveEntitlement(req);
+  const entitlement = await resolveSiteEntitlement(req, job.siteId);
   if (await editingLockedForNonPayment(entitlement.purchaseId)) throw new WebsiteError(403, "Editing is paused until the subscription payment is resolved.");
   if (!isPublish(job.kind) && !WEBSITE_TIER_PLANS[entitlement.tier].features[job.kind === "ASSISTANT" ? "aiAssistant" : "aiBuilderAgent"]) throw new WebsiteError(403, "This account no longer has the required AI feature.");
   return req;
@@ -228,8 +233,10 @@ export async function settleWebsiteUsage(tx: Prisma.TransactionClient, jobId: st
   if (job.usageState !== "RESERVED" || !job.usagePeriod) return;
   const changed = await tx.websiteWorkJob.updateMany({ where: { id: jobId, usageState: "RESERVED" },
     data: { usageState: used ? "ACCOUNTED" : "RELEASED" } });
+  // Back to the account the run was counted against, which on somebody else's
+  // website is not the person who asked.
   if (changed.count && !used) await tx.websiteUsage.updateMany({
-    where: { userId: job.userId, period: job.usagePeriod, aiPrompts: { gt: 0 } }, data: { aiPrompts: { decrement: 1 } },
+    where: { userId: job.chargedUserId ?? job.userId, period: job.usagePeriod, aiPrompts: { gt: 0 } }, data: { aiPrompts: { decrement: 1 } },
   });
 }
 

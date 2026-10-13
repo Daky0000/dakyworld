@@ -26,7 +26,7 @@ import { registerWebsiteReadiness } from "../services/websiteReadiness.js";
 import { registerWebsiteSurvey } from "../services/websiteSiteSurvey.js";
 import { registerWebsiteOnboarding } from "../services/websiteOnboarding.js";
 import { registerGithubAppRoutes, registerGithubConnectRoutes } from "../services/githubAppRoutes.js";
-import { assertEditAllowance, assertTierFeatureAccess, recordAiPromptUsed, registerWebsiteTierRoutes, websiteTierFeature, writePageEdit } from "../services/websiteTierPlans.js";
+import { assertEditAllowance, assertEditingNotPaused, assertTierFeatureAccess, recordAiPromptUsed, registerWebsiteTierRoutes, websiteRequestSiteId, websiteTierFeature, writePageEdit } from "../services/websiteTierPlans.js";
 import { registerWebsitePublishJobs } from "../services/websitePublishJobs.js";
 import { hostedUrlFor, registerWebsiteHosting } from "../services/websiteHosting.js";
 import { registerSubscriberSelfService } from "../services/websiteSubscriberSelfService.js";
@@ -91,19 +91,21 @@ websiteRouter.use(json({ limit: "16mb" }));
 // Plan features, ahead of every route. The table is `websiteTierFeature`;
 // registering this before any route means no route's position in this file
 // decides whether its plan is checked — it used to sit below ten register
-// calls and saw none of their routes.
+// calls and saw none of their routes. The plan is the website's: a colleague
+// on a Business website has its AI assistant, and the run is the owner's.
 websiteRouter.use((req, _res, next) => {
   void (async () => {
     const feature = websiteTierFeature(req.path);
     if (!feature) return;
+    const siteId = (await websiteRequestSiteId(req.path)) ?? undefined;
     if (feature === "aiBuilderAgent") {
-      await assertTierFeatureAccess(req, "aiBuilderAgent");
-      if (!capacity.admission && req.method === "POST" && /\/agent\/(?:plan|apply)\/?$/.test(req.path)) await recordAiPromptUsed(req);
+      await assertTierFeatureAccess(req, "aiBuilderAgent", siteId);
+      if (!capacity.admission && req.method === "POST" && /\/agent\/(?:plan|apply)\/?$/.test(req.path)) await recordAiPromptUsed(req, siteId);
     } else if (feature === "aiAssistant") {
-      await assertTierFeatureAccess(req, "aiAssistant", undefined, { skipUsageLimit: capacity.admission && /\/pages\/[^/]+\/assistant\/?$/.test(req.path) });
-      if (!capacity.admission && req.method === "POST") await recordAiPromptUsed(req);
+      await assertTierFeatureAccess(req, "aiAssistant", siteId, { skipUsageLimit: capacity.admission && /\/pages\/[^/]+\/assistant\/?$/.test(req.path) });
+      if (!capacity.admission && req.method === "POST") await recordAiPromptUsed(req, siteId);
     } else {
-      await assertTierFeatureAccess(req, feature);
+      await assertTierFeatureAccess(req, feature, siteId);
     }
   })().then(() => next(), next);
 });
@@ -888,8 +890,11 @@ websiteRouter.get("/pages/:pageId/preview", async (req, res, next) => {
 
 websiteRouter.post("/pages/:pageId/publish", async (req, res, next) => {
   try {
+    // Paused for non-payment means nothing changes on the site, published or
+    // not. The queue checked this; publishing in the request did not.
+    const { site, page } = await loadPage(req, req.params.pageId);
+    await assertEditingNotPaused(req, site.id);
     if (capacity.admission) {
-      const { site, page } = await loadPage(req, req.params.pageId);
       if (req.body?.ifRevision !== undefined && req.body.ifRevision !== page.draftRevision) throw new WebsiteError(409, "The draft changed after your review. Review it again before publishing.");
       res.status(202).json(await enqueueWebsiteWork(req, site.id, "PUBLISH_PAGE", { pageId: page.id, body: { ...req.body, ifRevision: page.draftRevision } }));
       return;
@@ -980,16 +985,18 @@ websiteRouter.post("/pages/:pageId/versions/:versionId/cherry-pick", async (req,
       [body.fieldId]: fieldVal,
     };
 
-    const updated = await prisma.sitePage.update({
-      where: { id: page.id },
-      data: {
-        draft: updatedDraft as any,
-        draftSavedAt: new Date(),
-        draftRevision: { increment: 1 },
-      },
-    });
+    // An edit like any other, and written against the revision it was read at:
+    // it used to overwrite whatever another editor saved in between.
+    const allowance = await assertEditAllowance(req, site.id, page);
+    const written = await prisma.$transaction((tx) => writePageEdit(tx, allowance, { id: page.id, draftRevision: page.draftRevision }, {
+      draft: updatedDraft as unknown as Prisma.InputJsonValue,
+      draftSavedAt: new Date(),
+      draftSavedById: req.dbUser?.id ?? null,
+      draftRevision: { increment: 1 },
+    }));
+    if (!written.count) throw new WebsiteError(409, "The draft changed while that field was being copied. Reopen the page and copy it again.");
 
-    res.json({ ok: true, draftRevision: updated.draftRevision, copiedField: body.fieldId });
+    res.json({ ok: true, draftRevision: page.draftRevision + 1, copiedField: body.fieldId });
   } catch (err) {
     next(err);
   }
@@ -1017,18 +1024,21 @@ websiteRouter.post("/pages/:pageId/versions/:versionId/restore", async (req, res
     const { values, dropped } = versionDraft(source.html, currentValues, version.html, Boolean(source.sourceFile), `Restored complete page from version ${version.number}`);
 
     const empty = Object.keys(values).length === 0;
+    // An edit only when it changes what the page says. Emptying the draft puts
+    // the page back to what it already says, as discarding does, and restoring
+    // the version a draft already restores changes nothing either.
+    const view = (draft: Record<string, FieldValue>) => applyValues(editingSource(source.html, draft), fieldValues(draft)).html;
+    const counts = !empty && view(values) !== view(currentValues);
+    const allowance = await assertEditAllowance(req, site.id, counts ? page : []);
     const expected = req.body?.ifRevision === undefined ? page.draftRevision : z.number().int().nonnegative().parse(req.body.ifRevision);
-    const restored = await prisma.sitePage.updateMany({
-      where: { id: page.id, draftRevision: expected },
-      data: {
-        // A nullable Json column clears with `Prisma.DbNull`; a plain `null`
-        // would be the JSON value `null`, which is not the same as no draft.
-        draft: empty ? Prisma.DbNull : (values as unknown as Prisma.InputJsonValue),
-        draftSavedAt: empty ? null : new Date(),
-        draftSavedById: empty ? null : req.dbUser?.id ?? null,
-        draftRevision: { increment: 1 },
-      },
-    });
+    const restored = await prisma.$transaction((tx) => writePageEdit(tx, allowance, { id: page.id, draftRevision: expected }, {
+      // A nullable Json column clears with `Prisma.DbNull`; a plain `null`
+      // would be the JSON value `null`, which is not the same as no draft.
+      draft: empty ? Prisma.DbNull : (values as unknown as Prisma.InputJsonValue),
+      draftSavedAt: empty ? null : new Date(),
+      draftSavedById: empty ? null : req.dbUser?.id ?? null,
+      draftRevision: { increment: 1 },
+    }, { counts }));
     if (!restored.count) throw new WebsiteError(409, "The draft changed while that version was being restored. Reopen the page before restoring.");
     res.json({ restored: Object.keys(values).length, dropped, empty });
   } catch (err) {
@@ -1160,8 +1170,9 @@ websiteRouter.get("/pages/:pageId/versions/:versionId/diff", async (req, res, ne
 
 websiteRouter.post("/pages/:pageId/versions/:versionId/publish", async (req, res, next) => {
   try {
+    const { site, page } = await loadPage(req, req.params.pageId);
+    await assertEditingNotPaused(req, site.id);
     if (capacity.admission) {
-      const { site, page } = await loadPage(req, req.params.pageId);
       res.status(202).json(await enqueueWebsiteWork(req, site.id, "PUBLISH_VERSION", {
         pageId: page.id, versionId: req.params.versionId, body: { ...req.body, ifRevision: req.body?.ifRevision ?? page.draftRevision },
       }));

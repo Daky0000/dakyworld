@@ -528,7 +528,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       throw error;
     });
     const extractedPalette = await autoPopulateSitePaletteFromHtml(site.id, preparedHtml).catch(() => []);
-    await recordImportUsed(req);
+    await recordImportUsed(req, site.id);
     const { html: _html, ...captureSummary } = capturedMedia;
     res.status(201).json({ id: page.id, fields: count, capturedMedia: captureSummary, palette: extractedPalette });
   }));
