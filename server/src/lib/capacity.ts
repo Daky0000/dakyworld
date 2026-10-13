@@ -44,6 +44,16 @@ export const capacity = {
   writeConcurrency: integerSetting("API_WRITE_CONCURRENCY", 20, 1, 100),
 };
 if (!["combined", "api", "worker"].includes(capacity.role)) throw new Error("Invalid SERVICE_ROLE");
+// Said at boot because nothing else says it: the plan label and the refusal both
+// quote the capped number, so "Unlimited AI runs (fair use: 2 a day)" on Business
+// was the only sign that a leftover AI_DAILY_USER_LIMIT was in force.
+{
+  const ceiling = capacity.aiDailyCeiling;
+  const capped = ceiling === null ? [] : (Object.keys(capacity.aiDailyByTier) as WebsitePlanTier[]).filter((tier) => capacity.aiDailyByTier[tier] > ceiling);
+  if (capped.length) {
+    console.warn(`[capacity] AI_DAILY_USER_LIMIT=${ceiling} is set and caps ${capped.join(", ")} below their own AI_DAILY_LIMIT_* value. Unset it to let each plan's number apply.`);
+  }
+}
 if (capacity.cache && !process.env.REDIS_URL) throw new Error("RESPONSE_CACHE_ENABLED requires REDIS_URL");
 
 /**
