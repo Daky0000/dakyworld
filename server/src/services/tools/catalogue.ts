@@ -73,7 +73,7 @@ import { companyProfile, contactBlock } from "../systemProfile.js";
 // Circular with services/agents/hiring.ts, which imports listAllTools from
 // here. Safe because every reference in both directions is inside a function
 // body rather than at module scope — see the note at the top of hiring.ts.
-import { closeGap, findOverlaps, hirePolicy, openGaps, proposeHire, searchRoster } from "../agents/hiring.js";
+import { closeGap, findOverlaps, hirePolicy, openGaps, proposeHire, searchRoster, toolsAutoWillNotGrant } from "../agents/hiring.js";
 
 /**
  * Every tool an agent can actually call.
@@ -3293,14 +3293,17 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     preview: async (input, ctx) => {
       const overlaps = await findOverlaps(`${input.title} ${input.mission} ${input.deliverable}`, input.skills);
       const policy = await hirePolicy();
+      const asks = policy === "AUTO" ? await toolsAutoWillNotGrant(input.toolkit) : [];
       return [
         `Propose hiring ${input.name} (${input.key}) — ${input.title}, reporting to ${input.managerKey}.`,
         `Produces: ${input.deliverable}`,
         input.toolkit.length ? `Asks for: ${input.toolkit.join(", ")}.` : "Asks for no tools.",
         overlaps.length ? `Overlaps ${overlaps.map((o) => `${o.name} (${Math.round(o.score * 100)}%)`).join(", ")}.` : "No existing agent overlaps it.",
-        policy === "AUTO"
+        policy === "AUTO" && asks.length === 0
           ? "The hiring policy is AUTO, so approving this run would create the agent immediately at autonomy 1 with dry run on."
-          : "The hiring policy is ASK, so this would go to the Owner in Slack and nothing would be created yet.",
+          : policy === "AUTO"
+            ? `The hiring policy is AUTO, but automatic hiring only grants tools that read and this asks for ${asks.join(", ")}, so it would go to the Owner and nothing would be created yet.`
+            : "The hiring policy is ASK, so this would go to the Owner in Slack and nothing would be created yet.",
       ].join(" ");
     },
     run: async (input, ctx) => {

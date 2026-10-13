@@ -21,6 +21,7 @@
  * the source files, and it uses the database only for the two assertions that
  * genuinely need one.
  */
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,8 +41,9 @@ import { listAllTools } from "../src/services/tools/catalogue.js";
 import { WRITER_JOBS } from "../src/services/writers/registry.js";
 import { jobsWithShippedWording, shippedDoctrine } from "../src/services/writers/shipped.js";
 import { resolveBrief } from "../src/services/writers/brief.js";
+import { STANDING_AFTER, STANDING_SEEDS, standingId } from "../src/services/agents/standingWork.js";
 import { prisma } from "../src/lib/prisma.js";
-import { SETTING, clearSettingsCache } from "../src/lib/settings.js";
+import { SETTING, clearSettingsCache, setSetting } from "../src/lib/settings.js";
 
 const src = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 
@@ -539,6 +541,173 @@ if (!withBoundary) {
       `a boundary added to a seed reaches a row that already existed — ${withBoundary.key} holds [${after.not_responsible.join(", ")}]`,
     );
   }
+}
+
+// --- 6d. `ensureAgents()` only ever creates ---------------------------------
+//
+// It said so in its own doc, at its call site and in the architecture notes,
+// and a second loop inside it rewrote the mission, the prompt and the toolkit
+// of every seeded agent whose wording nobody had edited, on every boot.
+// `promptEditedAt` is only written by a wording edit, so an untick — or a tool
+// ticked on by hand — was undone by the next deploy, and the offered ledger's
+// promise ("untick it again and it will not come back") was broken a few lines
+// before `reconcileSeedToolkits()` ever ran. Each assertion below fails on the
+// commit before the loop was deleted.
+{
+  const rows = await prisma.agent.findMany({ select: { key: true, promptEditedAt: true, toolkit: true } });
+  const byKey = new Map(rows.map((row) => [row.key, row]));
+  // An unedited agent, or the loop this guards against would have skipped it
+  // anyway and every assertion here would pass for the wrong reason.
+  const seed = AGENT_SEEDS.find((candidate) => {
+    const row = byKey.get(candidate.key);
+    return candidate.key !== SUBJECT && candidate.toolkit.length >= 2 && row && !row.promptEditedAt;
+  });
+  const extra = seed ? catalogue.find((tool) => !seed.toolkit.includes(tool.key) && !tool.key.startsWith("mcp."))?.key : undefined;
+
+  if (!seed || !extra) {
+    check(false, "an unedited seeded agent exists to prove ensureAgents() leaves a toolkit alone — none found");
+  } else {
+    const found = byKey.get(seed.key)!.toolkit;
+    const offeredFound = await prisma.appSetting.findUnique({ where: { key: SETTING.AGENT_TOOLKIT_OFFERED } });
+    const unticked = seed.toolkit[0];
+
+    // The Owner's two decisions: one seed tool taken away, one extra handed out.
+    await prisma.agent.update({
+      where: { key: seed.key },
+      data: { toolkit: [...seed.toolkit.filter((tool) => tool !== unticked), extra] },
+    });
+    // And the ledger saying the unticked one was offered, which is the state
+    // any database is in once `reconcileSeedToolkits()` has run once.
+    let ledger: Record<string, string[]> = {};
+    try {
+      ledger = offeredFound ? (JSON.parse(offeredFound.value) as Record<string, string[]>) : {};
+    } catch {
+      ledger = {};
+    }
+    ledger[seed.key] = [...new Set([...(ledger[seed.key] ?? []), ...seed.toolkit])];
+    await setSetting(SETTING.AGENT_TOOLKIT_OFFERED, JSON.stringify(ledger));
+
+    const stamps = async () =>
+      new Map((await prisma.agent.findMany({ select: { key: true, updatedAt: true } })).map((row) => [row.key, row.updatedAt.getTime()]));
+    const stampedBefore = await stamps();
+    await ensureAgents();
+    const stampedAfter = await stamps();
+    const touched = [...stampedBefore].filter(([key, at]) => stampedAfter.get(key) !== at).map(([key]) => key);
+    check(touched.length === 0, `ensureAgents() on a settled database writes to no agent — it touched ${touched.length}: ${touched.slice(0, 6).join(", ")}`);
+
+    const afterEnsure = await prisma.agent.findUniqueOrThrow({ where: { key: seed.key }, select: { toolkit: true } });
+    check(afterEnsure.toolkit.includes(extra), `${seed.key}: a tool ticked on by hand survives ensureAgents() — ${extra} is gone`);
+    check(!afterEnsure.toolkit.includes(unticked), `${seed.key}: a seed tool the Owner unticked stays unticked across ensureAgents() — ${unticked} came back`);
+
+    const reconciled = await reconcileSeedToolkits();
+    const afterReconcile = await prisma.agent.findUniqueOrThrow({ where: { key: seed.key }, select: { toolkit: true } });
+    check(
+      !afterReconcile.toolkit.includes(unticked) && !reconciled.granted.some((grant) => grant.key === seed.key),
+      `${seed.key}: and across the reconcile that follows it on boot — ${unticked} came back`,
+    );
+    check(afterReconcile.toolkit.includes(extra), `${seed.key}: the reconcile takes nothing away either — ${extra} is gone`);
+
+    // What the deleted loop also carried, and must still arrive: the lists that
+    // describe the job. The refresh is their road now, and it has to notice a
+    // difference in them alone — an agent whose wording is already current is
+    // exactly the one a prompt-only comparison would skip.
+    const describedFound = await prisma.agent.findUniqueOrThrow({ where: { key: seed.key }, select: { skills: true, kpis: true } });
+    await prisma.agent.update({ where: { key: seed.key }, data: { skills: ["a craft the seed has moved on from"], kpis: [] } });
+    await refreshUneditedSeedPrompts();
+    const carried = await prisma.agent.findUniqueOrThrow({ where: { key: seed.key }, select: { skills: true, kpis: true } });
+    check(
+      carried.skills.join("|") === (seed.skills ?? []).join("|") && carried.kpis.join("|") === seed.kpis.join("|"),
+      `${seed.key}: a seed's skills and KPIs reach an unedited agent through refreshUneditedSeedPrompts() — it holds [${carried.skills.join(", ")}]`,
+    );
+    // The negative: an edit to the list stamps promptEditedAt, and the refresh
+    // leaves that agent's own words alone.
+    await prisma.agent.update({ where: { key: seed.key }, data: { skills: ["the Owner's own words"], promptEditedAt: new Date() } });
+    await refreshUneditedSeedPrompts();
+    const kept = await prisma.agent.findUniqueOrThrow({ where: { key: seed.key }, select: { skills: true } });
+    check(kept.skills.join("|") === "the Owner's own words", `${seed.key}: an edited agent's skills survive the refresh — it holds [${kept.skills.join(", ")}]`);
+    await prisma.agent.update({ where: { key: seed.key }, data: { skills: describedFound.skills, kpis: describedFound.kpis, promptEditedAt: null } });
+
+    // Both halves back, as the section above learned to — and here both
+    // exactly as found. The section above unions in the seed because its
+    // reconcile legitimately granted those tools and wrote them to the ledger;
+    // this one puts the ledger back as it was, so the faithful toolkit is the
+    // one it found. A union here would re-tick a seed tool the Owner had
+    // unticked on a developer's database while the restored ledger still said
+    // it had been offered: the defect this section exists to catch, committed
+    // by the check itself.
+    await prisma.agent.update({ where: { key: seed.key }, data: { toolkit: found } });
+    await prisma.appSetting.deleteMany({ where: { key: SETTING.AGENT_TOOLKIT_OFFERED } });
+    if (offeredFound) {
+      await prisma.appSetting.create({ data: { key: offeredFound.key, value: offeredFound.value, secret: offeredFound.secret } });
+    }
+    clearSettingsCache();
+  }
+
+  // The half that must keep working: a seed added to the code still arrives.
+  const NEW_SEED_KEY = "check.roster.newseed";
+  await prisma.agent.deleteMany({ where: { key: NEW_SEED_KEY } });
+  const template = AGENT_SEEDS[0];
+  const fresh = { ...template, key: NEW_SEED_KEY, name: "Roster Check New Seed", managerKey: undefined, toolkit: ["lead.read"] };
+  AGENT_SEEDS.push(fresh);
+  try {
+    const added = await ensureAgents();
+    const row = await prisma.agent.findUnique({ where: { key: NEW_SEED_KEY }, select: { toolkit: true, status: true } });
+    check(added >= 1 && Boolean(row), `a brand-new seed key is still created — added ${added}, row ${row ? "exists" : "missing"}`);
+    check(row?.toolkit.join("|") === "lead.read", `and it arrives with its seed's toolkit — ${row?.toolkit.join(", ")}`);
+  } finally {
+    AGENT_SEEDS.splice(AGENT_SEEDS.indexOf(fresh), 1);
+    await prisma.agent.deleteMany({ where: { key: NEW_SEED_KEY } });
+  }
+}
+
+// --- 6e. Contract fields nothing reads --------------------------------------
+//
+// `input_type` and `output_type` cited an `[[AgentSchema]]` that existed
+// nowhere, were never persisted and were read by nothing; four output layers
+// asked the model for `contextRef` and `contextAggregration` fields no code
+// parses. Words in a prompt that nothing consumes are tokens on every turn and
+// an instruction the model tries to honour for nobody. Same precedent as the
+// per-call spending setting: a guard that does not exist should not read as one.
+for (const seed of AGENT_SEEDS) {
+  const declared = seed as unknown as Record<string, unknown>;
+  check(!("input_type" in declared) && !("output_type" in declared), `${seed.key}: declares no input_type/output_type — nothing reads them`);
+}
+for (const key of ["cro", "cmo", "design.graphic", "seo.specialist"]) {
+  const seed = AGENT_SEEDS.find((candidate) => candidate.key === key);
+  check(Boolean(seed), `${key} is on the roster`);
+  check(!JSON.stringify(seed?.prompt ?? {}).includes("contextAggregration"), `${key}: its prompt asks for no contextAggregration field`);
+}
+// The negative, and deliberately a fingerprint. The two outreach agents' wording
+// is the shipped doctrine, rebuilt from the skill libraries on the founder's
+// instruction and owned by `applyOutreachDoctrine()` — the cleanup above was not
+// allowed to reach it, `outreach.writer`'s own contextRef sentence included. A
+// deliberate change to that doctrine updates these in the same commit.
+const OUTREACH_FINGERPRINT: Record<string, string> = {
+  "outreach.writer": "e49aa30022774db765b45de2e38b226737e799cf1cbf23d795ccfc032a4c9ad9",
+  "outreach.followup": "ddfd4863e3cd692799f57abfca5d995f1dad5f0343134cf5f675d48d7afbf097",
+};
+for (const [key, expected] of Object.entries(OUTREACH_FINGERPRINT)) {
+  const seed = AGENT_SEEDS.find((candidate) => candidate.key === key);
+  const layersOf = (seed?.prompt ?? {}) as unknown as Record<string, string | undefined>;
+  // Layer by layer in a fixed order, never a stringified object, for the reason
+  // `refreshUneditedSeedPrompts()` gives: key order is not a fact about wording.
+  const text = PROMPT_LAYERS.map((layer) => `${layer}\n${layersOf[layer] ?? ""}`).join("\n\u0000\n");
+  const actual = createHash("sha256").update(text).digest("hex");
+  check(actual === expected, `${key}: the shipped outreach wording is byte-for-byte unchanged — fingerprint ${actual.slice(0, 12)}…`);
+}
+
+// --- 6f. The daily chain's links --------------------------------------------
+//
+// `STANDING_AFTER` is keyed by `(agentKey, title)` so it needs no migration, and
+// that is also its weakness: a title edited in one file and not the other is a
+// link that goes nowhere, silently, and the chain runs on its clock again.
+const standingIds = new Set(STANDING_SEEDS.map((seed) => standingId(seed)));
+for (const [downstream, upstream] of Object.entries(STANDING_AFTER)) {
+  for (const id of [downstream, upstream]) {
+    check(standingIds.has(id), `STANDING_AFTER names "${id}", which is a standing seed`);
+    check(known.has(id.slice(0, id.indexOf("|"))), `STANDING_AFTER names ${id.slice(0, id.indexOf("|"))}, which is on the roster`);
+  }
+  check(downstream !== upstream, `${downstream} does not wait for itself`);
 }
 
 // --- 7. Work that exists and cannot start ----------------------------------

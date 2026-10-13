@@ -415,7 +415,7 @@ async function handleAction(
       case HIRE_ACTIONS.policyAuto: {
         await setHirePolicy("AUTO", `${ctx.who} in Slack`);
         await say(
-          "Hiring is now *automatic*. The Agent Creator's proposals are created as soon as it makes them, still at autonomy 1 with dry run on — nothing a new agent decides takes effect until you raise it. Every hire still lands here with an Undo on it. Say `/dakyxtech hiring ask` to go back.",
+          "Hiring is now *automatic*. The Agent Creator's proposals are created as soon as it makes them, still at autonomy 1 with dry run on — nothing a new agent decides takes effect until you raise it. A design asking for any tool beyond reading still comes to you. Every hire still lands here with an Undo on it. Say `/dakyxtech hiring ask` to go back.",
         );
         return;
       }
@@ -610,7 +610,7 @@ slackRouter.post("/commands", async (req, res, next) => {
         const policy = await setHirePolicy(argument.toUpperCase() as HirePolicy, `${who} in Slack`);
         return await ephemeral(
           policy === "AUTO"
-            ? "Hiring is now *automatic*. Proposals become agents as soon as the Agent Creator makes them — at autonomy 1 with dry run on, so nothing they decide takes effect. Each one still lands here with an Undo on it."
+            ? "Hiring is now *automatic*. Proposals become agents as soon as the Agent Creator makes them — at autonomy 1 with dry run on, so nothing they decide takes effect. A design asking for any tool beyond reading still comes to you. Each one still lands here with an Undo on it."
             : "Hiring is *ask first*. Nothing is created until you approve it here.",
         );
       }
@@ -618,7 +618,7 @@ slackRouter.post("/commands", async (req, res, next) => {
       const waiting = (await listHireRequests("PENDING")).length;
       return await ephemeral(
         current === "AUTO"
-          ? `Hiring is *automatic* — the Agent Creator's proposals become agents immediately, at autonomy 1 with dry run on. \`/dakyxtech hiring ask\` to change it.`
+          ? `Hiring is *automatic* — the Agent Creator's proposals become agents immediately, at autonomy 1 with dry run on, unless one asks for a tool beyond reading. \`/dakyxtech hiring ask\` to change it.`
           : `Hiring is *ask first*${waiting ? `, and ${waiting} proposal(s) are waiting on you` : ""}. \`/dakyxtech hiring auto\` to change it.`,
       );
     }

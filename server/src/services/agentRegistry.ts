@@ -121,16 +121,6 @@ export interface AgentSeed {
   kpis: string[];
   toolkit: string[];
   /**
-   * Formal input schema keys expected by this agent, matching `[[AgentSchema]]` contract.
-   * e.g. `{company_name, website_url}` for Sales Director.
-   */
-  input_type?: string[];
-  /**
-   * Formal output schema keys produced by this agent, matching `[[AgentSchema]]` contract.
-   * e.g. `{lead_id, status, contextRef}` for Sales Director.
-   */
-  output_type?: string[];
-  /**
    * Tool keys this agent is NOT responsible for, as globs — `["design.*"]`.
    *
    * A call matching one is refused and counts a boundary crossing. `*` is the
@@ -494,8 +484,6 @@ ${RETENTION_CRAFT}`,
     kpis: ["Qualified conversations", "Proposal conversion", "Sales velocity", "Objections logged"],
     toolkit: ["crm.read", "lead.read", "audit.read", "demo.read", "proposal.draft", "calendar.read"],
     escalationPolicy: "Pricing exceptions and unusual negotiation go to the Owner.",
-    input_type: ["company_name", "website_url"],
-    output_type: ["lead_id", "status", "contextRef"],
     not_responsible: ["design.*", "image.*", "web.*", "code.*"],
     prompt: layers({
       role: "You are the DakyXTech CRO.",
@@ -509,7 +497,7 @@ ${RETENTION_CRAFT}`,
 
 ${PROSPECT_CRAFT}`,
       escalateWhen: "Discounting, a high-value contract, or anything with reputational risk.",
-      output: "Per opportunity: the evidence, the Option A/B anchor strategy, the next step, the owner and the date. Include contextRef and contextAggregration fields linking to prior stage records.",
+      output: "Per opportunity: the evidence, the Option A/B anchor strategy, the next step, the owner and the date.",
     }),
   },
   {
@@ -525,8 +513,6 @@ ${PROSPECT_CRAFT}`,
     kpis: ["Qualified inbound", "Content published", "Search visibility"],
     toolkit: ["content.draft", "analytics.read", "client.read", "audit.read", "projects.read"],
     escalationPolicy: "New public claims and major brand changes need approval before publishing.",
-    input_type: ["lead_id", "company_name", "website_url"],
-    output_type: ["asset", "audience", "problem", "proof", "distribution"],
     prompt: layers({
       role: "You are the DakyXTech CMO.",
       mission: "Position DakyXTech as an accountable outsourced technology & growth partner across Websites, Automation & AI, Integrations, and Training — never a generic freelancer or tool reseller.",
@@ -539,7 +525,7 @@ ${PROSPECT_CRAFT}`,
 
 ${GROWTH_CRAFT}`,
       escalateWhen: "A claim you cannot evidence, anything legal or compliance-adjacent, or a change in brand direction.",
-      output: "The asset, plus the audience, problem, proof and distribution behind it. Include contextRef and contextAggregration fields.",
+      output: "The asset, plus the audience, problem, proof and distribution behind it.",
     }),
   },
   {
@@ -966,8 +952,6 @@ ${BUILD_CRAFT}`,
         toolkit: ["design.brief", "image.generate", "document.render", "content.draft", "client.read"],
         escalationPolicy:
           "Never changes the brand system to solve a layout problem. A new public mark, a new colour or a new typeface is the Owner's decision, not a design choice.",
-        input_type: ["audit_report", "brand_tokens", "preserve_list", "design_verdict"],
-        output_type: ["pdf_report", "contextRef"],
         // The studio does not write to prospects and does not edit the lead
         // record. `outreach.*` was the intent and matched no tool: outreach
         // lives under these five prefixes.
@@ -978,7 +962,7 @@ ${BUILD_CRAFT}`,
 4. Hand the brief over with the artwork, update \`visual_asset_specs\` via \`update_living_context\`, and say what still needs a human eye.
 
 ${BRAND_CRAFT}`,
-        output: "The brief, the artwork or the prompt that made it, the sizes delivered, living context updated, and what still needs a human eye. Include contextRef and contextAggregration fields.",
+        output: "The brief, the artwork or the prompt that made it, the sizes delivered, living context updated, and what still needs a human eye.",
       },
       {
         key: "video.editor",
@@ -1086,15 +1070,13 @@ ${PROSE_CRAFT}`,
         kpis: ["Technical faults fixed", "Impressions and clicks", "Local pack visibility", "Indexation coverage"],
         toolkit: ["audit.website", "audit.section", "audit.read", "company.audit", "security.scan", "site.look", "content.draft", "analytics.read", "lead.read"],
         escalationPolicy: "Never promises a ranking or a timeline search engines do not guarantee. No paid links, no cloaking, no scraped content.",
-        input_type: ["diagnosis", "site_structure"],
-        output_type: ["seo_verdict", "contextRef"],
         process: `1. Check whether the site can be crawled and indexed at all before looking at anything else. An unindexable site does not need more keywords.
 2. Fix what is broken before chasing what is missing, and rank findings by commercial revenue impact (e.g., invisible high-intent service queries, broken mobile Core Web Vitals, missing LocalBusiness JSON-LD schema) rather than by how technical it sounds.
 3. Give every recommendation four parts: the fault, the evidence somebody can check for themselves, the fix, and who does it.
 4. Call \`update_living_context\` with \`seo_critical_faults\` and \`commercial_search_gaps\`, and where a fix needs access we do not have, name what the owner has to do inside their own account.
 
 ${SEARCH_CRAFT}`,
-        output: "The findings with their evidence, ranked by what they cost, living context updated, and the fix for each. Include contextRef and contextAggregration fields.",
+        output: "The findings with their evidence, ranked by what they cost, living context updated, and the fix for each.",
       },
       {
         key: "design.ux",
@@ -1118,8 +1100,6 @@ ${SEARCH_CRAFT}`,
         toolkit: ["audit.read", "demo.read", "design.brief", "lead.read"],
         escalationPolicy:
           "Never designs around a fault nobody has confirmed. It works from what the reviewer actually saw, and a page nobody has looked at is a page it asks to have looked at rather than guessing about.",
-        input_type: ["diagnosis", "preserve_list"],
-        output_type: ["ux_verdict", "contextRef"],
         process: `1. Start from the review and \`preserve_list\` in living context, not from guesswork. Somebody whose whole job is looking has already said what is wrong, and re-deciding it here is how two answers to one question end up in a client's inbox.
 2. Design in the owner's terms rather than the craft's: enforce the **390px Mobile First-Screen Blueprint** (1. Value Proposition Headline, 2. Trust Bar / Verifiable Proof, 3. Primary WhatsApp/Booking CTA within thumb reach, 4. Visual Proof).
 3. Lay out the first screen in order, and say what each part has to make a visitor do next.
@@ -1256,8 +1236,6 @@ ${OFFER_CRAFT}`,
         ],
         escalationPolicy:
           "Checks the suppression list before writing to anybody, and stops dead on a reply, an unsubscribe or a complaint. Never claims a result DakyXTech did not get, never implies a prior relationship, and every outward send (`whatsapp.send`) goes through the human approval gate.",
-        input_type: ["diagnosis", "fused_findings", "brand_voice"],
-        output_type: ["email_draft", "contextRef"],
         not_responsible_subject: ["client"],
         process: `${COLD_EMAIL_DOCTRINE}
 
@@ -2180,6 +2158,9 @@ export async function refreshUneditedSeedPrompts(): Promise<{ updated: string[];
       prompt: true,
       mission: true,
       escalationPolicy: true,
+      skills: true,
+      kpis: true,
+      responsibilities: true,
       not_responsible: true,
       not_responsible_subject: true,
     },
@@ -2225,7 +2206,17 @@ export async function refreshUneditedSeedPrompts(): Promise<{ updated: string[];
     const boundarySame =
       same(agent.not_responsible, wantedBoundary) && same(agent.not_responsible_subject, wantedSubjects);
 
-    if (promptSame && boundarySame && agent.mission === seed.mission && agent.escalationPolicy === seed.escalationPolicy) continue;
+    // The three lists that describe the job rather than grant anything. They
+    // were carried until Oct 2026 by a loop in `ensureAgents()` that wrote them
+    // — and the toolkit — onto every unedited agent on every boot; with that
+    // loop gone this is the only road a changed seed has, and without them here
+    // a seed whose skills alone moved would never reach the router that matches
+    // on them. An edit to any of the three stamps `promptEditedAt`, so the
+    // Owner's own list is protected by the same flag as their wording.
+    const describedSame =
+      same(agent.skills, seed.skills ?? []) && same(agent.kpis, seed.kpis) && same(agent.responsibilities, seed.responsibilities);
+
+    if (promptSame && boundarySame && describedSame && agent.mission === seed.mission && agent.escalationPolicy === seed.escalationPolicy) continue;
 
     await prisma.agent.update({
       where: { key: agent.key },
@@ -2494,14 +2485,28 @@ async function resyncSeeds(marker: string, keys: readonly string[]): Promise<Nar
 
 /**
  * Creates any agent that doesn't exist yet. Never updates one — an autonomy
- * level or a prompt the Owner has changed must survive a deploy.
+ * level, a toolkit or a prompt the Owner has changed must survive a deploy.
  *
  * Modelled on ensureBuiltinTemplates(): one read, diff in memory, one write.
+ *
+ * **Creating is the whole of it, and that is not an oversight.** Until Oct 2026
+ * a second loop here rewrote the mission, the prompt *and the toolkit* of every
+ * seeded agent whose wording nobody had edited, on every boot. `promptEditedAt`
+ * is written only by a wording edit, so a tool the Owner unticked — or ticked on
+ * by hand — was put back the way the seed had it on the next deploy, and the
+ * offered ledger in `reconcileSeedToolkits()` ("untick it again and it will not
+ * come back") was a promise this function broke a few lines earlier on the same
+ * boot. Wording — and the skills, KPIs and responsibilities the loop also
+ * carried — reaches an unedited agent through `refreshUneditedSeedPrompts()`,
+ * which compares before it writes; a tool added to a seed reaches it through
+ * `reconcileSeedToolkits()`, once. Nothing takes a tool away: one removed from a
+ * seed stays on the agents that already hold it until a person unticks it,
+ * because a revoked grant is invisible until the day something cannot be done.
  */
 export async function ensureAgents(): Promise<number> {
-  const existing = await prisma.agent.findMany({ select: { key: true, promptEditedAt: true } });
-  const existingMap = new Map(existing.map((a) => [a.key, a]));
-  const missing = AGENT_SEEDS.filter((seed) => !existingMap.has(seed.key));
+  const existing = await prisma.agent.findMany({ select: { key: true } });
+  const known = new Set(existing.map((a) => a.key));
+  const missing = AGENT_SEEDS.filter((seed) => !known.has(seed.key));
 
   if (missing.length > 0) {
     await prisma.agent.createMany({
@@ -2525,25 +2530,6 @@ export async function ensureAgents(): Promise<number> {
         prompt: seed.prompt as unknown as object,
       })),
       skipDuplicates: true,
-    });
-  }
-
-  // Sync updated prompt layers, toolkits, and missions onto existing seeded agents
-  // where the Owner has not manually edited the prompt (`promptEditedAt === null`).
-  for (const seed of AGENT_SEEDS) {
-    const row = existingMap.get(seed.key);
-    if (!row || row.promptEditedAt) continue;
-    await prisma.agent.update({
-      where: { key: seed.key },
-      data: {
-        mission: seed.mission,
-        responsibilities: seed.responsibilities,
-        kpis: seed.kpis,
-        toolkit: seed.toolkit,
-        skills: seed.skills ?? [],
-        escalationPolicy: seed.escalationPolicy,
-        prompt: seed.prompt as unknown as object,
-      },
     });
   }
 

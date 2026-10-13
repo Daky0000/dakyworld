@@ -153,6 +153,22 @@ an agent says   →  demand, counted  →  reads the gap,   →  a design waitin
   Creator out of it. **AUTO decides who exists; it never decides what they may
   do** — every hire lands at autonomy 1 with dry run on whichever way it was
   approved.
+- **And AUTO only ever hires an agent whose tools just read** — `autoMayGrant()`
+  in `hiring.ts`. Autonomy 1 and dry run hold a *call*; the toolkit is the
+  *grant*, and under AUTO a model wrote it, so a design asking for `email.send`
+  arrived holding `email.send` without a person ever having said that agent may
+  write to anybody. A design asking for anything that writes, sends, charges or
+  spends, for the post (`inbox.read`, and `webhooks.read`, which carries
+  inbound WhatsApp messages and website forms), for the money (the Money group
+  — `payment.status` marks an invoice paid), for a hiring tool (`agent.*`, so a
+  hire made without a person cannot go on to hire) or for a connected MCP
+  server's tool is **filed as ASK** — stored that way, so the card carries
+  Approve and Decline and says why it still asks, and the proposing agent is
+  told it was not hired. `applyHire()` holds the same rule for any decision
+  marked `automatic`, so a future caller that skips the filing still cannot
+  hand out more than reads. ASK itself is unchanged, and the `agent.hire`
+  preview and `GET /agents/hiring/policy` say the same thing.
+  `checks/hiringAuto.ts`.
 - **A hire lands ACTIVE where `POST /agents` lands DRAFT, and that is not an
   inconsistency.** Filling in a form is not by itself a decision to employ
   somebody. Clicking Approve on a card that says *hire this* is, and making
@@ -450,13 +466,38 @@ rewritten** (`promptEditedAt`), and **never touches a toolkit** — it prints th
 tools an agent no longer needs and leaves the untick to a person, because
 revoking a grant silently is invisible until the day something cannot be done.
 
-**`ensureAgents()` only ever creates, which cuts both ways.** A new seeded
-agent — `design.ux` and `sec.analyst` arrived with the audit team — appears on
-the next deploy. A new *tool* added to an existing agent's `toolkit` does not:
-the row is already there, so `audit.website` and `audit.read` have to be ticked
-by hand on the Agents screen for the SEO Specialist, the Copywriter, the Web
-Developer and the Cold Lead Writer. Check that before concluding an agent
-cannot do something.
+**`ensureAgents()` only ever creates — and since Oct 2026 that is true.** It
+said so in its own doc, at its call site and here, while a second loop inside
+it rewrote the mission, the prompt, the skills *and the toolkit* of every
+seeded agent whose wording nobody had edited, on every boot. `promptEditedAt`
+is stamped only by a wording edit, so a tool the Owner unticked — or ticked on
+by hand — was put back the way the seed had it on the next deploy, and the
+offered ledger's promise ("untick it again and it will not come back") was
+broken a few lines before `reconcileSeedToolkits()` ever ran. The loop is gone,
+and everything it carried has exactly one road now:
+
+- **A new seeded agent** — `design.ux` and `sec.analyst` arrived with the audit
+  team — is created by `ensureAgents()` on the next deploy.
+- **Wording, and the lists that describe the job** — mission, policy, prompt,
+  boundary, skills, KPIs, responsibilities — reach an agent nobody has
+  rewritten through `refreshUneditedSeedPrompts()`, compared field by field and
+  layer by layer before it writes. An edit to any of them stamps
+  `promptEditedAt`, and the refresh leaves that agent alone.
+- **A tool added to a seed** is granted once by `reconcileSeedToolkits()`; untick
+  it and it stays unticked.
+- **A tool removed from a seed is not taken away** from the agents that already
+  hold it. That is the consequence of deleting the loop, and it is deliberate:
+  revoking is a person's decision, made by unticking it on the Agents screen,
+  because a grant that disappears on a deploy is invisible until the day
+  something cannot be done.
+
+`checks/roster.ts` (6d) holds all four, including that `ensureAgents()` on a
+settled database changes no agent's `updatedAt`. The same pass removed two
+contract fields nothing read: `input_type`/`output_type` on six seeds, citing
+an `[[AgentSchema]]` that existed nowhere, and the "include contextRef and
+contextAggregration fields" sentence from four output layers that no code
+parses. `outreach.writer` keeps its copy, because its wording is the shipped
+doctrine and the roster check fingerprints it.
 
 **The workforce is commissioned, once, and the shipped defaults are still what
 a new agent arrives on** — `commissionWorkforce()` in `agentRegistry.ts`,
@@ -722,6 +763,48 @@ saying so. `retryReason` separates them, because `retry.ts` is the only thing
 that writes the pair; it is the same predicate `isPaused` reads, and
 `routes/agents.ts` imports that rather than writing its three conditions out a
 second time. `checks/startTheDay.ts` covers it.
+
+**The daily chain can wait for itself — behind `flags.workflows`, which ships
+off** (`FLAG_WORKFLOWS=true` turns it on). Standing work was ordered by nothing
+but clock times and a sentence in a brief ("before 09:30"): each stage is
+raised on its own slot whatever the stage before it is doing, so a Lead
+Orchestrator paused forty minutes on a rate limit meant the reviewer, the demo
+builder and the letter writer all started on yesterday's leads. Nor can the
+orchestrator hand them the work — its brief says "route top leads to
+`review.look` / `dev.web` / `outreach.writer`", but none of them reports to it,
+so that is never a `delegate`; the chain works because each pulls on its own
+slot. `STANDING_AFTER` in `standingWork.ts` names one upstream per stage —
+`review.look` after `lead.orchestrator`, `dev.web` after `review.look`,
+`outreach.writer` after `dev.web`, `email.sequencer` after `outreach.writer` —
+keyed `agentKey|title`, so it reaches the schedules already on a database with
+no migration; a schedule the Owner renames leaves the chain and runs on its
+clock, as everything did before. With the flag on:
+
+- **The tick works due schedules upstream first** (`inChainOrder`), and a stage
+  whose upstream's latest SCHEDULE task from the last twelve hours is QUEUED or
+  RUNNING is **held, not spent**: `nextRunAt` stays due so the next tick asks
+  again, and a restart only asks again — nothing was raised, so nothing can be
+  raised twice. Past ninety minutes it is raised anyway, with a warning, because
+  an upstream stuck that long is a fault and a quiet chain would hide it.
+- **Only work in progress holds anybody.** A BLOCKED or NEEDS_APPROVAL upstream
+  is waiting on a person, and since a refused or capped run ends BLOCKED rather
+  than DONE that is a common state; the morning does not wait behind somebody's
+  inbox. Nor behind an agent somebody paused: `runDueTasks` starts nothing for
+  it, so its queued task is waiting on a person too.
+- **A stage that could not be raised anyway is never held.** Its own last run
+  still open — `openStanding()`, the count `maxOpenTasks` is held against, which
+  includes BLOCKED — means it raises nothing whatever is ahead of it, so it is
+  spent as it always was, and the button does not call it waiting.
+- **"Start the day" keeps the order too.** It raises the upstream, brings a
+  waiting stage forward (`nextRunAt` = now) without spending it, and names it
+  in the summary; the minute tick raises it once the stage before it is done.
+  A press raises fewer tasks than it used to, by design. Draft and paused
+  agents and every ceiling are as before.
+
+With the flag off, both behave exactly as they did. `checks/startTheDay.ts`
+covers both halves; `checks/roster.ts` holds every link against `STANDING_SEEDS`
+and the roster, because a title edited in one file and not the other is a link
+that silently goes nowhere.
 
 **A business the judge could not be asked about is not a business that was
 judged** — `huntReport()` in `services/hunt/run.ts`. The `catch` around

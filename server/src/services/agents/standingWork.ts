@@ -1,4 +1,5 @@
 import type { AgentSchedule } from "@prisma/client";
+import { FLAG, flagOn } from "../../lib/featureFlags.js";
 import { prisma } from "../../lib/prisma.js";
 import { SETTING, getSetting, setSetting } from "../../lib/settings.js";
 import { parseScheduleTime, safeZone, zonedDateParts, zonedTimeToUtc } from "../../lib/timezone.js";
@@ -90,14 +91,155 @@ export async function syncStandingWork(id: string): Promise<Date | null> {
   return nextRunAt;
 }
 
+// --- The order of the daily chain -------------------------------------------
+
+/** A schedule's identity for the chain: `agentKey|title`, the pair `ensureStandingWork` is additive on. */
+export function standingId(schedule: { agentKey: string; title: string }): string {
+  return `${schedule.agentKey}|${schedule.title}`;
+}
+
+/**
+ * Which stage of the daily chain each standing job waits for, as
+ * `agentKey|title` → `agentKey|title`. One upstream each, and only where the
+ * downstream job reads what the upstream one wrote that morning.
+ *
+ * The chain used to be ordered by nothing but clock times and a sentence in a
+ * brief ("before 09:30"). Every stage is raised on its own slot whatever the
+ * stage before it is doing, so a Lead Orchestrator paused for forty minutes
+ * on a rate limit meant the reviewer, the demo builder and the letter writer
+ * all started on yesterday's qualified leads — each correct alone, the chain
+ * as a whole working from a morning that had not happened yet.
+ *
+ * Keyed by the schedule's own `(agentKey, title)` rather than by a column, so
+ * it reaches every schedule `ensureStandingWork` has already put on a database
+ * without a migration. The cost of that is said here rather than discovered:
+ * **a schedule the Owner renames leaves the chain** and simply runs on its
+ * clock again, which is exactly how it ran before this existed.
+ * `checks/roster.ts` holds every pair against `STANDING_SEEDS` and the roster,
+ * because a title edited here and not there is a link that silently goes
+ * nowhere.
+ *
+ * Read only behind `flags.workflows`, which ships off.
+ */
+export const STANDING_AFTER: Readonly<Record<string, string>> = {
+  "review.look|Run 5-Second 390px mobile reviews on today's top qualified leads": "lead.orchestrator|Qualify and route the day's unworked leads",
+  "dev.web|Build speculative 390px preview demos for top-scored leads": "review.look|Run 5-Second 390px mobile reviews on today's top qualified leads",
+  "outreach.writer|Write the first letter to today's qualified leads": "dev.web|Build speculative 390px preview demos for top-scored leads",
+  "email.sequencer|Work today's sending queue": "outreach.writer|Write the first letter to today's qualified leads",
+};
+
+/** How far back an upstream task still counts as this morning's. Yesterday's run holds nobody. */
+const UPSTREAM_LOOKBACK_MS = 12 * 60 * 60_000;
+/**
+ * The longest a stage waits for the one before it. Past this it is raised
+ * anyway, with a warning: an upstream stuck for an hour and a half is a fault
+ * somebody should look at, and the rest of the morning stalling behind it
+ * would hide the fault behind a quiet chain.
+ */
+const MAX_HOLD_MS = 90 * 60_000;
+
+/** How many stages stand ahead of this one. Bounded, so a cycle typed into the map cannot spin. */
+function chainDepth(id: string, after: Readonly<Record<string, string>>): number {
+  let depth = 0;
+  for (let cursor = after[id]; cursor && depth < 16; cursor = after[cursor]) depth += 1;
+  return depth;
+}
+
+/**
+ * Upstream stages before the ones that wait for them, everything else where
+ * it was.
+ *
+ * Without this the hold below could only ever see yesterday: on a tick where
+ * the Lead Orchestrator and the reviewer are both due, `findMany` is free to
+ * hand back the reviewer first, which finds no task for the orchestrator yet
+ * and starts. Ordered by place in the chain rather than by position in
+ * `STANDING_SEEDS`, so a schedule the Owner added by hand keeps its place.
+ */
+export function inChainOrder<T extends { agentKey: string; title: string }>(schedules: T[], after: Readonly<Record<string, string>> = STANDING_AFTER): T[] {
+  return schedules
+    .map((schedule, index) => ({ schedule, index, depth: chainDepth(standingId(schedule), after) }))
+    .sort((a, b) => a.depth - b.depth || a.index - b.index)
+    .map((entry) => entry.schedule);
+}
+
+/**
+ * This schedule's own tasks that are not over — what `maxOpenTasks` is held
+ * against, here and in `startTheDay`.
+ *
+ * BLOCKED and NEEDS_APPROVAL count, and more often than they used to: a run
+ * that is refused or spends every turn now ends BLOCKED rather than DONE, so a
+ * standing job whose last run is waiting on a person raises nothing new until
+ * somebody answers it. The hold below asks this first for that reason — a stage
+ * that could not be raised anyway is not "waiting for the stage before it", and
+ * saying it was would promise the Owner a task that never comes.
+ */
+export function openStanding(schedule: { agentKey: string; title: string }): Promise<number> {
+  return prisma.agentTask.count({
+    where: { agentKey: schedule.agentKey, origin: "SCHEDULE", title: schedule.title, status: { in: ["QUEUED", "RUNNING", "BLOCKED", "NEEDS_APPROVAL"] } },
+  });
+}
+
+export interface OpenUpstream {
+  agentKey: string;
+  title: string;
+  /** QUEUED or RUNNING, or HELD when the upstream stage is itself waiting in this same pass. */
+  status: "QUEUED" | "RUNNING" | "HELD";
+}
+
+/**
+ * The stage this schedule waits for, when that stage is still working.
+ *
+ * **Only QUEUED or RUNNING holds anything.** An upstream that is BLOCKED or
+ * NEEDS_APPROVAL is waiting on a person, and holding the rest of the morning
+ * behind somebody's inbox helps nobody; DONE, FAILED and CANCELLED are over.
+ * So is a queued task whose agent somebody paused: `runDueTasks` starts work
+ * only for an ACTIVE agent, so that task waits on a person too.
+ * `heldThisPass` is the upstream that was held a moment ago in the same pass:
+ * it has no task of its own yet, so without this the stage after it would
+ * read "nothing open" and start ahead of it.
+ */
+export async function openUpstream(
+  schedule: { agentKey: string; title: string },
+  now: Date,
+  after: Readonly<Record<string, string>> = STANDING_AFTER,
+  heldThisPass: ReadonlySet<string> = new Set(),
+): Promise<OpenUpstream | null> {
+  const upstream = after[standingId(schedule)];
+  if (!upstream) return null;
+  // An agent key never contains a bar; a title may.
+  const cut = upstream.indexOf("|");
+  const agentKey = upstream.slice(0, cut);
+  const title = upstream.slice(cut + 1);
+  if (heldThisPass.has(upstream)) return { agentKey, title, status: "HELD" };
+
+  const latest = await prisma.agentTask.findFirst({
+    where: { agentKey, title, origin: "SCHEDULE", createdAt: { gte: new Date(now.getTime() - UPSTREAM_LOOKBACK_MS) } },
+    orderBy: { createdAt: "desc" },
+    select: { status: true, agent: { select: { status: true } } },
+  });
+  if (latest?.agent.status !== "ACTIVE") return null;
+  if (latest.status === "QUEUED" || latest.status === "RUNNING") return { agentKey, title, status: latest.status };
+  return null;
+}
+
 /**
  * Raises the tasks that are due.
  *
  * Joins the six jobs on the minute tick. Like the scraper tick it **advances
  * the schedule before doing the work**, so a failure cannot be retried in a
  * loop and a restart cannot fire the same slot twice.
+ *
+ * **With `flags.workflows` on, a stage waits for the one before it** — see
+ * `STANDING_AFTER`. A held schedule is deliberately *not* advanced: its
+ * `nextRunAt` stays due, so the next tick asks again, and a restart in between
+ * simply asks again too. Nothing was raised, so there is nothing to raise
+ * twice. Only an ACTIVE agent's schedule is held; a paused one goes down the
+ * ordinary path and is spent and skipped, as it always was. So does a stage
+ * whose own last run is still open (`openStanding`): it raises nothing
+ * whatever the stage ahead of it is doing, and holding it would only put off
+ * spending a slot that was never going to raise anything.
  */
-export async function raiseStandingWork(now = new Date()): Promise<number> {
+export async function raiseStandingWork(now = new Date(), after: Readonly<Record<string, string>> = STANDING_AFTER): Promise<number> {
   // Schedules enabled before this ever ran, or saved with no next time worked
   // out. Same backfill the scrapers do.
   const unscheduled = await prisma.agentSchedule.findMany({ where: { enabled: true, nextRunAt: null } });
@@ -111,16 +253,38 @@ export async function raiseStandingWork(now = new Date()): Promise<number> {
   });
   if (due.length === 0) return 0;
 
+  const workflows = await flagOn(FLAG.WORKFLOWS);
+  const heldThisPass = new Set<string>();
+
   let raised = 0;
-  for (const schedule of due) {
+  for (const schedule of workflows ? inChainOrder(due, after) : due) {
     const slot = schedule.nextRunAt;
+    const stale = slot !== null && now.getTime() - slot.getTime() > MAX_CATCHUP_MS;
+
+    if (workflows && !stale && schedule.agent.status === "ACTIVE") {
+      const upstream = await openUpstream(schedule, now, after, heldThisPass);
+      if (upstream && (await openStanding(schedule)) < schedule.maxOpenTasks) {
+        const waited = slot ? now.getTime() - slot.getTime() : 0;
+        if (waited < MAX_HOLD_MS) {
+          heldThisPass.add(standingId(schedule));
+          // Said once, on the first minute of the wait, not on every tick of it.
+          if (waited < 60_000) console.log(`[standing] "${schedule.title}" waits for "${upstream.title}", still ${upstream.status.toLowerCase()}.`);
+          continue;
+        }
+        console.warn(
+          `[standing] raising "${schedule.title}" although "${upstream.title}" is still ${upstream.status.toLowerCase()} ` +
+            `${Math.round(waited / 60_000)} minutes after its slot — the chain does not wait longer than ${MAX_HOLD_MS / 60_000}.`,
+        );
+      }
+    }
+
     // Spent whatever happens next.
     await prisma.agentSchedule.update({
       where: { id: schedule.id },
       data: { nextRunAt: nextRunFor(schedule, now), lastRunAt: now },
     });
 
-    if (slot && now.getTime() - slot.getTime() > MAX_CATCHUP_MS) {
+    if (slot && stale) {
       console.warn(`[standing] skipping "${schedule.title}" — its ${slot.toISOString()} slot is more than six hours stale.`);
       continue;
     }
@@ -130,9 +294,7 @@ export async function raiseStandingWork(now = new Date()): Promise<number> {
     // about a deliberate decision is noise.
     if (schedule.agent.status !== "ACTIVE") continue;
 
-    const open = await prisma.agentTask.count({
-      where: { agentKey: schedule.agentKey, origin: "SCHEDULE", title: schedule.title, status: { in: ["QUEUED", "RUNNING", "BLOCKED", "NEEDS_APPROVAL"] } },
-    });
+    const open = await openStanding(schedule);
     if (open >= schedule.maxOpenTasks) {
       console.warn(`[standing] "${schedule.title}" already has ${open} open — not raising another.`);
       continue;
@@ -170,8 +332,10 @@ export async function raiseStandingWork(now = new Date()): Promise<number> {
  * to begin. "Run agents now" looped over an empty table and honestly reported
  * that nothing was waiting.
  *
- * These seven are one chain, in the order a lead travels through it, and they
- * are deliberately not one per agent. Standing work costs model tokens every
+ * Thirteen of them, in the order the day runs. Five are one chain in the order
+ * a lead travels through it — qualify, look, build the preview, write, send —
+ * and `STANDING_AFTER` above names those links; the rest stand alone. They are
+ * deliberately not one per agent. Standing work costs model tokens every
  * morning whether or not there was anything to do, so an agent gets a slot
  * here when there is a question worth asking daily — not because it exists.
  *
@@ -180,14 +344,14 @@ export async function raiseStandingWork(now = new Date()): Promise<number> {
  * over; it does not enable one, because enabling a hunt starts an Apify
  * capture twice a day and that is the Owner's money.
  */
-interface StandingSeed {
+export interface StandingSeed {
   agentKey: string;
   title: string;
   runTimes: string[];
   brief: string;
 }
 
-const STANDING_SEEDS: StandingSeed[] = [
+export const STANDING_SEEDS: readonly StandingSeed[] = [
   {
     agentKey: "ceo",
     title: "Sync weekly company priorities and Founding Partner slot availability",

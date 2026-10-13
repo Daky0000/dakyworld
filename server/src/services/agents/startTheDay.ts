@@ -1,6 +1,7 @@
+import { FLAG, flagOn } from "../../lib/featureFlags.js";
 import { prisma } from "../../lib/prisma.js";
 import { recordCreated } from "./state.js";
-import { nextRunFor } from "./standingWork.js";
+import { STANDING_AFTER, inChainOrder, nextRunFor, openStanding, openUpstream, standingId } from "./standingWork.js";
 import { runDueTasks } from "./runner.js";
 import { hunt } from "../hunt/run.js";
 
@@ -31,6 +32,13 @@ import { hunt } from "../hunt/run.js";
  *   clock as well. The wait budget is reset, because the person pressing this is
  *   the one deciding to try again. A task somebody scheduled for Tuesday is a
  *   different thing wearing the same column, and is left where it is.
+ * - **With `flags.workflows` on, the chain keeps its order.** Bringing every
+ *   slot forward at once is exactly the case the order exists for: the reviewer
+ *   would start in the same instant as the Lead Orchestrator it reads from. A
+ *   stage whose upstream is still open is neither raised nor spent — its
+ *   `nextRunAt` becomes now, so the minute tick raises it, in order, once the
+ *   stage before it has finished. So a press raises fewer tasks than it used to,
+ *   by design, and the summary names the ones that are waiting.
  *
  * Hunts are **opt-in** on this button rather than included by default. Standing
  * work costs model tokens; a hunt starts an Apify capture and audits five
@@ -49,12 +57,17 @@ export interface StartTheDayResult {
   hunts: number;
   /** Schedules that came round but belong to an agent that is not ACTIVE. */
   asleep: string[];
+  /** Stages brought forward but waiting for the stage before them. Always empty with `flags.workflows` off. */
+  held: string[];
   /** What happened, in one sentence for a person. */
   summary: string;
 }
 
-export async function startTheDay(options: { includeHunts?: boolean } = {}): Promise<StartTheDayResult> {
+export async function startTheDay(
+  options: { includeHunts?: boolean; after?: Readonly<Record<string, string>> } = {},
+): Promise<StartTheDayResult> {
   const now = new Date();
+  const after = options.after ?? STANDING_AFTER;
 
   // 1. Every standing schedule, as though its slot had just come round.
   //
@@ -69,8 +82,26 @@ export async function startTheDay(options: { includeHunts?: boolean } = {}): Pro
 
   let raised = 0;
   const asleep: string[] = [];
+  const held: string[] = [];
+  const workflows = await flagOn(FLAG.WORKFLOWS);
+  const heldThisPass = new Set<string>();
 
-  for (const schedule of schedules) {
+  for (const schedule of workflows ? inChainOrder(schedules, after) : schedules) {
+    // Brought forward and not spent: the minute tick raises it once the stage
+    // before it is done, and holds it no longer than it holds any other. A
+    // stage whose own last run is still open is not called waiting — it would
+    // raise nothing when its turn came, and the summary would have promised it.
+    if (workflows && schedule.agent.status === "ACTIVE") {
+      const upstream = await openUpstream(schedule, now, after, heldThisPass);
+      if (upstream && (await openStanding(schedule)) < schedule.maxOpenTasks) {
+        await prisma.agentSchedule.update({ where: { id: schedule.id }, data: { nextRunAt: now } });
+        heldThisPass.add(standingId(schedule));
+        const before = schedules.find((other) => other.agentKey === upstream.agentKey)?.agent.name ?? upstream.agentKey;
+        held.push(`${schedule.agent.name} (after ${before})`);
+        continue;
+      }
+    }
+
     // Spent whatever happens next, like a real firing. Without this, pressing
     // the button at 07:29 raises the task and the 07:30 tick raises it again.
     await prisma.agentSchedule.update({
@@ -83,15 +114,7 @@ export async function startTheDay(options: { includeHunts?: boolean } = {}): Pro
       continue;
     }
 
-    const open = await prisma.agentTask.count({
-      where: {
-        agentKey: schedule.agentKey,
-        origin: "SCHEDULE",
-        title: schedule.title,
-        status: { in: ["QUEUED", "RUNNING", "BLOCKED", "NEEDS_APPROVAL"] },
-      },
-    });
-    if (open >= schedule.maxOpenTasks) continue;
+    if ((await openStanding(schedule)) >= schedule.maxOpenTasks) continue;
 
     const task = await prisma.agentTask.create({
       data: { agentKey: schedule.agentKey, title: schedule.title, brief: schedule.brief, origin: "SCHEDULE" },
@@ -156,9 +179,10 @@ export async function startTheDay(options: { includeHunts?: boolean } = {}): Pro
   const summary =
     (parts.length > 0 ? `${parts.join(", ")}.` : "Nothing to start.") +
     (asleep.length > 0 ? ` Left asleep because they are not Active: ${asleep.join(", ")}.` : "") +
-    (started === 0 && raised === 0 && woken === 0
+    (held.length > 0 ? ` Waiting for the stage before them, and raised in order as each finishes: ${held.join(", ")}.` : "") +
+    (started === 0 && raised === 0 && woken === 0 && held.length === 0
       ? " Nothing was waiting — either every agent is a draft, or their standing work is already open."
       : " The rest begin over the next few minutes, one task per agent.");
 
-  return { raised, woken, started, hunts, asleep, summary };
+  return { raised, woken, started, hunts, asleep, held, summary };
 }

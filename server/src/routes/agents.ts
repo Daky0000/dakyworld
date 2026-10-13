@@ -2313,7 +2313,7 @@ agentsRouter.get("/hiring/policy", async (_req, res, next) => {
       // nothing, which reads as broken rather than as safe.
       explanation:
         policy === "AUTO"
-          ? "The Agent Creator's proposals become agents as soon as it makes them — at autonomy 1 with dry run on, so nothing a new agent decides takes effect until you raise it."
+          ? "The Agent Creator's proposals become agents as soon as it makes them — at autonomy 1 with dry run on, so nothing a new agent decides takes effect until you raise it. A design asking for any tool beyond reading still comes to you."
           : "Nothing is created until you approve it. Proposals arrive in Slack when it is connected, and are listed here either way.",
       ...(slack ? {} : { note: "Slack is not connected, so hiring cards have nowhere to go. Proposals still land here." }),
     });

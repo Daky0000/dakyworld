@@ -6,6 +6,7 @@ import { enqueueSlack } from "../slack/queue.js";
 import { remember, subjectOf } from "./memory.js";
 import { SETTING, getSetting, setSetting } from "../../lib/settings.js";
 import { listAllTools } from "../tools/catalogue.js";
+import type { ToolDefinition } from "../tools/types.js";
 import { sendSlackBlocks, slackConfigured, settleSlackMessage } from "../../lib/slack.js";
 import { appUrl } from "../emailSender.js";
 import { appendToConversation } from "./checkpoint.js";
@@ -35,7 +36,8 @@ import { recordCreated, transition } from "./state.js";
  *
  * **Every hire lands the same way** — SUB_AGENT, autonomy 1, dry run on —
  * however it was approved. AUTO decides *who exists*. It never decides what
- * they may do.
+ * they may do — which is why AUTO only ever hires an agent whose tools just
+ * read (`autoMayGrant`), and a design asking for more goes to a person.
  *
  * (This module and `services/tools/catalogue.ts` import each other. Every
  * reference across that boundary is inside a function body, never at module
@@ -81,6 +83,62 @@ export async function setHirePolicy(policy: HirePolicy, changedBy: string): Prom
   await setSetting(SETTING.AGENT_HIRE_POLICY, policy);
   console.log(`[hiring] policy set to ${policy} by ${changedBy}`);
   return policy;
+}
+
+/** The reads that hand an agent what somebody outside the company wrote to us. */
+const OTHER_PEOPLES_WORDS: ReadonlySet<string> = new Set(["inbox.read", "webhooks.read"]);
+
+/**
+ * Whether the AUTO policy may hand a new agent this tool without a person.
+ *
+ * Autonomy 1 and dry run were the whole of AUTO's safety story, and they hold
+ * a call; they are not the grant. The toolkit is the grant, and under AUTO a
+ * model wrote it: an Agent Creator that asked for `email.send` got an agent
+ * holding `email.send` without a person ever having said this agent may write
+ * to anybody. Every later decision about it — commissioning, an autonomy
+ * raise, approving the card for its first letter — then rests on a grant
+ * nobody made.
+ *
+ * So AUTO may hand out reads, and only the ordinary ones. Not anything that
+ * spends or reaches outside the company, whatever its scope says. Not the
+ * post (`inbox.read` is other people's letters, and `webhooks.read` is what
+ * other systems posted to us — inbound WhatsApp messages and website forms
+ * among it) and not the money (every read in the Money group —
+ * `payment.status` among them marks an invoice paid). Not the hiring tools,
+ * so a hire made without a person cannot go on to hire. And not a tool from a
+ * connected MCP server, whose behaviour is not in this repository and whose
+ * scope is only what somebody typed on the connection. A design asking for any
+ * of those is filed as ASK instead, for the Owner.
+ */
+export function autoMayGrant(tool: Pick<ToolDefinition, "key" | "scope" | "spends" | "outward" | "group">): boolean {
+  if (tool.scope !== "read" || tool.spends || tool.outward) return false;
+  if (tool.group === "Money" || tool.group === "Connected") return false;
+  if (OTHER_PEOPLES_WORDS.has(tool.key) || tool.key.startsWith("agent.")) return false;
+  return true;
+}
+
+/** The tools in a toolkit AUTO may not grant on its own — empty when it may grant them all. */
+function beyondAuto(toolkit: readonly string[], catalogue: readonly ToolDefinition[]): string[] {
+  const byKey = new Map(catalogue.map((tool) => [tool.key, tool]));
+  return toolkit.filter((key) => {
+    const tool = byKey.get(key);
+    return !tool || !autoMayGrant(tool);
+  });
+}
+
+/**
+ * The same answer for a design that has not been filed yet — what the
+ * `agent.hire` preview tells the person approving the call. A key the
+ * catalogue does not know is left out rather than counted: `proposeHire`
+ * drops it before the policy is ever asked.
+ */
+export async function toolsAutoWillNotGrant(toolkit: readonly string[]): Promise<string[]> {
+  const catalogue = await listAllTools();
+  const known = new Set(catalogue.map((tool) => tool.key));
+  return beyondAuto(
+    toolkit.map((entry) => entry.trim()).filter((entry) => known.has(entry)),
+    catalogue,
+  );
 }
 
 /**
@@ -536,6 +594,11 @@ export interface ProposeOutcome {
   createdAgentKey: string | null;
   overlaps: Overlap[];
   droppedTools: string[];
+  /**
+   * Tools that turned an AUTO hire into a question for the Owner — see
+   * `autoMayGrant`. Empty under ASK, and under AUTO when every tool just reads.
+   */
+  beyondAuto: string[];
   /** What to tell the agent that proposed it, in plain words. */
   message: string;
 }
@@ -585,13 +648,20 @@ export async function proposeHire(design: HireDesign, ctx: ProposeContext): Prom
   // A tool key that does not exist would be a silent hole in a new agent's
   // toolkit, so it is dropped here and named, rather than stored and puzzled
   // over on the day the agent cannot do its job.
-  const known = new Set((await listAllTools()).map((tool) => tool.key));
+  const catalogue = await listAllTools();
+  const known = new Set(catalogue.map((tool) => tool.key));
   const toolkit = design.toolkit.map((entry) => entry.trim()).filter((entry) => known.has(entry));
   const droppedTools = design.toolkit.filter((entry) => !known.has(entry.trim()));
 
   const overlaps = await findOverlaps(`${design.title} ${design.mission} ${design.deliverable}`, design.skills);
 
-  const policy = await hirePolicy();
+  // The standing policy decides who exists; what they may reach beyond reading
+  // is a person's decision whatever the policy says, so a design asking for
+  // more is filed as ASK. Stored that way too, so the card carries Approve and
+  // Decline rather than an Undo for something that never happened.
+  const standing = await hirePolicy();
+  const needsOwner = standing === "AUTO" ? beyondAuto(toolkit, catalogue) : [];
+  const policy: HirePolicy = needsOwner.length > 0 ? "ASK" : standing;
 
   // Which task this was proposed on. The tool layer does not carry a task id in
   // its context, so rather than store a null that would make the column dead,
@@ -625,7 +695,7 @@ export async function proposeHire(design: HireDesign, ctx: ProposeContext): Prom
   });
 
   if (policy === "AUTO") {
-    const applied = await applyHire(request.id, { by: "the standing AUTO hiring policy" });
+    const applied = await applyHire(request.id, { by: "the standing AUTO hiring policy", automatic: true });
     return {
       requestId: request.id,
       status: "APPROVED",
@@ -633,11 +703,17 @@ export async function proposeHire(design: HireDesign, ctx: ProposeContext): Prom
       createdAgentKey: applied.agentKey,
       overlaps,
       droppedTools,
+      beyondAuto: [],
       message: `Hired. ${request.name} (${applied.agentKey}) is on the roster now, at autonomy 1 with dry run on — it can prepare work and nothing it decides takes effect until a person raises that. The Owner has been told in Slack and can undo it there.`,
     };
   }
 
   const posted = await postHireCard(request.id);
+  // Said to the proposing agent in so many words, because it was told the
+  // policy is AUTO and would otherwise plan around an agent that does not exist.
+  const why = needsOwner.length
+    ? ` Not hired: hiring is automatic only for an agent whose tools just read, and this design asks for ${needsOwner.join(", ")}, so a person decides this one.`
+    : "";
   return {
     requestId: request.id,
     status: "PENDING",
@@ -645,9 +721,10 @@ export async function proposeHire(design: HireDesign, ctx: ProposeContext): Prom
     createdAgentKey: null,
     overlaps,
     droppedTools,
+    beyondAuto: needsOwner,
     message: posted
-      ? `Proposed. The design is in Slack for the Owner to approve or decline. Nothing exists yet — do not plan around ${request.name} until it is approved.`
-      : `Proposed, and recorded in the app under Agents. Slack is not connected, so nobody has been notified — say in your summary that a person needs to look at it.`,
+      ? `Proposed.${why} The design is in Slack for the Owner to approve or decline. Nothing exists yet — do not plan around ${request.name} until it is approved.`
+      : `Proposed, and recorded in the app under Agents.${why} Slack is not connected, so nobody has been notified — say in your summary that a person needs to look at it.`,
   };
 }
 
@@ -684,7 +761,14 @@ export interface ApplyOutcome {
  * Being employed and being handed the company card are different decisions,
  * and nothing in this file can make the second one.
  */
-export async function applyHire(requestId: string, decided: DecidedBy & { by?: string }): Promise<ApplyOutcome> {
+export async function applyHire(
+  requestId: string,
+  decided: DecidedBy & {
+    by?: string;
+    /** No person made this decision — the AUTO policy did. Grants only what `autoMayGrant` allows. */
+    automatic?: boolean;
+  },
+): Promise<ApplyOutcome> {
   const request = await prisma.agentHireRequest.findUnique({ where: { id: requestId } });
   if (!request) throw new HireRefused("No such hire request.");
   if (request.status === "APPROVED" && request.createdAgentKey) {
@@ -702,8 +786,19 @@ export async function applyHire(requestId: string, decided: DecidedBy & { by?: s
     throw new HireRefused(`An agent with the key ${request.key} already exists now, so this was not created.`);
   }
 
-  const known = new Set((await listAllTools()).map((tool) => tool.key));
+  const catalogue = await listAllTools();
+  const known = new Set(catalogue.map((tool) => tool.key));
   const toolkit = request.toolkit.filter((entry) => known.has(entry));
+
+  // The rule `proposeHire` files by, held again where the row is written: a
+  // decision no person made grants nothing beyond reading, whichever road
+  // reached here. The request stays PENDING, for somebody to decide.
+  if (decided.automatic) {
+    const beyond = beyondAuto(toolkit, catalogue);
+    if (beyond.length > 0) {
+      throw new HireRefused(`Automatic hiring only grants tools that read, and ${request.name} asks for ${beyond.join(", ")}. A person decides this one.`);
+    }
+  }
 
   const agent = await prisma.agent.create({
     data: {
@@ -993,6 +1088,9 @@ async function hireBlocks(request: AgentHireRequest, decidedBy: string | null): 
   const overlaps = (request.overlaps ?? []) as unknown as Overlap[];
   const base = await appUrl();
   const spendingTools = await spendingIn(request.toolkit);
+  // A design AUTO would not have hired. Recomputed rather than stored: the
+  // grant rule is code, and what the card says should be what the code says.
+  const notAutomatic = beyondAuto(request.toolkit, await listAllTools());
 
   const headline =
     request.status === "PENDING"
@@ -1047,13 +1145,28 @@ async function hireBlocks(request: AgentHireRequest, decidedBy: string | null): 
     });
   }
 
+  // A question that reached a person although hiring is on automatic. Said on
+  // the card, or it reads as the policy switch not having worked.
+  const askedDespiteAuto =
+    request.status === "PENDING" && request.policy === "ASK" && notAutomatic.length > 0 && (await hirePolicy()) === "AUTO";
+  if (askedDespiteAuto) {
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `:raised_hand: *Hiring is on automatic, and this one still asks you.* It wants ${notAutomatic.join(", ")} — automatic hiring only ever gives a new agent tools that read, so what it may reach beyond that is yours to decide.`,
+      },
+    });
+  }
+
   if (request.status === "PENDING" && request.policy === "ASK") {
     blocks.push({
       type: "actions",
       elements: [
         button("Approve", ACTION.approve, request.id, "primary"),
         button("Decline", ACTION.decline, request.id, "danger"),
-        button("Approve these automatically from now on", ACTION.policyAuto, request.id),
+        // "From now on" means nothing when it is already on.
+        ...(askedDespiteAuto ? [] : [button("Approve these automatically from now on", ACTION.policyAuto, request.id)]),
       ],
     });
   } else if (request.status === "APPROVED") {
