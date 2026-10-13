@@ -380,7 +380,11 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
             )}
           </section>
 
-          <RunCost task={task} />
+          <RunCost
+            task={task}
+            onSetCeiling={(budgetUsd) => act.mutate({ what: "budget", body: { budgetUsd } })}
+            pending={act.isPending}
+          />
 
           <TaskLevelControl
             task={task}
@@ -485,9 +489,18 @@ function TaskDrawer({ taskId, onClose, onChanged }: { taskId: string | null; onC
  * and there is no fraction to draw: `budget.fraction` is null and inventing a
  * denominator from the spend so far would show every run at 100%.
  */
-function RunCost({ task }: { task: AgentTaskDetail }) {
+function RunCost({
+  task,
+  onSetCeiling,
+  pending,
+}: {
+  task: AgentTaskDetail;
+  onSetCeiling: (budgetUsd: number | null) => void;
+  pending: boolean;
+}) {
   const { budget, spend } = task;
   const tokens = spend.inputTokens + spend.outputTokens;
+  const handedOn = task.treeTasks - 1;
   const fraction = budget.fraction === null ? null : Math.min(1, budget.fraction);
   const overCeiling = budget.remainingUsd !== null && budget.remainingUsd <= 0;
 
@@ -499,9 +512,11 @@ function RunCost({ task }: { task: AgentTaskDetail }) {
         <span className="text-muted">
           {budget.ceilingUsd !== null ? `of a $${budget.ceilingUsd.toFixed(2)} ceiling` : "on this task"}
           {tokens > 0 && ` · ${tokens.toLocaleString()} tokens over ${spend.modelCalls} model call${spend.modelCalls === 1 ? "" : "s"}`}
+          {spend.cacheReadTokens > 0 && `, and ${spend.cacheReadTokens.toLocaleString()} more read back from cache`}
         </span>
         {budget.easedOff && <Badge tone="muted">on the cheaper model</Badge>}
       </div>
+
 
       {fraction !== null && (
         <div className="mt-1.5 h-1 w-full max-w-sm bg-line">
@@ -523,7 +538,49 @@ function RunCost({ task }: { task: AgentTaskDetail }) {
             ` About $${budget.estimatedToFinishUsd.toFixed(2)} more at the rate so far, if it uses every turn it has left.`}
         </p>
       )}
+
+      {/* A manager's own bill is mostly its colleagues'. The list of what it
+          handed on shows only their statuses, so the whole tree is said here. */}
+      {handedOn > 0 && (
+        <p className="mt-1.5 text-xs text-muted">
+          With the {handedOn} task{handedOn === 1 ? "" : "s"} handed on under it:{" "}
+          <span className="font-medium text-ink">${task.treeCostUsd.toFixed(4)}</span> in all, model calls and paid tools.
+        </p>
+      )}
+
+      <CeilingControl key={task.id} ceilingUsd={budget.ceilingUsd} onSet={onSetCeiling} pending={pending} />
     </section>
+  );
+}
+
+/**
+ * Setting, raising or clearing the task's own ceiling — what the sentence a
+ * task stopped at its ceiling says to do. Empty or 0 is no ceiling, the same
+ * as on the form that gave the task.
+ */
+function CeilingControl({ ceilingUsd, onSet, pending }: { ceilingUsd: number | null; onSet: (value: number | null) => void; pending: boolean }) {
+  const [value, setValue] = useState(ceilingUsd === null ? "" : ceilingUsd.toFixed(2));
+  const parsed = value.trim() === "" ? null : Number(value);
+  const valid = parsed === null || (Number.isFinite(parsed) && parsed >= 0 && parsed <= 100);
+  const unchanged = (parsed || null) === ceilingUsd;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+      <label className="text-xs text-muted" htmlFor="task-ceiling">
+        Spend ceiling (USD)
+      </label>
+      <input
+        id="task-ceiling"
+        className="input w-28"
+        inputMode="decimal"
+        placeholder="none"
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+      />
+      <Button variant="ghost" onClick={() => onSet(parsed)} disabled={pending || !valid || unchanged}>
+        {ceilingUsd === null ? "Set" : parsed === null || parsed === 0 ? "Remove" : "Change"}
+      </Button>
+      {!valid && <span className="text-xs text-danger-text">Between $0 and $100.</span>}
+    </div>
   );
 }
 
@@ -592,7 +649,10 @@ function GiveTaskDrawer({
   const [brief, setBrief] = useState("");
   const [priority, setPriority] = useState(2);
   const [level, setLevel] = useState<"auto" | TaskLevel>("auto");
+  const [ceiling, setCeiling] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  const ceilingUsd = ceiling.trim() === "" ? null : Number(ceiling);
+  const ceilingValid = ceilingUsd === null || (Number.isFinite(ceilingUsd) && ceilingUsd >= 0 && ceilingUsd <= 100);
 
   const create = useMutation({
     mutationFn: () =>
@@ -601,11 +661,13 @@ function GiveTaskDrawer({
         brief: brief.trim(),
         priority,
         level,
+        budgetUsd: ceilingUsd,
         runNow: agent.status === "ACTIVE",
       }),
     onSuccess: () => {
       setTitle("");
       setBrief("");
+      setCeiling("");
       setNotice(null);
       onCreated();
       onClose();
@@ -613,7 +675,7 @@ function GiveTaskDrawer({
     onError: (err: Error) => setNotice(err.message),
   });
 
-  const ready = title.trim().length > 2 && brief.trim().length > 9;
+  const ready = title.trim().length > 2 && brief.trim().length > 9 && ceilingValid;
 
   return (
     <Drawer
@@ -663,6 +725,20 @@ function GiveTaskDrawer({
               </option>
             ))}
           </select>
+        </Field>
+
+        <Field
+          label="Spend ceiling (USD)"
+          hint="Optional, up to $100. At four fifths of it the run finishes on a cheaper setting; at the ceiling it stops and keeps its place. Empty or 0 is no ceiling of its own — the budgets on the Costs screen still apply."
+        >
+          <input
+            className="input"
+            inputMode="decimal"
+            placeholder="No ceiling"
+            value={ceiling}
+            onChange={(event) => setCeiling(event.target.value)}
+          />
+          {!ceilingValid && <span className="mt-1 block text-xs text-danger-text">A number between 0 and 100.</span>}
         </Field>
 
         <p className="rounded-xl border border-line bg-cream px-3 py-2 text-xs leading-relaxed text-muted">

@@ -82,7 +82,8 @@ agentsRouter.use(
       // Running work is where the money goes, and it is a different decision from
       // rewriting what an agent is told.
       { path: /^\/[^/]+\/tasks$/, method: "POST", permission: "agents.run" },
-      { path: /^\/tasks\/[^/]+\/(run|approve|cancel|level)$/, permission: "agents.run" },
+      // Its ceiling too: raising what a task may spend is deciding to spend it.
+      { path: /^\/tasks\/[^/]+\/(run|approve|cancel|level|budget)$/, permission: "agents.run" },
       { path: /^\/memory/, method: ["POST", "PATCH", "DELETE"], permission: "agents.memory" },
       { path: /^\/[^/]+\/memory/, method: ["POST", "PATCH", "DELETE"], permission: "agents.memory" },
       { path: /^\/hiring/, method: ["POST", "PUT"], permission: "agents.hire" },
@@ -1446,6 +1447,7 @@ function taskSummary(task: {
   blockedReason: string | null;
   error: string | null;
   costUsd: unknown;
+  budgetUsd: unknown;
   toolCalls: number;
   dryRunCalls: number;
   startedAt: Date | null;
@@ -1472,6 +1474,8 @@ function taskSummary(task: {
     blockedReason: task.blockedReason,
     error: task.error,
     costUsd: Number(task.costUsd),
+    /** Its own ceiling in USD, or null for none — stored zero never reaches here. */
+    budgetUsd: task.budgetUsd == null || Number(task.budgetUsd) <= 0 ? null : Number(task.budgetUsd),
     toolCalls: task.toolCalls,
     dryRunCalls: task.dryRunCalls,
     startedAt: task.startedAt,
@@ -1567,6 +1571,19 @@ agentsRouter.get("/:key/tasks", async (req, res, next) => {
   }
 });
 
+/**
+ * What this one task may spend before it stops itself, in USD.
+ *
+ * Zero and null both mean **no ceiling of its own**, which is the schema's
+ * call for `AgentTask.budgetUsd` and the reverse of a `Budget`, where zero
+ * stops everything. Both are stored as null, so no reader has to know there
+ * are two spellings of "none". $100 is the top because one task past that is
+ * a decision for a scope budget on the Costs screen, not a field on a form.
+ */
+const taskCeiling = z.number().min(0).max(100).nullish();
+// Below half a cent rounds to a stored 0.00, which would read as none anyway.
+const storedCeiling = (value: number | null | undefined) => (value != null && value >= 0.005 ? value.toFixed(2) : null);
+
 const newTaskInput = z.object({
   title: z.string().min(3).max(120),
   brief: z.string().min(10).max(4000),
@@ -1583,7 +1600,9 @@ const newTaskInput = z.object({
   runNow: z.boolean().default(false),
   /** The Owner's call on how demanding it is. `auto` leaves it to the router. */
   level: z.enum(["auto", ...TASK_LEVELS] as [string, ...string[]]).default("auto"),
+  budgetUsd: taskCeiling,
 });
+
 
 /** `auto` is no override; anything else is the stored spelling of a level. */
 function overrideFrom(level: string): ReturnType<typeof toStored> | null {
@@ -1614,6 +1633,7 @@ agentsRouter.post("/:key/tasks", async (req, res, next) => {
         proposalId: input.proposalId ?? null,
         invoiceId: input.invoiceId ?? null,
         levelOverride: overrideFrom(input.level),
+        budgetUsd: storedCeiling(input.budgetUsd),
       },
       include: taskInclude,
     });
@@ -1642,6 +1662,41 @@ agentsRouter.post("/:key/tasks", async (req, res, next) => {
   }
 });
 
+/**
+ * A task and everything delegated under it, by `parentId`, and what the lot
+ * cost.
+ *
+ * Walked a level at a time, six levels below the task at most, so the drawer's
+ * poll stays a handful of queries (a deeper chain is counted to its sixth level
+ * and no further) — and with a set of the tasks already seen, because
+ * nothing in the schema stops a `parentId` loop and a walk with no memory
+ * would never answer. Summed from the two ledgers by task id or trace, the
+ * same join the task's own spend uses, so a row is counted once however it
+ * was attributed.
+ */
+async function treeCost(root: { id: string; traceId: string }): Promise<{ costUsd: number; tasks: number }> {
+  const seen = new Set<string>([root.id]);
+  const traces = [root.traceId];
+  let level = [root.id];
+  for (let depth = 0; depth < 6 && level.length > 0; depth++) {
+    const children = await prisma.agentTask.findMany({ where: { parentId: { in: level } }, select: { id: true, traceId: true } });
+    level = [];
+    for (const child of children) {
+      if (seen.has(child.id)) continue;
+      seen.add(child.id);
+      traces.push(child.traceId);
+      level.push(child.id);
+    }
+  }
+  const ids = [...seen];
+  const where = { OR: [{ taskId: { in: ids } }, { traceId: { in: traces } }] };
+  const [models, tools] = await Promise.all([
+    prisma.llmCall.aggregate({ where, _sum: { costUsd: true } }),
+    prisma.toolCall.aggregate({ where, _sum: { costUsd: true } }),
+  ]);
+  return { costUsd: Number(models._sum.costUsd ?? 0) + Number(tools._sum.costUsd ?? 0), tasks: ids.length };
+}
+
 /** One task, with its whole timeline. What the drawer polls while it runs. */
 agentsRouter.get("/tasks/:id", async (req, res, next) => {
   try {
@@ -1666,7 +1721,7 @@ agentsRouter.get("/tasks/:id", async (req, res, next) => {
     // was already being written down and none of them could be reached from
     // the task: ToolCall had no task id, LlmCall had neither, and the step's
     // own `toolCallId` was declared as the join and never filled in.
-    const [history, toolCalls, modelCalls] = await Promise.all([
+    const [history, toolCalls, modelCalls, tree] = await Promise.all([
       historyOf(task.id),
       prisma.toolCall.findMany({
         where: { OR: [{ taskId: task.id }, { traceId: task.traceId }] },
@@ -1674,9 +1729,10 @@ agentsRouter.get("/tasks/:id", async (req, res, next) => {
       }),
       prisma.llmCall.aggregate({
         where: { OR: [{ taskId: task.id }, { traceId: task.traceId }] },
-        _sum: { inputTokens: true, outputTokens: true, costUsd: true },
+        _sum: { inputTokens: true, outputTokens: true, costUsd: true, cacheReadTokens: true, cacheCreationTokens: true },
         _count: true,
       }),
+      treeCost(task),
     ]);
 
     res.json({
@@ -1696,8 +1752,20 @@ agentsRouter.get("/tasks/:id", async (req, res, next) => {
         inputTokens: task.inputTokens || (modelCalls._sum.inputTokens ?? 0),
         outputTokens: task.outputTokens || (modelCalls._sum.outputTokens ?? 0),
         modelCalls: modelCalls._count,
+        // The other two thirds of the cache rate, so a long run that re-sent
+        // its whole history uncached can be told from one that read it back.
+        cacheReadTokens: modelCalls._sum.cacheReadTokens ?? 0,
+        cacheCreationTokens: modelCalls._sum.cacheCreationTokens ?? 0,
         costUsd: task.costUsd,
       },
+      /**
+       * What this task and everything it delegated cost together — model turns
+       * and paid tools, from the ledgers — and how many tasks that is. A
+       * manager's own bill is mostly its colleagues', and the children list
+       * shows only their statuses.
+       */
+      treeCostUsd: tree.costUsd,
+      treeTasks: tree.tasks,
       /**
        * Where this run stands against its own ceiling, and what it is spending
        * per turn.
@@ -1865,6 +1933,32 @@ agentsRouter.post("/tasks/:id/level", async (req, res, next) => {
     const updated = await prisma.agentTask.update({
       where: { id: task.id },
       data: { levelOverride: overrideFrom(level) },
+      include: taskInclude,
+    });
+    res.json({ task: taskSummary(updated) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Sets, raises or clears a task's own spending ceiling.
+ *
+ * What the runner's sentence for a task stopped at its ceiling — "raise the
+ * ceiling and carry on" — tells the Owner to do, which until this existed
+ * meant editing the database. Same rules as setting one when the task is
+ * given: up to $100, and 0 or null for none. Takes effect at the next turn of
+ * a running task, since `shouldStop` reads the row between turns, and at the
+ * next run of a stopped one — which this does not start.
+ */
+agentsRouter.post("/tasks/:id/budget", async (req, res, next) => {
+  try {
+    const { budgetUsd } = z.object({ budgetUsd: taskCeiling }).parse(req.body ?? {});
+    const task = await prisma.agentTask.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!task) return res.status(404).json({ error: "No such task." });
+    const updated = await prisma.agentTask.update({
+      where: { id: task.id },
+      data: { budgetUsd: storedCeiling(budgetUsd) },
       include: taskInclude,
     });
     res.json({ task: taskSummary(updated) });

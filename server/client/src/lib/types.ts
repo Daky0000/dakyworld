@@ -2316,6 +2316,8 @@ export interface AgentTask {
   blockedReason: string | null;
   error: string | null;
   costUsd: number;
+  /** Its own spending ceiling in USD, or null for none. */
+  budgetUsd: number | null;
   toolCalls: number;
   /** How many calls were prepared rather than carried out. */
   dryRunCalls: number;
@@ -2387,7 +2389,17 @@ export interface AgentTaskDetail extends Omit<AgentTask, "steps"> {
     invoice: { id: string; invoiceNumber: string } | null;
   };
   /** What the model side of this run actually cost, in tokens as well as money. */
-  spend: { inputTokens: number; outputTokens: number; modelCalls: number; costUsd: number };
+  spend: {
+    inputTokens: number;
+    outputTokens: number;
+    modelCalls: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+    costUsd: number;
+  };
+  /** This task and everything delegated under it, from the ledgers, and how many tasks that is. */
+  treeCostUsd: number;
+  treeTasks: number;
   /**
    * Where the run stands against its own ceiling, summed from the `LlmCall`
    * ledger rather than stored. Every field is null when the task has no
@@ -3181,6 +3193,13 @@ export interface SpendSummary {
   cacheCreationTokens: number;
   /** Null when nothing was sent at all — "no cache hits" and "no calls" differ. */
   cacheHitRate: number | null;
+  /**
+   * The same rate over Claude's calls alone — the only path that caches, so
+   * the only figure that can show its cache is broken. Null when no Claude
+   * call sent anything in the window; 0 over Claude calls is the failure.
+   */
+  claudeCacheHitRate: number | null;
+  claudeCalls: number;
   failedCalls: number;
   failedUsd: number;
   refusedCalls: number;
@@ -3193,7 +3212,23 @@ export interface SpendRow {
   costUsd: number;
   inputTokens: number;
   outputTokens: number;
+  /** On model rows only: the other two parts of the cache rate. */
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
   failed: number;
+}
+
+/** Paid, finished model work done outside any agent task — a candidate for batching, not a verdict. */
+export interface BatchCandidate {
+  purpose: string;
+  calls: number;
+  costUsd: number;
+  /** The part Claude served, which is the part the Message Batches API could halve. */
+  claudeUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  /** Of all model spend in the window. */
+  share: number;
 }
 
 export interface DaySpend {
@@ -3220,6 +3255,7 @@ export interface CostReport {
   /** Agent task spend by the level each task was sized at. */
   byLevel: SpendRow[];
   byTool: SpendRow[];
+  batchCandidates: BatchCandidate[];
   daily: DaySpend[];
   outcomes: { totalUsd: number; outcomes: Outcome[] };
 }

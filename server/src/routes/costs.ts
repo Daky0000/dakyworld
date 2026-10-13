@@ -48,6 +48,14 @@ const callsQuery = z.object({
   purpose: z.string().max(120).optional(),
   agentKey: z.string().max(80).optional(),
   model: z.string().max(80).optional(),
+  /**
+   * One task's rows, or one trace's — the two ids the ledger is indexed on,
+   * and the only way to open a task's own bill from here. Capped at a length
+   * no id this app writes comes near, so a pasted paragraph is a 400 rather
+   * than a query.
+   */
+  taskId: z.string().max(64).optional(),
+  traceId: z.string().max(64).optional(),
   /** Only the ones that failed — the fastest way to see what an outage cost. */
   failed: z.coerce.boolean().optional(),
 });
@@ -62,7 +70,7 @@ const callsQuery = z.object({
  */
 costsRouter.get("/calls", async (req, res, next) => {
   try {
-    const { days, take, purpose, agentKey, model, failed } = callsQuery.parse(req.query);
+    const { days, take, purpose, agentKey, model, taskId, traceId, failed } = callsQuery.parse(req.query);
     const since = new Date(Date.now() - days * 24 * 60 * 60_000);
 
     const calls = await prisma.llmCall.findMany({
@@ -71,6 +79,9 @@ costsRouter.get("/calls", async (req, res, next) => {
         ...(purpose ? { purpose } : {}),
         ...(agentKey ? { agentKey } : {}),
         ...(model ? { model } : {}),
+        // Both together narrow; neither one wins over the other.
+        ...(taskId ? { taskId } : {}),
+        ...(traceId ? { traceId } : {}),
         ...(failed ? { ok: false } : {}),
       },
       orderBy: { createdAt: "desc" },

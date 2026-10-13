@@ -75,6 +75,27 @@ export interface SpendSummary {
    */
   cacheHitRate: number | null;
 
+  /**
+   * The same rate over Claude's rows alone, and how many rows that is.
+   *
+   * The global figure cannot catch a broken Claude cache any more, because
+   * most of what it divides by never could have cached: the chat-completions
+   * wire (NVIDIA, ChatGPT) sends no breakpoints and records no cache figures,
+   * by a decision recorded in the model-routing notes, and the ladder puts
+   * every agent turn on a free rung first. So a month of healthy Claude
+   * caching reads as a low percentage, and a month of none reads as a
+   * slightly lower one. Only the Claude SDK path caches, and only its rows
+   * can say whether it is working.
+   *
+   * Null when no Claude call in the window sent anything — the same rule as
+   * the global rate, for the same reason (a vendor-error marker row is a
+   * Claude row with no tokens, and is not evidence either way). Zero over
+   * Claude calls that did send something is the failure this exists to show,
+   * and it is reported as zero.
+   */
+  claudeCacheHitRate: number | null;
+  claudeCalls: number;
+
   /** Calls that failed, and what they cost anyway. */
   failedCalls: number;
   failedUsd: number;
@@ -87,10 +108,17 @@ export interface SpendSummary {
 export async function spendSummary(window: Window): Promise<SpendSummary> {
   const range = { gte: window.since, lte: window.until };
 
-  const [models, failures, tools, refused, dryRun] = await Promise.all([
+  const [models, claude, failures, tools, refused, dryRun] = await Promise.all([
     prisma.llmCall.aggregate({
       where: { createdAt: range },
       _sum: { costUsd: true, inputTokens: true, outputTokens: true, cacheReadTokens: true, cacheCreationTokens: true },
+      _count: true,
+    }),
+    // The id the Anthropic API reports for the model that served the call —
+    // every Claude row this app writes starts so, and nothing else does.
+    prisma.llmCall.aggregate({
+      where: { createdAt: range, model: { startsWith: "claude" } },
+      _sum: { inputTokens: true, cacheReadTokens: true, cacheCreationTokens: true },
       _count: true,
     }),
     prisma.llmCall.aggregate({ where: { createdAt: range, ok: false }, _sum: { costUsd: true }, _count: true }),
@@ -103,6 +131,8 @@ export async function spendSummary(window: Window): Promise<SpendSummary> {
   const cacheReadTokens = models._sum.cacheReadTokens ?? 0;
   const cacheCreationTokens = models._sum.cacheCreationTokens ?? 0;
   const sentIn = inputTokens + cacheReadTokens + cacheCreationTokens;
+  const claudeRead = claude._sum.cacheReadTokens ?? 0;
+  const claudeSentIn = (claude._sum.inputTokens ?? 0) + claudeRead + (claude._sum.cacheCreationTokens ?? 0);
 
   const modelUsd = num(models._sum.costUsd);
   const toolUsd = num(tools._sum.costUsd);
@@ -124,6 +154,8 @@ export async function spendSummary(window: Window): Promise<SpendSummary> {
     cacheReadTokens,
     cacheCreationTokens,
     cacheHitRate: sentIn > 0 ? cacheReadTokens / sentIn : null,
+    claudeCacheHitRate: claudeSentIn > 0 ? claudeRead / claudeSentIn : null,
+    claudeCalls: claude._count,
 
     failedCalls: failures._count,
     failedUsd: num(failures._sum.costUsd),
@@ -141,6 +173,13 @@ export interface SpendRow {
   costUsd: number;
   inputTokens: number;
   outputTokens: number;
+  /**
+   * Cache reads and writes, on model rows only. With `inputTokens` they are
+   * the three halves of the cache rate, so the model table can show which
+   * model's cache is working — which the summary's one figure cannot.
+   */
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
   /** Calls in this row that failed. A row that is mostly failures is the point. */
   failed: number;
 }
@@ -162,7 +201,7 @@ export async function modelSpendBy(dimension: ModelDimension, window: Window, li
     prisma.llmCall.groupBy({
       by: [dimension],
       where,
-      _sum: { costUsd: true, inputTokens: true, outputTokens: true },
+      _sum: { costUsd: true, inputTokens: true, outputTokens: true, cacheReadTokens: true, cacheCreationTokens: true },
       _count: true,
     }),
     prisma.llmCall.groupBy({ by: [dimension], where: { ...where, ok: false }, _count: true }),
@@ -182,6 +221,8 @@ export async function modelSpendBy(dimension: ModelDimension, window: Window, li
         costUsd: num(row._sum.costUsd),
         inputTokens: row._sum.inputTokens ?? 0,
         outputTokens: row._sum.outputTokens ?? 0,
+        cacheReadTokens: row._sum.cacheReadTokens ?? 0,
+        cacheCreationTokens: row._sum.cacheCreationTokens ?? 0,
         failed: failedBy.get(String(raw ?? "")) ?? 0,
       };
     })
@@ -250,6 +291,75 @@ export async function toolSpendBy(window: Window, limit = 40): Promise<SpendRow[
       outputTokens: 0,
       failed: failedBy.get(row.tool) ?? 0,
     }))
+    .sort((a, b) => b.costUsd - a.costUsd || b.calls - a.calls)
+    .slice(0, limit);
+}
+
+// --- Work that could wait ---------------------------------------------------
+
+export interface BatchCandidate {
+  purpose: string;
+  calls: number;
+  costUsd: number;
+  /** The part Claude served — the only part the Message Batches API could halve. */
+  claudeUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  /** Of all model spend in the window, failures and agent turns included. */
+  share: number;
+}
+
+/**
+ * Paid one-shot model work, by purpose, dearest first: the measurement behind
+ * any decision to move work onto the Message Batches API, which charges half
+ * for a request that can wait up to a day for its answer.
+ *
+ * **A candidate list, not a verdict.** What qualifies is what *could* be
+ * batched — a call that cost something, succeeded, and was made outside any
+ * agent task. A zero-cost call has nothing to halve; a failed one is not work
+ * anybody would resubmit; and an agent turn waits on the one before it, so a
+ * run of them cannot be handed off and collected tomorrow. What the ledger
+ * cannot say is whether anybody was *waiting*: a writer called from a screen
+ * and the same writer called from a nightly job carry the same `purpose`, and
+ * only the first would be hurt by a day's delay. So this ranks where the money
+ * is; whether a purpose can wait is read from its code, not from here.
+ *
+ * Grouped by purpose and model together, so the Claude part of each purpose
+ * is told apart — the batch discount is Anthropic's, and a purpose served
+ * mostly by another vendor would save little from it.
+ */
+export async function paidOneShotByPurpose(window: Window, limit = 15): Promise<BatchCandidate[]> {
+  const range = { gte: window.since, lte: window.until };
+
+  const [grouped, all] = await Promise.all([
+    prisma.llmCall.groupBy({
+      by: ["purpose", "model"],
+      where: { createdAt: range, taskId: null, ok: true, costUsd: { gt: 0 } },
+      _sum: { costUsd: true, inputTokens: true, outputTokens: true },
+      _count: true,
+    }),
+    prisma.llmCall.aggregate({ where: { createdAt: range }, _sum: { costUsd: true } }),
+  ]);
+
+  // Nothing qualifying is an empty list. A row of zeros would read as "these
+  // were looked at and cost nothing", which is a claim about the business.
+  const modelUsd = num(all._sum.costUsd);
+  if (grouped.length === 0 || modelUsd <= 0) return [];
+
+  const byPurpose = new Map<string, BatchCandidate>();
+  for (const row of grouped) {
+    const costUsd = num(row._sum.costUsd);
+    const into = byPurpose.get(row.purpose) ?? { purpose: row.purpose, calls: 0, costUsd: 0, claudeUsd: 0, inputTokens: 0, outputTokens: 0, share: 0 };
+    into.calls += row._count;
+    into.costUsd += costUsd;
+    if (row.model.startsWith("claude")) into.claudeUsd += costUsd;
+    into.inputTokens += row._sum.inputTokens ?? 0;
+    into.outputTokens += row._sum.outputTokens ?? 0;
+    byPurpose.set(row.purpose, into);
+  }
+
+  return [...byPurpose.values()]
+    .map((candidate) => ({ ...candidate, share: candidate.costUsd / modelUsd }))
     .sort((a, b) => b.costUsd - a.costUsd || b.calls - a.calls)
     .slice(0, limit);
 }
@@ -370,6 +480,8 @@ export interface CostReport {
   /** Agent task spend by the level each task was sized at. */
   byLevel: SpendRow[];
   byTool: SpendRow[];
+  /** Paid one-shot work by purpose — a candidate list for batching, not a verdict. */
+  batchCandidates: BatchCandidate[];
   daily: DaySpend[];
   outcomes: { totalUsd: number; outcomes: Outcome[] };
 }
@@ -377,15 +489,26 @@ export interface CostReport {
 export async function costReport(days: number): Promise<CostReport> {
   const window = lastDays(days);
 
-  const [summary, byPurpose, byAgent, byModel, byLevel, byTool, daily] = await Promise.all([
+  const [summary, byPurpose, byAgent, byModel, byLevel, byTool, batchCandidates, daily] = await Promise.all([
     spendSummary(window),
     modelSpendBy("purpose", window),
     modelSpendBy("agentKey", window),
     modelSpendBy("model", window),
     levelSpend(window),
     toolSpendBy(window),
+    paidOneShotByPurpose(window),
     spendByDay(window),
   ]);
 
-  return { summary, byPurpose, byAgent, byModel, byLevel, byTool, daily, outcomes: await costPerOutcome(window, summary.totalUsd) };
+  return {
+    summary,
+    byPurpose,
+    byAgent,
+    byModel,
+    byLevel,
+    byTool,
+    batchCandidates,
+    daily,
+    outcomes: await costPerOutcome(window, summary.totalUsd),
+  };
 }

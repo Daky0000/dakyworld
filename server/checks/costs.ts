@@ -25,12 +25,28 @@
  *     about the business.
  *   - **Empty days survive.** A chart that closes over a silent week turns a
  *     one-off spike into a trend.
+ *   - **The Claude cache rate is Claude's alone.** The chat-completions wire
+ *     records no cache at all, by decision, so every free-rung turn dilutes
+ *     the global rate. The figure meant to catch a broken Claude cache has to
+ *     be computed over Claude rows only, and must say 0 — not null, and not
+ *     the global figure — when Claude read nothing.
+ *   - **The batch list is a candidate list.** Paid, finished, and outside any
+ *     agent task: a zero-cost call has nothing to halve, a failed one is not
+ *     work anybody would resubmit, and an agent turn waits on the one before
+ *     it. A window with none of them is an empty list, not a row of zeros.
  *
- * A database and nothing else.
+ * A database and nothing else. The `/calls` section mounts the real router on
+ * port 0, the way `index.ts` mounts it.
  *   npx tsx checks/costs.ts
  */
+import express from "express";
+import type { AddressInfo } from "node:net";
 import { prisma } from "../src/lib/prisma.js";
-import { costPerOutcome, lastDays, modelSpendBy, spendByDay, spendSummary, toolSpendBy } from "../src/services/costs.js";
+import { ensureSystemRoles } from "../src/lib/accessRoles.js";
+import { attachUser, requireAuth } from "../src/middleware/auth.js";
+import { errorHandler } from "../src/middleware/errorHandler.js";
+import { costsRouter } from "../src/routes/costs.js";
+import { costPerOutcome, lastDays, modelSpendBy, paidOneShotByPurpose, spendByDay, spendSummary, toolSpendBy } from "../src/services/costs.js";
 
 const failures: string[] = [];
 let passed = 0;
@@ -97,6 +113,201 @@ async function seed() {
       { tool: TOOL, agentKey: AGENT, createdAt: hoursAgo(2), ok: false, dryRun: false, refusedReason: "a deliberate refusal", costUsd: "0.000000" },
     ],
   });
+}
+
+/** A point `days` back, nudged by `hours`, and a twelve-hour window around one. */
+const daysAgo = (days: number, hours = 0) => new Date(Date.now() - days * 86_400_000 - hours * 60 * 60_000);
+const band = (days: number) => ({ since: daysAgo(days, 6), until: daysAgo(days, -6) });
+
+/**
+ * Each of these sections writes into its own day, most of a year back, so
+ * nothing a real database holds lands in the same window and every figure can
+ * be asserted exactly rather than as a floor.
+ */
+async function claudeCacheRate() {
+  console.log("\nThe Claude cache rate is computed over Claude alone");
+  const row = (days: number, model: string, input: number, read: number, written: number, costUsd = "0.010000") => ({
+    purpose: `${PURPOSE}.cache`, model, createdAt: daysAgo(days, 1),
+    inputTokens: input, outputTokens: 10, cacheReadTokens: read, cacheCreationTokens: written,
+    costUsd, durationMs: 100, ok: true,
+  });
+
+  // A free rung beside a Claude cache that works.
+  //   nvidia/x           6000 in, nothing cached — the chat-completions wire records none
+  //   claude-sonnet-5-5  1000 in, 3000 read, nothing written
+  // everything:  3000 / (7000 + 3000) = 30%
+  // Claude:      3000 / (1000 + 3000) = 75%
+  await prisma.llmCall.createMany({
+    data: [row(320, "nvidia/x", 6000, 0, 0, "0.000000"), row(320, "claude-sonnet-5-5", 1000, 3000, 0)],
+  });
+  const diluted = await spendSummary(band(320));
+  check("the global rate is still every row's", diluted.cacheHitRate !== null && near(diluted.cacheHitRate, 0.3), `${diluted.cacheHitRate}`);
+  check(
+    "the Claude rate is reads over input + reads + writes on Claude rows only",
+    diluted.claudeCacheHitRate !== null && near(diluted.claudeCacheHitRate, 0.75),
+    `${diluted.claudeCacheHitRate}`,
+  );
+  check("and it says how many Claude calls it is over", diluted.claudeCalls === 1, `${diluted.claudeCalls}`);
+
+  // Free rungs and nothing else. The global rate is a true 0; there is no
+  // Claude rate at all, which is a different fact and must not print as 0.
+  await prisma.llmCall.createMany({ data: [row(325, "nvidia/x", 5000, 0, 0, "0.000000"), row(325, "nvidia/y", 2000, 0, 0, "0.000000")] });
+  const freeOnly = await spendSummary(band(325));
+  check("free rungs alone: the global rate is 0", freeOnly.cacheHitRate === 0, `${freeOnly.cacheHitRate}`);
+  check("and the Claude rate is null rather than zero", freeOnly.claudeCacheHitRate === null && freeOnly.claudeCalls === 0, `${freeOnly.claudeCacheHitRate} over ${freeOnly.claudeCalls}`);
+
+  // The broken cache the tile exists to catch, beside reads recorded under
+  // another model. Nothing outside the Claude SDK path records a cache read
+  // today; that row stands in for one that might, so the Claude figure is
+  // shown not to borrow anybody else's.
+  //   gpt-5.6-terra      1000 in, 9000 read
+  //   claude × 2         1000 in each, nothing read, 500 written each
+  // everything: 9000 / (3000 + 9000 + 1000) ≈ 69%; Claude: 0 / 3000 = 0
+  await prisma.llmCall.createMany({
+    data: [row(328, "gpt-5.6-terra", 1000, 9000, 0), row(328, "claude-sonnet-5-5", 1000, 0, 500), row(328, "claude-opus-5-5", 1000, 0, 500)],
+  });
+  const broken = await spendSummary(band(328));
+  check("the global figure stays high", broken.cacheHitRate !== null && broken.cacheHitRate > 0.6, `${broken.cacheHitRate}`);
+  check("while Claude reading nothing says exactly 0", broken.claudeCacheHitRate === 0 && broken.claudeCalls === 2, `${broken.claudeCacheHitRate} over ${broken.claudeCalls}`);
+
+  // The model table carries the same three numbers, so a model whose cache
+  // broke can be told from one that never had one.
+  const byModel = await modelSpendBy("model", band(328), 200);
+  const sonnet = byModel.find((entry) => entry.key === "claude-sonnet-5-5");
+  const gpt = byModel.find((entry) => entry.key === "gpt-5.6-terra");
+  check("a model row carries its cache reads", gpt?.cacheReadTokens === 9000 && sonnet?.cacheReadTokens === 0, `${gpt?.cacheReadTokens} / ${sonnet?.cacheReadTokens}`);
+  check("and its cache writes", sonnet?.cacheCreationTokens === 500 && gpt?.cacheCreationTokens === 0, `${sonnet?.cacheCreationTokens} / ${gpt?.cacheCreationTokens}`);
+}
+
+async function batchCandidates() {
+  console.log("\nPaid one-shot work, by purpose — the batch candidates");
+  const A = `${PURPOSE}.batch.a`;
+  const B = `${PURPOSE}.batch.b`;
+  const FREE = `${PURPOSE}.batch.free`;
+  const TASK = `${PURPOSE}.batch.task`;
+  const FAILED = `${PURPOSE}.batch.failed`;
+  const row = (days: number, purpose: string, model: string, costUsd: string, extra: { ok?: boolean; taskId?: string } = {}) => ({
+    purpose, model, createdAt: daysAgo(days, 1), inputTokens: 100, outputTokens: 10,
+    costUsd, durationMs: 100, ok: extra.ok ?? true, taskId: extra.taskId ?? null,
+  });
+
+  //   a  claude  $0.40  ok              counted
+  //   a  gpt     $0.20  ok              counted
+  //   a  claude  $0.10  failed          not counted
+  //   a  claude  $0.25  inside a task   not counted
+  //   b  claude  $0.30  ok              counted
+  //   free  nvidia  $0                  nothing to halve
+  //   task  claude  $1.00 inside a task an agent turn waits on the last one
+  //   failed claude $0.50 failed         not work anybody would resubmit
+  // the window's model spend is $2.75, so a is 0.60/2.75 and b is 0.30/2.75.
+  await prisma.llmCall.createMany({
+    data: [
+      row(330, A, "claude-sonnet-5-5", "0.400000"),
+      row(330, A, "gpt-5.6-terra", "0.200000"),
+      row(330, A, "claude-sonnet-5-5", "0.100000", { ok: false }),
+      row(330, A, "claude-sonnet-5-5", "0.250000", { taskId: "check-costs-task" }),
+      row(330, B, "claude-sonnet-5-5", "0.300000"),
+      row(330, FREE, "nvidia/x", "0.000000"),
+      row(330, TASK, "claude-sonnet-5-5", "1.000000", { taskId: "check-costs-task" }),
+      row(330, FAILED, "claude-sonnet-5-5", "0.500000", { ok: false }),
+    ],
+  });
+  const list = await paidOneShotByPurpose(band(330));
+  const a = list.find((entry) => entry.purpose === A);
+  const b = list.find((entry) => entry.purpose === B);
+  check("two purposes qualify", list.length === 2, list.map((entry) => entry.purpose).join(", "));
+  check("dearest first", list[0]?.purpose === A && list[1]?.purpose === B);
+  check("a purpose's figure leaves out its failed call and its task's call", a?.calls === 2 && near(a?.costUsd ?? 0, 0.6), `${a?.calls} calls, $${a?.costUsd}`);
+  check("zero-cost work is not a candidate", !list.some((entry) => entry.purpose === FREE));
+  check("work done only inside a task is not", !list.some((entry) => entry.purpose === TASK));
+  check("work that only failed is not", !list.some((entry) => entry.purpose === FAILED));
+  check("a share is of the window's whole model spend", near(a?.share ?? 0, 0.6 / 2.75) && near(b?.share ?? 0, 0.3 / 2.75), `${a?.share} / ${b?.share}`);
+  check("the shares come to at most one", list.reduce((total, entry) => total + entry.share, 0) <= 1 + 1e-9);
+  check("the Claude part of a purpose is told apart", near(a?.claudeUsd ?? -1, 0.4) && near(b?.claudeUsd ?? -1, 0.3), `${a?.claudeUsd} / ${b?.claudeUsd}`);
+
+  // Nothing qualifying is an empty list. A row of zeros would read as "these
+  // were looked at and cost nothing", which is a statement about the business.
+  const nothing = await paidOneShotByPurpose(band(350));
+  check("a window with no calls has an empty list", Array.isArray(nothing) && nothing.length === 0, JSON.stringify(nothing));
+  await prisma.llmCall.createMany({
+    data: [
+      row(335, FREE, "nvidia/x", "0.000000"),
+      row(335, TASK, "claude-sonnet-5-5", "1.000000", { taskId: "check-costs-task" }),
+      row(335, FAILED, "claude-sonnet-5-5", "0.500000", { ok: false }),
+    ],
+  });
+  const excludedOnly = await paidOneShotByPurpose(band(335));
+  check("nor does one with only free, task and failed calls", excludedOnly.length === 0, JSON.stringify(excludedOnly));
+
+  // Fifteen at most, and the cheapest are the ones that fall off.
+  await prisma.llmCall.createMany({
+    data: Array.from({ length: 17 }, (_, i) => row(340, `${PURPOSE}.batch.top.${i}`, "claude-sonnet-5-5", ((i + 1) / 100).toFixed(6))),
+  });
+  const top = await paidOneShotByPurpose(band(340));
+  check("the list stops at fifteen", top.length === 15, `${top.length}`);
+  check(
+    "keeping the dearest",
+    top[0]?.purpose === `${PURPOSE}.batch.top.16` && !top.some((entry) => entry.purpose === `${PURPOSE}.batch.top.0` || entry.purpose === `${PURPOSE}.batch.top.1`),
+    top.map((entry) => entry.purpose.split(".").pop()).join(","),
+  );
+}
+
+async function callsFilters() {
+  console.log("\nThe rows behind a total, by task and by trace");
+  const stamp = Date.now();
+  const T1 = `check-costs-task-1-${stamp}`;
+  const T2 = `check-costs-task-2-${stamp}`;
+  const R1 = `check-costs-trace-1-${stamp}`;
+  const R2 = `check-costs-trace-2-${stamp}`;
+  const R3 = `check-costs-trace-3-${stamp}`;
+  const CALLS = `${PURPOSE}.calls`;
+  const row = (taskId: string | null, traceId: string, ok = true) => ({
+    purpose: CALLS, model: "claude-sonnet-5-5", createdAt: hoursAgo(6), taskId, traceId,
+    inputTokens: 100, outputTokens: 10, costUsd: "0.010000", durationMs: 100, ok,
+  });
+  await prisma.llmCall.createMany({ data: [row(T1, R1), row(T1, R1), row(T2, R2), row(null, R3, false)] });
+
+  // The real router, mounted the way index.ts mounts it — the gate included.
+  await ensureSystemRoles();
+  const app = express();
+  app.use(express.json());
+  app.use(attachUser);
+  app.use("/api", requireAuth);
+  app.use("/api/costs", costsRouter);
+  app.use(errorHandler);
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  const port = (server.address() as AddressInfo).port;
+
+  type Row = { taskId: string | null; traceId: string | null; purpose: string; ok: boolean };
+  const calls = async (query: Record<string, string>) => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/costs/calls?${new URLSearchParams({ days: "1", take: "200", ...query })}`);
+    const body = (await res.json()) as { calls?: Row[] };
+    return { status: res.status, rows: body.calls ?? [] };
+  };
+
+  try {
+    const byTask = await calls({ taskId: T1 });
+    check("?taskId returns that task's rows", byTask.status === 200 && byTask.rows.length === 2, `${byTask.status}, ${byTask.rows.length} rows`);
+    check("and only that task's", byTask.rows.every((entry) => entry.taskId === T1));
+
+    const byTrace = await calls({ traceId: R2 });
+    check("?traceId returns that trace's rows, and only those", byTrace.rows.length === 1 && byTrace.rows[0]?.traceId === R2, `${byTrace.rows.length} rows`);
+
+    const both = await calls({ taskId: T2, traceId: R1 });
+    check("the two narrow together rather than either one winning", both.rows.length === 0, `${both.rows.length} rows`);
+
+    // The filters that were already there behave as before.
+    const byPurpose = await calls({ purpose: CALLS });
+    check("?purpose still returns the purpose's rows across tasks", byPurpose.rows.length === 4 && new Set(byPurpose.rows.map((entry) => entry.taskId)).size === 3, `${byPurpose.rows.length} rows`);
+    const failedOnly = await calls({ purpose: CALLS, failed: "true" });
+    check("?failed still returns only the failures", failedOnly.rows.length === 1 && failedOnly.rows[0]?.ok === false, `${failedOnly.rows.length} rows`);
+
+    const tooLong = await calls({ taskId: "x".repeat(500) });
+    check("a filter value that cannot be an id is refused", tooLong.status === 400, `${tooLong.status}`);
+  } finally {
+    server.close();
+  }
 }
 
 async function main() {
@@ -204,6 +415,10 @@ async function main() {
 
   const noSpend = await costPerOutcome(lastDays(7), 0);
   check("no spend at all does not throw", noSpend.outcomes.length === outcomes.outcomes.length);
+
+  await claudeCacheRate();
+  await batchCandidates();
+  await callsFilters();
 
   // Rule 3: everything this check created, gone — including the refused and
   // dry-run rows, which are the ones a cleanup list naming only successes

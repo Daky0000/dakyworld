@@ -18,7 +18,28 @@ already indexed by, so none of it needed a migration.
   the bill was the only symptom. Its denominator is **input + cache reads +
   cache writes**, because all three are input — dividing by `inputTokens` alone
   reports a healthy cache on a run that cached nothing, which is exactly the
-  failure it exists to catch. Zero reads says so in amber.
+  failure it exists to catch. Zero reads says so in the warning colour.
+- **Beside it, the same rate over Claude alone** (`claudeCacheHitRate`,
+  `claudeCalls`; rows whose model starts `claude`). Only the Claude SDK path
+  sends breakpoints — the chat-completions wire records no cache by decision
+  (see [02](02-model-routing-and-cost.md); do not "fix" that 0% by sending
+  `cache_control` there) — and the ladder puts every agent turn on a free rung
+  first, so the global figure is diluted by every free turn and a broken Claude
+  cache moves it a point or two. Null with no Claude calls, exactly 0 (in the
+  warning colour) when Claude calls read nothing back. The model table carries
+  each model's cache reads and writes for the same reason.
+- **"Work that could wait"** (`paidOneShotByPurpose`) is measurement for the
+  Message Batches API, which charges half for a request that can wait up to
+  24 hours: paid (`costUsd > 0`), succeeded, and outside any agent task (an
+  agent turn waits on the one before it), grouped by purpose, top 15, with the
+  Claude part and each purpose's share of all model spend. **A candidate list,
+  not a verdict** — the ledger cannot tell a writer called from a screen from
+  the same writer called by a nightly job. There is no batch path, on purpose.
+  The protocol before building one: read this list over 30 days, read each
+  candidate purpose's code to see whether anybody waits on it, and check the
+  discount, the batch limits and whether structured output, prompt caching and
+  thinking behave the same in a batch against Anthropic's current API docs —
+  not from memory.
 - **Failed, refused and prepared are three different things.** A failure is
   spend (a timeout after the tokens burned costs real money) and is never a
   denominator. A refusal and a dry run are the gate working, and are counted
@@ -37,8 +58,10 @@ already indexed by, so none of it needed a migration.
 **A ceiling is `warn → downgrade → approve → pause`, not an on/off switch.**
 Lead capture has had `capture.monthlyBudgetUsd` since it could spend and a
 rehearsal has had `budgetUsd` since it could fan out; the four model vendors had
-nothing. At 50% the screen says so, at 75% the workforce carries on **on the
-economy model** (`effortUnderBudget` in `agents/runner.ts`), at 90% spending work
+nothing. At 50% the screen says so, at 75% the workforce carries on **more
+cheaply** — `budgetWantsCheaper` in `agents/complexity.ts` holds a complex task
+at standard (dropping its retry `effortFloor` with it), and with routing `off`
+talks the legacy `high` effort down to `medium` — at 90% spending work
 is **prepared for a decision** instead of done, and at 100% nothing new starts.
 The middle two are the point: a ceiling that can only stop work is one nobody
 dares set low enough to be useful, and both reuse machinery that already exists
@@ -51,13 +74,27 @@ rather than inventing a third way for work to be held.
   a ceiling.
 - **Enforced at three points, all of them places where stopping is already
   safe**: the claim in `runDueTasks` (nothing has started, so nothing is
-  half-done), the gate in `tools/invoke.ts` for `spends` tools only, and
-  `shouldStop` between iterations. **Never inside `callModel`** — stopping
+  half-done) and the gate in `tools/invoke.ts` for `spends` tools only. The
+  third stop, `shouldStop` between iterations, checks **only the task's own
+  `budgetUsd`** — a scope budget reaches a running task through the gate and
+  the level cap, not there. **Never inside `callModel`** — stopping
   mid-turn leaves the half-finished turn the whole checkpoint design exists to
   avoid.
 - **A read is never held.** Only a tool that spends is gated. A blanket hold
   blinds every agent without saving a penny, which is the mistake
   `rehearsals/policy.ts` argues out at length.
+- **A task's own `budgetUsd` is settable** — the give-task form's "Spend
+  ceiling (USD)" (`POST /agents/:key/tasks`) and the task drawer
+  (`POST /agents/tasks/:id/budget`, gated with Run), $0–$100. Until Oct 2026
+  nothing wrote it and a ceiling meant psql. **Zero and null are both no
+  ceiling** and both are stored as null — the schema's call for this column,
+  the reverse of a `Budget` below. At four fifths `easeOff` in `runner.ts`
+  lowers the run one step, once; at the ceiling `shouldStop` stops it. The
+  drawer also shows the task's cache reads and writes and `treeCostUsd`, the
+  task and everything delegated under it (six levels, a visited set so a
+  `parentId` loop answers); `checks/taskBudgetApi.ts` holds all of it, through
+  a real `runTask`. `averageCallUsd` and `estimatedToFinishUsd` are per call,
+  which since one `LlmCall` row is written per paid turn means per turn.
 - **A task over its own `budgetUsd` goes BLOCKED, not back to QUEUED.** An
   interrupt requeues, and a task over budget put back in the queue is picked up
   next tick, stopped before it does anything and requeued — once a minute, for
@@ -101,6 +138,13 @@ override any job from Settings → AI models (`models.jobModels`, holding only w
 differs, like `models.routes`). A model with no published rate is refused on write
 and ignored on read: an unpriced model prices at the dearest rate we know of,
 which is the safe direction for a ceiling and a terrible place to find a typo.
+**A model is admitted by a rate** — shipped in the code tables or declared by
+the Owner under `models.pricing` (`isPricedModelAsync`); a declared rate is
+also what it is billed at, so the guard and the bill agree. One priced model is
+refused anyway: `claude-haiku-4-5` stays in the price table for the calls it
+served, but `CLAUDE_WITHOUT_EFFORT` refuses it as a choice, because every
+Claude request this app sends carries `output_config.effort` and Haiku 4.5
+400s on it — which the ladder reads as "hand the work to the next vendor".
 **A job with no tier declared is `standard`** — named that way round so a job
 added later and not thought about costs too much rather than quietly being done
 badly.

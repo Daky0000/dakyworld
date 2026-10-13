@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { Badge, Button, Card, EmptyState, PageHeader, StatGrid, StatTile, Table } from "../components/ui";
-import type { BudgetAction, BudgetPeriod, BudgetRow, BudgetScope, CostReport, DaySpend, Outcome, SpendRow } from "../lib/types";
+import type { BatchCandidate, BudgetAction, BudgetPeriod, BudgetRow, BudgetScope, CostReport, DaySpend, Outcome, SpendRow } from "../lib/types";
 
 /**
  * What the workforce spends, and what it got for it.
@@ -78,7 +78,7 @@ export function Costs() {
         <div className="text-sm text-muted">Loading…</div>
       ) : (
         <>
-          <StatGrid columns={4}>
+          <StatGrid columns={5}>
             <StatTile
               label={`Spent · ${summary.windowDays} days`}
               value={usd(summary.totalUsd)}
@@ -95,6 +95,7 @@ export function Costs() {
               input={summary.inputTokens}
               written={summary.cacheCreationTokens}
             />
+            <ClaudeCacheTile rate={summary.claudeCacheHitRate} calls={summary.claudeCalls} />
             <FailureTile calls={summary.failedCalls} cost={summary.failedUsd} refused={summary.refusedCalls} dryRun={summary.dryRunCalls} />
           </StatGrid>
 
@@ -134,6 +135,8 @@ export function Costs() {
             />
           </div>
 
+          <BatchCandidates rows={data.batchCandidates ?? []} />
+
           <Outcomes outcomes={data.outcomes.outcomes} totalUsd={data.outcomes.totalUsd} days={summary.windowDays} />
 
           <Budgets agentKeys={data.byAgent.map((row) => row.key)} toolKeys={data.byTool.map((row) => row.key)} />
@@ -153,12 +156,12 @@ export function Costs() {
  */
 function CacheTile({ rate, read, input, written }: { rate: number | null; read: number; input: number; written: number }) {
   if (rate === null) {
-    return <StatTile label="Read from cache" value="—" sub="no model calls in this window" />;
+    return <StatTile label="All models from cache" value="—" sub="no model calls in this window" />;
   }
   const percent = Math.round(rate * 100);
   return (
     <StatTile
-      label="Read from cache"
+      label="All models from cache"
       value={`${percent}%`}
       sub={
         read === 0 ? (
@@ -172,6 +175,89 @@ function CacheTile({ rate, read, input, written }: { rate: number | null; read: 
         )
       }
     />
+  );
+}
+
+/**
+ * The same rate over Claude's calls alone.
+ *
+ * Only the Claude path sends cache breakpoints; the chat-completions wire the
+ * free rungs and ChatGPT use records no cache at all, by decision. So the
+ * global tile is diluted by every free turn, and a Claude cache that stopped
+ * working moves it by a point or two. This one cannot be diluted: 0% over
+ * Claude calls is the broken cache, said in the warning colour.
+ */
+function ClaudeCacheTile({ rate, calls }: { rate: number | null; calls: number }) {
+  if (rate === null) {
+    return <StatTile label="Claude from cache" value="—" sub="no Claude calls in this window" />;
+  }
+  const over = `over ${calls.toLocaleString()} Claude call${calls === 1 ? "" : "s"}`;
+  return (
+    <StatTile
+      label="Claude from cache"
+      value={rate === 0 ? <span className="text-warn-text">0%</span> : `${Math.round(rate * 100)}%`}
+      sub={
+        rate === 0 ? (
+          <span className="text-warn-text">nothing read back {over} — the Claude prompt cache is not working</span>
+        ) : (
+          `${over} — the only calls that cache`
+        )
+      }
+    />
+  );
+}
+
+/**
+ * Paid one-shot work by purpose — the measurement behind any batch path.
+ *
+ * A candidate list and labelled as one. The ledger cannot tell a writer called
+ * from a screen, where somebody is waiting, from the same writer called by a
+ * nightly job, so this ranks where the money is and leaves whether a purpose
+ * can wait a day to its code. Nothing qualifying is an empty state, never a
+ * row of zeros.
+ */
+function BatchCandidates({ rows }: { rows: BatchCandidate[] }) {
+  return (
+    <section className="space-y-3">
+      <div>
+        <Heading>Work that could wait</Heading>
+        <p className="mt-1 max-w-3xl text-sm text-muted">
+          Anthropic’s Message Batches API charges half price for requests that can wait up to 24 hours for an answer. Listed here: paid model
+          calls that succeeded outside any agent task, by purpose, dearest first — candidates to look at, not a verdict, since the ledger
+          cannot tell a call somebody was waiting on from one nobody was. Only the Claude part could be halved.
+        </p>
+      </div>
+      {rows.length === 0 ? (
+        <EmptyState message="No paid one-shot work in this window." />
+      ) : (
+        <Table>
+          <thead>
+            <tr className="border-b border-line font-sans text-[11px] uppercase tracking-[.06em] text-muted">
+              <th className="px-4 py-3 font-normal">Purpose</th>
+              <th className="px-4 py-3 text-right font-normal">Calls</th>
+              <th className="px-4 py-3 text-right font-normal">Cost</th>
+              <th className="px-4 py-3 text-right font-normal">Of which Claude</th>
+              <th className="px-4 py-3 text-right font-normal">Of model spend</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.purpose} className="border-b border-line/60 last:border-0">
+                <td className="px-4 py-2.5">
+                  <span className="font-mono text-xs">{row.purpose}</span>
+                </td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-ink">{row.calls.toLocaleString()}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums">{usd(row.costUsd)}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-muted">{usd(row.claudeUsd)}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-muted">
+                  {row.share < 0.01 ? "<1%" : `${Math.round(row.share * 100)}%`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      )}
+    </section>
   );
 }
 
