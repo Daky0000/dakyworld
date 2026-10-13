@@ -122,11 +122,11 @@ export function WebsiteFindReplaceModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-4 backdrop-blur-2xs">
-      <div className="flex max-h-[88vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl">
+      <div role="dialog" aria-modal="true" aria-labelledby="website-find-replace-title" className="flex max-h-[88vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-line p-5">
           <div>
-            <h2 className="font-display text-lg font-bold text-ink">
+            <h2 id="website-find-replace-title" className="font-display text-lg font-bold text-ink">
               Multi-Page Content & Global Tokens
             </h2>
             <p className="mt-0.5 text-xs text-muted">

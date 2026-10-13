@@ -249,6 +249,25 @@ try {
   await page.keyboard.press("Escape");
   await canvas.locator("[data-dw-editing]").waitFor({ state: "detached" });
 
+  // Nor behind one of the editor's own windows. Find & replace was a full-screen
+  // overlay with no dialog semantics, so with focus on one of its buttons rather
+  // than a text box, Delete removed the selected heading behind it.
+  await page.getByRole("treeitem", { name: /Welcome home/ }).click();
+  await page.getByRole("treeitem", { name: /Welcome home/, selected: true }).waitFor();
+  await page.getByRole("button", { name: "More publish options", exact: true }).click();
+  await page.getByRole("menuitem", { name: /Find & replace across the site/ }).click();
+  // Found by its heading rather than its role, so the Delete itself is what
+  // this proves, not only the markup.
+  const findReplace = page.locator("div").filter({ has: page.getByRole("heading", { name: /Multi-Page Content/ }) }).filter({ has: page.getByRole("button", { name: "Close", exact: true }) }).last();
+  await findReplace.waitFor();
+  await findReplace.getByRole("button", { name: "Global Content Tokens" }).click();
+  check("with focus on one of its buttons, not a text box", await findReplace.getByRole("button", { name: "Global Content Tokens" }).evaluate((element) => element === document.activeElement));
+  await page.keyboard.press("Delete");
+  await untouched("Delete behind Find & replace leaves the selected block alone", 0);
+  check("and Find & replace is a dialog to the browser and to a screen reader", (await page.getByRole("dialog", { name: /Multi-Page Content/ }).getAttribute("aria-modal")) === "true");
+  await findReplace.getByRole("button", { name: "Close", exact: true }).click();
+  await findReplace.waitFor({ state: "detached" });
+
   // Refused wherever the menu's Delete is greyed out.
   await page.getByRole("treeitem", { name: /Footer/ }).click();
   await page.keyboard.press("Delete");

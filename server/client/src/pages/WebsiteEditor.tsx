@@ -1943,6 +1943,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     // The page and the panel disagreeing about what is selected is a reason to
     // do nothing: deleting the wrong block is worse than deleting none.
     if (frameSelection !== undefined && frameSelection !== pickedId) return false;
+    // The editor's own overlays by state as well as by markup: Find & replace
+    // had no dialog semantics, so Delete with focus on one of its buttons
+    // removed the selected block behind it, where nobody could see it go.
+    if (showFindReplace || showAI) return false;
     const focused = document.activeElement;
     if (typingInto(focused) || focused?.closest('[role="dialog"], [role="alertdialog"]') || document.querySelector('[aria-modal="true"], dialog[open]')) return false;
     const field = allFields.find((entry) => entry.id === pickedId);

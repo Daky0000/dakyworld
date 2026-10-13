@@ -752,6 +752,14 @@ changed is where `pageSource` gets its bytes and what a publish writes.
   Select parent followed by a click elsewhere left two outlines, and clearing the
   selection removed one. Both now clear every mark. Escape inside the frame also
   clears, because after a click on the page the keyboard is in the frame.
+- **The Delete key never acts behind a window.** `keyboardDelete` refuses while
+  anything is being typed into, in List mode, while the editor is read-only or
+  busy, and while a dialog is open — judged by markup (`role="dialog"`,
+  `aria-modal`) *and* by the editor's own overlay state, because Find & replace
+  was a full-screen overlay with neither, and Delete with focus on one of its
+  buttons removed the selected block behind it, out of sight. Every editor
+  overlay is a labelled `aria-modal` dialog now (Find & replace and the save
+  conflict were the two that were not). `checks/browser/layersAndDelete.mjs`.
 - **The editor sets its own `::selection`** in the frame, translucent, so a page
   with a faint selection colour still shows what is selected and a highlight
   just applied shows through it.

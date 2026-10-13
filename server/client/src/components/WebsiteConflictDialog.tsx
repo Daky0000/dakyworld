@@ -48,9 +48,9 @@ export function ConflictDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-6">
-      <div className="flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-xl">
+      <div role="dialog" aria-modal="true" aria-labelledby="website-conflict-title" className="flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-xl">
         <div className="flex-none border-b border-line px-6 py-4">
-          <h2 className="font-display text-base tracking-[-.02em]">Somebody else saved this page</h2>
+          <h2 id="website-conflict-title" className="font-display text-base tracking-[-.02em]">Somebody else saved this page</h2>
           <p className="mt-1 text-xs text-muted">{conflict.error}</p>
         </div>
 
