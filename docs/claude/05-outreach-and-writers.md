@@ -248,6 +248,8 @@ lead preparation. Now:
   button does not enforce, and neither does the scheduler for a row a
   signed-in person composed (`createdById`) — the composer stores its own
   drafter's letters as `AI_DRAFT`, so the kind alone cannot say who decided.
+  A person who edits or schedules an agent's draft from the outbox
+  (`PATCH /emails/:id`) is stamped there too, when nobody was.
 - **A client's letter answers to the merge field and nothing else**
   (`scopedToPurpose`). An invoice reminder has no opt-out and no question by
   design, and telling an agent it "must" add "reply stop" to one makes the

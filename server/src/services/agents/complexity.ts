@@ -5,6 +5,7 @@ import { TASK_LEVELS, effortForLevel, isTaskLevel, providerConfigured, type Task
 import { SETTING, getSetting } from "../../lib/settings.js";
 import { check, scopesForAgent } from "../budgets.js";
 import type { ToolScope } from "../tools/types.js";
+import type { FailureClass } from "./runner.js";
 
 /**
  * How demanding a task is, decided between the task and the agent.
@@ -408,6 +409,13 @@ export async function lookAtTask(
 
 // --- The decision ------------------------------------------------------------
 
+/**
+ * Failure classes a retry buys nothing for: a vendor that could not be reached
+ * and the task's own spending ceiling. `truncated` has its own branch, because
+ * what it buys is a sentence about why it did not climb.
+ */
+const BUYS_NOTHING: ReadonlySet<FailureClass> = new Set<FailureClass>(["vendor-unavailable", "budget"]);
+
 export type DecidedBy = "owner" | "stored" | "retry" | "rules" | "model" | "legacy";
 
 export interface LevelDecision {
@@ -454,6 +462,13 @@ export interface RouteRequest {
    * included. One is the first retry; absent is read as one.
    */
   failuresInARow?: number;
+  /**
+   * Why the failed run stopped — the class off its FAILED transition
+   * (`FAILURE_CLASSES` in the runner). Only a failure the model could have
+   * avoided climbs the ladder; absent or null is read as one that could, which
+   * is how every failure was read before the class was passed.
+   */
+  failureClass?: FailureClass | null;
   /**
    * The effort a retry was raised to, read back off the checkpoint it saved.
    * Honoured only on a plain resume, so a pause in the middle of a retry
@@ -524,6 +539,29 @@ export async function routeTask(request: RouteRequest): Promise<LevelDecision> {
     level = override;
     decidedBy = "owner";
     sentence = `Sized as a ${level} task because that was chosen for it.`;
+  } else if (stored && request.previousStatus === "FAILED" && !NOT_THE_MODELS_FAULT.has(request.previousActor ?? "") && request.failureClass === "truncated") {
+    // A reply that ran out of room. Every Claude turn goes out with the same
+    // fixed `max_tokens`, and thinking is counted inside it, so a rung up the
+    // ladder spends more of a budget that was already too small — another
+    // truncation, then a dearer model, at a higher price each time. The level
+    // stays and so does its own effort, which is a step down for a retry that
+    // was already thinking harder. The ceiling is not raised here: above it
+    // the SDK refuses a call that is not streamed.
+    level = stored;
+    decidedBy = "retry";
+    sentence =
+      `Its last run ran out of room before it finished, and thinking harder spends more of the same reply budget, ` +
+      `so this one stays ${stored} at ${effortForLevel(stored)} effort rather than climbing.`;
+  } else if (stored && request.previousStatus === "FAILED" && !NOT_THE_MODELS_FAULT.has(request.previousActor ?? "") && request.failureClass != null && BUYS_NOTHING.has(request.failureClass)) {
+    // The far end, or the task's own spending ceiling: nothing about the task
+    // or how hard the model thinks would have changed either, and the second
+    // costs more for the same refusal.
+    level = stored;
+    decidedBy = "retry";
+    sentence =
+      request.failureClass === "budget"
+        ? `Its last run stopped at its own spending ceiling, and thinking harder costs more, so a retry buys nothing: this one stays ${stored} at ${effortForLevel(stored)} effort.`
+        : `Its last run failed because no model could be reached, which nothing about the task causes, so a retry buys nothing: this one stays ${stored} at ${effortForLevel(stored)} effort.`;
   } else if (stored && request.previousStatus === "FAILED" && !NOT_THE_MODELS_FAULT.has(request.previousActor ?? "")) {
     // **Effort before model** — the Owner's rule. The first retry keeps the
     // level, and so the model and its warm cache, and only thinks harder: a

@@ -598,6 +598,13 @@ emailsRouter.patch("/:id", async (req, res, next) => {
         scheduledFor: input.scheduledFor === undefined ? undefined : input.scheduledFor,
         status: input.scheduledFor ? "SCHEDULED" : input.scheduledFor === null ? "DRAFT" : undefined,
         error: null,
+        // A person who edits or schedules a draft nobody composed — an agent's
+        // `email.draft`, a sequence step held for approval — has made the
+        // decision the composer's author makes, and `writtenByAPerson` reads
+        // this column for it. Without it the scheduler held the Owner's own
+        // scheduling a minute later as a letter nobody read. Never overwritten:
+        // the person who composed it stays the one it was logged against.
+        createdById: existing.createdById ?? req.dbUser?.id ?? null,
       },
     });
     res.json(message);

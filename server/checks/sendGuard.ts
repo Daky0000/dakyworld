@@ -443,6 +443,68 @@ try {
   await dispatchDueEmails();
   check("and a second tick leaves it alone", delivered === 0);
 
+  // An agent's draft a person then scheduled from the outbox. The agent wrote
+  // it with nobody behind it, so `createdById` was empty, and PATCH /emails/:id
+  // set SCHEDULED without saying who — so a minute later the scheduler held
+  // the Owner's deliberate decision as though no person had made one. The
+  // route mounted as `index.ts` mounts it, with a person signed in.
+  console.log("\nA person scheduling an agent's draft from the outbox");
+  {
+    const express = (await import("express")).default;
+    const { emailsRouter } = await import("../src/routes/emails.js");
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.dbUser = person as never;
+      req.permissions = new Set(["emails.view", "emails.draft"]);
+      next();
+    });
+    app.use("/api/emails", emailsRouter);
+    const api = app.listen(0, "127.0.0.1");
+    await new Promise((resolve) => api.once("listening", resolve));
+    const patch = async (id: string, body: unknown) => {
+      const res = await fetch(`http://127.0.0.1:${(api.address() as AddressInfo).port}/api/emails/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return { status: res.status, body: (await res.json().catch(() => null)) as any };
+    };
+    try {
+      const drafted = await invokeTool("email.draft", { subject: BAD_SUBJECT, body: BAD_BODY, leadId: lead.id, purpose: "COLD_OUTREACH" }, as);
+      const draftId = (drafted.output as { id?: string } | null)?.id ?? "";
+      const before = await prisma.emailMessage.findUnique({ where: { id: draftId } });
+      check("the agent's draft has nobody behind it", before?.createdById === null && before.kind === "AI_DRAFT", `${before?.createdById}/${before?.kind}`);
+
+      const scheduled = await patch(draftId, { scheduledFor: past.toISOString() });
+      check("PATCH schedules it", scheduled.status === 200 && scheduled.body?.status === "SCHEDULED", `${scheduled.status} ${scheduled.body?.status}`);
+      check("and records the person who did", scheduled.body?.createdById === person.id, `${scheduled.body?.createdById}`);
+
+      // Edited and scheduled in one go: the words are now the person's too.
+      const other = await invokeTool("email.draft", { subject: BAD_SUBJECT, body: BAD_BODY, leadId: lead.id, purpose: "COLD_OUTREACH" }, as);
+      const otherId = (other.output as { id?: string } | null)?.id ?? "";
+      const edited = await patch(otherId, { body: BAD_BODY.replace("Would it help", "Would it be useful"), scheduledFor: past.toISOString() });
+      check("an edit records them as well", edited.status === 200 && edited.body?.createdById === person.id, `${edited.status} ${edited.body?.createdById}`);
+
+      // The negative: a sequence step the sequence scheduled itself, which no
+      // person opened, is still a letter nobody read.
+      const stepRow = await composeMessage({ subject: BAD_SUBJECT, body: BAD_BODY, purpose: "COLD_OUTREACH", kind: "SEQUENCE", leadId: lead.id, status: "SCHEDULED", scheduledFor: past });
+
+      delivered = 0;
+      await dispatchDueEmails();
+      const [scheduledAfter, editedAfter, stepAfter] = await Promise.all([
+        prisma.emailMessage.findUnique({ where: { id: draftId } }),
+        prisma.emailMessage.findUnique({ where: { id: otherId } }),
+        prisma.emailMessage.findUnique({ where: { id: stepRow.id } }),
+      ]);
+      check("an agent's draft a person scheduled is sent, not held", scheduledAfter?.status === "SENT", `${scheduledAfter?.status}: ${scheduledAfter?.error}`);
+      check("so is one they edited and scheduled", editedAfter?.status === "SENT", `${editedAfter?.status}: ${editedAfter?.error}`);
+      check("a letter the sequence scheduled with nobody opening it is still held", stepAfter?.status === "FAILED" && delivered === 2, `${stepAfter?.status}, ${delivered} delivered`);
+    } finally {
+      api.close();
+    }
+  }
+
   // --- 6. A sequence step -------------------------------------------------------
   console.log("\nA sequence step nobody read");
   async function sequenceStep(purpose: "COLD_OUTREACH" | "FOLLOW_UP") {

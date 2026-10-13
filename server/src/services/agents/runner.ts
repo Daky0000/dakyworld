@@ -2630,6 +2630,8 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
         previousStatus: failure ? "FAILED" : claim.from,
         previousActor: failure?.actor ?? null,
         failuresInARow: failure?.inARow ?? 0,
+        // Why it failed: only a failure the model could have avoided climbs.
+        failureClass: failure?.failureClass ?? null,
         // A rung of the ladder the conversation was already on, so a pause in
         // the middle of a retry comes back thinking as hard as it left.
         savedEffortFloor: savedEffort(saved?.counters.effortFloor),

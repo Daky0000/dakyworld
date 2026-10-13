@@ -110,6 +110,11 @@ async function main() {
   delete process.env.GEMINI_API_KEY;
   delete process.env.PERPLEXITY_API_KEY;
   delete process.env.NVIDIA_API_KEY;
+  // The environment beats the database for Claude's two model settings, so a
+  // value left in the shell would decide the pin section below on its own.
+  const savedPins = { ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL, ANTHROPIC_MODEL_ECONOMY: process.env.ANTHROPIC_MODEL_ECONOMY };
+  delete process.env.ANTHROPIC_MODEL;
+  delete process.env.ANTHROPIC_MODEL_ECONOMY;
 
   const { callClaude } = await import("../src/lib/claude.js");
   const { callModel } = await import("../src/lib/models/call.js");
@@ -122,6 +127,7 @@ async function main() {
     await deleteSetting(SETTING.MODEL_JOB_MODELS);
     await deleteSetting(SETTING.MODEL_ROUTES);
     await deleteSetting(SETTING.ANTHROPIC_MODEL);
+    await deleteSetting(SETTING.ANTHROPIC_MODEL_ECONOMY);
   };
   await reset();
 
@@ -211,6 +217,96 @@ async function main() {
   await askJob("triage");
   check("a priced model the wire cannot ask is ignored too", lastModel() === MODEL_ECONOMY, `sent ${lastModel()}`);
 
+  console.log("\nNor through Claude's own two model settings");
+  // Refused for a job and for a level, Haiku 4.5 could still get in through the
+  // settings a level falls back to and every unsized call reads: a deployment
+  // that pinned the economy model to it while it was the shipped simple model
+  // sent every standard-level turn and every economy one-shot to a 400, and on
+  // to the next paid vendor. Ignored on read with one log line, refused on
+  // write — and a pin that can take an effort is still honoured.
+  {
+    const { clearSettingsCache } = await import("../src/lib/settings.js");
+    const { defaultModel, modelForEffort } = await import("../src/lib/claudePricing.js");
+    const { tierSlot } = await import("../src/lib/models/registry.js");
+    await setSetting(SETTING.MODEL_JOB_MODELS, JSON.stringify({}));
+
+    const warned: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warned.push(args.map(String).join(" "));
+      originalWarn(...args);
+    };
+    try {
+      await setSetting(SETTING.ANTHROPIC_MODEL_ECONOMY, "claude-haiku-4-5");
+      await setSetting(SETTING.ANTHROPIC_MODEL, "claude-haiku-4-5");
+      const standard = await tierSlot("anthropic", "standard");
+      check("a standard-level agent turn does not take an economy pin to Haiku 4.5", standard.model === MODEL_ECONOMY && standard.source === "shipped", `${standard.model}/${standard.source}`);
+      const complex = await tierSlot("anthropic", "complex");
+      check("nor a complex one a headline pin", complex.model === MODEL_DEFAULT && complex.source === "shipped", `${complex.model}/${complex.source}`);
+      check("an unsized medium-effort turn falls back to the shipped economy model", (await modelForEffort("medium")) === MODEL_ECONOMY, await modelForEffort("medium"));
+      check("and defaultModel to the shipped headline model", (await defaultModel()) === MODEL_DEFAULT, await defaultModel());
+      await ask({ effort: "low" });
+      check("on the wire too", lastModel() === MODEL_ECONOMY, `sent ${lastModel()}`);
+      await modelForEffort("low");
+      const said = warned.filter((line) => line.includes("anthropic.model.economy") && line.includes("claude-haiku-4-5"));
+      check("said once in the log, not on every read", said.length === 1, `${said.length} lines`);
+
+      await deleteSetting(SETTING.ANTHROPIC_MODEL_ECONOMY);
+      await deleteSetting(SETTING.ANTHROPIC_MODEL);
+      process.env.ANTHROPIC_MODEL_ECONOMY = "claude-haiku-4-5";
+      clearSettingsCache();
+      check("the same pin in ANTHROPIC_MODEL_ECONOMY is ignored", (await modelForEffort("medium")) === MODEL_ECONOMY && (await tierSlot("anthropic", "standard")).model === MODEL_ECONOMY);
+      delete process.env.ANTHROPIC_MODEL_ECONOMY;
+      clearSettingsCache();
+
+      // The negative: a pin that can take an effort is the Owner's, as before.
+      await setSetting(SETTING.ANTHROPIC_MODEL_ECONOMY, "claude-sonnet-5");
+      await setSetting(SETTING.ANTHROPIC_MODEL, "claude-opus-5");
+      check("a pin that takes an effort is still honoured for the standard level", (await tierSlot("anthropic", "standard")).model === "claude-sonnet-5");
+      check("and for unsized turns", (await modelForEffort("medium")) === "claude-sonnet-5" && (await defaultModel()) === "claude-opus-5");
+    } finally {
+      console.warn = originalWarn;
+      await deleteSetting(SETTING.ANTHROPIC_MODEL_ECONOMY);
+      await deleteSetting(SETTING.ANTHROPIC_MODEL);
+    }
+
+    // The write half, through the route the Settings screen uses.
+    const express = (await import("express")).default;
+    const { attachUser, requireAuth } = await import("../src/middleware/auth.js");
+    const { settingsRouter } = await import("../src/routes/settings.js");
+    const { ensureSystemRoles } = await import("../src/lib/accessRoles.js");
+    const { getSetting } = await import("../src/lib/settings.js");
+    // The dev user is an Owner only once the Owner role exists.
+    await ensureSystemRoles();
+    const app = express();
+    app.use(express.json());
+    app.use(attachUser);
+    app.use("/api", requireAuth);
+    app.use("/api/settings", settingsRouter);
+    const api = app.listen(0, "127.0.0.1");
+    await new Promise((resolve) => api.once("listening", resolve));
+    const put = async (body: unknown) => {
+      const res = await fetch(`http://127.0.0.1:${(api.address() as AddressInfo).port}/api/settings/models/anthropic`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return { status: res.status, body: (await res.json().catch(() => null)) as any };
+    };
+    try {
+      const refused = await put({ model: "claude-haiku-4-5" });
+      check("PUT /settings/models/anthropic refuses Haiku 4.5", refused.status === 400 && String(refused.body?.error ?? "").includes("effort"), `${refused.status} ${JSON.stringify(refused.body).slice(0, 160)}`);
+      check("and stores nothing", (await getSetting(SETTING.ANTHROPIC_MODEL)) == null);
+      const taken = await put({ model: "claude-sonnet-5-5" });
+      check("a model that takes an effort is stored as before", taken.status === 200 && (await getSetting(SETTING.ANTHROPIC_MODEL)) === "claude-sonnet-5-5", `${taken.status}`);
+      const cleared = await put({ model: "" });
+      check("and blank still restores the shipped default", cleared.status === 200 && (await getSetting(SETTING.ANTHROPIC_MODEL)) == null, `${cleared.status}`);
+    } finally {
+      api.close();
+      await deleteSetting(SETTING.ANTHROPIC_MODEL);
+    }
+  }
+
   console.log("\nThe ledger records what actually served it");
   const rows = await prisma.llmCall.findMany({ where: { purpose: "check.modelChoice" }, select: { model: true } });
   check("every call left a priced ledger row", rows.length === sent.length, `${rows.length} rows for ${sent.length} calls`);
@@ -277,6 +373,10 @@ async function main() {
   // expected to be ignored. The delete is the last thing that happens.
   await prisma.llmCall.deleteMany({ where: { purpose: { startsWith: "check.modelChoice" } } });
   await reset();
+  for (const [name, value] of Object.entries(savedPins)) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
   await prisma.$disconnect();
   server.close();
 

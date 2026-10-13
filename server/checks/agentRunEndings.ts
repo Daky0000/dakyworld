@@ -29,7 +29,9 @@
  *     the model and sends a higher effort, is told why in exactly one text
  *     block after the tool results, and a pause halfway through it comes back
  *     on the same rung without being told twice; the second failure in a row
- *     moves the model up.
+ *     moves the model up. **Except after a truncation**: a reply that ran out
+ *     of room comes back on the same model at the same effort, because
+ *     thinking is counted inside the same fixed reply budget.
  *
  * A database and nothing else. No API key, no network — both vendors are
  * local stubs on ports the OS picks.
@@ -179,6 +181,12 @@ async function run(title: string, scripted: Script, extra: { parentId?: string }
 const lastTransition = (taskId: string) =>
   prisma.agentTaskTransition.findFirst({ where: { taskId }, orderBy: [{ at: "desc" }, { id: "desc" }] });
 
+/** Re-files the newest FAILED under `tool-error`, a class the ladder climbs for. */
+async function asModelFault(taskId: string) {
+  const failed = await prisma.agentTaskTransition.findFirst({ where: { taskId, to: "FAILED" }, orderBy: [{ at: "desc" }, { id: "desc" }] });
+  if (failed) await prisma.agentTaskTransition.update({ where: { id: failed.id }, data: { reason: failed.reason.replace(/^\[[a-z-]+\]/, "[tool-error]") } });
+}
+
 async function requeue(taskId: string, from: "FAILED" | "BLOCKED" | "DONE") {
   await transition(taskId, { to: "QUEUED", reason: "Run again by the check.", actor: "owner", expect: [from] });
 }
@@ -250,6 +258,7 @@ async function main() {
   // --- Truncated -------------------------------------------------------------
   console.log("\nThe reply ran out of room");
   const cut = await run("Endings: truncated", () => say([{ type: "text", text: "Here is the first half of what I" }], "max_tokens"));
+  const cutSeen = anthropicSeen[0];
   check("it finishes FAILED, not DONE", cut.row.status === "FAILED", cut.row.status);
   check("the runner reports the same", cut.outcome.status === "FAILED", cut.outcome.status);
   check("the error says the reply ran out of room", (cut.row.error ?? "").includes("ran out of room"), cut.row.error ?? "");
@@ -261,6 +270,23 @@ async function main() {
   check("the FAILED step carries stoppedBecause", (cutStep?.data as { stoppedBecause?: string } | null)?.stoppedBecause === "truncated", JSON.stringify(cutStep?.data));
   check("so does the result", (cut.row.result as { stoppedBecause?: string } | null)?.stoppedBecause === "truncated");
   check("and the history names the class", failureClassOf((await lastTransition(cut.task.id))?.reason) === "truncated", (await lastTransition(cut.task.id))?.reason);
+
+  // Run again on a truncation: the same model at the same effort. Thinking is
+  // counted inside the same fixed `max_tokens`, so a rung up would spend more
+  // of a budget that was already too small.
+  const cutModel = cutSeen?.model;
+  const cutEffort = cutSeen?.effort;
+  await requeue(cut.task.id, "FAILED");
+  anthropicSeen.length = 0;
+  script = () => say([{ type: "text", text: "All of it, this time." }], "end_turn");
+  await runTask(cut.task.id);
+  check(
+    "a retry after a truncation keeps the model and does not think harder",
+    anthropicSeen[0]?.model === cutModel && anthropicSeen[0]?.effort === cutEffort,
+    `${cutModel}/${cutEffort} → ${anthropicSeen[0]?.model}/${anthropicSeen[0]?.effort}`,
+  );
+  const cutRouted = await prisma.agentTaskStep.findFirst({ where: { taskId: cut.task.id, kind: "ROUTED" }, orderBy: { seq: "desc" } });
+  check("and the ROUTED step says why", (cutRouted?.message ?? "").includes("ran out of room") && (cutRouted?.message ?? "").includes("rather than climbing"), cutRouted?.message);
 
   // --- Refused ---------------------------------------------------------------
   console.log("\nThe model declined");
@@ -363,6 +389,11 @@ async function main() {
   console.log("\nThe retry ladder, on the wire");
   const ladder = await run("Endings: the ladder", (turn) => (turn === 1 ? rememberTurn(turn) : say([{ type: "text", text: "and then the" }], "max_tokens")));
   check("the first run failed", ladder.row.status === "FAILED", ladder.row.status);
+  // The stub can end a run short only by truncating it, and a truncation no
+  // longer climbs (above). So each failure here is re-filed under the class a
+  // failure from our own side of the run carries — the one word `routeTask`
+  // reads — and the ladder itself is exercised exactly as it was.
+  await asModelFault(ladder.task.id);
   const firstModel = anthropicSeen[0]?.model;
   const firstEffort = anthropicSeen[0]?.effort;
   const firstLevel = ladder.row.level;
@@ -385,7 +416,7 @@ async function main() {
   const tailBlocks = Array.isArray(tail?.content) ? (tail!.content as { type?: string; text?: string }[]) : [];
   check(
     "as text after the tool results, in the same user turn",
-    tail?.role === "user" && tailBlocks[0]?.type === "tool_result" && tailBlocks.at(-1)?.type === "text" && (tailBlocks.at(-1)?.text ?? "").includes("truncated"),
+    tail?.role === "user" && tailBlocks[0]?.type === "tool_result" && tailBlocks.at(-1)?.type === "text" && (tailBlocks.at(-1)?.text ?? "").includes("ran out of room"),
     JSON.stringify(tailBlocks.map((block) => block.type)),
   );
   check("and the conversation still alternates — no two user turns in a row", alternates(sent));
@@ -400,6 +431,7 @@ async function main() {
   check("without being told about the failure a second time", traceBlocks(resumed?.messages ?? []) === 1, String(traceBlocks(resumed?.messages ?? [])));
   const afterSecond = await prisma.agentTask.findUniqueOrThrow({ where: { id: ladder.task.id } });
   check("and it failed again", afterSecond.status === "FAILED", afterSecond.status);
+  await asModelFault(ladder.task.id);
 
   // Rung two: a second failure in a row is the evidence thinking was not enough.
   await requeue(ladder.task.id, "FAILED");

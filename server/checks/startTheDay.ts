@@ -192,6 +192,110 @@ console.log("\nAnd an agent somebody switched off stays off");
   check("in words a person can act on", result.summary.includes("not Active"), result.summary.slice(0, 120));
 }
 
+/** Every `console.warn` while `run` runs, still printed. */
+async function warningsDuring(run: () => Promise<unknown>): Promise<string[]> {
+  const seen: string[] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => {
+    seen.push(args.map(String).join(" "));
+    original(...args);
+  };
+  try {
+    await run();
+  } finally {
+    console.warn = original;
+  }
+  return seen;
+}
+
+// --- A run that ended short does not stop the standing job --------------------
+//
+// A run that used every turn, or that the model declined, ends BLOCKED with
+// its class at the front of the transition (`[iteration-cap]`, `[refusal]`).
+// Counted as open against `maxOpenTasks` 1, one bad morning stopped the job
+// for good: every later slot said "already has 1 open" and nothing else did.
+// The blocked task still waits for a person; the next slot runs beside it,
+// and its timeline says why the one before it is still there. A BLOCKED task
+// that asked a question is different — its answer is the work — and still
+// holds the slot.
+const SHORT_TITLE = "The job that ran out of turns";
+async function blockedWith(reason: string, extra: { escalationStatus?: "PENDING" } = {}) {
+  const task = await prisma.agentTask.create({
+    data: { agentKey: AGENT_KEY, title: SHORT_TITLE, brief: "b", origin: "SCHEDULE", status: "BLOCKED", blockedReason: reason.replace(/^\[[a-z-]+\]\s*/, ""), ...extra },
+  });
+  await prisma.agentTaskTransition.createMany({
+    data: [
+      { taskId: task.id, from: "QUEUED", to: "RUNNING", reason: "Claimed.", actor: "runner" },
+      { taskId: task.id, from: "RUNNING", to: "BLOCKED", reason, actor: "runner", at: new Date(Date.now() + 1) },
+    ],
+  });
+  return task;
+}
+const shortSchedule = () =>
+  prisma.agentSchedule.create({
+    data: { agentKey: AGENT_KEY, title: SHORT_TITLE, brief: "b", runTimes: ["23:59"], timezone: "UTC", enabled: true, maxOpenTasks: 1, nextRunAt: new Date(Date.now() - 60_000) },
+  });
+const raisedSince = (before: string[]) =>
+  prisma.agentTask.findMany({ where: { agentKey: AGENT_KEY, origin: "SCHEDULE", id: { notIn: before } }, include: { steps: true } });
+
+console.log("\nA run that ended short does not stop the standing job");
+for (const [label, reason] of [
+  ["used every turn", "[iteration-cap] Used all 16 turns without finishing."],
+  ["was declined by the model", "[refusal] claude-opus-5-5 declined to continue."],
+] as const) {
+  await clearWork();
+  await shortSchedule();
+  const blocked = await blockedWith(reason);
+  await raiseStandingWork(new Date());
+  const fresh = await raisedSince([blocked.id]);
+  check(`the next slot is raised beside a run that ${label}`, fresh.length === 1, `${fresh.length}`);
+  const note = fresh[0]?.steps.find((one) => one.kind === "NOTED");
+  check(
+    "and its timeline says the slot before it ended short, and why",
+    Boolean(note && note.message.includes(blocked.id) && note.message.includes(reason.slice(1, reason.indexOf("]")))),
+    note?.message,
+  );
+  check("the blocked one is left waiting for a person", (await prisma.agentTask.findUniqueOrThrow({ where: { id: blocked.id } })).status === "BLOCKED");
+  await prisma.agentSchedule.updateMany({ where: { agentKey: AGENT_KEY }, data: { nextRunAt: new Date(Date.now() - 60_000) } });
+  const warned = await warningsDuring(() => raiseStandingWork(new Date()));
+  check("and the new one still holds the slot after it, as any open task does", (await raisedSince([blocked.id])).length === 1);
+  check("which the log names as open", warned.some((line) => line.includes(SHORT_TITLE) && line.includes("already has 1 open")), warned.join(" | "));
+}
+{
+  await clearWork();
+  await shortSchedule();
+  const blocked = await blockedWith("[iteration-cap] Used all 16 turns without finishing.");
+  const result = await startTheDay();
+  const fresh = await raisedSince([blocked.id]);
+  check("the button raises it too", fresh.length === 1 && result.raised >= 1, `${fresh.length} / ${result.raised}`);
+  check("with the same note", fresh[0]?.steps.some((one) => one.kind === "NOTED" && one.message.includes(blocked.id)) === true);
+}
+{
+  // The negatives: a question waiting for an answer holds the slot, with or
+  // without the escalation status set, and so does a capped task somebody
+  // set going again.
+  await clearWork();
+  await shortSchedule();
+  const asked = await blockedWith("Which of the two lists should I work from?", { escalationStatus: "PENDING" });
+  await raiseStandingWork(new Date());
+  check("a BLOCKED task waiting on an escalation answer still holds the slot", (await raisedSince([asked.id])).length === 0);
+
+  await clearWork();
+  await shortSchedule();
+  const untagged = await blockedWith("Blocked for a reason with no class on it.");
+  await raiseStandingWork(new Date());
+  check("so does a BLOCKED task with no class on its ending", (await raisedSince([untagged.id])).length === 0);
+
+  await clearWork();
+  await shortSchedule();
+  const carried = await blockedWith("[iteration-cap] Used all 16 turns without finishing.");
+  await prisma.agentTask.update({ where: { id: carried.id }, data: { status: "QUEUED" } });
+  await prisma.agentTaskTransition.create({ data: { taskId: carried.id, from: "BLOCKED", to: "QUEUED", reason: "Carry on.", actor: "owner", at: new Date(Date.now() + 2) } });
+  await raiseStandingWork(new Date());
+  check("and so does a capped task somebody pressed Carry on for", (await raisedSince([carried.id])).length === 0);
+}
+await clearWork();
+
 // --- The daily chain, behind flags.workflows --------------------------------
 const STAGE_A = "Stage A";
 const STAGE_B = "Stage B";
@@ -208,22 +312,6 @@ async function taskFor(agentKey: string, title: string, status: "QUEUED" | "RUNN
 }
 const tasksOf = (agentKey: string) => prisma.agentTask.count({ where: { agentKey, origin: "SCHEDULE" } });
 const scheduleOf = (id: string) => prisma.agentSchedule.findUniqueOrThrow({ where: { id } });
-
-/** Every `console.warn` while `run` runs, still printed. */
-async function warningsDuring(run: () => Promise<unknown>): Promise<string[]> {
-  const seen: string[] = [];
-  const original = console.warn;
-  console.warn = (...args: unknown[]) => {
-    seen.push(args.map(String).join(" "));
-    original(...args);
-  };
-  try {
-    await run();
-  } finally {
-    console.warn = original;
-  }
-  return seen;
-}
 
 console.log("\nThe chain keeps its order on the minute tick (flag on)");
 await setFlag(FLAG.WORKFLOWS, true);

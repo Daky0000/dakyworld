@@ -304,6 +304,38 @@ async function decisions() {
   const retriedAgain = await routeTask({ ...base, agent: agentRow(), task: taskRow({ level: "SIMPLE" }), resuming: true, previousStatus: "FAILED", failuresInARow: 2, mode: "full" });
   check("and one that failed twice in a row comes back one level up", retriedAgain.level === "standard" && retriedAgain.decidedBy === "retry", `${retriedAgain.level}/${retriedAgain.decidedBy}`);
 
+  // The ladder reads why the run failed. A reply that ran out of room is not
+  // fixed by thinking harder — thinking counts against the same fixed reply
+  // budget — and a vendor that could not be reached is not fixed by anything
+  // the task does. Only a failure the model could have avoided climbs.
+  for (const [stored, own] of [["SIMPLE", "low"], ["STANDARD", "medium"], ["COMPLEX", "high"]] as const) {
+    for (const inARow of [1, 2, 3]) {
+      const cut = await routeTask({ ...base, agent: agentRow(), task: taskRow({ level: stored }), resuming: true, previousStatus: "FAILED", failuresInARow: inARow, failureClass: "truncated", mode: "full" });
+      check(
+        `a ${stored.toLowerCase()} run that ran out of room (${inARow} in a row) keeps its level and does not think harder`,
+        cut.level === stored.toLowerCase() && cut.effort === own && cut.effortFloor === null && cut.decidedBy === "retry",
+        `${cut.level}/${cut.effort}/${cut.effortFloor}/${cut.decidedBy}`,
+      );
+      if (inARow === 1) check("and the timeline says why", /ran out of room/.test(cut.sentence ?? "") && (cut.sentence ?? "").includes(`${own} effort`), cut.sentence ?? "");
+    }
+  }
+  for (const failureClass of ["vendor-unavailable", "budget"] as const) {
+    const down = await routeTask({ ...base, agent: agentRow(), task: taskRow({ level: "STANDARD" }), resuming: true, previousStatus: "FAILED", failuresInARow: 2, failureClass, mode: "full" });
+    check(
+      `a ${failureClass} failure buys nothing — same level, same effort`,
+      down.level === "standard" && down.effort === "medium" && down.effortFloor === null,
+      `${down.level}/${down.effort}/${down.effortFloor}`,
+    );
+    check("and says so", (down.sentence ?? "").includes("buys nothing"), down.sentence ?? "");
+  }
+  // The negatives: a tool error and an untagged failure climb as before.
+  for (const failureClass of ["tool-error", "other", null] as const) {
+    const once = await routeTask({ ...base, agent: agentRow(), task: taskRow({ level: "SIMPLE" }), resuming: true, previousStatus: "FAILED", failuresInARow: 1, failureClass, mode: "full" });
+    const twice = await routeTask({ ...base, agent: agentRow(), task: taskRow({ level: "SIMPLE" }), resuming: true, previousStatus: "FAILED", failuresInARow: 2, failureClass, mode: "full" });
+    check(`a ${failureClass ?? "untagged"} failure still thinks harder first`, once.level === "simple" && once.effort === "medium", `${once.level}/${once.effort}`);
+    check(`and still steps up on the second`, twice.level === "standard", `${twice.level}`);
+  }
+
   const paused = await routeTask({ ...base, agent: agentRow(), task: taskRow({ level: "SIMPLE" }), resuming: true, previousStatus: "QUEUED", mode: "full" });
   check("a run put down for a busy vendor does not", paused.level === "simple", paused.level ?? "null");
 

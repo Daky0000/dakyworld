@@ -145,6 +145,16 @@ refused anyway: `claude-haiku-4-5` stays in the price table for the calls it
 served, but `CLAUDE_WITHOUT_EFFORT` refuses it as a choice, because every
 Claude request this app sends carries `output_config.effort` and Haiku 4.5
 400s on it — which the ladder reads as "hand the work to the next vendor".
+That covers every door, not only the job and level pickers: `PUT
+/settings/models/anthropic` refuses it with the same sentence
+(`whyNotChoosable`), and `anthropic.model` / `anthropic.model.economy` — and
+`ANTHROPIC_MODEL` / `ANTHROPIC_MODEL_ECONOMY` in the environment, which nothing
+validates — are read through `claudeModelSetting()` in `claudePricing.ts`,
+which skips such a pin with one log line and falls back to the shipped model.
+Those two settings are what `defaultModel`, `modelForEffort` and the
+standard/complex levels' `vendorChoice` fall back to, so a pin saved while Haiku
+4.5 was the shipped simple model would otherwise have sent every standard-level
+turn to a 400.
 **A job with no tier declared is `standard`** — named that way round so a job
 added later and not thought about costs too much rather than quietly being done
 badly.
@@ -171,7 +181,19 @@ rungs still serve first. Four stages, first answer wins:
    the task first; see [07](07-agent-runtime.md). A pause for a busy vendor, a
    block that was answered, and a failure the reaper or a restart wrote do not
    count, because none of them was the model's fault — and a pause in the middle
-   of a retry comes back on the rung its checkpoint saved.
+   of a retry comes back on the rung its checkpoint saved. **The ladder reads
+   why the run failed** (`failureClass`, off the FAILED transition) and only a
+   failure the model could have avoided climbs — `tool-error`, `other`, and an
+   untagged failure from before the classes. A **`truncated`** retry keeps its
+   level at the level's own effort, never higher, which is a step down for a
+   retry that was already thinking harder: every Claude turn carries the same
+   fixed `max_tokens` (16,000) and thinking is counted inside it, so climbing
+   spends more of a budget that was already too small, then reaches a dearer
+   model. The ceiling is not raised for it — above it the SDK refuses a call
+   that is not streamed. **`vendor-unavailable` and `budget` buy nothing**: same
+   level, same effort. Each says so on the ROUTED step. The streak those
+   failures leave still counts towards "two in a row" for a later failure that
+   does climb.
 2. **`scoreTask()`**, pure: agent tier, origin (schedule and delegated −1), the
    tools the brief points at (`likelyTools` — a build or judgement tool +2,
    reading only −1), brief length, wording cues (capped ±2; "care plan" is a

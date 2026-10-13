@@ -195,10 +195,53 @@ export function costOf(rate: ModelRate, tokens: TokenCounts): number {
   return (input + output + cacheRead + cacheWrite) / 1_000_000;
 }
 
+/**
+ * Claude models this app still prices but can no longer ask for anything.
+ *
+ * Every request this app sends Claude carries `output_config.effort` — the
+ * one-shot writers through `callClaude`, and every agent turn, with adaptive
+ * thinking besides — and Haiku 4.5 takes neither: both are a 400 on it. A 400
+ * is "refused the request shape", which `callModel` and the agent loop both
+ * read as a reason to hand the work to the next vendor, so the model the
+ * simple level shipped on until Oct 2026 did not fail loudly; every simple task
+ * that reached it was quietly passed on to ChatGPT or Gemini. It stays in the
+ * price table, because the ledger holds months of calls it served, and it is
+ * refused as a choice — for a job, a level, and the two Claude model settings
+ * below. Here rather than in the registry so the reads below can use it
+ * without the registry's import graph; the registry re-exports it.
+ */
+export const CLAUDE_WITHOUT_EFFORT: readonly string[] = ["claude-haiku-4-5"];
+
+/** Said once per setting and model, not on every turn that reads it. */
+const refusedPinsSaid = new Set<string>();
+
+/**
+ * One of the two Claude model settings, or null when it is unset or names a
+ * model that cannot take an effort setting.
+ *
+ * The Settings screen refuses those now, but a value saved before it did — or
+ * put in `ANTHROPIC_MODEL` / `ANTHROPIC_MODEL_ECONOMY`, where nothing checks
+ * it — would otherwise send every turn that reads it to a model that 400s, and
+ * the 400 hands the work to the next paid vendor without a word. Null means
+ * the shipped model, with one line in the log saying so.
+ */
+export async function claudeModelSetting(key: typeof SETTING.ANTHROPIC_MODEL | typeof SETTING.ANTHROPIC_MODEL_ECONOMY): Promise<string | null> {
+  const configured = (await getSetting(key))?.trim();
+  if (!configured) return null;
+  if (CLAUDE_WITHOUT_EFFORT.includes(configured)) {
+    const said = `${key}=${configured}`;
+    if (!refusedPinsSaid.has(said)) {
+      refusedPinsSaid.add(said);
+      console.warn(`[models] ${key} is set to ${configured}, which takes no effort setting and would refuse every call — using the shipped model instead.`);
+    }
+    return null;
+  }
+  return configured;
+}
+
 /** The model every call uses unless it asks for another. */
 export async function defaultModel(): Promise<string> {
-  const configured = (await getSetting(SETTING.ANTHROPIC_MODEL))?.trim();
-  return configured || MODEL_DEFAULT;
+  return (await claudeModelSetting(SETTING.ANTHROPIC_MODEL)) || MODEL_DEFAULT;
 }
 
 /**
@@ -214,6 +257,5 @@ export async function modelForEffort(effort: Effort): Promise<string> {
   // "high" must default to the better model, not quietly fall through to the
   // cheaper one because nobody remembered to list it.
   if (effort !== "low" && effort !== "medium") return defaultModel();
-  const configured = (await getSetting(SETTING.ANTHROPIC_MODEL_ECONOMY))?.trim();
-  return configured || MODEL_ECONOMY;
+  return (await claudeModelSetting(SETTING.ANTHROPIC_MODEL_ECONOMY)) || MODEL_ECONOMY;
 }

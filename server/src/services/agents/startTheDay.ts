@@ -1,7 +1,7 @@
 import { FLAG, flagOn } from "../../lib/featureFlags.js";
 import { prisma } from "../../lib/prisma.js";
 import { recordCreated } from "./state.js";
-import { STANDING_AFTER, inChainOrder, nextRunFor, openStanding, openUpstream, standingId } from "./standingWork.js";
+import { STANDING_AFTER, inChainOrder, nextRunFor, noteEndedShort, openStanding, openUpstream, standingId, standingSlot } from "./standingWork.js";
 import { runDueTasks } from "./runner.js";
 import { hunt } from "../hunt/run.js";
 
@@ -114,7 +114,8 @@ export async function startTheDay(
       continue;
     }
 
-    if ((await openStanding(schedule)) >= schedule.maxOpenTasks) continue;
+    const { open, endedShort } = await standingSlot(schedule);
+    if (open >= schedule.maxOpenTasks) continue;
 
     const task = await prisma.agentTask.create({
       data: { agentKey: schedule.agentKey, title: schedule.title, brief: schedule.brief, origin: "SCHEDULE" },
@@ -124,6 +125,7 @@ export async function startTheDay(
       reason: `Standing work: "${schedule.title}", brought forward by hand.`,
       actor: "owner",
     });
+    await noteEndedShort(task.id, schedule.title, endedShort);
     raised += 1;
   }
 

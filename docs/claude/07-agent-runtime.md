@@ -778,6 +778,24 @@ that writes the pair; it is the same predicate `isPaused` reads, and
 `routes/agents.ts` imports that rather than writing its three conditions out a
 second time. `checks/startTheDay.ts` covers it.
 
+**A run that ended short does not stop its standing job** —
+`standingSlot()` in `standingWork.ts`. Every shipped schedule has
+`maxOpenTasks` 1, and once a capped or refused run ended BLOCKED rather than
+DONE, counting it as open stopped the job for good after one bad morning:
+every later slot logged "already has 1 open" and raised nothing until somebody
+pressed Carry on — and broad batch briefs are exactly the work most likely to
+use all sixteen turns. A BLOCKED task whose newest transition into BLOCKED is
+classed `iteration-cap` or `refusal` is left out of the count: it keeps waiting
+for a person, the next slot runs beside it, and the new task's timeline opens
+with a NOTED step naming the run that ended short and why
+(`noteEndedShort()`), so the stoppage is visible somewhere other than the log.
+**A BLOCKED task that asked** — `escalate`, a blocking `needSkill`, anything
+with an escalation still PENDING, or a BLOCKED with no class at all — still
+holds the slot, because its answer is the work. A capped task somebody set
+going again is QUEUED or RUNNING and counts as any open task does. Both the
+minute tick and "Start the day" read it; `checks/startTheDay.ts` covers the
+two endings and the three negatives.
+
 **The daily chain can wait for itself — behind `flags.workflows`, which ships
 off** (`FLAG_WORKFLOWS=true` turns it on). Standing work was ordered by nothing
 but clock times and a sentence in a brief ("before 09:30"): each stage is
@@ -807,8 +825,9 @@ clock, as everything did before. With the flag on:
   it, so its queued task is waiting on a person too.
 - **A stage that could not be raised anyway is never held.** Its own last run
   still open — `openStanding()`, the count `maxOpenTasks` is held against, which
-  includes BLOCKED — means it raises nothing whatever is ahead of it, so it is
-  spent as it always was, and the button does not call it waiting.
+  includes a BLOCKED run that asked a question — means it raises nothing
+  whatever is ahead of it, so it is spent as it always was, and the button does
+  not call it waiting.
 - **"Start the day" keeps the order too.** It raises the upstream, brings a
   waiting stage forward (`nextRunAt` = now) without spending it, and names it
   in the summary; the minute tick raises it once the stage before it is done.

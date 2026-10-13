@@ -1,6 +1,6 @@
 import { SETTING, getSetting, isEnvManaged } from "../settings.js";
 import type { Effort } from "../claude.js";
-import { MODEL_DEFAULT, MODEL_ECONOMY, MODEL_PRICING, declaredRates, defaultModel, type ModelRate } from "../claudePricing.js";
+import { CLAUDE_WITHOUT_EFFORT, MODEL_DEFAULT, MODEL_ECONOMY, MODEL_PRICING, claudeModelSetting, declaredRates, defaultModel, type ModelRate } from "../claudePricing.js";
 
 /**
  * The five model vendors, and which job each one does.
@@ -971,20 +971,8 @@ export async function isPricedModelAsync(model: string): Promise<boolean> {
   return isShippedPricedModel(model) || Object.hasOwn(await declaredRates(), model);
 }
 
-/**
- * Claude models this app still prices but can no longer ask for anything.
- *
- * Every request this app sends Claude carries `output_config.effort` — the
- * one-shot writers through `callClaude`, and every agent turn, with adaptive
- * thinking besides — and Haiku 4.5 takes neither: both are a 400 on it. A 400
- * is "refused the request shape", which `callModel` and the agent loop both
- * read as a reason to hand the work to the next vendor, so the model the
- * simple level shipped on until Oct 2026 did not fail loudly; every simple task
- * that reached it was quietly passed on to ChatGPT or Gemini. It stays in the
- * price table, because the ledger holds months of calls it served, and it is
- * refused as a choice.
- */
-export const CLAUDE_WITHOUT_EFFORT: readonly string[] = ["claude-haiku-4-5"];
+/** Claude models that cannot take an effort setting — see `claudePricing.ts`, where it lives. */
+export { CLAUDE_WITHOUT_EFFORT };
 
 /**
  * Why this id cannot be chosen for a job or a task level, or null when it can.
@@ -1521,8 +1509,11 @@ export interface TierSlot {
  */
 async function vendorChoice(vendor: PaidProvider, level: TaskLevel): Promise<string | null> {
   if (vendor === "anthropic") {
-    if (level === "complex") return (await getSetting(SETTING.ANTHROPIC_MODEL))?.trim() || null;
-    if (level === "standard") return (await getSetting(SETTING.ANTHROPIC_MODEL_ECONOMY))?.trim() || null;
+    // Through `claudeModelSetting`, which drops a model that cannot take an
+    // effort setting: refused for a level chosen here, it must not get in
+    // through the setting a level falls back to.
+    if (level === "complex") return claudeModelSetting(SETTING.ANTHROPIC_MODEL);
+    if (level === "standard") return claudeModelSetting(SETTING.ANTHROPIC_MODEL_ECONOMY);
     return null;
   }
   if (level === "standard") return (await getSetting(PROVIDERS[vendor].modelSetting))?.trim() || null;

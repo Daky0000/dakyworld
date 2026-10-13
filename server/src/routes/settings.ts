@@ -974,6 +974,14 @@ settingsRouter.put("/models/:provider", async (req, res, next) => {
     if (input.model !== undefined) {
       if (guardEnv(definition.modelSetting, `The ${definition.vendor} model`, res)) return;
       const model = input.model?.trim();
+      // Claude's model is the one every unsized turn and `callClaude` read, and
+      // the complex level falls back to it: held to the same test as a model
+      // chosen for a job or a level, or a model that refuses every request
+      // shape this app sends gets in through the one door left open.
+      if (model && provider === "anthropic") {
+        const refused = await whyNotChoosable(model);
+        if (refused) return res.status(400).json({ error: refused });
+      }
       if (model) await setSetting(definition.modelSetting, model);
       else await deleteSetting(definition.modelSetting);
     }

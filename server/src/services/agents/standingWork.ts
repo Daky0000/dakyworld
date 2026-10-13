@@ -4,6 +4,7 @@ import { prisma } from "../../lib/prisma.js";
 import { SETTING, getSetting, setSetting } from "../../lib/settings.js";
 import { parseScheduleTime, safeZone, zonedDateParts, zonedTimeToUtc } from "../../lib/timezone.js";
 import { recordCreated } from "./state.js";
+import { failureClassOf, step, type FailureClass } from "./runner.js";
 
 /**
  * What an agent does without being asked.
@@ -163,20 +164,92 @@ export function inChainOrder<T extends { agentKey: string; title: string }>(sche
 }
 
 /**
- * This schedule's own tasks that are not over — what `maxOpenTasks` is held
- * against, here and in `startTheDay`.
- *
- * BLOCKED and NEEDS_APPROVAL count, and more often than they used to: a run
- * that is refused or spends every turn now ends BLOCKED rather than DONE, so a
- * standing job whose last run is waiting on a person raises nothing new until
- * somebody answers it. The hold below asks this first for that reason — a stage
- * that could not be raised anyway is not "waiting for the stage before it", and
- * saying it was would promise the Owner a task that never comes.
+ * The endings that wait for a person without asking one anything: every turn
+ * used, or the model declining. Both end BLOCKED with the class at the front
+ * of the transition (`FAILURE_CLASSES` in the runner).
  */
-export function openStanding(schedule: { agentKey: string; title: string }): Promise<number> {
-  return prisma.agentTask.count({
-    where: { agentKey: schedule.agentKey, origin: "SCHEDULE", title: schedule.title, status: { in: ["QUEUED", "RUNNING", "BLOCKED", "NEEDS_APPROVAL"] } },
-  });
+const ENDED_SHORT: ReadonlySet<FailureClass> = new Set(["iteration-cap", "refusal"]);
+
+export interface EndedShort {
+  id: string;
+  failureClass: FailureClass;
+  /** The BLOCKED transition's reason, class and all. */
+  reason: string;
+}
+
+export interface StandingSlot {
+  /** What `maxOpenTasks` is held against. */
+  open: number;
+  /** BLOCKED runs left out of `open` because they ended short rather than asked. */
+  endedShort: EndedShort[];
+}
+
+/**
+ * This schedule's own tasks that are not over — what `maxOpenTasks` is held
+ * against, here and in `startTheDay` — and the blocked ones that are not.
+ *
+ * QUEUED, RUNNING and NEEDS_APPROVAL count, and so does a BLOCKED task that
+ * stopped to ask: its answer is the work, and a second copy of the job raised
+ * beside the question would do the same work without it.
+ *
+ * **A BLOCKED task that ran out of turns or was declined does not count.**
+ * Those used to finish DONE; since they end BLOCKED, counting them meant one
+ * capped run stopped a daily job for good — every later slot said "already has
+ * 1 open" and nothing else did, and broad batch briefs are exactly the work
+ * most likely to use all sixteen turns. So the blocked one waits for a person
+ * and the next slot runs beside it, told why (`noteEndedShort`). Read off the
+ * newest transition into BLOCKED, because the class lives there and nowhere
+ * else that outlives a re-run; a task with an escalation still pending is held
+ * as asking whatever its ending says.
+ */
+export async function standingSlot(schedule: { agentKey: string; title: string }): Promise<StandingSlot> {
+  const where = { agentKey: schedule.agentKey, origin: "SCHEDULE" as const, title: schedule.title };
+  const [working, blocked] = await Promise.all([
+    prisma.agentTask.count({ where: { ...where, status: { in: ["QUEUED", "RUNNING", "NEEDS_APPROVAL"] } } }),
+    prisma.agentTask.findMany({
+      where: { ...where, status: "BLOCKED" },
+      select: {
+        id: true,
+        escalationStatus: true,
+        transitions: { where: { to: "BLOCKED" }, orderBy: [{ at: "desc" }, { id: "desc" }], take: 1, select: { reason: true } },
+      },
+    }),
+  ]);
+
+  const endedShort: EndedShort[] = [];
+  let asking = 0;
+  for (const task of blocked) {
+    const reason = task.transitions[0]?.reason ?? "";
+    const failureClass = failureClassOf(reason);
+    if (failureClass && ENDED_SHORT.has(failureClass) && task.escalationStatus !== "PENDING") {
+      endedShort.push({ id: task.id, failureClass, reason });
+    } else {
+      asking += 1;
+    }
+  }
+  return { open: working + asking, endedShort };
+}
+
+/** The count alone, for the hold below. */
+export async function openStanding(schedule: { agentKey: string; title: string }): Promise<number> {
+  return (await standingSlot(schedule)).open;
+}
+
+/**
+ * Says on a freshly raised task that the slot before it ended short and is
+ * still waiting — so the stoppage is on a timeline somebody reads, not only in
+ * a log line nobody does. A NOTED step, because it is a fact about the job's
+ * history rather than anything this run concluded.
+ */
+export async function noteEndedShort(taskId: string, scheduleTitle: string, endedShort: EndedShort[]): Promise<void> {
+  if (endedShort.length === 0) return;
+  const words: Record<string, string> = { "iteration-cap": "used every turn it had", refusal: "was declined by the model" };
+  const lines = endedShort.map((one) => `task ${one.id} ${words[one.failureClass] ?? "ended short"} — ${one.reason}`);
+  const message =
+    `Raised although the last run of "${scheduleTitle}" ended short and is still BLOCKED, waiting for a person: ${lines.join("; ")}. ` +
+    `It no longer holds this slot; it keeps its place until somebody carries it on or cancels it.`;
+  console.warn(`[standing] "${scheduleTitle}": ${endedShort.length} earlier run(s) ended short and wait for a person — raised the next slot anyway.`);
+  await step(taskId, "NOTED", message, { data: { endedShort: endedShort.map(({ id, failureClass }) => ({ id, failureClass })) } });
 }
 
 export interface OpenUpstream {
@@ -294,7 +367,7 @@ export async function raiseStandingWork(now = new Date(), after: Readonly<Record
     // about a deliberate decision is noise.
     if (schedule.agent.status !== "ACTIVE") continue;
 
-    const open = await openStanding(schedule);
+    const { open, endedShort } = await standingSlot(schedule);
     if (open >= schedule.maxOpenTasks) {
       console.warn(`[standing] "${schedule.title}" already has ${open} open — not raising another.`);
       continue;
@@ -313,6 +386,7 @@ export async function raiseStandingWork(now = new Date(), after: Readonly<Record
       reason: `Standing work: "${schedule.title}" came round on its schedule.`,
       actor: "schedule",
     });
+    await noteEndedShort(raisedTask.id, schedule.title, endedShort);
     raised += 1;
     console.log(`[standing] raised "${schedule.title}" for ${schedule.agent.name}`);
   }

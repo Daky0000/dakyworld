@@ -362,8 +362,10 @@ export function blockingLine(report: { blocking: Array<{ label: string; detail: 
  * The kind alone is not enough: the composer stores a letter its drafter wrote
  * as `AI_DRAFT`, and the person who read the red box above it and scheduled it
  * anyway has made the same decision as one pressing Send. `createdById` is
- * that person — the composer sets it, while an agent's `email.draft` (run with
- * no user) and a sequence step leave it empty.
+ * that person — the composer sets it, and so does a person editing or
+ * scheduling a draft from the outbox (`PATCH /emails/:id`), while an agent's
+ * `email.draft` (run with no user) and a sequence step leave it empty until
+ * somebody does.
  */
 function writtenByAPerson(message: Pick<EmailMessage, "kind" | "createdById">): boolean {
   return message.kind === "MANUAL" || message.kind === "TEMPLATE" || message.createdById !== null;
