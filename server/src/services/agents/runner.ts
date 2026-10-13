@@ -6,7 +6,18 @@ import type { Agent, AgentTask, AgentStepKind, Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 import { SETTING, getSetting, setSetting } from "../../lib/settings.js";
 import { MAX_ITERATIONS, clipToolResult, runAgentLoop, type AgentRunResult, type AgentTool, type AgentToolOutcome } from "../../lib/claudeAgent.js";
-import { appendToConversation, clearCheckpoint, loadCheckpoint, saveCheckpoint } from "./checkpoint.js";
+import {
+  appendToConversation,
+  clearCheckpoint,
+  holdsThinking,
+  loadCheckpoint,
+  prefixOf,
+  readPrefix,
+  samePrefix,
+  saveCheckpoint,
+  stripThinking,
+  type ConversationPrefix,
+} from "./checkpoint.js";
 import { reconcileCounters } from "./checkpoint-journal.js";
 import { AnalystError, type Effort } from "../../lib/claude.js";
 import { listAllTools } from "../tools/catalogue.js";
@@ -710,6 +721,31 @@ export async function toolsFor(agent: Agent, task: AgentTask, counters: Counters
   };
 }
 
+/**
+ * The tools a resumed thinking conversation was first sent, wired to what this
+ * claim can actually run.
+ *
+ * The definitions are the stored ones, byte for byte, because Claude's
+ * reasoning is bound to them; the handlers are today's, because what a tool
+ * may do is decided now. A tool that is no longer granted — a consult or a
+ * hand-off spent, a key taken off the toolkit — keeps its place in the list
+ * and refuses, which is the answer the tool itself would have given.
+ */
+function keptTools(kept: ConversationPrefix, live: AgentTool[]): AgentTool[] {
+  const byName = new Map(live.map((tool) => [tool.name, tool]));
+  return kept.tools.map((definition) => {
+    const tool = byName.get(definition.name);
+    if (tool) return { ...tool, description: definition.description, inputSchema: definition.inputSchema };
+    return {
+      ...definition,
+      run: async () => ({
+        content: `\`${definition.name}\` is not available on this task any more. Carry on without it, or use escalate if the work cannot be finished.`,
+        isError: true,
+      }),
+    };
+  });
+}
+
 /** Default on. Off removes a sentence from the brief and changes nothing else. */
 async function relevanceOn(): Promise<boolean> {
   return (await getSetting(SETTING.ENABLE_TOOL_RELEVANCE)) !== "false";
@@ -960,7 +996,10 @@ async function priorConsult(taskId: string, colleagueKey: string, question: stri
  * breakpoint on the last tool definition valid from the first turn to the last.
  * A resumed run recomputes it from the restored counters, which is exactly when
  * the saving is largest: a task that has already spent its consults and its
- * hand-offs carries neither for the rest of its life.
+ * hand-offs carries neither for the rest of its life. **Except a conversation
+ * Claude has thought in**, which keeps the tools it was first sent (see
+ * `keptTools`): its reasoning is bound to them, and a spent tool that stays in
+ * the list answers with its own refusal.
  *
  * Everything omitted here is omitted because the tool itself would refuse. This
  * never removes a capability an agent has.
@@ -2522,12 +2561,52 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       // ceiling is worked out once here and handed to each of them.
       const consultLimit = await consultLimitFor(task);
       const can = workflowAvailability(agent, task, counters, consultLimit);
-      const [system, granted, described] = await Promise.all([
+      const [freshSystem, granted, described] = await Promise.all([
         systemPrompt(agent, memories, { can }),
         toolsFor(agent, task, counters, consultLimit),
         describeTask(task),
       ]);
-      const tools = granted.tools;
+
+      // **A conversation Claude has thought in keeps the prompt and tools it
+      // started with.** Claude signs each thinking block against the system
+      // prompt and the tool set as well as the messages before it, and both
+      // were rebuilt above: a memory written in the last run, one another
+      // agent shared since, or a consult or hand-off used up all change them,
+      // and replaying the old reasoning under the new prefix is a 400. So the
+      // prefix this conversation was sent with rides on its checkpoint and is
+      // sent again; what changed reaches this agent's next task instead. A
+      // tool that has gone since keeps its definition and answers that it is
+      // not available, which is what it would have said anyway. A conversation
+      // with no thinking in it has nothing to protect and takes the fresh one.
+      let system = freshSystem;
+      let tools = granted.tools;
+      let prefix: ConversationPrefix = prefixOf(freshSystem, granted.tools);
+      if (resume && holdsThinking(resume)) {
+        const kept = readPrefix(saved?.counters.prefix);
+        if (kept && !samePrefix(kept, prefix)) {
+          system = kept.system;
+          tools = keptTools(kept, granted.tools);
+          prefix = kept;
+          await step(
+            task.id,
+            "NOTED",
+            "Carried on with the instructions and tools this conversation started with, so the reasoning already in it stays valid. " +
+              "What has changed since — a new memory, a tool used up or granted — applies from its next task.",
+          );
+        } else if (!kept) {
+          // Saved before the prefix was kept, so there is nothing to send
+          // that the reasoning would match. Anthropic's one-time recovery:
+          // take the thinking out before the first request, rather than
+          // learn from a 400 that the run cannot carry on. The first save
+          // writes the stripped conversation, so it is never stripped twice.
+          Object.assign(resume, stripThinking(resume));
+          await step(
+            task.id,
+            "NOTED",
+            "Its earlier reasoning was taken out before it carried on: the conversation was saved by an older version that did not keep what that reasoning was written against. Its replies and tool calls are all still there.",
+          );
+        }
+      }
       // Appended to the brief rather than woven into it, so the task's own
       // words stay first and a reader can see where ours begin.
       const hint = likelyToolsLine(granted.likely);
@@ -2585,6 +2664,10 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       const checkpointCounters = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
         ...counters,
         claimIteration: startedFrom,
+        // What every thinking block in the messages saved beside it was
+        // written against. In the same statement as those messages, so the
+        // two can never disagree.
+        prefix,
         ...(sized.effortFloor ? { effortFloor: sized.effortFloor } : {}),
         ...extra,
       });

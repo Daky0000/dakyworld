@@ -458,9 +458,37 @@ until now.
   `checks/promptCache.ts` pins the decision — eight thinking turns past the
   ceiling, nothing rewritten, every signature sent back, no `block_binding` and
   no thinking-binding beta on the wire — and `checks/conversationTrim.ts` pins
-  the boundary. `trimToFit` in
-  `agents/checkpoint.ts` can still release answers in the *stored* copy, but only
-  past 3 MB, which a clipped sixteen-turn run does not reach.
+  the boundary. `trimToFit` in `agents/checkpoint.ts` keeps the same boundary
+  on the *stored* copy (and never trims the newest, unread user turn): a
+  thinking conversation past 3 MB is saved over the ceiling rather than saved
+  in a shape the next resume cannot send.
+- **The prefix is more than the messages, and a resume rebuilt it** (fixed
+  13 Oct 2026). Each claim calls `recall()`, `systemPrompt()` and `toolsFor()`
+  afresh, so a `remember` in the first run, a memory another agent shared, or a
+  consult or hand-off spent (which `workflowAvailability()` then drops) changed
+  `system` or `tools` under the reasoning the next run replayed — every pause,
+  deploy, answered escalation and Carry on of a thinking run was a 400, which
+  `describeTurnFailure` worded "Could not reach Claude" and `retry.ts` paused
+  and replayed six times before blocking. The system text and tool definitions
+  a conversation was sent with now ride on its checkpoint (`counters.prefix`,
+  tens of KB — the heaviest seeded toolkit's definitions are 26 KB — written in
+  the same statement as the messages they belong to), and
+  a claim resuming a conversation that holds thinking sends those again, with
+  today's handlers behind the stored definitions (`keptTools`; a tool no longer
+  granted keeps its place and refuses). A conversation with no thinking in it
+  takes the fresh prompt, so a new memory still reaches it. A checkpoint from
+  before this has nothing to resend and is stripped of its thinking once, before
+  the first request, with a NOTED step. **The backstop** is in the loop: a
+  binding 400 (`Invalid signature in thinking block`) is answered with
+  Anthropic's documented one-time recovery — every thinking block out, saved at
+  once, the same model asked again, once per run — instead of a hand-off to a
+  paid vendor. That 400 also names the `anthropic-beta` header, and
+  `rejectedTheBeta` used to read it as the fallback beta being refused and
+  switch server-side fallbacks off for the life of the process; it no longer
+  does. Any other 400 on the loop now reads "refused the request shape", the
+  words `callModel` uses, which `retry.ts` hands to a person instead of pausing.
+  `checks/agentThinkingResume.ts` drives all of it through `runTask` against a
+  fake Anthropic that enforces the binding the way the API does.
 
 **One `LlmCall` row per paid turn, written the moment the turn is priced** (12
 Oct 2026). The loop used to write one row when the run ended, holding the run's

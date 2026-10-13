@@ -694,6 +694,20 @@ conversation instead of starting one.
 - **Answering an escalation appends to the conversation, not just the brief.**
   Without `appendOwnerAnswer()` the agent resumes at the moment it asked its
   question, having never been told the answer, and asks it again.
+  Appending is the only edit a resume may make: anything said to a stopped
+  conversation goes on the *end* of its last user turn, never in front of a
+  turn the model already answered.
+- **A conversation Claude has thought in resumes on the prompt and tools it was
+  first sent**, not on the ones this claim rebuilt. Claude binds each thinking
+  block to the system prompt and the tool set as well as the messages, and
+  `recall()` and `workflowAvailability()` give a different answer after a
+  `remember` or a spent consult — so every resume of a thinking run was a 400.
+  The prefix rides on the checkpoint (`counters.prefix`) and `keptTools()` wires
+  today's handlers to the stored definitions; what changed applies from the
+  agent's next task. A checkpoint saved before the prefix was kept is stripped
+  of its thinking once, with a NOTED step. See
+  [02](02-model-routing-and-cost.md) for the backstop in the loop and
+  `checks/agentThinkingResume.ts`.
 - DONE and NEEDS_APPROVAL clear the checkpoint; BLOCKED, FAILED and CANCELLED
   keep it, which is what makes "Carry on" mean carry on. `pruneCheckpoints()`
   sweeps them after 30 days.
@@ -830,7 +844,10 @@ JSON document is the size of its parts, so a trim's saving is subtracted from a
 running total instead. Measured on a 40-turn conversation: 4.0ms → 1.7ms under
 the ceiling, 118.8ms → 18.4ms over it. The copy is made only when something is
 about to change, because the caller's `messages` is the live conversation the
-loop is still turning — asserted in `checks/conversationTrim.ts`.
+loop is still turning — asserted in `checks/conversationTrim.ts`. It trims only
+below the last thinking block and never the newest user turn, whose answers the
+model has not read; a thinking conversation past 3 MB is saved over the ceiling
+(`checks/agentThinkingResume.ts`).
 
 **Two sweeps were written and put on nobody's schedule**, both on the daily
 housekeeping tick now. `pruneMemories()` matters because recall has a ceiling

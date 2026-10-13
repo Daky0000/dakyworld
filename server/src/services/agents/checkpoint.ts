@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
-import type { AgentCheckpointState } from "../../lib/claudeAgent.js";
+import { editableFrom, withoutThinking, type AgentCheckpointState, type AgentTool } from "../../lib/claudeAgent.js";
 
 /**
  * Where a run got to, kept so the next one continues instead of starting again.
@@ -19,7 +19,8 @@ import type { AgentCheckpointState } from "../../lib/claudeAgent.js";
  *    results in it is large, and the cure has to be trimming rather than
  *    dropping: deleting a message would separate a `tool_use` from its
  *    `tool_result` and the next request would be rejected outright. So the
- *    oldest tool *results* lose their content and keep their place.
+ *    oldest tool *results* lose their content and keep their place — and only
+ *    below the last thinking block, never above one.
  * 3. **A checkpoint dies with the run it belongs to.** Everything that is not
  *    going to be continued clears it.
  */
@@ -37,6 +38,70 @@ export interface StoredCheckpoint {
   state: AgentCheckpointState;
   /** The runner's own tallies — see `Counters` in runner.ts. */
   counters: Record<string, unknown>;
+}
+
+/**
+ * The two halves of a request that are not messages: the system prompt and the
+ * tool definitions, exactly as a conversation was sent them.
+ *
+ * Kept on the checkpoint (`counters.prefix`, written with every save, in the
+ * same statement as the messages it belongs to) because Claude's newer models
+ * bind each thinking block to them as well as to every earlier message. The
+ * runner rebuilds both on every claim — a fresh `recall()`, a fresh
+ * `workflowAvailability()` — so a memory written in the first run, or a consult
+ * spent there, changed the prefix under the reasoning the second run replayed,
+ * and every resume of a thinking conversation was a 400.
+ */
+export interface ConversationPrefix {
+  system: string;
+  tools: { name: string; description: string; inputSchema: Record<string, unknown> }[];
+}
+
+export function prefixOf(system: string, tools: AgentTool[]): ConversationPrefix {
+  return { system, tools: tools.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema })) };
+}
+
+/** A stored prefix, or null when there is none or it is not one. */
+export function readPrefix(raw: unknown): ConversationPrefix | null {
+  const value = raw as { system?: unknown; tools?: unknown } | null | undefined;
+  if (!value || typeof value.system !== "string" || !Array.isArray(value.tools)) return null;
+  const tools = value.tools as { name?: unknown; description?: unknown; inputSchema?: unknown }[];
+  const valid = tools.every(
+    (tool) => tool && typeof tool.name === "string" && typeof tool.description === "string" && tool.inputSchema !== null && typeof tool.inputSchema === "object",
+  );
+  return valid ? (value as ConversationPrefix) : null;
+}
+
+/** Key order ignored: a stored prefix has been through `jsonb`, which sorts keys. */
+function stable(value: unknown): string {
+  return JSON.stringify(value, (_key, inner) =>
+    inner && typeof inner === "object" && !Array.isArray(inner)
+      ? Object.fromEntries(Object.keys(inner as Record<string, unknown>).sort().map((key) => [key, (inner as Record<string, unknown>)[key]]))
+      : inner,
+  );
+}
+
+export function samePrefix(a: ConversationPrefix, b: ConversationPrefix): boolean {
+  return a.system === b.system && stable(a.tools) === stable(b.tools);
+}
+
+/** Is there reasoning in this conversation that a changed prefix would invalidate? */
+export function holdsThinking(state: Pick<AgentCheckpointState, "messages" | "pendingAssistant">): boolean {
+  const thinking = (block: { type?: string }) => block?.type === "thinking" || block?.type === "redacted_thinking";
+  return (
+    state.messages.some((message) => Array.isArray(message.content) && message.content.some(thinking)) ||
+    (state.pendingAssistant ?? []).some(thinking)
+  );
+}
+
+/**
+ * The same state with every thinking block gone, the half-finished turn
+ * included — Anthropic's one-time recovery, applied before the first request
+ * rather than after a refusal. See `withoutThinking` in the agent loop.
+ */
+export function stripThinking<T extends Pick<AgentCheckpointState, "messages" | "pendingAssistant">>(state: T): T {
+  const pending = state.pendingAssistant?.filter((block) => block.type !== "thinking" && block.type !== "redacted_thinking") ?? null;
+  return { ...state, messages: withoutThinking(state.messages), pendingAssistant: pending && pending.length > 0 ? pending : null };
 }
 
 /**
@@ -58,17 +123,32 @@ export interface StoredCheckpoint {
  * be changed, because the caller's `messages` must not be mutated — it is the
  * live conversation the loop is still turning.
  *
+ * **Never above the last thinking block** (`editableFrom`, the loop's own
+ * boundary). Claude signs each block against everything before it, so a result
+ * trimmed above one is a stored conversation the next resume cannot send: on a
+ * newer account a 400, and before the loop's backstop caught it, a run handed
+ * to a paid vendor. A thinking conversation that is past the ceiling is saved
+ * over it — it is no larger than what the loop is already sending every turn,
+ * and a checkpoint that is valid matters more than one that is small.
+ *
  * Exported for `checks/conversationTrim.ts`, which is where the rule this obeys
  * is already written down.
  */
 export function trimToFit(messages: AgentCheckpointState["messages"]): AgentCheckpointState["messages"] {
   let size = JSON.stringify(messages).length;
   if (size <= MAX_JSON) return messages;
+  // And never the newest user turn, which holds answers the model has not read
+  // yet — `TRIMMED` tells it it read them at the time, and it had not. The
+  // same guard `releaseOldAnswers` keeps on what is sent.
+  const from = editableFrom(messages);
+  let unread = messages.length - 1;
+  while (unread >= 0 && messages[unread].role !== "user") unread -= 1;
+  if (from >= unread) return messages;
 
   const copy = JSON.parse(JSON.stringify(messages)) as AgentCheckpointState["messages"];
   const replacement = JSON.stringify(TRIMMED).length;
 
-  for (const message of copy) {
+  for (const message of copy.slice(from, unread)) {
     if (!Array.isArray(message.content)) continue;
     for (const block of message.content as { type?: string; content?: unknown }[]) {
       if (block?.type !== "tool_result") continue;

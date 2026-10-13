@@ -335,7 +335,8 @@ const SHORTENED = "[Shortened from ";
  * *above* a thinking block invalidates that block and every one after it. On
  * an account created since 31 Aug 2026 replaying one is a 400 (older accounts
  * are let off for now, and the guidance is append-only regardless) — and in
- * this loop a 400 hands the run to the next paid vendor, or fails it.
+ * this loop a 400 handed the run to the next paid vendor, or failed it, until
+ * the backstop below (one strip and one retry on the same model) caught it.
  *
  * Anthropic's guidance for a harness that trims old tool results is to stop:
  * bound each result before it is first sent (`clipToolResult`) and never touch
@@ -349,14 +350,61 @@ const SHORTENED = "[Shortened from ";
  * premium on everything after it. The free and chat-completions wires never
  * put a thinking block into the conversation, so nothing changes for them.
  */
-function editableFrom(messages: Anthropic.Beta.BetaMessageParam[]): number {
+export function editableFrom(messages: Anthropic.Beta.BetaMessageParam[]): number {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const content = messages[index].content;
-    if (Array.isArray(content) && content.some((block) => block.type === "thinking" || block.type === "redacted_thinking")) {
+    if (Array.isArray(content) && content.some(isThinkingBlock)) {
       return index + 1;
     }
   }
   return 0;
+}
+
+function isThinkingBlock(block: { type?: string }): boolean {
+  return block?.type === "thinking" || block?.type === "redacted_thinking";
+}
+
+/**
+ * The conversation with every thinking block taken out, and nothing else.
+ *
+ * Anthropic's one-time recovery for reasoning that no longer matches its
+ * conversation: strip every `thinking` and `redacted_thinking` block, keep each
+ * turn's text and tool calls, and carry on. The model answers the next turn
+ * without the reasoning those blocks held. **All of them, never a selection**:
+ * the API accepts a contiguous run of a conversation's blocks and nothing
+ * else, so one removed from the middle fails the block after it. A turn that
+ * held nothing but reasoning goes with it, because an empty assistant turn is
+ * not a shape the API accepts. Returns a copy; the caller decides whether the
+ * strip becomes the conversation, and must save it if it does — a strip that
+ * is not written down sends the refused blocks again on the next resume.
+ */
+export function withoutThinking(messages: Anthropic.Beta.BetaMessageParam[]): Anthropic.Beta.BetaMessageParam[] {
+  const kept: Anthropic.Beta.BetaMessageParam[] = [];
+  for (const message of messages) {
+    if (!Array.isArray(message.content) || !message.content.some(isThinkingBlock)) {
+      kept.push(message);
+      continue;
+    }
+    const content = message.content.filter((block) => !isThinkingBlock(block));
+    if (content.length > 0) kept.push({ ...message, content });
+  }
+  return kept;
+}
+
+/**
+ * Claude refused a replayed thinking block: its conversation changed since it
+ * was written, or its signature does not belong to this one.
+ *
+ * Both are the same 400 opening — "Invalid `signature` in `thinking` block" —
+ * and both are cured the same way, by sending the conversation without its
+ * reasoning. Matched on that wording rather than on the status alone, because
+ * every other 400 is a request this code built wrong, and stripping reasoning
+ * out of a request that was wrong for some other reason fixes nothing.
+ */
+function thinkingBindingRefused(err: unknown): boolean {
+  if (!(err instanceof Anthropic.BadRequestError)) return false;
+  const message = err.message.toLowerCase();
+  return message.includes("thinking") && message.includes("signature");
 }
 
 /**
@@ -489,6 +537,10 @@ let fallbacksAvailable = true;
 
 function rejectedTheBeta(err: unknown): boolean {
   if (!(err instanceof Anthropic.BadRequestError)) return false;
+  // The binding refusal names the `anthropic-beta` header in its advice, and
+  // read as a refused fallback beta it switched server-side fallbacks off for
+  // the life of the process and resent the same refused conversation.
+  if (thinkingBindingRefused(err)) return false;
   const message = err.message.toLowerCase();
   return message.includes("fallback") || message.includes("beta");
 }
@@ -1132,6 +1184,11 @@ function describeTurnFailure(vendor: AgentVendor, status: number, model: string,
   if (status === 429) return `${who} is rate-limiting this key. The task will be picked up again.`;
   if (status === 402) return `${who} has no credit left on this account. Top it up, or connect another model under Settings → AI models.`;
   if (KEY_LEVEL_STATUSES.includes(status)) return `${who} rejected the API key. Check it under Settings → AI models.`;
+  // Our request, not their availability. "Could not reach" read as temporary
+  // in `retry.ts`, so a 400 that fails identically every time was paused and
+  // replayed six times over two hours before anybody was asked. The same words
+  // `callModel` uses, which `retry.ts` already hands to a person.
+  if (status === 400) return `${who} refused the request shape: ${(err as Error).message}`;
   if (status === 404) {
     return (
       `${who} does not have the model “${model}”. Change it under Settings → AI models, ` +
@@ -1304,6 +1361,9 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
    * The chain's own summary is the truth; the last rung is a detail of it.
    */
   const refusals: string[] = [];
+
+  /** Set once the recovery below has been spent; a second refusal is a real failure. */
+  let strippedThinking = false;
 
   /**
    * Say who is serving, to the console and to whoever is watching.
@@ -1661,6 +1721,27 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
       } catch (err) {
         const status = statusOf(err);
         const climbing = serving === "nvidia" && ladder.length > 0;
+
+        // Claude refused reasoning it wrote earlier in this conversation,
+        // because something above it changed. The runner keeps the prompt and
+        // tools a thinking conversation started with, and nothing here
+        // rewrites above a thinking block, so this is the backstop for
+        // whatever still slipped through. Handing it on would move the run to
+        // a paid vendor for a fault in our own history, and a 400 retried as
+        // it stands fails identically for ever. So: Anthropic's one-time
+        // recovery — every thinking block out, the same model asked again,
+        // once — and the strip saved at once, so no later turn or resume sends
+        // the refused blocks back.
+        if (serving === "anthropic" && !strippedThinking && thinkingBindingRefused(err)) {
+          strippedThinking = true;
+          const stripped = withoutThinking(messages);
+          messages.splice(0, messages.length, ...stripped);
+          await saying(
+            "Claude would not accept this conversation's earlier reasoning — something above it changed since it was written — so it carries on without that reasoning, on the same model. Its text and tool calls are all still there.",
+          );
+          await checkpoint();
+          continue;
+        }
 
         // A rung that did not serve, with rungs left. Not a failure of
         // anything: the next free model is asked and the conversation is
