@@ -456,7 +456,7 @@ try {
   console.log("\nThe declined-payment notice");
   for (const currency of ["USD", "GHS"] as const) {
     await check(`a ${currency} purchase is told its price in ${currency === "USD" ? "dollars" : "cedis"}`, async () => {
-      await prisma.websitePurchase.update({ where: { id: purchase.id }, data: { tier: "MANAGED", currency, billingState: "PAST_DUE" } });
+      await prisma.websitePurchase.update({ where: { id: purchase.id }, data: { tier: "MANAGED", currency, billingState: "PAST_DUE", standardRecurringPrice: priceFor("MANAGED", currency).standardMonthlyPrice, billingPriceUpdatedAt: new Date() } });
       delivered.length = 0;
       await sendDunningNotice(purchase.id);
       assert.equal(delivered.length, 1, "one notice reached the mail server");

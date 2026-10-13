@@ -97,20 +97,38 @@ check(
 // Keeping the plan is half of it; the other half is that editing does close
 // after a fortnight. It never did for a subscription with no paid-up date —
 // a missing date answered "not locked" — and that is exactly the date a
-// subscription the processor never confirmed is missing. The fallback is when
-// the row was last written, which is no earlier than when it went past due.
-const unpaid = (billingState: string, nextBillingAt: Date | null, updatedAt: Date): UnpaidRow => ({ billingState, nextBillingAt, updatedAt });
+// subscription the processor never confirmed is missing. Without one the
+// fortnight runs from when it went past due (`pastDueSince`), and only a row
+// with neither date falls back to when it was last written, which is no
+// earlier than when it went past due.
+const unpaid = (billingState: string, nextBillingAt: Date | null, updatedAt: Date, pastDueSince: Date | null = null): UnpaidRow => ({ billingState, nextBillingAt, pastDueSince, updatedAt });
+check(
+  "past due with no paid-up date: the fortnight runs from when it went past due, not from the last write",
+  lockedForNonPayment(unpaid("PAST_DUE", null, NOW, inDays(-20)), NOW),
+);
+check(
+  "...so a row every Paystack event rewrites is not unlocked by the next one, and a recent spell is not locked by an old row",
+  !lockedForNonPayment(unpaid("PAST_DUE", null, inDays(-30), inDays(-3)), NOW),
+);
+check(
+  "...and a paid-up date still comes before it",
+  lockedForNonPayment(unpaid("PAST_DUE", inDays(-15), NOW, inDays(-1)), NOW) && !lockedForNonPayment(unpaid("PAST_DUE", inDays(-3), NOW, inDays(-30)), NOW),
+);
 check(
   "past due with no paid-up date: editing closes a fortnight after it was marked past due",
-  lockedForNonPayment(unpaid("PAST_DUE", null, inDays(-15)), NOW),
+  lockedForNonPayment(unpaid("PAST_DUE", null, NOW, inDays(-15)), NOW),
 );
 check(
   "...exactly at the fortnight",
-  lockedForNonPayment(unpaid("PAST_DUE", null, inDays(-14)), NOW),
+  lockedForNonPayment(unpaid("PAST_DUE", null, NOW, inDays(-14)), NOW),
 );
 check(
   "...and not a day before it",
-  !lockedForNonPayment(unpaid("PAST_DUE", null, inDays(-13)), NOW),
+  !lockedForNonPayment(unpaid("PAST_DUE", null, NOW, inDays(-13)), NOW),
+);
+check(
+  "a past-due row with neither date locks a fortnight after its last write, and not before",
+  lockedForNonPayment(unpaid("PAST_DUE", null, inDays(-14)), NOW) && !lockedForNonPayment(unpaid("PAST_DUE", null, inDays(-13)), NOW),
 );
 check(
   "a paid-up date, where there is one, is what the fortnight runs from",

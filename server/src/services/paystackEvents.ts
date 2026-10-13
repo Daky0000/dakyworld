@@ -59,8 +59,15 @@ async function handle(event: string, data: Data) {
     }
   }
   if (purchase.billingState === "CANCELLING" || (purchase.billingState === "CANCEL_UNCERTAIN" && !["CANCELLED", "NON_RENEWING"].includes(state))) throw new Error("Cancellation reconciliation is pending");
+  // When it went past due: set by the event that moves it into PAST_DUE, kept
+  // by every event after, cleared by the one that moves it out. Without a
+  // paid-up date the fortnight before editing pauses, and which notice goes
+  // out, run from it — they ran from `updatedAt`, which this very write moves,
+  // so each further declined charge started them again. A row already past due
+  // without one starts from its last write before this, as the migration did.
+  const pastDueSince = state !== "PAST_DUE" ? null : purchase.billingState !== "PAST_DUE" ? new Date() : purchase.pastDueSince ?? purchase.updatedAt;
   const changed = await prisma.websitePurchase.updateMany({ where: { id: purchase.id, billingState: purchase.billingState, status: purchase.status }, data: {
-    providerSubscriptionCode: code, billingState: state,
+    providerSubscriptionCode: code, billingState: state, pastDueSince,
     ...(state === "CANCELLED" ? { status: "CANCELLED" } : state === "PAST_DUE" ? { status: "FAILED" } : purchase.status !== "CANCELLED" && state === "ACTIVE" ? { status: "ACTIVE" } : {}),
     // Only ever written when the provider offers a real date. It used to be
     // nulled whenever one was absent, and Paystack stops reporting a next

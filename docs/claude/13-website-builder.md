@@ -1215,6 +1215,21 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   checkout page keeps in `sessionStorage` and never in a URL. A Paystack
   reference alone — which sits in browser history and receipts — learns paid
   or unpaid and nothing else (`checks/checkoutTokenScope.ts`).
+- **Past due counts from `pastDueSince`, never from `updatedAt`.** With no
+  paid-up date, the fortnight before editing pauses and the notice stage (the
+  second from day 4, the third from day 14) run from when the subscription went
+  past due. `paystackEvents.ts` sets it on the event that moves the row into
+  PAST_DUE, keeps it on every later one and clears it on the one that moves it
+  out. It ran from `updatedAt`, and that handler rewrites the row on every
+  `subscription.*` and `invoice.*` event, so a further declined charge unlocked
+  a customer locked for non-payment and every notice went out as the first. A
+  paid-up date still comes first; a past-due row with neither date falls back
+  to its last write, which is late but never early, and is how rows already
+  past due were backfilled. **The notice quotes what the plan charges** —
+  `monthlyPrice` until `billingPriceUpdatedAt` says Paystack was stepped up,
+  `standardRecurringPrice` after, per year on an annual plan — in the
+  purchase's currency from the stored amount, never `priceFor` at today's rate.
+  `checks/websiteDunning.ts`.
 - **Hosted forms are limited in the shared rate table** (site and address,
   eight in ten minutes), and a site emails its managers at most
   `WEBSITE_FORM_EMAILS_PER_DAY` (50) a day; past that, messages wait in the

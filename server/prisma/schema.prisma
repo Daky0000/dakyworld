@@ -1651,6 +1651,12 @@ model WebsitePurchase {
   recurringConsentAt       DateTime?
   billingEmail             String?
   billingState             String                @default("NONE")
+  /// When this subscription went past due: set by the Paystack event that moves
+  /// it into PAST_DUE and cleared by the one that moves it out, and read only
+  /// while it is PAST_DUE. With no paid-up date it is what the fortnight before
+  /// editing pauses, and the notice stage, run from. `updatedAt` cannot stand in
+  /// for it: every Paystack event rewrites the row.
+  pastDueSince             DateTime?
   standardRecurringPrice   Decimal?              @db.Decimal(12, 2)
   promoEndsAt              DateTime?
   billingPriceUpdatedAt    DateTime?

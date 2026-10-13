@@ -1,7 +1,7 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { sendMail, mailerConfigured } from "../lib/mailer.js";
 import { brandedNotice } from "./transactionalEmail.js";
-import { priceFor } from "./websitePricing.js";
 import { WEBSITE_TIER_PLANS } from "./websiteTierPlans.js";
 import { subscriptionManagementLink } from "../lib/paystack.js";
 import { customerAppUrl } from "./emailSender.js";
@@ -35,20 +35,25 @@ import { customerAppUrl } from "./emailSender.js";
 export const DUNNING_DAYS_BEFORE_LOCK = 14;
 
 /** The parts of a purchase that say how long it has gone unpaid. */
-export type UnpaidRow = { billingState: string; nextBillingAt: Date | null; updatedAt: Date };
+export type UnpaidRow = { billingState: string; nextBillingAt: Date | null; pastDueSince: Date | null; updatedAt: Date };
 
 /**
  * The date a past-due subscription has been unpaid since.
  *
  * The date it was paid up to, when the processor gave one. When it did not,
- * the last time the row was written — which is no earlier than the write that
- * marked it past due, so a lock counted from it can come late but never early.
- * Late in one way worth knowing: every later event from Paystack writes the row
- * again, so without a paid-up date the fortnight runs from the last of them.
- * The alternative was what this replaced — no date, no lock, ever.
+ * the moment it went past due, which the Paystack event handler records on the
+ * way in and leaves alone until the subscription leaves PAST_DUE. This used to
+ * be the last time the row was written, and every Paystack event writes the
+ * row whether anything changed or not — so each further declined charge
+ * started the fortnight again and unlocked editing for somebody still unpaid.
+ *
+ * The last write remains the answer for a past-due row with neither date,
+ * which nothing makes any more: it is no earlier than the write that marked
+ * the row past due, so a lock counted from it comes late but never early, and
+ * the next event gives the row a date taken from it.
  */
-export function unpaidSince(row: Pick<UnpaidRow, "nextBillingAt" | "updatedAt">): Date {
-  return row.nextBillingAt ?? row.updatedAt;
+export function unpaidSince(row: Pick<UnpaidRow, "nextBillingAt" | "pastDueSince" | "updatedAt">): Date {
+  return row.nextBillingAt ?? row.pastDueSince ?? row.updatedAt;
 }
 
 /**
@@ -62,25 +67,57 @@ export function lockedForNonPayment(row: UnpaidRow, now = new Date()): boolean {
 }
 
 type Notice = { subject: string; body: string; closing: string };
+type Charge = { label: string; period: "month" | "year" };
 
-function noticeFor(stage: number, planName: string, priceLabel: string, updateUrl: string): Notice {
+/**
+ * The amount the Paystack plan charges, which is the amount that was declined.
+ *
+ * Read off the purchase, in its own currency, never recomputed from the price
+ * list or the exchange rate. A monthly plan is created at the introductory
+ * price and raised to the standard one only once `updateDuePaystackPrices` has
+ * done it at Paystack, which is what `billingPriceUpdatedAt` records; an annual
+ * plan renews at the standard price once a year (`updatePurchaseStatus` in
+ * websiteCommerce.ts creates both). This quoted the standard monthly list price
+ * instead: $45/mo to somebody whose $25 had just been declined, "/mo" to an
+ * annual customer, and cedis converted at today's rate rather than the amount
+ * the customer agreed to.
+ */
+function chargedAmount(purchase: {
+  billingCycle: string;
+  currency: string;
+  monthlyPrice: Prisma.Decimal;
+  standardRecurringPrice: Prisma.Decimal | null;
+  billingPriceUpdatedAt: Date | null;
+}): Charge {
+  const annual = purchase.billingCycle === "annual";
+  // The same fallback the event handler checks Paystack's amount against.
+  const introductory = Number(purchase.monthlyPrice) * (annual ? 10 : 1);
+  const standard = purchase.standardRecurringPrice === null ? introductory : Number(purchase.standardRecurringPrice);
+  const amount = annual || purchase.billingPriceUpdatedAt ? standard : introductory;
+  const figure = amount.toLocaleString("en-GB", { minimumFractionDigits: Number.isInteger(amount) ? 0 : 2, maximumFractionDigits: 2 });
+  const money = purchase.currency === "USD" ? `$${figure}` : `${purchase.currency} ${figure}`;
+  return annual ? { label: `${money}/yr`, period: "year" } : { label: `${money}/mo`, period: "month" };
+}
+
+function noticeFor(stage: number, planName: string, charge: Charge): Notice {
+  const payment = `This ${charge.period}'s ${planName} payment (${charge.label})`;
   if (stage <= 1) {
     return {
-      subject: "We could not take this month's payment",
-      body: `This month's ${planName} payment (${priceLabel}) was declined. This is usually an expired card or a bank blocking the charge, and it is normally fixed in a minute.`,
+      subject: `We could not take this ${charge.period}'s payment`,
+      body: `${payment} was declined. This is usually an expired card or a bank blocking the charge, and it is normally fixed in a minute.`,
       closing: "We will try again in a few days. Your website is unaffected.",
     };
   }
   if (stage === 2) {
     return {
       subject: "Still declined — please update your card",
-      body: `This month's ${planName} payment (${priceLabel}) is still being declined.`,
+      body: `${payment} is still being declined.`,
       closing: "Your website is still online and will stay online. If it stays unpaid for two weeks, editing pauses until a payment goes through.",
     };
   }
   return {
     subject: "Editing paused — payment still outstanding",
-    body: `This month's ${planName} payment (${priceLabel}) is still outstanding after two weeks, so editing is paused on your account.`,
+    body: `${payment} is still outstanding after two weeks, so editing is paused on your account.`,
     closing:
       "Your website stays online exactly as it is — nothing has been taken down and nothing has been deleted. Update your card and editing comes back immediately.",
   };
@@ -91,10 +128,10 @@ function escapeHtml(value: string): string {
 }
 
 /**
- * Tells the customer, in the words that fit which attempt this is.
+ * Tells the customer, in the words that fit how long it has been.
  *
- * Called from the payment webhook after the count has been incremented, so the
- * number it reads is the number of failures including this one.
+ * Called from the Paystack event handler once the past-due state is committed,
+ * so the date it counts from is the one the lock reads.
  */
 export async function sendDunningNotice(purchaseId: string): Promise<void> {
   const purchase = await prisma.websitePurchase.findUnique({
@@ -104,8 +141,13 @@ export async function sendDunningNotice(purchaseId: string): Promise<void> {
       contactName: true,
       tier: true,
       currency: true,
+      billingCycle: true,
+      monthlyPrice: true,
+      standardRecurringPrice: true,
+      billingPriceUpdatedAt: true,
       billingState: true,
       nextBillingAt: true,
+      pastDueSince: true,
       updatedAt: true,
       providerSubscriptionCode: true,
     },
@@ -113,20 +155,16 @@ export async function sendDunningNotice(purchaseId: string): Promise<void> {
   if (!purchase) return;
 
   const plan = WEBSITE_TIER_PLANS[purchase.tier];
-  // In the currency the purchase is billed in. Left to its default this quoted
-  // cedis to a customer paying in dollars — twelve times their bill, in money
-  // they have never been charged.
-  const price = priceFor(purchase.tier, purchase.currency === "USD" ? "USD" : "GHS");
   const fallbackUrl = `${customerAppUrl()}/website/balance`;
   const updateUrl = purchase.providerSubscriptionCode
     ? await subscriptionManagementLink(purchase.providerSubscriptionCode).catch(() => fallbackUrl)
     : fallbackUrl;
   // How far past due, in whole days, decides which of the three notices this
   // is — the first the day it fails, the second a few days in, the third once
-  // editing is about to close. Counted from the same date the lock is.
+  // editing has paused. Counted from the same date the lock is.
   const overdueDays = Math.max(0, Math.floor((Date.now() - unpaidSince(purchase).getTime()) / 86_400_000));
   const stage = overdueDays >= DUNNING_DAYS_BEFORE_LOCK ? 3 : overdueDays >= 4 ? 2 : 1;
-  const notice = noticeFor(stage, plan.name, `${price.standardDisplay}/mo`, updateUrl);
+  const notice = noticeFor(stage, plan.name, chargedAmount(purchase));
 
   if (!(await mailerConfigured())) {
     console.warn(`[dunning] no mailer configured — past-due notice for ${purchase.email} not sent`);
@@ -156,7 +194,7 @@ export async function editingLockedForNonPayment(purchaseId: string | null): Pro
   if (!purchaseId) return false;
   const purchase = await prisma.websitePurchase.findUnique({
     where: { id: purchaseId },
-    select: { billingState: true, nextBillingAt: true, updatedAt: true },
+    select: { billingState: true, nextBillingAt: true, pastDueSince: true, updatedAt: true },
   });
   // A missing paid-up date used to answer "not locked", for ever — and that
   // date is exactly what a subscription the processor never confirmed lacks.
