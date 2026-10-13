@@ -17,13 +17,27 @@ import { firstLine, reportServerError } from "../services/opsAlert.js";
  * The path an error happened on, safe to put in an email: no query string, and
  * any long random-looking segment (a review link's token, a checkout key)
  * replaced, because the address of a failing request is not worth a credential.
+ * Percent-escapes are set aside first, so a link cut off mid-character
+ * (`<token>%E2%80`) still has its token replaced.
  */
 export function redactedRoute(method: string, originalUrl: string): string {
   const path = (originalUrl.split("?")[0] ?? "")
     .split("/")
-    .map((segment) => (/^[A-Za-z0-9_-]{24,}$/.test(segment) && !/^c[a-z0-9]{20,}$/.test(segment) ? ":token" : segment))
+    .map((segment) => {
+      const bare = segment.replace(/%[0-9A-Fa-f]{0,2}/g, "");
+      return /^[A-Za-z0-9_-]{24,}$/.test(bare) && !/^c[a-z0-9]{20,}$/.test(bare) ? ":token" : segment;
+    })
     .join("/");
   return `${method} ${path}`.slice(0, 200);
+}
+
+/**
+ * Express's own refusal of a path parameter whose escapes do not decode —
+ * `/review/%zz`, or a link cut off in the middle of a character. Express marks
+ * it 400 but not `expose`, so it is told apart by its class and status.
+ */
+function isUndecodableAddress(err: unknown): boolean {
+  return err instanceof URIError && (err as { status?: unknown }).status === 400;
 }
 
 /**
@@ -67,7 +81,8 @@ function reportUnexpected(err: unknown, route: string, reference: string): void 
  * "the refusal arrives as something a person can act on" becomes an assertion
  * rather than a hope.
  *
- * Zod validation errors become 400s, everything else 500s.
+ * Zod validation errors and an address Express cannot decode become 400s,
+ * everything else 500s.
  *
  * The 500 body is deliberately uninformative in production. It used to return
  * `err.message`, which is whatever threw: a Prisma failure names the table and
@@ -80,6 +95,12 @@ function reportUnexpected(err: unknown, route: string, reference: string): void 
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
   res.set("Cache-Control", "private, no-store");
   if (err instanceof CapacityError) return res.status(err.status).set("Retry-After", String(err.retryAfter)).json({ error: err.message });
+  // The address is wrong, not the server. It used to be a 500 reported to
+  // Sentry, so anyone could spend the quota and the Owner's error-burst alert
+  // with `%zz` and a different suffix each time. Its message is the whole raw
+  // parameter — on a review link, the token; from a stranger, 15 KB of
+  // whatever they typed — so it is answered before the log line too.
+  if (isUndecodableAddress(err)) return res.status(400).json({ error: "That address is not valid." });
   const reference = Math.random().toString(36).slice(2, 10);
   console.error(`[${reference}]`, err);
   if (err instanceof PaystackError || err instanceof PaymentRefused) {

@@ -1196,10 +1196,24 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   client loads `lib/monitoring.ts` lazily on the production hosts only.
   `errorHandler` reports only what it renders as the generic 500 — never a
   `WebsiteError`, a validation refusal or any composed error class, whatever
-  its status — because a refusal is the system working. Before anything
-  leaves, cookies, bodies, auth headers, IP, frame variables, query values and
-  Prisma's echoed arguments are removed (Prisma prints the call's values,
-  which here means customer HTML and visitors' messages). The DSNs are
-  committed on purpose — they only permit sending — and `SENTRY_DSN=off`
-  stops it. The CSP's `connect-src` names exactly the ingest host.
-  `checks/monitoring.ts`.
+  its status — because a refusal is the system working. Express's own
+  `URIError` for an undecodable parameter (`/review/%zz`) is answered 400
+  "That address is not valid." before the log line and never reported: it was
+  a 500 anyone could repeat to spend the quota, and its message is the raw
+  parameter. Before anything leaves, cookies, bodies, auth headers, IP, frame
+  variables, query values and Prisma's echoed arguments are removed (Prisma
+  prints the call's values, which here means customer HTML and visitors'
+  messages); tags, `extra` and `contexts` are scrubbed too, and a thrown
+  plain object leaves its keys and none of its values. A token-shaped
+  segment is masked even with percent-escapes attached (a link cut off
+  mid-character). **The scrubbers run on the event loop over text a stranger
+  chooses, so every pattern must stay linear** and every string is cut to
+  4 KB first, back to a character that cannot be inside a token or an
+  address; three patterns were quadratic and one cubic, and a 15 KB path
+  parameter stalled the API for half a second per request. `maxValueLength`
+  is 64 KB, not 4 KB, because Prisma's verdict follows the page HTML it
+  prints. **No lookbehind in `lib/monitoring.ts`**: it is in the main bundle,
+  and Safari before 16.4 cannot parse one, which would stop the app loading.
+  The DSNs are committed on purpose — they only permit sending — and
+  `SENTRY_DSN=off` stops it. The CSP's `connect-src` names exactly the ingest
+  host. `checks/monitoring.ts`.

@@ -50,22 +50,67 @@ export const LEFT_OUT_INTEGRATIONS = new Set(["Express", "OnUncaughtException", 
 // almost nothing to almost everything, and these functions do not trust the
 // next default either. `client/src/lib/monitoring.ts` holds the browser's copy
 // of the same rules, and `checks/monitoring.ts` runs both over one table.
+//
+// These run synchronously on the event loop after every reported error, over
+// text a stranger can choose: Express puts a whole path parameter into the
+// message of the error it throws. So every pattern below is linear. A pattern
+// may start a match only on the character before a run (the leads), may not
+// share a long run between many starting points (the scheme is at most 64
+// characters, and a path without a query is consumed rather than retried), and
+// every string is cut to `MAX_SCRUBBED` before they run. Three of them used to
+// be quadratic and the encoded-address one cubic: a 5 KB path segment of
+// `a%40` held the process for seven seconds. A lead is matched rather than
+// looked behind for because the browser's copy has to parse on Safari before
+// 16.4, where a lookbehind is a syntax error that would stop the app loading.
 
 /** A path segment shaped like a credential — a review link's token, a checkout key. Same rule as `redactedRoute`. */
 const CREDENTIAL_SEGMENT = /^[A-Za-z0-9_-]{24,}$/;
 /** A cuid is a row id, which is what makes an error findable, not a secret. */
 const ROW_ID = /^c[a-z0-9]{20,}$/;
-const EMAIL_SEGMENT = /[^/@\s]+(?:@|%40)[^/@\s]+\.[a-z]{2,}/i;
+/** Stripped before the test above, so a link cut off mid-character (`<token>%E2%80`) is still a token. */
+const PERCENT_ESCAPE = /%[0-9A-Fa-f]{0,2}/g;
+/** Tested with `%40` decoded first; the `@` it leaves is what keeps this to one start per run. */
+const EMAIL_SEGMENT = /(?:^|[/@\s])[^/@\s]+@[^/@\s]+\.[a-z]{2,}/i;
 const PARAM_NAME = /^[A-Za-z_][\w.[\]-]{0,63}$/;
-const URL_IN_TEXT = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+/gi;
-const PATH_WITH_QUERY = /(^|[\s"'(=])(\/[^\s"'<>`?]*\?[^\s"'<>`]+)/g;
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const URL_IN_TEXT = /[a-z][a-z0-9+.-]{0,63}:\/\/[^\s"'<>`]+/gi;
+/** The query is optional so that a path without one is consumed in one step, not tried again from every `=/` inside it. */
+const PATH_WITH_QUERY = /(^|[\s"'(=])(\/[^\s"'<>`?]*)(\?[^\s"'<>`]+)?/g;
+/**
+ * Addresses written back to back (`a@x.com%2Cb@y.com`) are one match, because
+ * the second has no lead of its own to start from.
+ */
+const EMAIL = /(^|[^A-Za-z0-9._%+-])((?:[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})+)/g;
 const SECRET_HEADER = /authorization|cookie|token|secret|signature|api-?key|session|password/i;
+/** How the error handler's `route` tag and a transaction name begin. */
+const REQUEST_LINE = /^[A-Z]+ \//;
+
+/** Far longer than any real address, route or sentence; anything longer is cut before it is scrubbed. */
+const MAX_SCRUBBED = 4096;
+/** The SDK's own cut, below. Above `MAX_SCRUBBED`, so whatever the SDK cut is cut again here, back to a safe place. */
+const MAX_VALUE_LENGTH = 64 * 1024;
+/** Characters an address, a token or the password in a link is made of. */
+const WORD_TAIL = /[\w.%+@:-]/;
+
+/**
+ * Scrubs at most `MAX_SCRUBBED` characters. The cut goes back to the last
+ * character that cannot be inside an address or a token, because a review
+ * token cut to twelve characters no longer looks like a token, and the half of
+ * an address before the cut no longer looks like an address.
+ */
+function withinLimit(text: string, scrub: (text: string) => string): string {
+  if (text.length <= MAX_SCRUBBED) return scrub(text);
+  let end = MAX_SCRUBBED;
+  while (end > 0 && WORD_TAIL.test(text.charAt(end - 1))) end--;
+  return `${scrub(text.slice(0, end))}[truncated]`;
+}
 
 function scrubPath(path: string): string {
   return path
     .split("/")
-    .map((segment) => (EMAIL_SEGMENT.test(segment) ? ":email" : CREDENTIAL_SEGMENT.test(segment) && !ROW_ID.test(segment) ? ":token" : segment))
+    .map((segment) => {
+      const bare = segment.replace(PERCENT_ESCAPE, "");
+      return EMAIL_SEGMENT.test(segment.replace(/%40/g, "@")) ? ":email" : CREDENTIAL_SEGMENT.test(bare) && !ROW_ID.test(bare) ? ":token" : segment;
+    })
     .join("/");
 }
 
@@ -83,16 +128,18 @@ function scrubParam(pair: string): string {
  * what makes the event useful, so it stays.
  */
 export function scrubUrl(url: string): string {
-  const beforeFragment = url.split("#", 1)[0] ?? "";
-  const queryAt = beforeFragment.indexOf("?");
-  const base = queryAt === -1 ? beforeFragment : beforeFragment.slice(0, queryAt);
-  const authority = /^[a-z][a-z0-9+.-]*:\/\/[^/]*/i.exec(base)?.[0] ?? "";
-  const query = queryAt === -1 ? "" : beforeFragment.slice(queryAt + 1);
-  return (
-    authority.replace(/\/\/[^/]*@/, "//[Filtered]@") +
-    scrubPath(base.slice(authority.length)) +
-    (query ? `?${query.split("&").map(scrubParam).join("&")}` : "")
-  );
+  return withinLimit(url, (whole) => {
+    const beforeFragment = whole.split("#", 1)[0] ?? "";
+    const queryAt = beforeFragment.indexOf("?");
+    const base = queryAt === -1 ? beforeFragment : beforeFragment.slice(0, queryAt);
+    const authority = /^[a-z][a-z0-9+.-]*:\/\/[^/]*/i.exec(base)?.[0] ?? "";
+    const query = queryAt === -1 ? "" : beforeFragment.slice(queryAt + 1);
+    return (
+      authority.replace(/\/\/[^/]*@/, "//[Filtered]@") +
+      scrubPath(base.slice(authority.length)) +
+      (query ? `?${query.split("&").map(scrubParam).join("&")}` : "")
+    );
+  });
 }
 
 /**
@@ -112,18 +159,61 @@ function scrubPrismaArguments(text: string): string {
   return [text.slice(0, at) + head, ...location, ...(dropped ? ["[arguments filtered]"] : []), ...verdict].join("\n");
 }
 
-/** Free text — an error message, a breadcrumb — with every URL in it scrubbed and every address masked. */
+/**
+ * Free text — an error message, a breadcrumb — with every URL in it scrubbed
+ * and every address masked. Prisma's arguments go before the cut, because
+ * they come before its verdict and a page's HTML is longer than the limit.
+ */
 export function scrubText(text: string): string {
-  return scrubPrismaArguments(text)
-    .replace(URL_IN_TEXT, (url) => scrubUrl(url))
-    .replace(PATH_WITH_QUERY, (_match, lead: string, path: string) => lead + scrubUrl(path))
-    .replace(EMAIL, "[email]");
+  return withinLimit(scrubPrismaArguments(text), (short) =>
+    short
+      .replace(URL_IN_TEXT, (url) => scrubUrl(url))
+      .replace(PATH_WITH_QUERY, (match: string, lead: string, path: string, query?: string) => (query ? lead + scrubUrl(path + query) : match))
+      .replace(EMAIL, (_match: string, lead: string) => `${lead}[email]`),
+  );
 }
 
 /** `GET /review/<token>` → `GET /review/:token`. */
 function scrubRouteName(name: string): string {
-  const space = name.indexOf(" ");
-  return space === -1 ? scrubUrl(name) : name.slice(0, space + 1) + scrubUrl(name.slice(space + 1));
+  return withinLimit(name, (whole) => {
+    const space = whole.indexOf(" ");
+    return space === -1 ? scrubUrl(whole) : whole.slice(0, space + 1) + scrubUrl(whole.slice(space + 1));
+  });
+}
+
+/**
+ * Every string in `extra` or `contexts`, scrubbed as free text. Nothing in the
+ * app sets either, but the SDK fills `contexts` and an integration may add to
+ * it — a span's data holds the full URL. Deeper than the SDK normalises to is
+ * dropped rather than walked.
+ */
+function scrubValues(value: unknown, depth: number): unknown {
+  if (typeof value === "string") return scrubText(value);
+  if (!value || typeof value !== "object") return value;
+  if (depth > 5) return "[Filtered]";
+  if (Array.isArray(value)) return value.map((item) => scrubValues(item, depth + 1));
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    const scrubbed = scrubValues(record[key], depth + 1);
+    if (scrubbed !== record[key]) record[key] = scrubbed;
+  }
+  return record;
+}
+
+/**
+ * Something thrown that is not an Error — a library rejecting with a plain
+ * object — arrives serialised whole in `extra.__serialized__`, and the server's
+ * SDK makes the object's own `message` (or `name`) the exception's value. That
+ * object is data, not a sentence: a mail payload, an enquiry. The event keeps
+ * which keys it had and the stack; its values never leave.
+ */
+function scrubThrownObject(event: Event): void {
+  if (!event.extra || !("__serialized__" in event.extra)) return;
+  const thrown = event.extra.__serialized__;
+  delete event.extra.__serialized__;
+  const keys = thrown && typeof thrown === "object" ? Object.keys(thrown).sort().slice(0, 20) : [];
+  const named = keys.map((key) => (PARAM_NAME.test(key) ? key : "[Filtered]")).join(", ");
+  for (const exception of event.exception?.values ?? []) exception.value = `Object captured as exception with keys: ${named || "none"}`;
 }
 
 export function scrubBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb | null {
@@ -165,11 +255,23 @@ export function scrubEvent<T extends Event>(event: T): T {
   if (event.transaction) event.transaction = scrubRouteName(event.transaction);
   if (event.message) event.message = scrubText(event.message);
   if (event.logentry?.message) event.logentry.message = scrubText(event.logentry.message);
+  scrubThrownObject(event);
   for (const exception of event.exception?.values ?? []) {
     if (exception.value) exception.value = scrubText(exception.value);
     // A frame's local variables can be the very body this file keeps out.
     for (const frame of exception.stacktrace?.frames ?? []) delete frame.vars;
   }
+  // A tag sits beside the message. The error handler's `route` is a request
+  // line, written before any of this ran.
+  const tags = event.tags;
+  if (tags) {
+    for (const name of Object.keys(tags)) {
+      const value = tags[name];
+      if (typeof value === "string") tags[name] = REQUEST_LINE.test(value) ? scrubRouteName(value) : scrubText(value);
+    }
+  }
+  if (event.extra) scrubValues(event.extra, 0);
+  if (event.contexts) scrubValues(event.contexts, 0);
   // Breadcrumbs added straight to a scope skip `beforeBreadcrumb`.
   if (event.breadcrumbs) event.breadcrumbs = event.breadcrumbs.flatMap((breadcrumb) => scrubBreadcrumb(breadcrumb) ?? []);
   return event;
@@ -211,6 +313,11 @@ export function monitoringOptions(env: NodeJS.ProcessEnv = process.env): NodeOpt
     initialScope: { tags: { service: role } },
     // Errors only unless somebody asks for traces.
     tracesSampleRate: Number.isFinite(sampled) && sampled > 0 ? Math.min(sampled, 1) : 0,
+    // The SDK cuts the URL and each exception's value to this before
+    // `beforeSend` sees them: a ceiling on what reaches the scrubbers at all.
+    // Generous on purpose, because Prisma prints a page's HTML before its
+    // verdict and the verdict has to survive until `scrubText` drops the HTML.
+    maxValueLength: MAX_VALUE_LENGTH,
     // What `sendDefaultPii: false` used to mean, spelled out, because v11
     // removed that option and defaults every one of these to on.
     dataCollection: {

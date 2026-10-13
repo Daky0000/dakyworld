@@ -13,7 +13,9 @@
  * twice — once as configured, and once with v11's collect-everything defaults,
  * with a control proving those defaults really do collect — so the scrubber is
  * proved to stand on its own. The browser's copy of the scrubbers is run over
- * the same table as the server's.
+ * the same table as the server's, and both are timed on 80,000 characters of
+ * each shape that used to make them backtrack: they run on the event loop,
+ * over text a stranger can put in an address.
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -31,7 +33,7 @@ process.env.SENTRY_DSN = "off";
 const Sentry = await import("@sentry/node");
 const server = await import("../src/instrument.js");
 const browser = await import("../client/src/lib/monitoring.js");
-const { errorHandler } = await import("../src/middleware/errorHandler.js");
+const { errorHandler, redactedRoute } = await import("../src/middleware/errorHandler.js");
 const { WebsiteError } = await import("../src/services/website/site.js");
 const { ApifyError } = await import("../src/lib/apify.js");
 const { securityHeaders } = await import("../src/middleware/security.js");
@@ -122,6 +124,12 @@ function everythingEvent(): Record<string, any> {
     },
     user: { id: "user-1", ip_address: "203.0.113.9", email: SECRETS.email, username: "ama" },
     tags: { route: `POST /api/website/pages/${ROW_ID}/publish`, reference: "k3x9q2mf" },
+    // A span's data carries the full URL; the ErrorBoundary's component stack is worth keeping.
+    contexts: {
+      trace: { trace_id: "4bf92f3577b34da6a3ce929d0e0e4736", data: { "url.full": `https://os.dakyx.com/set-password?token=${SECRETS.token}` } },
+      react: { componentStack: "\n    at WebsiteEditor (https://os.dakyx.com/assets/WebsiteEditor-Dv9lN7t6.js:1:2)" },
+    },
+    extra: { recipient: SECRETS.email, attempt: 2 },
     breadcrumbs: [
       { category: "console", level: "log", message: `enquiry from ${SECRETS.email}: ${SECRETS.enquiry}` },
       {
@@ -188,6 +196,9 @@ try {
     const kept = (options.integrations as (all: typeof defaults) => typeof defaults)(defaults).map((integration) => integration.name);
     for (const name of server.LEFT_OUT_INTEGRATIONS) assert.ok(!kept.includes(name), `${name} is still installed`);
     assert.ok(kept.includes("Http") && kept.includes("RequestData") && kept.includes("LinkedErrors"), "the rest stay");
+    // A ceiling on what reaches the scrubbers, set well above their own 4 KB
+    // cut; that it is high enough for Prisma's verdict is checked below.
+    assert.ok(typeof options.maxValueLength === "number" && options.maxValueLength >= 16_384, `maxValueLength ${options.maxValueLength}`);
   });
 
   /* ---------------------------------------------------------- scrubbers -- */
@@ -199,6 +210,14 @@ try {
     [`/api/public/review/${REVIEW_TOKEN}/decision`, "/api/public/review/:token/decision"],
     [`/api/leads/${ROW_ID}`, `/api/leads/${ROW_ID}`],
     [`/api/users/${SECRETS.email}/reset`, "/api/users/:email/reset"],
+    ["/api/users/ama%40mensahfoods.example/reset", "/api/users/:email/reset"],
+    // A review link cut off in the middle of a character still carries its token.
+    [`/api/public/review/${REVIEW_TOKEN}%E2%80`, "/api/public/review/:token"],
+    [`/api/public/review/${REVIEW_TOKEN}%`, "/api/public/review/:token"],
+    [`/api/public/review/%20${REVIEW_TOKEN}/decision`, "/api/public/review/:token/decision"],
+    // And neither a row id nor a short escaped word is a token.
+    [`/api/leads/${ROW_ID}%E2`, `/api/leads/${ROW_ID}%E2`],
+    ["/sites/caf%C3%A9-menu", "/sites/caf%C3%A9-menu"],
     ["postgresql://admin:hunter2@db.internal:5432/os", "postgresql://[Filtered]@db.internal:5432/os"],
     ["/verify-email?code=991204&reference=PSK_123&=bare", "/verify-email?code=[Filtered]&reference=[Filtered]&[Filtered]"],
     ["https://os.dakyx.com/leads", "https://os.dakyx.com/leads"],
@@ -214,6 +233,76 @@ try {
       assert.equal(copy.scrubText(`GET /set-password?token=${SECRETS.token} failed`), "GET /set-password?token=[Filtered] failed");
       const ordinary = "PrismaClientKnownRequestError: Unique constraint failed on the fields: (`slug`)";
       assert.equal(copy.scrubText(ordinary), ordinary);
+      // Addresses back to back, and a link glued to the word before it.
+      assert.equal(copy.scrubText(`to ${SECRETS.email}%2Ckofi@mensahfoods.example, cc ${SECRETS.email}.`), "to [email], cc [email].");
+      assert.equal(copy.scrubText(`retry1https://os.dakyx.com/set-password?token=${SECRETS.token}`), "retry1https://os.dakyx.com/set-password?token=[Filtered]");
+      assert.equal(copy.scrubText(`open(/set-password?token=${SECRETS.token} and =/a=/b`), "open(/set-password?token=[Filtered] and =/a=/b");
+    });
+
+    await check(`${label}: tags are scrubbed like everything else, and a token cut off mid-character is masked in every field`, () => {
+      const cut = `${REVIEW_TOKEN}%E2%80`;
+      const event = copy.scrubEvent({
+        transaction: `GET /api/public/review/${cut}`,
+        request: { url: `https://os.dakyx.com/api/public/review/${cut}` },
+        exception: { values: [{ type: "TypeError", value: `fetch failed for https://os.dakyx.com/review/${cut}` }] },
+        tags: { route: `GET /api/public/review/${cut}`, reference: "k3x9q2mf", boundary: `lead for ${SECRETS.email}` },
+      } as any) as Record<string, any>;
+      assert.ok(!JSON.stringify(event).includes(REVIEW_TOKEN), JSON.stringify(event));
+      assert.equal(event.transaction, "GET /api/public/review/:token");
+      assert.equal(event.request.url, "https://os.dakyx.com/api/public/review/:token");
+      assert.equal(event.exception.values[0].value, "fetch failed for https://os.dakyx.com/review/:token");
+      assert.deepEqual(event.tags, { route: "GET /api/public/review/:token", reference: "k3x9q2mf", boundary: "lead for [email]" });
+    });
+
+    await check(`${label}: something thrown that is not an Error leaves its keys and none of its values`, () => {
+      // The shape both SDKs give a plain object: serialised whole into
+      // `extra`, and on the server its own `message` as the exception's value.
+      const event = copy.scrubEvent({
+        exception: { values: [{ type: "Error", value: SECRETS.enquiry, mechanism: { type: "generic", synthetic: true } }] },
+        extra: { __serialized__: { to: SECRETS.email, html: SECRETS.page, message: SECRETS.enquiry, [SECRETS.email]: true } },
+      } as any) as Record<string, any>;
+      assertNothingSecret(JSON.stringify(event), `${label}, a thrown object`);
+      assert.deepEqual(event.extra, {});
+      assert.equal(event.exception.values[0].value, "Object captured as exception with keys: [Filtered], html, message, to");
+      assert.equal(event.exception.values[0].type, "Error");
+    });
+
+    await check(`${label}: a string longer than the limit is cut back to a safe place, never through a token or an address`, () => {
+      const words = "word ".repeat(818); // 4,090 characters, so what follows straddles the cut.
+      const text = copy.scrubText(`${words}${SECRETS.email} and more`);
+      assert.ok(text.endsWith("[truncated]") && text.length <= 4096 + "[truncated]".length, `${text.length} characters`);
+      assert.ok(!text.includes("ama"), text.slice(-40));
+      // A connection string whose password the cut lands in: 4,074 + 22 = 4,096.
+      const dsn = copy.scrubText(`${"word ".repeat(814)}dsn postgresql://admin:hunter2@db.internal:5432/os`);
+      assert.ok(!dsn.includes("admin") && !dsn.includes("hun"), dsn.slice(-40));
+      // The token starts at 4,089, so the cut at 4,096 falls seven characters into it.
+      const url = copy.scrubUrl(`https://os.dakyx.com/${"b/".repeat(2034)}${REVIEW_TOKEN}/decision`);
+      assert.ok(url.endsWith("/[truncated]"), url.slice(-40));
+      assert.ok(!url.includes(REVIEW_TOKEN.slice(0, 6)), url.slice(-40));
+    });
+
+    await check(`${label}: 80,000 characters a stranger chose, in every field, are scrubbed in well under 50 ms`, () => {
+      // One shape per pattern that used to backtrack: a run of address
+      // characters, an encoded `@` (cubic), scheme characters, `=/` and `(/`
+      // inside a path, a domain that never ends, and Prisma's opening.
+      for (const shape of ["a", "a%40", "a.", "a-", "=/", "(/", "a@-", "a@a.", "Invalid `"]) {
+        const long = shape.repeat(Math.ceil(80_000 / shape.length)).slice(0, 80_000);
+        const event = {
+          message: long,
+          transaction: `GET /api/public/review/${long}%`,
+          exception: { values: [{ type: "URIError", value: `Failed to decode param '${long}%'` }] },
+          request: { url: `https://os.dakyx.com/api/public/review/${long}%`, headers: { referer: `https://os.dakyx.com/${long}` } },
+          tags: { route: `GET /api/public/review/${long}%`, note: long },
+          extra: { note: long },
+          contexts: { trace: { data: { "url.full": `https://os.dakyx.com/${long}` } } },
+          breadcrumbs: [{ category: "http", message: long, data: { url: `https://os.dakyx.com/${long}`, note: long } }],
+        };
+        const started = performance.now();
+        const scrubbed = copy.scrubEvent(event as any) as Record<string, any>;
+        const took = performance.now() - started;
+        assert.ok(took < 50, `${JSON.stringify(shape)}: ${took.toFixed(0)} ms`);
+        assert.ok(JSON.stringify(scrubbed).length < 80_000, `${JSON.stringify(shape)}: every field is cut`);
+      }
     });
 
     await check(`${label}: Prisma's printout of the call's arguments goes, the call and the verdict stay`, () => {
@@ -249,6 +338,9 @@ try {
       assert.equal(event.exception.values[0].stacktrace.frames[0].lineno, 412);
       assert.equal(event.exception.values[0].stacktrace.frames[0].vars, undefined, "a frame's local variables");
       assert.deepEqual(event.tags, { route: `POST /api/website/pages/${ROW_ID}/publish`, reference: "k3x9q2mf" });
+      assert.deepEqual(event.contexts.trace, { trace_id: "4bf92f3577b34da6a3ce929d0e0e4736", data: { "url.full": "https://os.dakyx.com/set-password?token=[Filtered]" } });
+      assert.equal(event.contexts.react.componentStack, "\n    at WebsiteEditor (https://os.dakyx.com/assets/WebsiteEditor-Dv9lN7t6.js:1:2)");
+      assert.deepEqual(event.extra, { recipient: "[email]", attempt: 2 });
       assert.deepEqual(event.user, { id: "user-1" });
       // The console line is gone; the request and the navigation stay, minus their secrets.
       assert.deepEqual(event.breadcrumbs.map((b: { category: string }) => b.category), ["http", "navigation"]);
@@ -277,6 +369,14 @@ try {
     const kept = (options.integrations as (all: Array<{ name: string }>) => Array<{ name: string }>)([{ name: "Console" }, { name: "Breadcrumbs" }, { name: "GlobalHandlers" }]);
     assert.deepEqual(kept.map((integration) => integration.name), ["Breadcrumbs", "GlobalHandlers"]);
     assert.ok(!Object.keys(options).some((key) => /replay/i.test(key)), "no session replay");
+    assert.equal(options.maxValueLength, server.monitoringOptions({ NODE_ENV: "production" })!.maxValueLength, "the same ceiling on both sides");
+  });
+
+  await check("the browser's copy parses on Safari before 16.4: no lookbehind, which there is a syntax error that stops the app loading", () => {
+    // main.tsx imports it, so it is in the bundle every page loads.
+    const source = readFileSync(new URL("../client/src/lib/monitoring.ts", import.meta.url), "utf8");
+    assert.ok(!/\(\?<[=!]/.test(source), "a lookbehind in client/src/lib/monitoring.ts");
+    assert.match(readFileSync(new URL("../client/src/main.tsx", import.meta.url), "utf8"), /from "\.\/lib\/monitoring"/);
   });
 
   await check("an error thrown by an extension, the page being edited, or another site is not ours", () => {
@@ -335,6 +435,14 @@ try {
   // A vendor's own error object: a 4xx status from GitHub is our call failing.
   app.get("/api/website/vendor", () => {
     throw Object.assign(new Error("GitHub answered 404 for contents/about.html"), { status: 404 });
+  });
+  // A route with a parameter, which Express decodes before the handler runs.
+  app.get("/api/public/review/:token", (_req, res) => {
+    res.json({ ok: true });
+  });
+  // No parameter, so nothing is decoded and an accident is an accident.
+  app.use("/api/public/broken", () => {
+    throw new TypeError("Cannot read properties of undefined (reading 'decision')");
   });
   // A real Prisma validation error: refused before any query runs, so nothing
   // is written, and its message holds the value it was handed.
@@ -443,6 +551,80 @@ try {
     } finally {
       http.close();
     }
+  });
+
+  await check("an address Express cannot decode is a 400, kept out of the log and never reported, whatever is attached to it", async () => {
+    await start();
+    const { http, base } = await listen();
+    const logged: string[] = [];
+    const log = console.error;
+    console.error = (...args: unknown[]) => void logged.push(args.map(String).join(" "));
+    try {
+      // Garbage, a real link cut off in the middle of a character, and
+      // 12 KB of a stranger's choosing — each used to be a reported 500.
+      for (const path of ["%zz", `${REVIEW_TOKEN}%E2%80`, `${"a".repeat(12_000)}%`]) {
+        const response = await fetch(`${base}/api/public/review/${path}`);
+        assert.equal(response.status, 400, path.slice(0, 40));
+        assert.deepEqual(await response.json(), { error: "That address is not valid." });
+      }
+      assert.equal((await fetch(`${base}/api/public/review/${REVIEW_TOKEN}`)).status, 200, "a whole link still works");
+      await Sentry.flush(2000);
+      assert.equal(events().length, 0, `nothing reported, got ${events().map((event) => event.exception?.values?.[0]?.value).join(" | ").slice(0, 300)}`);
+      assert.ok(!logged.some((line) => line.includes("Failed to decode")), "the raw parameter is not logged");
+      // The negative is worth something only if the positive still fires.
+      await accident(base);
+      await Sentry.flush(2000);
+      assert.equal(events().length, 1);
+    } finally {
+      console.error = log;
+      http.close();
+    }
+  });
+
+  await check("an accident on a link cut off mid-character is reported with the token masked in the route, the URL and the transaction", async () => {
+    await start();
+    const { http, base } = await listen();
+    try {
+      assert.equal((await fetch(`${base}/api/public/broken/${REVIEW_TOKEN}%E2%80`)).status, 500);
+      await Sentry.flush(2000);
+      assert.equal(events().length, 1);
+      const raw = envelopes.map((envelope) => envelope.raw).join("\n");
+      assert.ok(!raw.includes(REVIEW_TOKEN), "the token left the building");
+      const [event] = events();
+      assert.equal(event!.tags.route, "GET /api/public/broken/:token");
+      assert.ok(String(event!.request.url).endsWith("/api/public/broken/:token"), event!.request.url);
+      // The SDK's own name for the request, built from the raw path.
+      assert.equal(event!.transaction, "GET /api/public/broken/:token");
+      // The route also goes into the Owner's error-burst email, which no scrubber here touches.
+      assert.equal(redactedRoute("GET", `/api/public/broken/${REVIEW_TOKEN}%E2%80?x=1`), "GET /api/public/broken/:token");
+      assert.equal(redactedRoute("GET", `/api/leads/${ROW_ID}%E2/notes`), `GET /api/leads/${ROW_ID}%E2/notes`);
+    } finally {
+      http.close();
+    }
+  });
+
+  await check("something thrown that is not an Error reaches Sentry with its keys and none of its values", async () => {
+    await start();
+    // A library rejecting with its payload rather than an Error.
+    const thrown = { to: SECRETS.email, html: SECRETS.page, message: SECRETS.enquiry };
+    Sentry.captureException(thrown);
+    await Sentry.flush(2000);
+    assert.equal(events().length, 1);
+    assertNothingSecret(envelopes.map((envelope) => envelope.raw).join("\n"), "a thrown object");
+    const [event] = events();
+    assert.equal(event!.extra?.__serialized__, undefined);
+    assert.equal(event!.exception.values[0].value, "Object captured as exception with keys: html, message, to");
+  });
+
+  await check("a page's HTML in Prisma's printout is cut by neither the SDK nor the scrubber before its verdict is kept", async () => {
+    await start();
+    const html = `${SECRETS.page}${"<p>Fresh bread every morning.</p>".repeat(1000)}`; // about 34 KB
+    const printout = `\nInvalid \`prisma.websitePage.update()\` invocation:\n\n{\n  data: {\n    html: ${JSON.stringify(html)},\n    sitId: "x"\n  }\n}\n\nUnknown argument \`sitId\`. Did you mean \`siteId\`?`;
+    Sentry.captureException(new Error(printout));
+    await Sentry.flush(2000);
+    assert.equal(events().length, 1);
+    assertNothingSecret(envelopes.map((envelope) => envelope.raw).join("\n"), "a long Prisma printout");
+    assert.equal(events()[0]!.exception.values[0].value, "\nInvalid `prisma.websitePage.update()` invocation:\n[arguments filtered]\nUnknown argument `sitId`. Did you mean `siteId`?");
   });
 
   await check("control: with v11's own defaults and no scrubber, a cookie, the body and the address really would be sent", async () => {

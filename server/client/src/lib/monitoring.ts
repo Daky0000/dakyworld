@@ -30,20 +30,41 @@ export const PRODUCTION_HOSTS: ReadonlySet<string> = new Set(["os.dakyx.com", "e
 // token-shaped segment and address goes. Set-password and reset links carry a
 // token and an email in the address bar, and the address bar is the first
 // thing an error report records.
+//
+// Every pattern is linear and every string is cut to `MAX_SCRUBBED` before they
+// run, as on the server, where the reasons are written out: an address bar can
+// hold whatever a link put there. No lookbehind: Safari before 16.4 refuses to
+// parse one, and this module is in the bundle every page loads.
 
 const CREDENTIAL_SEGMENT = /^[A-Za-z0-9_-]{24,}$/;
 const ROW_ID = /^c[a-z0-9]{20,}$/;
-const EMAIL_SEGMENT = /[^/@\s]+(?:@|%40)[^/@\s]+\.[a-z]{2,}/i;
+const PERCENT_ESCAPE = /%[0-9A-Fa-f]{0,2}/g;
+const EMAIL_SEGMENT = /(?:^|[/@\s])[^/@\s]+@[^/@\s]+\.[a-z]{2,}/i;
 const PARAM_NAME = /^[A-Za-z_][\w.[\]-]{0,63}$/;
-const URL_IN_TEXT = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+/gi;
-const PATH_WITH_QUERY = /(^|[\s"'(=])(\/[^\s"'<>`?]*\?[^\s"'<>`]+)/g;
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const URL_IN_TEXT = /[a-z][a-z0-9+.-]{0,63}:\/\/[^\s"'<>`]+/gi;
+const PATH_WITH_QUERY = /(^|[\s"'(=])(\/[^\s"'<>`?]*)(\?[^\s"'<>`]+)?/g;
+const EMAIL = /(^|[^A-Za-z0-9._%+-])((?:[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})+)/g;
 const SECRET_HEADER = /authorization|cookie|token|secret|signature|api-?key|session|password/i;
+const REQUEST_LINE = /^[A-Z]+ \//;
+
+const MAX_SCRUBBED = 4096;
+const MAX_VALUE_LENGTH = 64 * 1024;
+const WORD_TAIL = /[\w.%+@:-]/;
+
+function withinLimit(text: string, scrub: (text: string) => string): string {
+  if (text.length <= MAX_SCRUBBED) return scrub(text);
+  let end = MAX_SCRUBBED;
+  while (end > 0 && WORD_TAIL.test(text.charAt(end - 1))) end--;
+  return `${scrub(text.slice(0, end))}[truncated]`;
+}
 
 function scrubPath(path: string): string {
   return path
     .split("/")
-    .map((segment) => (EMAIL_SEGMENT.test(segment) ? ":email" : CREDENTIAL_SEGMENT.test(segment) && !ROW_ID.test(segment) ? ":token" : segment))
+    .map((segment) => {
+      const bare = segment.replace(PERCENT_ESCAPE, "");
+      return EMAIL_SEGMENT.test(segment.replace(/%40/g, "@")) ? ":email" : CREDENTIAL_SEGMENT.test(bare) && !ROW_ID.test(bare) ? ":token" : segment;
+    })
     .join("/");
 }
 
@@ -54,16 +75,18 @@ function scrubParam(pair: string): string {
 }
 
 export function scrubUrl(url: string): string {
-  const beforeFragment = url.split("#", 1)[0] ?? "";
-  const queryAt = beforeFragment.indexOf("?");
-  const base = queryAt === -1 ? beforeFragment : beforeFragment.slice(0, queryAt);
-  const authority = /^[a-z][a-z0-9+.-]*:\/\/[^/]*/i.exec(base)?.[0] ?? "";
-  const query = queryAt === -1 ? "" : beforeFragment.slice(queryAt + 1);
-  return (
-    authority.replace(/\/\/[^/]*@/, "//[Filtered]@") +
-    scrubPath(base.slice(authority.length)) +
-    (query ? `?${query.split("&").map(scrubParam).join("&")}` : "")
-  );
+  return withinLimit(url, (whole) => {
+    const beforeFragment = whole.split("#", 1)[0] ?? "";
+    const queryAt = beforeFragment.indexOf("?");
+    const base = queryAt === -1 ? beforeFragment : beforeFragment.slice(0, queryAt);
+    const authority = /^[a-z][a-z0-9+.-]*:\/\/[^/]*/i.exec(base)?.[0] ?? "";
+    const query = queryAt === -1 ? "" : beforeFragment.slice(queryAt + 1);
+    return (
+      authority.replace(/\/\/[^/]*@/, "//[Filtered]@") +
+      scrubPath(base.slice(authority.length)) +
+      (query ? `?${query.split("&").map(scrubParam).join("&")}` : "")
+    );
+  });
 }
 
 // A development build shows the server's own error message, and Prisma's
@@ -79,15 +102,43 @@ function scrubPrismaArguments(text: string): string {
 }
 
 export function scrubText(text: string): string {
-  return scrubPrismaArguments(text)
-    .replace(URL_IN_TEXT, (url) => scrubUrl(url))
-    .replace(PATH_WITH_QUERY, (_match, lead: string, path: string) => lead + scrubUrl(path))
-    .replace(EMAIL, "[email]");
+  return withinLimit(scrubPrismaArguments(text), (short) =>
+    short
+      .replace(URL_IN_TEXT, (url) => scrubUrl(url))
+      .replace(PATH_WITH_QUERY, (match: string, lead: string, path: string, query?: string) => (query ? lead + scrubUrl(path + query) : match))
+      .replace(EMAIL, (_match: string, lead: string) => `${lead}[email]`),
+  );
 }
 
 function scrubRouteName(name: string): string {
-  const space = name.indexOf(" ");
-  return space === -1 ? scrubUrl(name) : name.slice(0, space + 1) + scrubUrl(name.slice(space + 1));
+  return withinLimit(name, (whole) => {
+    const space = whole.indexOf(" ");
+    return space === -1 ? scrubUrl(whole) : whole.slice(0, space + 1) + scrubUrl(whole.slice(space + 1));
+  });
+}
+
+function scrubValues(value: unknown, depth: number): unknown {
+  if (typeof value === "string") return scrubText(value);
+  if (!value || typeof value !== "object") return value;
+  if (depth > 5) return "[Filtered]";
+  if (Array.isArray(value)) return value.map((item) => scrubValues(item, depth + 1));
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    const scrubbed = scrubValues(record[key], depth + 1);
+    if (scrubbed !== record[key]) record[key] = scrubbed;
+  }
+  return record;
+}
+
+// An unhandled rejection with a plain object arrives serialised whole in
+// `extra.__serialized__`. Its keys stay; its values are data, never a sentence.
+function scrubThrownObject(event: Event): void {
+  if (!event.extra || !("__serialized__" in event.extra)) return;
+  const thrown = event.extra.__serialized__;
+  delete event.extra.__serialized__;
+  const keys = thrown && typeof thrown === "object" ? Object.keys(thrown).sort().slice(0, 20) : [];
+  const named = keys.map((key) => (PARAM_NAME.test(key) ? key : "[Filtered]")).join(", ");
+  for (const exception of event.exception?.values ?? []) exception.value = `Object captured as exception with keys: ${named || "none"}`;
 }
 
 export function scrubBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb | null {
@@ -130,10 +181,21 @@ export function scrubEvent<T extends Event>(event: T): T {
   if (event.transaction) event.transaction = scrubRouteName(event.transaction);
   if (event.message) event.message = scrubText(event.message);
   if (event.logentry?.message) event.logentry.message = scrubText(event.logentry.message);
+  scrubThrownObject(event);
   for (const exception of event.exception?.values ?? []) {
     if (exception.value) exception.value = scrubText(exception.value);
     for (const frame of exception.stacktrace?.frames ?? []) delete frame.vars;
   }
+  const tags = event.tags;
+  if (tags) {
+    for (const name of Object.keys(tags)) {
+      const value = tags[name];
+      if (typeof value === "string") tags[name] = REQUEST_LINE.test(value) ? scrubRouteName(value) : scrubText(value);
+    }
+  }
+  // The ErrorBoundary's component stack is in `contexts.react`.
+  if (event.extra) scrubValues(event.extra, 0);
+  if (event.contexts) scrubValues(event.contexts, 0);
   if (event.breadcrumbs) event.breadcrumbs = event.breadcrumbs.flatMap((breadcrumb) => scrubBreadcrumb(breadcrumb) ?? []);
   return event;
 }
@@ -192,6 +254,8 @@ export function browserOptions(dsn: string, host: string): BrowserOptions {
     // Errors only. No replay integration is added either: a recording of the
     // editor is a recording of a customer's page.
     tracesSampleRate: 0,
+    // A ceiling on what reaches the scrubbers; they cut to 4 KB themselves.
+    maxValueLength: MAX_VALUE_LENGTH,
     // v11 collects every one of these by default; `sendDefaultPii` is gone.
     // The user agent stays, because it is what says which browser broke.
     dataCollection: {
