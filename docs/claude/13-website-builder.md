@@ -1183,12 +1183,24 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   the global-content sync (once for each page touched, all or nothing, each
   page written against the revision it was read at), restoring a version (an
   edit only when the page would read differently — emptying the draft is a
-  discard), copying a field out of a version, inserting a section, and saving a
-  shared element (an edit of the page it was typed on). Paused for non-payment
-  refuses all of them, and the publish routes too, which with admission off had
-  checked nothing. Publishing never counts. A route that writes a page's draft
-  without it is free at the limit and open while paused — give a new one the
-  guard. `checks/websiteEditGuard.ts`.
+  discard), copying a field out of a version, inserting a section, saving a
+  shared element (an edit of the page it was typed on), the five SEO tools that
+  rewrite a page (`/seo/page`, `/seo/technical`, `/seo/conversion-bar`,
+  `/seo/speed-optimize`, `/seo/brand-theme` — `writeToolEdit`; a run that
+  leaves the page as it was spends nothing) and applying an agent plan.
+  **`applyAgentSitePlan` works the whole plan out in memory and then writes
+  each page once**, allowed for every page it changes and in one transaction
+  against the revisions it read: it used to write as it went, so a page saved
+  meanwhile left a plan half applied. Paused for non-payment refuses all of
+  them, and every publish route too — the page and version publishes, the
+  agent's batch publish, a source file's publish (in `websiteSource.ts`'s
+  default `authorize`, before GitHub is read) and `/seo/page` with
+  `publishNow`, whose allowance is asked before the commit — which with
+  admission off had checked nothing. Publishing on its own never counts. A
+  route that writes a page's draft without it is free at the limit and open
+  while paused — give a new one the guard. `checks/websiteEditGuard.ts`, which
+  also proves each SEO tool and the agent answer a save that lands mid-request
+  with a 409 that counts nothing.
 - **On a website, the plan is the website's.** `resolveSiteEntitlement` finds
   the site's paying owner (`Site.clientId` → the client's live purchase → its
   account) and puts everybody on that website under that plan, with its edits,

@@ -330,7 +330,7 @@ async function main() {
     api.use(express.json({ limit: "5mb" }));
     let caller = editor;
     api.use((req, _res, next) => {
-      req.dbUser = { id: caller.id, name: caller.name, email: caller.email } as unknown as Request["dbUser"];
+      req.dbUser = { id: caller.id, name: caller.name, email: caller.email, active: true, deniedPermissions: [], accessRole: { superAdmin: true } } as unknown as Request["dbUser"];
       next();
     });
     const router = express.Router();

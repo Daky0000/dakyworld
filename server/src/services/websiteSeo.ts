@@ -17,7 +17,7 @@ import {
 } from "./website/site.js";
 import { setSiteSetting, updateSiteSettings } from "./websiteSiteSettings.js";
 import { invalidateSource } from "./website/sourceCache.js";
-import { assertEditAllowance, writePageEdit } from "./websiteTierPlans.js";
+import { assertEditAllowance, countPageEdit, writePageEdit } from "./websiteTierPlans.js";
 
 export interface PageSeoData {
   title: string;
@@ -334,6 +334,37 @@ export function generateSmartPageSeo(site: Site, page: SitePage, html: string): 
   };
 }
 
+/**
+ * Writes what one of the tools below did to a page's document, as an edit.
+ *
+ * These tools rewrite the page's HTML and its draft, which is changing the
+ * page as surely as typing in it: refused while editing is paused, refused at
+ * the limit when it would be the page's first counted edit today, counted once
+ * a page a day. Each used to write with a plain update — free at the limit,
+ * open while paused, and over the top of a colleague's save made while the
+ * tool was reading the page. Now it is written against the revision it was
+ * read at, and a page that moved meanwhile is a conflict that changes and
+ * counts nothing. A run that leaves the page exactly as it was (the optimiser
+ * with nothing left to fix) still saves, and spends nothing.
+ */
+async function writeToolEdit(
+  req: Request,
+  siteId: string,
+  page: SitePage,
+  change: { before: string; after: string },
+  data: Prisma.SitePageUncheckedUpdateManyInput,
+): Promise<void> {
+  const changed = change.after !== change.before;
+  const allowance = await assertEditAllowance(req, siteId, changed ? page : []);
+  const written = await prisma.$transaction((tx) => writePageEdit(tx, allowance, { id: page.id, draftRevision: page.draftRevision }, {
+    ...data,
+    draftRevision: { increment: 1 },
+    draftSavedAt: new Date(),
+    draftSavedById: req.dbUser?.id ?? null,
+  }, { counts: changed }));
+  if (!written.count) throw new WebsiteError(409, `${page.title} was saved by somebody else while this was being made. Nothing was changed — reopen the page and try again.`);
+}
+
 export function registerWebsiteSeoRoutes(
   router: Router,
   access: {
@@ -509,33 +540,33 @@ export function registerWebsiteSeoRoutes(
       const author = req.dbUser?.name ?? req.dbUser?.email ?? "Website Manager";
 
       if (body.publishNow && repo) {
+        // Asked before the commit, which is the change: paused for
+        // non-payment, or out of edits, nothing reaches the repository.
+        const changed = updatedHtml !== currentHtml;
+        const allowance = await assertEditAllowance(req, site.id, changed ? page : []);
         commitInfo = await publishPages({
           site,
           message: `SEO: updated title, description & meta tags on ${page.path} (${author})`,
           pages: [{ page, html: updatedHtml, expectedSource: source.html }],
         });
         invalidateSource(site.id, page.filePath);
-        await prisma.sitePage.update({
-          where: { id: page.id },
-          data: {
-            ...(page.sourceHtml !== null ? { sourceHtml: updatedHtml } : {}),
-            draft: Prisma.DbNull,
-            draftRevision: { increment: 1 },
-            lastPublishedAt: new Date(),
-            status: "LIVE",
-          },
+        // The commit has landed whatever happens next, so the page records it
+        // and the edit is spent either way; only the draft waits on the
+        // revision, so a colleague's save made during the commit is kept.
+        await prisma.$transaction(async (tx) => {
+          const published = { ...(page.sourceHtml !== null ? { sourceHtml: updatedHtml } : {}), lastPublishedAt: new Date(), status: "LIVE" as const };
+          const written = await writePageEdit(tx, allowance, { id: page.id, draftRevision: page.draftRevision }, {
+            ...published, draft: Prisma.DbNull, draftRevision: { increment: 1 },
+          }, { counts: changed });
+          if (written.count) return;
+          await tx.sitePage.update({ where: { id: page.id }, data: published });
+          if (changed) await countPageEdit(tx, allowance, page.id);
         });
       } else {
         const docDraft = restoreDocument(source.html, existingDraft, updatedHtml, "Updated page SEO metadata");
-        await prisma.sitePage.update({
-          where: { id: page.id },
-          data: {
-            ...(page.sourceHtml !== null ? { sourceHtml: updatedHtml } : {}),
-            draft: { ...nextDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
-            draftRevision: { increment: 1 },
-            draftSavedAt: new Date(),
-            draftSavedById: req.dbUser?.id ?? null,
-          },
+        await writeToolEdit(req, site.id, page, { before: currentHtml, after: updatedHtml }, {
+          ...(page.sourceHtml !== null ? { sourceHtml: updatedHtml } : {}),
+          draft: { ...nextDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
         });
       }
 
@@ -601,6 +632,7 @@ export function registerWebsiteSeoRoutes(
       const source = await pageSource(site, page);
       const existingDraft = (page.draft ?? {}) as Record<string, FieldValue>;
       let currentHtml = editingSource(source.html, existingDraft);
+      const before = currentHtml;
       const currentSeo = extractPageSeo(currentHtml);
 
       const jsonLd = {
@@ -627,15 +659,10 @@ export function registerWebsiteSeoRoutes(
       }
 
       const docDraft = restoreDocument(source.html, existingDraft, currentHtml, `Added ${body.schemaType} JSON-LD Schema`);
-      await prisma.sitePage.update({
-        where: { id: page.id },
-        data: {
-          ...(page.sourceHtml !== null ? { sourceHtml: currentHtml } : {}),
-          draft: { ...existingDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
-          draftRevision: { increment: 1 },
-          draftSavedAt: new Date(),
-          draftSavedById: req.dbUser?.id ?? null,
-        },
+      // Before the sitemap commit below, so a refused edit sends nothing.
+      await writeToolEdit(req, site.id, page, { before, after: currentHtml }, {
+        ...(page.sourceHtml !== null ? { sourceHtml: currentHtml } : {}),
+        draft: { ...existingDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
       });
 
       const today = new Date().toISOString().slice(0, 10);
@@ -707,6 +734,7 @@ export function registerWebsiteSeoRoutes(
       const source = await pageSource(site, page);
       const existingDraft = (page.draft ?? {}) as Record<string, FieldValue>;
       let currentHtml = editingSource(source.html, existingDraft);
+      const before = currentHtml;
 
       currentHtml = currentHtml.replace(/<!--\s*BEGIN\s+CONVERSION\s+BAR\s*-->[\s\S]*?<!--\s*END\s+CONVERSION\s+BAR\s*-->\s*/gi, "");
 
@@ -742,15 +770,9 @@ export function registerWebsiteSeoRoutes(
         body.enabled ? "Added floating WhatsApp/Call Conversion Bar" : "Removed floating Conversion Bar",
       );
 
-      await prisma.sitePage.update({
-        where: { id: page.id },
-        data: {
-          ...(page.sourceHtml !== null ? { sourceHtml: currentHtml } : {}),
-          draft: { ...existingDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
-          draftRevision: { increment: 1 },
-          draftSavedAt: new Date(),
-          draftSavedById: req.dbUser?.id ?? null,
-        },
+      await writeToolEdit(req, site.id, page, { before, after: currentHtml }, {
+        ...(page.sourceHtml !== null ? { sourceHtml: currentHtml } : {}),
+        draft: { ...existingDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
       });
 
       res.json({ ok: true, enabled: body.enabled });
@@ -929,6 +951,7 @@ export function registerWebsiteSeoRoutes(
       const source = await pageSource(site, page);
       const existingDraft = (page.draft ?? {}) as Record<string, FieldValue>;
       let html = editingSource(source.html, existingDraft);
+      const before = html;
 
       let lazyImagesAdded = 0;
       let asyncDecodingAdded = 0;
@@ -999,15 +1022,9 @@ export function registerWebsiteSeoRoutes(
           html,
           `Optimized Page Speed (${lazyImagesAdded} lazy-load images, ${externalLinksHardened} links hardened)`,
         );
-        await prisma.sitePage.update({
-          where: { id: page.id },
-          data: {
-            ...(page.sourceHtml !== null ? { sourceHtml: html } : {}),
-            draft: { ...existingDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
-            draftRevision: { increment: 1 },
-            draftSavedAt: new Date(),
-            draftSavedById: req.dbUser?.id ?? null,
-          },
+        await writeToolEdit(req, site.id, page, { before, after: html }, {
+          ...(page.sourceHtml !== null ? { sourceHtml: html } : {}),
+          draft: { ...existingDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
         });
       }
 
@@ -1096,6 +1113,7 @@ export function registerWebsiteSeoRoutes(
       const source = await pageSource(site, page);
       const existingDraft = (page.draft ?? {}) as Record<string, FieldValue>;
       let html = editingSource(source.html, existingDraft);
+      const before = html;
 
       html = html.replace(/<!--\s*BEGIN\s+BRAND\s+THEME\s*-->[\s\S]*?<!--\s*END\s+BRAND\s+THEME\s*-->\s*/gi, "");
 
@@ -1132,15 +1150,9 @@ export function registerWebsiteSeoRoutes(
       }
 
       const docDraft = restoreDocument(source.html, existingDraft, html, label);
-      await prisma.sitePage.update({
-        where: { id: page.id },
-        data: {
-          ...(page.sourceHtml !== null ? { sourceHtml: html } : {}),
-          draft: { ...existingDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
-          draftRevision: { increment: 1 },
-          draftSavedAt: new Date(),
-          draftSavedById: req.dbUser?.id ?? null,
-        },
+      await writeToolEdit(req, site.id, page, { before, after: html }, {
+        ...(page.sourceHtml !== null ? { sourceHtml: html } : {}),
+        draft: { ...existingDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
       });
 
       res.json({ ok: true, label });

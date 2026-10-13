@@ -17,12 +17,22 @@
  * each page it touches; putting a page back the way it already is counts
  * nothing; publishing a draft that was already counted counts nothing.
  *
+ * The five SEO tools that rewrite a page and the AI agent's apply were the
+ * same gap again, found later, and the agent's batch publish, a source file's
+ * publish and the SEO save's "publish now" did not check the pause. They are
+ * held to the same four things here — refused while paused, refused at the
+ * limit, counted once a page a day — and a fourth: a colleague's save landing
+ * while the request is between reading the page and writing it is a 409 that
+ * writes and counts nothing (the agent's plan refused whole), proved by
+ * holding the row until the request is waiting on it.
+ *
  * Needs Postgres and nothing else. Every row it makes is removed at the end.
  */
 import assert from "node:assert/strict";
 import express from "express";
 import type { AddressInfo } from "node:net";
 import { randomUUID } from "node:crypto";
+import { Prisma } from "@prisma/client";
 
 const databaseUrl = new URL(process.env.DATABASE_URL ?? "postgresql://invalid/invalid");
 if (!["localhost", "127.0.0.1", "[::1]"].includes(databaseUrl.hostname) || !/(test|check|editor)/i.test(databaseUrl.pathname)) {
@@ -81,6 +91,9 @@ const html = (words = "Hello world") => `<!doctype html><html><head><title>Guard
 let siteId = "";
 let clientId: string | null = null;
 let productId: string | null = null;
+let proSiteId = "";
+let proClientId: string | null = null;
+let proProductId: string | null = null;
 
 try {
   const client = await prisma.client.create({ data: { name: `${mark}-client` } }); clientId = client.id;
@@ -284,10 +297,199 @@ try {
     assert.equal((await row(pageC)).draft, null, "the draft went live");
     assert.equal(await editsUsed(), 10);
   });
+
+  /* ------------------------------------- the SEO tools and the AI agent -- */
+
+  // A second website on its own client and plan: the SEO tools are Pro, the
+  // agent and the source editor Business, and Starter is refused them before
+  // any guard is reached. The usage they spend is the same owner's.
+  const proClient = await prisma.client.create({ data: { name: `${mark}-pro-client` } }); proClientId = proClient.id;
+  const proProduct = await prisma.product.create({ data: { key: `${mark}-pro-product`, name: `${mark} pro product`, monthlyPrice: 1 } }); proProductId = proProduct.id;
+  const proPurchase = await prisma.websitePurchase.create({ data: {
+    clientId: proClient.id, productId: proProduct.id, userId: owner.id, tier: "CARE", status: "ACTIVE", billingState: "ACTIVE",
+    businessName: "Guard Shop Pro", contactName: "Efua Guard", email: owner.email, websiteUrl: "https://edit-guard-pro.example.test",
+    compatibilityStatus: "COMPATIBLE", monthlyPrice: 1, setupPrice: 0, currency: "GHS",
+    setupPaidAt: new Date(), activatedAt: new Date(), nextBillingAt: new Date(Date.now() + 20 * 86_400_000),
+  } });
+  const proSite = await prisma.site.create({ data: {
+    name: `${mark}-pro`, slug: `${mark}-pro`, publicUrl: "https://edit-guard-pro.example.test", clientId: proClient.id,
+    pages: { create: ["/", "/services"].map((path, sortOrder) => ({ title: path === "/" ? "Home" : "Services", path, filePath: `${path === "/" ? "index" : "services"}.html`, sourceHtml: html(), sortOrder })) },
+  }, include: { pages: { orderBy: { sortOrder: "asc" } } } });
+  proSiteId = proSite.id;
+  const [proA, proB] = proSite.pages.map((page) => page.id) as [string, string];
+  const pause = () => prisma.$executeRaw`UPDATE "WebsitePurchase" SET "billingState" = 'PAST_DUE', "nextBillingAt" = NULL, "pastDueSince" = ${new Date(Date.now() - 20 * 86_400_000)}, "updatedAt" = ${new Date(Date.now() - 20 * 86_400_000)} WHERE "id" = ${proPurchase.id}`;
+  const unpause = () => prisma.websitePurchase.update({ where: { id: proPurchase.id }, data: { billingState: "ACTIVE", pastDueSince: null, nextBillingAt: new Date(Date.now() + 20 * 86_400_000) } });
+
+  /**
+   * Holds the page's row while the request reads it, lets the request block
+   * on its own write, and then saves the page underneath it — the colleague's
+   * autosave that lands between a route reading a page and writing it. The
+   * route must answer 409 and spend nothing; a route that writes without the
+   * revision overwrites the colleague and answers 200.
+   */
+  async function underAConcurrentSave(pageId: string, send: () => Promise<{ status: number; body: { error?: string } }>) {
+    let response: Promise<{ status: number; body: { error?: string } }> | null = null;
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "SitePage" WHERE "id" = ${pageId} FOR UPDATE`;
+      response = send();
+      const deadline = Date.now() + 15_000;
+      for (;;) {
+        const [{ waiting }] = await prisma.$queryRaw<Array<{ waiting: number }>>`SELECT count(*)::int AS "waiting" FROM pg_stat_activity WHERE "datname" = current_database() AND "wait_event_type" = 'Lock'`;
+        if (waiting > 0) break;
+        // A route that never writes the page never waits; it has answered.
+        if (Date.now() > deadline) throw new Error("the request never reached its write");
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      await tx.$executeRaw`UPDATE "SitePage" SET "draftRevision" = "draftRevision" + 1 WHERE "id" = ${pageId}`;
+    }, { timeout: 20_000 });
+    return response!;
+  }
+
+  type Route = { name: string; send: (pageId: string, words: string) => Promise<{ status: number; body: { error?: string } & Record<string, unknown> }>; changed: (pageId: string, words: string) => Promise<boolean> };
+  const draftOrSourceHas = async (pageId: string, text: string) => { const page = await row(pageId); return JSON.stringify(page.draft ?? null).includes(text) || (page.sourceHtml ?? "").includes(text); };
+  const seoRoutes: Route[] = [
+    { name: "saving a page's SEO", send: (pageId, words) => call("POST", `/sites/${proSiteId}/seo/page`, { pageId, title: words, description: `${words}, described` }), changed: (pageId, words) => draftOrSourceHas(pageId, words) },
+    { name: "adding structured data", send: (pageId, words) => call("POST", `/sites/${proSiteId}/seo/technical`, { pageId, organizationName: words }), changed: (pageId, words) => draftOrSourceHas(pageId, words) },
+    { name: "adding the conversion bar", send: (pageId, words) => call("POST", `/sites/${proSiteId}/seo/conversion-bar`, { pageId, enabled: true, whatsapp: "233200000000", ctaLabel: words }), changed: (pageId, words) => draftOrSourceHas(pageId, words) },
+    { name: "the speed optimiser", send: (pageId) => call("POST", `/sites/${proSiteId}/seo/speed-optimize`, { pageId, applyFixes: true }), changed: (pageId) => draftOrSourceHas(pageId, "fonts.gstatic.com") },
+    // Each call asks for the other pair, so every call really changes the page.
+    { name: "the brand theme", send: (pageId, words) => call("POST", `/sites/${proSiteId}/seo/brand-theme`, { pageId, fontPairId: words.length % 2 ? "playfair-inter" : "outfit-work" }), changed: async (pageId) => draftOrSourceHas(pageId, "BEGIN BRAND THEME") },
+  ];
+
+  console.log("\nThe SEO tools (Pro, 200 a month)");
+  for (const route of seoRoutes) {
+    // Each route starts from a page whose edit was spent yesterday.
+    const fresh = async () => {
+      await prisma.sitePage.update({ where: { id: proA }, data: { sourceHtml: html(), draft: Prisma.DbNull } });
+      await countedYesterday(proA);
+    };
+    await fresh();
+    await check(`${route.name}: refused while editing is paused, and writes nothing`, async () => {
+      await pause();
+      await setEdits(0);
+      const before = await row(proA);
+      try { paused(await route.send(proA, "Paused words")); } finally { await unpause(); }
+      assert.equal((await row(proA)).draftRevision, before.draftRevision);
+      assert.equal(await route.changed(proA, "Paused words"), false);
+      assert.equal(await editsUsed(), 0);
+    });
+    await check(`${route.name}: refused at the limit on a page not changed today`, async () => {
+      await setEdits(200);
+      const before = await row(proA);
+      const refused = await route.send(proA, "Limit words");
+      assert.equal(refused.status, 403, refused.body.error);
+      assert.match(refused.body.error ?? "", /page edit limit/i);
+      assert.equal((await row(proA)).draftRevision, before.draftRevision);
+      assert.equal(await editsUsed(), 200);
+    });
+    await check(`${route.name}: with room, counts once for the page and once only that day`, async () => {
+      await setEdits(10);
+      const first = await route.send(proA, "Counted words");
+      assert.equal(first.status, 200, first.body.error);
+      assert.ok(await route.changed(proA, "Counted words"), "the page changed");
+      assert.equal(await editsUsed(), 11);
+      const again = await route.send(proA, "Counted again");
+      assert.equal(again.status, 200, again.body.error);
+      assert.equal(await editsUsed(), 11);
+    });
+    await check(`${route.name}: a page saved meanwhile is a conflict that writes and counts nothing`, async () => {
+      await fresh();
+      await setEdits(10);
+      const before = await row(proA);
+      const conflicted = await underAConcurrentSave(proA, () => route.send(proA, "Raced words"));
+      assert.equal(conflicted.status, 409, conflicted.body.error);
+      const after = await row(proA);
+      assert.equal(after.draftRevision, before.draftRevision + 1, "only the colleague's save landed");
+      assert.equal(await route.changed(proA, "Raced words"), false);
+      assert.equal(after.editCountedOn?.toISOString(), before.editCountedOn?.toISOString());
+      assert.equal(await editsUsed(), 10);
+    });
+  }
+  await check("publishing a page's SEO straight to its repository is refused while paused, before anything is sent", async () => {
+    // A repository site: an unguarded route goes on to commit, which fails
+    // here for want of credentials rather than answering 402.
+    await prisma.site.update({ where: { id: proSiteId }, data: { repoOwner: "edit-guard-check", repoName: "nowhere" } });
+    await pause();
+    try {
+      paused(await call("POST", `/sites/${proSiteId}/seo/page`, { pageId: proA, title: "Live while paused", publishNow: true }));
+    } finally {
+      await unpause();
+      await prisma.site.update({ where: { id: proSiteId }, data: { repoOwner: null, repoName: null } });
+    }
+    assert.equal(await draftOrSourceHas(proA, "Live while paused"), false);
+  });
+
+  console.log("\nThe AI agent and the source editor (Business)");
+  await prisma.websitePurchase.update({ where: { id: proPurchase.id }, data: { tier: "MANAGED" } });
+  const agentPlan = async (pageIds: string[], words: string) => {
+    const pages = await Promise.all(pageIds.map(row));
+    return {
+      pageRevisions: Object.fromEntries(pages.map((page) => [page.id, page.draftRevision])),
+      plan: {
+        explanation: "Change the words",
+        pages: pages.map((page) => ({ pageId: page.id, pageTitle: page.title, pagePath: page.path, draftRevision: page.draftRevision, changes: [], edits: { "s0.1": { value: words } } })),
+      },
+    };
+  };
+  const apply = async (pageIds: string[], words: string) => call("POST", `/sites/${proSiteId}/agent/apply`, await agentPlan(pageIds, words));
+  // Business is unlimited, so its limit is reached only by saying so.
+  const BUSINESS = 999_999;
+  await prisma.sitePage.updateMany({ where: { id: { in: [proA, proB] } }, data: { sourceHtml: html(), draft: Prisma.DbNull } });
+  await countedYesterday(proA, proB);
+  await check("applying an agent plan is refused while paused, and writes nothing", async () => {
+    await pause();
+    await setEdits(0);
+    try { paused(await apply([proA], "Agent words while paused")); } finally { await unpause(); }
+    assert.equal(await draftOrSourceHas(proA, "Agent words while paused"), false);
+    assert.equal(await editsUsed(), 0);
+  });
+  await check("at the limit, an agent plan across pages not changed today is refused whole", async () => {
+    await setEdits(BUSINESS - 1);
+    const refused = await apply([proA, proB], "Agent words at the limit");
+    assert.equal(refused.status, 403, refused.body.error);
+    assert.match(refused.body.error ?? "", /2 pages/);
+    for (const pageId of [proA, proB]) assert.equal(await draftOrSourceHas(pageId, "Agent words at the limit"), false, "neither page was written");
+    assert.equal(await editsUsed(), BUSINESS - 1);
+  });
+  await check("with room, an agent plan counts once for each page it changes, and once a day", async () => {
+    await setEdits(10);
+    const applied = await apply([proA, proB], "Agent words");
+    assert.equal(applied.status, 200, applied.body.error);
+    for (const pageId of [proA, proB]) assert.ok(await draftOrSourceHas(pageId, "Agent words"));
+    assert.equal(await editsUsed(), 12);
+    assert.equal((await apply([proA, proB], "Agent words, again")).status, 200);
+    assert.equal(await editsUsed(), 12);
+  });
+  await check("a page saved while the plan was applied refuses the whole plan and counts nothing", async () => {
+    await countedYesterday(proA, proB);
+    await setEdits(10);
+    const plan = await agentPlan([proA, proB], "Agent words, raced");
+    const before = await Promise.all([proA, proB].map(row));
+    const conflicted = await underAConcurrentSave(proB, () => call("POST", `/sites/${proSiteId}/agent/apply`, plan));
+    assert.equal(conflicted.status, 409, conflicted.body.error);
+    for (const pageId of [proA, proB]) assert.equal(await draftOrSourceHas(pageId, "Agent words, raced"), false, "neither page was written");
+    assert.equal((await row(proA)).draftRevision, before[0]!.draftRevision);
+    assert.equal(await editsUsed(), 10);
+  });
+  await check("publishing the agent's pages is refused while paused, and nothing goes live", async () => {
+    await pause();
+    try { paused(await call("POST", `/sites/${proSiteId}/agent/publish-batch`, {})); } finally { await unpause(); }
+    assert.equal((await row(proA)).publishedHtml, null);
+    assert.ok((await row(proA)).draft !== null, "the draft is still a draft");
+  });
+  await check("publishing a source file is refused while paused, before the repository is read", async () => {
+    await pause();
+    try {
+      paused(await call("POST", `/sites/${proSiteId}/source/publish`, { filePath: "src/pages/index.astro", sourceHash: "0".repeat(64), reviewHash: "0".repeat(64), changes: [{ fieldId: "t0", value: "Paused" }] }));
+    } finally { await unpause(); }
+  });
 } finally {
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  if (proSiteId) await prisma.site.deleteMany({ where: { id: proSiteId } });
   if (siteId) await prisma.site.deleteMany({ where: { id: siteId } });
   await prisma.websitePurchase.deleteMany({ where: { userId: owner.id } });
+  if (proClientId) await prisma.client.deleteMany({ where: { id: proClientId } });
+  if (proProductId) await prisma.product.deleteMany({ where: { id: proProductId } });
   if (clientId) await prisma.client.deleteMany({ where: { id: clientId } });
   if (productId) await prisma.product.deleteMany({ where: { id: productId } });
   // Usage and sessions go with the account.

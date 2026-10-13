@@ -12,6 +12,7 @@ import { websiteAssetFilesIn } from "./websiteAssets.js";
 import { USES_INTERACTION_CSS } from "../shared/websiteInteraction.js";
 import { failPublishJob, sourcePublishCommitted, startPublishJob } from "./websitePublishJobs.js";
 import { assertWebsiteSiteAccess, type WebsiteAction } from "./websiteAccess.js";
+import { assertEditingNotPaused } from "./websiteTierPlans.js";
 
 const MAX_SOURCE_BYTES = 2_000_000;
 const EXCLUDED_FOLDERS = new Set(["node_modules", ".git", ".next", ".nuxt", "dist", "build", "coverage"]);
@@ -214,7 +215,15 @@ type Dependencies = {
   audit(input: { siteId: string; actorId?: string; actorName: string; filePath: string; sourceHash: string; resultHash: string; fields: number; commitSha: string; commitUrl: string }): Promise<void>;
 };
 const dependencies: Dependencies = {
-  read: readFile, list: listTree, commit: commitFiles, authorize: assertWebsiteSiteAccess,
+  read: readFile, list: listTree, commit: commitFiles,
+  // Publishing a source file changes the site, so it is refused while editing
+  // is paused for non-payment, as every other publish is. It is asked here,
+  // before the repository is read, because this is the one call a publish
+  // makes before it touches GitHub.
+  authorize: async (req, siteId, action) => {
+    await assertWebsiteSiteAccess(req, siteId, action);
+    if (action === "publish") await assertEditingNotPaused(req, siteId);
+  },
   // The framework's own static folder, not the site's page folder: a build
   // copies `public/` to the root, and an image committed anywhere else is a
   // file in the repository that the built site cannot see.
