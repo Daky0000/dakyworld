@@ -32,12 +32,17 @@ export function redactedRoute(method: string, originalUrl: string): string {
 }
 
 /**
- * Express's own refusal of a path parameter whose escapes do not decode —
- * `/review/%zz`, or a link cut off in the middle of a character. Express marks
- * it 400 but not `expose`, so it is told apart by its class and status.
+ * Something in the request whose escapes do not decode — `/review/%zz`, or a
+ * link cut off in the middle of a character. Express's own refusal of a path
+ * parameter is a URIError marked 400; a bare `decodeURIComponent` anywhere
+ * else throws one with no status at all, and only accepting the first left
+ * every other decoder a reported 500 that a stranger could repeat. So any
+ * URIError that reaches here is answered as the request's fault — which means
+ * code decoding something a request did not bring (a scraped page's
+ * `mailto:`) must catch its own.
  */
 function isUndecodableAddress(err: unknown): boolean {
-  return err instanceof URIError && (err as { status?: unknown }).status === 400;
+  return err instanceof URIError;
 }
 
 /**

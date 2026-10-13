@@ -7,6 +7,7 @@ import { prisma } from "../lib/prisma.js";
 import { dailyAiLimit } from "../lib/capacity.js";
 import { hashPassword } from "../lib/password.js";
 import { WebsiteError } from "./website/site.js";
+import { websitePathId } from "./websiteAccess.js";
 import { IS_PRODUCTION } from "../middleware/auth.js";
 import {
   bumpUsage,
@@ -865,15 +866,16 @@ export async function recordAiPromptUsed(req: WebsiteActor, siteId?: string | nu
 /**
  * The website a request is about, from its path — the same three shapes the
  * access gate reads: `/sites/:id`, `/pages/:id` and `/shared/:id`. Null for a
- * route about the account rather than one website.
+ * route about the account rather than one website. An id that does not decode
+ * is the gate's 404, never a URIError.
  */
 export async function websiteRequestSiteId(path: string): Promise<string | null> {
   const site = /^\/sites\/([^/]+)(?:\/|$)/.exec(path);
-  if (site) return decodeURIComponent(site[1]!);
+  if (site) return websitePathId(site[1]!);
   const page = /^\/pages\/([^/]+)(?:\/|$)/.exec(path);
-  if (page) return (await prisma.sitePage.findUnique({ where: { id: decodeURIComponent(page[1]!) }, select: { siteId: true } }))?.siteId ?? null;
+  if (page) return (await prisma.sitePage.findUnique({ where: { id: websitePathId(page[1]!) }, select: { siteId: true } }))?.siteId ?? null;
   const shared = /^\/shared\/([^/]+)(?:\/|$)/.exec(path);
-  if (shared) return (await prisma.sharedElement.findUnique({ where: { id: decodeURIComponent(shared[1]!) }, select: { siteId: true } }))?.siteId ?? null;
+  if (shared) return (await prisma.sharedElement.findUnique({ where: { id: websitePathId(shared[1]!) }, select: { siteId: true } }))?.siteId ?? null;
   return null;
 }
 

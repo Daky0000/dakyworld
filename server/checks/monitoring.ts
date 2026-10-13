@@ -30,6 +30,9 @@ import { z } from "zod";
 // instrument.ts starts Sentry when it is imported and reads .env first. A
 // developer's .env must not turn that into real traffic from a check.
 process.env.SENTRY_DSN = "off";
+// A request with no session must stay one: under DEV_NO_AUTH, attachUser
+// would sign it in as the local Owner and write that account to the database.
+process.env.DEV_NO_AUTH = "false";
 const Sentry = await import("@sentry/node");
 const server = await import("../src/instrument.js");
 const browser = await import("../client/src/lib/monitoring.js");
@@ -38,6 +41,10 @@ const { WebsiteError } = await import("../src/services/website/site.js");
 const { ApifyError } = await import("../src/lib/apify.js");
 const { securityHeaders } = await import("../src/middleware/security.js");
 const { prisma } = await import("../src/lib/prisma.js");
+const { attachUser, DEV_NO_AUTH } = await import("../src/middleware/auth.js");
+const { createWebsiteAccessGate } = await import("../src/services/websiteAccess.js");
+const { websiteRequestSiteId } = await import("../src/services/websiteTierPlans.js");
+assert.equal(DEV_NO_AUTH, false, "something imported auth.ts before DEV_NO_AUTH was switched off");
 
 let passed = 0;
 async function check(name: string, test: () => Promise<void> | void) {
@@ -440,6 +447,25 @@ try {
   app.get("/api/public/review/:token", (_req, res) => {
     res.json({ ok: true });
   });
+  // Every request passes attachUser, signed in or not, so its cookie is read
+  // before anything else is.
+  app.get("/api/health", attachUser, (_req, res) => {
+    res.json({ ok: true });
+  });
+  // A bare decodeURIComponent, which throws a URIError with no status.
+  app.get("/api/public/lookup", (req, res) => {
+    res.json({ value: decodeURIComponent(String(req.query.q)) });
+  });
+  // The website gate, signed in, over a reader that knows every id: the path
+  // is decoded before any of them is asked.
+  app.use("/api/website", (req, _res, next) => {
+    req.dbUser = { id: "monitoring-check", active: true, accessRole: { superAdmin: true, external: false }, deniedPermissions: [] } as never;
+    req.permissions = new Set(["website.view", "website.edit", "website.manage"]);
+    next();
+  }, createWebsiteAccessGate({ memberRole: async () => "MANAGER", pageSite: async () => "site", sharedSite: async () => "site", hasMembership: async () => true }));
+  app.post("/api/website/sites/:id/seo/page", (_req, res) => {
+    res.json({ ok: true });
+  });
   // No parameter, so nothing is decoded and an accident is an accident.
   app.use("/api/public/broken", () => {
     throw new TypeError("Cannot read properties of undefined (reading 'decision')");
@@ -577,6 +603,40 @@ try {
       assert.equal(events().length, 1);
     } finally {
       console.error = log;
+      http.close();
+    }
+  });
+
+  await check("a session cookie, a website id or a value that does not decode is answered, never reported — signed in or not", async () => {
+    await start();
+    const { http, base } = await listen();
+    try {
+      // Without signing in: the cookie is no session, and the request goes on.
+      for (const cookie of ["dw_session=%zz", "__Host-dw_session=%E2%80", `dw_seen=${SECRETS.cookie}; dw_session=%`]) {
+        const response = await fetch(`${base}/api/health`, { headers: { Cookie: cookie } });
+        assert.equal(response.status, 200, cookie);
+      }
+      // A decoder with no status of its own.
+      const lookup = await fetch(`${base}/api/public/lookup?q=%25zz`);
+      assert.equal(lookup.status, 400);
+      assert.deepEqual(await lookup.json(), { error: "That address is not valid." });
+      // Signed in: an id that names nothing is the website's 404, as any unknown id is.
+      for (const path of ["sites/%zz/seo/page", "pages/%zz/assistant", "shared/%zz", "sites/%E2%80/agent/plan"]) {
+        const response = await fetch(`${base}/api/website/${path}`, { method: "POST" });
+        assert.equal(response.status, 404, path);
+        assert.equal(((await response.json()) as { error: string }).error, "That website page is not available.");
+      }
+      await assert.rejects(websiteRequestSiteId("/sites/%zz/seo/page"), (error: { status?: number }) => error instanceof WebsiteError && error.status === 404);
+      await assert.rejects(websiteRequestSiteId("/pages/%E2%80/assistant"), (error: { status?: number }) => error instanceof WebsiteError && error.status === 404);
+      await Sentry.flush(2000);
+      assert.equal(events().length, 0, `nothing reported, got ${events().map((event) => event.exception?.values?.[0]?.value).join(" | ")}`);
+      // The negatives are worth something only if a good id still gets through, and an accident is still reported.
+      assert.equal((await fetch(`${base}/api/website/sites/site-1/seo/page`, { method: "POST" })).status, 200);
+      assert.equal(await websiteRequestSiteId("/sites/site%201/seo/page"), "site 1");
+      await accident(base);
+      await Sentry.flush(2000);
+      assert.equal(events().length, 1);
+    } finally {
       http.close();
     }
   });

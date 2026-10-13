@@ -65,7 +65,8 @@ export type Entitlement = {
   /**
    * The account whose counters this plan's use is added to. The person
    * themselves, except on a website with a paying owner: there it is the owner,
-   * because the plan is theirs and so is every edit made under it.
+   * because the plan is theirs and so is every edit made under it — every edit
+   * but DakyX staff's, who stay on their own plan and their own counters.
    */
   chargedUserId: string | null;
   /** On a website's plan, the client whose websites share it — its storage is theirs. */
@@ -306,7 +307,7 @@ export async function sitePayer(siteId: string, now = new Date()) {
  * A website with a paying owner is on the owner's plan for the people working
  * on it — a colleague the owner invited shares its limits, its AI and its
  * storage — and the edits, imports, AI runs and storage used there are the
- * owner's, whoever used them, DakyXTech staff included. Business sells fifteen
+ * owner's, whoever used them, except DakyXTech staff's. Business sells fifteen
  * team accounts, and until 13 Oct 2026 every one of them was on Starter here,
  * because a colleague has no subscription of their own. A website with no
  * paying owner is on the person's own plan, as before.
@@ -336,9 +337,13 @@ async function loadSiteEntitlement(req: WebsiteActor, siteId: string): Promise<E
   if (!payer) return own;
   // Staff keep the whole product on a client's website — fixing something a
   // client asked for must not stop at the client's limit, and a Pro client's
-  // included developer time is spent in tools Pro does not sell — but what they
-  // use there is the client's, as a colleague's is.
-  if (own.source === "staff") return { ...own, chargedUserId: payer.userId, siteClientId: payer.clientId };
+  // included developer time is spent in tools Pro does not sell — and what they
+  // use there is their own (the Owner's decision, 13 Oct 2026). Until then it
+  // was the client's: thirty fixes a Starter client asked DakyX for used up
+  // the client's thirty edits, the client's own next save was refused, and a
+  // Starter meter showed AI the plan does not have. The storage is still the
+  // client's websites', because the files are.
+  if (own.source === "staff") return { ...own, siteClientId: payer.clientId };
   return {
     ...own,
     chargedUserId: payer.userId,

@@ -1269,7 +1269,7 @@ export function readPublishedContacts(html: string, finalUrl: string): CompanyAu
   const socials: Record<string, string> = {};
 
   for (const match of html.matchAll(/mailto:([^"'?\s>]+)/gi)) {
-    const address = decodeURIComponent(match[1]).trim().toLowerCase();
+    const address = (() => { try { return decodeURIComponent(match[1]); } catch { return match[1]; } })().trim().toLowerCase(); // a stranger's page may hold `mailto:%zz`
     if (/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(address)) emails.add(address);
   }
   // Addresses printed as text rather than linked, which is the common case on

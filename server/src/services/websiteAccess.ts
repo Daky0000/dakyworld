@@ -200,6 +200,20 @@ export function websiteGateHandlesDirectly(method: string, path: string): boolea
     || (/^\/sites\/?$/.test(path) && method === "POST");
 }
 
+/**
+ * A website, page or shared-element id from a request path. One whose escapes
+ * do not decode (`/sites/%zz`) names nothing, so it is the same 404 as any
+ * other unknown id. `decodeURIComponent`'s own URIError was a reported 500
+ * that any signed-in person could repeat, with the raw segment as its message.
+ */
+export function websitePathId(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new WebsiteError(404, "That website page is not available.");
+  }
+}
+
 export function createWebsiteAccessGate(reader = accessReader) {
   return (req: Request, _res: Response, next: NextFunction) => {
     void (async () => {
@@ -238,11 +252,11 @@ export function createWebsiteAccessGate(reader = accessReader) {
       const siteMatch = /^\/sites\/([^/]+)(?:\/|$)/.exec(req.path);
       const pageMatch = /^\/pages\/([^/]+)(?:\/|$)/.exec(req.path);
       const sharedMatch = /^\/shared\/([^/]+)(?:\/|$)/.exec(req.path);
-      let siteId = siteMatch ? decodeURIComponent(siteMatch[1]) : null;
-      if (pageMatch) siteId = await reader.pageSite(decodeURIComponent(pageMatch[1]));
+      let siteId = siteMatch ? websitePathId(siteMatch[1]) : null;
+      if (pageMatch) siteId = await reader.pageSite(websitePathId(pageMatch[1]));
       // A shared element is addressed on its own, so the record that says who
       // may touch it is two levels up rather than one.
-      if (sharedMatch) siteId = (await reader.sharedSite?.(decodeURIComponent(sharedMatch[1]))) ?? null;
+      if (sharedMatch) siteId = (await reader.sharedSite?.(websitePathId(sharedMatch[1]))) ?? null;
       if (!siteId) throw new WebsiteError(404, "That website page is not available.");
       await assertWebsiteSiteAccess(req, siteId, action, reader);
     })().then(() => next(), next);

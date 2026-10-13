@@ -16,8 +16,11 @@
  *
  * It also holds the detector itself to the browser's parsing rules — a handler
  * hidden by a quoted value that spans a raw-text, RCDATA or comment closer is
- * found, not read past — and the rich-text sanitiser's one rule for the
- * `data-` names a library runs as code (_hyperscript, Datastar, old Bootstrap's
+ * found, not read past; and through SVG and MathML, where a `<style>` is
+ * walked until an integration point, a breakout tag or an end tag takes the
+ * browser back to HTML, each shape of which ran in Chromium — and the
+ * rich-text sanitiser's one rule for the `data-` names a library runs as code
+ * (_hyperscript, Datastar, old Bootstrap's
  * selector sinks), with the count-up figure proving an ordinary `data-target`
  * still survives.
  *
@@ -153,6 +156,73 @@ for (const [name, insert, found] of [
 ] as const) {
   equal(`${name} is found, not hidden by the quote`, introducedActiveContent(page, at(insert)), [found]);
 }
+
+// Foreign content. Inside <svg>/<math> a <style> is walked as markup, so a
+// quote there really does span — but the browser leaves foreign content by an
+// integration point, a breakout start tag, </p> or </br>, or an HTML end tag
+// that closes what the <svg> sits in, and after that the <style> is raw text
+// again. One counter of open <svg>/<math> missed every one of these; each ran
+// in Chromium 141.
+const hidden = (open: string, text: string, close = "") =>
+  `${open}<${text}><a title="</${text}><img src=x onerror=alert(1)>"></a></${text}>${close}`;
+for (const [name, insert] of [
+  ["a breakout <p> inside an <svg>", hidden("<svg><p>", "style", "</p></svg>")],
+  ["a <foreignObject>", hidden("<svg><foreignObject>", "style", "</foreignObject></svg>")],
+  ["a MathML <mtext>", hidden("<math><mtext>", "style", "</mtext></math>")],
+  ["an SVG <desc>, with a <textarea>", hidden("<svg><desc>", "textarea", "</desc></svg>")],
+  ["a </p> closing the <svg>", hidden("<svg></p>", "style", "</svg>")],
+  ["a </br> closing the <svg>", hidden("<svg></br>", "style", "</svg>")],
+  ["an SVG <title>", hidden("<svg><title>", "style", "</title></svg>")],
+  ["a MathML <mi>, with a <textarea>", hidden("<math><mi>", "textarea", "</mi></math>")],
+  ["an <annotation-xml> holding HTML", hidden(`<math><annotation-xml encoding="text/html">`, "style", "</annotation-xml></math>")],
+  ["a <font color> breaking out", hidden("<svg><font color=red>", "style", "</svg>")],
+  ["a </div> closing the <div> an unclosed <svg> sits in", hidden("<div><svg></div>", "style")],
+  ["a </span> closing the <span> an unclosed <svg> sits in", hidden("<span><svg></span>", "style")],
+  ["a table cell closed from inside a <foreignObject>", hidden("<table><tr><td><svg><foreignObject><div></td>", "style", "</table>")],
+  ["an <svg> inside an <annotation-xml>, then its <title>", hidden("<math><annotation-xml><svg><title>", "style", "</title></svg></annotation-xml></math>")],
+  ["<style/>, which HTML opens like <style>", `<style/><a title="</style><img src=x onerror=alert(1)>"></a>`],
+  ["a closer ended by a vertical tab, which is not one", `<style></style\v><a title="</style><img src=x onerror=alert(1)>"></a>`],
+  ["<svg.x>, an unknown HTML element and not an SVG", hidden("<svg.x>", "style")],
+  ["a </ comment that ends at its >", `</ <b title="><img src=x onerror=alert(1)>">`],
+  ["a comment inside a <style> after a breakout", `<svg><p><style><!--</style><img src=x onerror=alert(1)>--></style></svg>`],
+  ["CDATA after the <svg> was closed", `<div><svg></div><![CDATA[><img src=x onerror=alert(1)>]]>`],
+  ["CDATA on an integration point, which Chromium reads as a comment", `<svg><desc><![CDATA[><img src=x onerror=alert(1)>]]></desc></svg>`],
+] as const) {
+  equal(`${name} is followed out of foreign content`, introducedActiveContent(page, at(insert)), ["an onerror handler"]);
+}
+// …and the other way: where the browser walks, a body this check dropped would hide it.
+for (const [name, insert] of [
+  ["a <foreignObject> inside <math>, which is MathML there", `<math><foreignObject><style><img src=x onerror=alert(1)></style></foreignObject></math>`],
+  ["a <title> in an <svg> inside <math>", `<math><svg><title><style><img src=x onerror=alert(1)></style></title></svg></math>`],
+  ["an <mglyph> inside an <mi>", `<math><mi><mglyph><style><img src=x onerror=alert(1)></style></mglyph></mi></math>`],
+  ["a <foreignObject> closed after its HTML closed in order", `<svg><foreignObject><div><span>x</span></div></foreignObject><style><img src=x onerror=alert(1)></style></svg>`],
+  ["a <foreignObject> closed after a nested <a> the browser closed early", `<svg><foreignObject><a><a></a></foreignObject><style><img src=x onerror=alert(1)></style></svg>`],
+  ["a <foreignObject> closed after an <image>, which is an <img>", `<svg><foreignObject><image src=y></foreignObject><style><img src=x onerror=alert(1)></style></svg>`],
+] as const) {
+  equal(`${name} is still walked`, introducedActiveContent(page, at(insert)), ["an onerror handler"]);
+}
+// The negatives: still in foreign content, so the quote spans and nothing runs.
+for (const [name, insert] of [
+  ["an <svg>'s own <style>", hidden("<svg>", "style", "</svg>")],
+  ["a <font> with no colour, face or size", hidden("<svg><font>", "style", "</font></svg>")],
+  ["an <svg> opened inside an <mi>", hidden("<math><mi><svg>", "style", "</svg></mi></math>")],
+  ["a text-only <foreignObject> after an unclosed <b>", hidden("<p><b></p><svg><foreignObject>Label</foreignObject>", "style", "</svg>")],
+] as const) {
+  equal(`${name} hides nothing that runs`, introducedActiveContent(page, at(insert)), []);
+}
+// Real pages: a diagram whose labels are HTML in sixty <foreignObject>s is read
+// once, and edits after it pass; a page too tangled to read is refused after
+// the tangle, never guessed at, and only there.
+const label = `<foreignObject width="10" height="10"><div xmlns="http://www.w3.org/1999/xhtml"><div><span>Label</span><br></div></div></foreignObject>`;
+const diagram = at(`<svg viewBox="0 0 10 10">${`<g>${label}<rect width="1" height="1"/></g>`.repeat(60)}</svg><p>After</p>`);
+equal("a diagram of sixty HTML labels takes an edit after it", introducedActiveContent(diagram, diagram.replace("<p>After</p>", "<p>Later</p>")), []);
+const tangled = at(`${`<div><svg><path d="M0 0"></div>`.repeat(10)}<p>After</p>`);
+equal("a tangled page compares equal to itself", introducedActiveContent(tangled, tangled), []);
+equal("…takes an edit before the tangle", introducedActiveContent(tangled, tangled.replace("<h1>Hello</h1>", "<h1>Hi</h1>")), []);
+equal("…and refuses one after it", introducedActiveContent(tangled, tangled.replace("<p>After</p>", "<p>Later</p>")), ["markup this check cannot read safely"]);
+// The same words below the tangle read differently once a table is open above
+// it (its end tags close straight through foreign content), so that is a change too.
+equal("…or one above it that changes how the words after it are read", introducedActiveContent(tangled, tangled.replace("<h1>Hello</h1>", "<h1>Hello</h1><table></table>")), ["markup this check cannot read safely"]);
 
 // Every section the assistant can insert, on a page that already runs code.
 for (const [kind, template] of Object.entries(SECTION_TEMPLATES)) {

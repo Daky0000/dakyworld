@@ -150,7 +150,15 @@ export function readSessionCookie(req: Request): string | null {
     if (eq === -1) continue;
     const name = part.slice(0, eq).trim();
     if (name === SECURE_COOKIE || name === PLAIN_COOKIE) {
-      found.set(name, decodeURIComponent(part.slice(eq + 1).trim()));
+      // A value that does not decode is not a session we issued (ours are
+      // base64url), so it is no session at all. It used to throw, and since
+      // this runs on every request, `Cookie: dw_session=%zz` was a reported
+      // 500 anyone could send without signing in.
+      try {
+        found.set(name, decodeURIComponent(part.slice(eq + 1).trim()));
+      } catch {
+        continue;
+      }
     }
   }
   return found.get(cookieName()) || found.get(SECURE_COOKIE) || found.get(PLAIN_COOKIE) || null;

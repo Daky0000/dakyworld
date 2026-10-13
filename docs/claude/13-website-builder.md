@@ -1044,9 +1044,25 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   be stricter — it is not, because a `<p title="</style><img onerror=…>">` then
   lets the quoted value swallow the real `</style>` and the live `<img>` after
   it. Inside `<svg>`/`<math>` those elements are not raw-text, so there they
-  are still walked (the quote really does span, as in the DOM). Both client
-  call sites send `documentHtmlUpdates` back whole, or the signatures cannot
-  survive. `checks/websiteActiveContent.ts`.
+  are still walked (the quote really does span, as in the DOM) — and *which*
+  `<style>` is inside is decided by a stack of open foreign elements kept by
+  the spec's foreign-content rules, not a counter. One counter missed every
+  way out (13 Oct 2026): an integration point (`<foreignObject>`, `<desc>`,
+  SVG `<title>`, MathML `<mi>`…`<mtext>`, `<annotation-xml
+  encoding=text/html>`), a breakout start tag (`<p>`, `<img>`, `<font
+  color>`…), `</p>`/`</br>`, and an HTML end tag closing what an unclosed
+  `<svg>` sits in. The HTML around an `<svg>` is not modelled, so where it
+  decides (a misnested end tag, table modes, out-of-order HTML inside a
+  `<foreignObject>`) the page is **read both ways** and either reading's
+  finding counts; past 32 readings the rest of the page is refused as
+  "markup this check cannot read safely" rather than guessed. Tags are
+  tokenized as a browser does (a quote opens a value only after `=`; `<svg.x>`
+  is not an SVG; `</style\v>` does not close), `<style/>` opens raw text, and
+  CDATA on an integration point is read both ways because Chromium and the
+  spec disagree there. Proved against Chromium with 10,000 generated shapes:
+  of the 5,541 that ran, the counter missed 1,074 and this misses none. Both
+  client call sites send `documentHtmlUpdates` back whole, or the signatures
+  cannot survive. `checks/websiteActiveContent.ts`.
 - **A value written into an attribute is escaped for the quote the page
   used** — `inAttribute()` in `regions.ts`, for a meta field's words, a
   picture's address, a link, alt text, a style and a class. A page's
@@ -1210,8 +1226,13 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   Starter there — refused AI, refused at thirty edits, measured against 50 MB —
   while every colleague on a Starter website had thirty edits of their own.
   DakyX staff keep the whole product on a client's website (a fix the client
-  asked for must not stop at the client's limit or a payment pause) but what
-  they use is the client's. A website with no paying owner is on the person's
+  asked for must not stop at the client's limit or a payment pause), and what
+  they use there is **their own**, by the Owner's decision of 13 Oct 2026:
+  staff's `chargedUserId` is the staff account. It was the client's, so thirty
+  fixes a Starter client asked DakyX for spent the client's thirty edits and
+  refused the client's own next save, and a Starter meter showed AI the plan
+  has none of. Storage is still counted over the client's websites, because
+  the files are theirs. A website with no paying owner is on the person's
   own plan, as before. It decides whose plan applies, never who may act: the
   membership still does, and a site the person cannot see is a 404, not its
   owner's plan. A colleague is told "this website's" plan, and is not shown the
@@ -1262,11 +1283,19 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   client loads `lib/monitoring.ts` lazily on the production hosts only.
   `errorHandler` reports only what it renders as the generic 500 — never a
   `WebsiteError`, a validation refusal or any composed error class, whatever
-  its status — because a refusal is the system working. Express's own
-  `URIError` for an undecodable parameter (`/review/%zz`) is answered 400
-  "That address is not valid." before the log line and never reported: it was
-  a 500 anyone could repeat to spend the quota, and its message is the raw
-  parameter. Before anything leaves, cookies, bodies, auth headers, IP, frame
+  its status — because a refusal is the system working. Any `URIError` —
+  Express's own for an undecodable parameter (`/review/%zz`), or a bare
+  `decodeURIComponent` anywhere, which has no status — is answered 400 "That
+  address is not valid." before the log line and never reported: it was a 500
+  anyone could repeat to spend the quota, and its message is the raw
+  parameter. The decoders a stranger reaches first answer before that:
+  `readSessionCookie` treats a `dw_session` that does not decode as no
+  session (it runs on every request, signed in or not), and the website ids
+  in `/sites/%zz`, `/pages/%zz` and `/shared/%zz` are the gate's 404
+  (`websitePathId`, also behind `websiteRequestSiteId`). Code that decodes
+  something no request brought — a scraped page's `mailto:` — catches its
+  own, or its accident is answered as the visitor's. `checks/monitoring.ts`.
+  Before anything leaves, cookies, bodies, auth headers, IP, frame
   variables, query values and Prisma's echoed arguments are removed (Prisma
   prints the call's values, which here means customer HTML and visitors'
   messages); tags, `extra` and `contexts` are scrubbed too, and a thrown

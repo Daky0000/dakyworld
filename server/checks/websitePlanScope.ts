@@ -13,8 +13,10 @@
  *
  * On a website the plan, its limits and its counters are those of the client
  * the website belongs to — its live subscription and the account that pays for
- * it — whoever is signed in. DakyX staff keep the whole product there, but what
- * they use is still the client's. Only a website with no paying owner falls
+ * it — whoever is signed in. DakyX staff keep the whole product there, and
+ * what they use is their own: thirty fixes a Starter client asked DakyX for
+ * used to spend the client's thirty edits and lock the client out of their own
+ * website. Only a website with no paying owner falls
  * back to the person's own plan, which is what it always did. Whose plan
  * applies changes; who may do what on the website does not.
  *
@@ -267,18 +269,37 @@ try {
     assert.equal((await usageOf(starterOwner)).edits, 30);
     assert.equal((await usageOf(colleague)).edits, 0);
   });
-  await check("DakyX staff working on the client's website are charged to the client", async () => {
+  await check("DakyX staff working on the client's website spend their own allowance, never the client's", async () => {
     await setEdits(starterOwner, 10);
     const saved = await save(staff, small.pageId);
     assert.equal(saved.status, 200, saved.body.error);
-    assert.equal((await usageOf(starterOwner)).edits, 11);
-    assert.equal((await usageOf(staff)).edits, 0);
+    assert.equal((await usageOf(starterOwner)).edits, 10, "the client's thirty are untouched");
+    assert.equal((await usageOf(staff)).edits, 1);
+  });
+  await check("so thirty fixes the client asked DakyX for do not lock the client out of their own website", async () => {
+    await setEdits(starterOwner, 29);
+    for (let fix = 0; fix < 3; fix += 1) assert.equal((await save(staff, small.pageId)).status, 200);
+    assert.equal((await usageOf(starterOwner)).edits, 29);
+    const own = await save(colleague, small.pageId);
+    assert.equal(own.status, 200, own.body.error);
+    assert.equal((await usageOf(starterOwner)).edits, 30, "the client's own edit is still the client's");
+  });
+  await check("and the AI they run there is theirs too, even where the client's plan has none", async () => {
+    const queued = await ask(staff, small.pageId);
+    assert.equal(queued.status, 202, queued.body.error);
+    const job = await prisma.websiteWorkJob.findUniqueOrThrow({ where: { id: queued.body.jobId } });
+    assert.equal(job.userId, staff.id);
+    assert.equal(job.chargedUserId, staff.id);
+    assert.equal((await usageOf(staff)).aiPrompts, 1);
+    assert.equal((await usageOf(starterOwner)).aiPrompts, 0, "a Starter meter never shows AI it cannot have");
+    const plan = await planOn(starterOwner, small.siteId);
+    assert.equal(plan.body.usage.aiPromptsUsed, 0);
   });
   await check("but keep the whole product there: the client's limit or a payment problem does not stop them", async () => {
     assert.equal((await planOn(staff, small.siteId)).body.planCode, "MANAGED");
     await setEdits(starterOwner, 30);
     assert.equal((await save(staff, small.pageId)).status, 200, "a fix the client asked for, at their limit");
-    assert.equal((await usageOf(starterOwner)).edits, 31);
+    assert.equal((await usageOf(starterOwner)).edits, 30);
     await prisma.$executeRaw`UPDATE "WebsitePurchase" SET "billingState" = 'PAST_DUE', "nextBillingAt" = NULL, "updatedAt" = ${new Date(Date.now() - 15 * 86_400_000)} WHERE "id" = ${starter.purchase.id}`;
     assert.equal((await save(staff, small.pageId)).status, 200, "while the client's editing is paused");
     assert.equal((await save(colleague, small.pageId)).status, 402, "which it still is for the client's own people");
@@ -295,8 +316,9 @@ try {
   });
   await check("so are staff, on their own staff plan", async () => {
     assert.equal((await planOn(staff, free.siteId)).body.planCode, "MANAGED");
+    const before = (await usageOf(staff)).edits;
     assert.equal((await save(staff, free.pageId)).status, 200);
-    assert.equal((await usageOf(staff)).edits, 1);
+    assert.equal((await usageOf(staff)).edits, before + 1);
   });
   await check("a client whose subscription has run out is not a paying owner", async () => {
     assert.equal((await planOn(colleague, old.siteId)).body.planCode, "EDITOR");
