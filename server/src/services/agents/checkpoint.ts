@@ -61,9 +61,40 @@ export function prefixOf(system: string, tools: AgentTool[]): ConversationPrefix
   return { system, tools: tools.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema })) };
 }
 
+/**
+ * A value as the checkpoint stores it: as JSON *text*, inside the `jsonb`.
+ *
+ * `jsonb` does not keep an object's keys in the order they were written — it
+ * re-sorts them, shortest first — and the parts of a conversation Claude's
+ * reasoning is bound to are full of objects whose key order is part of what
+ * was sent: every tool's `input_schema`, every `tool_use` input. Stored as
+ * objects they came back reordered, so a "kept" prefix was not the one the
+ * thinking was signed against, and a resumed thinking run was refused or
+ * rescued only by stripping its reasoning. A JSON string is stored exactly, and
+ * `JSON.parse` keeps the order it finds. No schema change: the column is still
+ * `jsonb`, holding a string.
+ */
+export function storedJson(value: unknown): Prisma.InputJsonValue {
+  return JSON.stringify(value);
+}
+
+/**
+ * The value back. A checkpoint written before the text form holds the object
+ * itself, with its keys as `jsonb` left them; that is still read, and is the
+ * best there is for it.
+ */
+export function fromStoredJson<T>(raw: unknown): T | null {
+  if (typeof raw !== "string") return (raw ?? null) as T | null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
 /** A stored prefix, or null when there is none or it is not one. */
 export function readPrefix(raw: unknown): ConversationPrefix | null {
-  const value = raw as { system?: unknown; tools?: unknown } | null | undefined;
+  const value = fromStoredJson<{ system?: unknown; tools?: unknown }>(raw);
   if (!value || typeof value.system !== "string" || !Array.isArray(value.tools)) return null;
   const tools = value.tools as { name?: unknown; description?: unknown; inputSchema?: unknown }[];
   const valid = tools.every(
@@ -72,7 +103,12 @@ export function readPrefix(raw: unknown): ConversationPrefix | null {
   return valid ? (value as ConversationPrefix) : null;
 }
 
-/** Key order ignored: a stored prefix has been through `jsonb`, which sorts keys. */
+/**
+ * Key order ignored. Used to ask whether two prefixes say the same thing, never
+ * to decide what is sent: a prefix written before `storedJson` has been through
+ * `jsonb` and lost its order, and one rebuilt by this claim may be equal to the
+ * stored one in everything but that.
+ */
 function stable(value: unknown): string {
   return JSON.stringify(value, (_key, inner) =>
     inner && typeof inner === "object" && !Array.isArray(inner)
@@ -83,6 +119,11 @@ function stable(value: unknown): string {
 
 export function samePrefix(a: ConversationPrefix, b: ConversationPrefix): boolean {
   return a.system === b.system && stable(a.tools) === stable(b.tools);
+}
+
+/** The same JSON whatever order its keys are in — see `stable`. */
+export function sameJson(a: unknown, b: unknown): boolean {
+  return stable(a) === stable(b);
 }
 
 /** Is there reasoning in this conversation that a changed prefix would invalidate? */
@@ -169,7 +210,7 @@ export async function loadCheckpoint(taskId: string): Promise<StoredCheckpoint |
   const row = await prisma.agentTaskCheckpoint.findUnique({ where: { taskId } });
   if (!row) return null;
 
-  const messages = (row.messages ?? []) as unknown as AgentCheckpointState["messages"];
+  const messages = fromStoredJson<AgentCheckpointState["messages"]>(row.messages) ?? [];
   if (!Array.isArray(messages) || messages.length === 0) return null;
 
   return {
@@ -177,8 +218,8 @@ export async function loadCheckpoint(taskId: string): Promise<StoredCheckpoint |
       iteration: row.iteration,
       messages,
       narration: (row.narration ?? []) as unknown as string[],
-      pendingAssistant: (row.pendingAssistant ?? null) as unknown as AgentCheckpointState["pendingAssistant"],
-      pendingResults: (row.pendingResults ?? null) as unknown as AgentCheckpointState["pendingResults"],
+      pendingAssistant: fromStoredJson<AgentCheckpointState["pendingAssistant"]>(row.pendingAssistant),
+      pendingResults: fromStoredJson<AgentCheckpointState["pendingResults"]>(row.pendingResults),
       pendingStop: Boolean((row.counters as Record<string, unknown> | null)?.pendingStop),
       toolCalls: 0,
       inputTokens: row.inputTokens,
@@ -213,10 +254,13 @@ export async function saveCheckpoint(
   const messages = trimToFit(state.messages);
   const data = {
     iteration: state.iteration,
-    messages: messages as unknown as Prisma.InputJsonValue,
+    // As text, so every `tool_use` input keeps the key order it was sent in.
+    // See `storedJson`. Null stays a real null: the runner asks the column
+    // whether a turn was left half-way.
+    messages: storedJson(messages),
     narration: state.narration as unknown as Prisma.InputJsonValue,
-    pendingAssistant: (state.pendingAssistant ?? Prisma.JsonNull) as unknown as Prisma.InputJsonValue,
-    pendingResults: (state.pendingResults ?? Prisma.JsonNull) as unknown as Prisma.InputJsonValue,
+    pendingAssistant: state.pendingAssistant ? storedJson(state.pendingAssistant) : Prisma.JsonNull,
+    pendingResults: state.pendingResults ? storedJson(state.pendingResults) : Prisma.JsonNull,
     counters: { ...counters, pendingStop: state.pendingStop } as unknown as Prisma.InputJsonValue,
     costUsd: state.costUsd.toFixed(6),
     inputTokens: state.inputTokens,
@@ -267,7 +311,7 @@ export async function appendToConversation(taskId: string, text: string): Promis
   const row = await prisma.agentTaskCheckpoint.findUnique({ where: { taskId }, select: { messages: true } });
   if (!row) return false;
 
-  const messages = (row.messages ?? []) as unknown as AgentCheckpointState["messages"];
+  const messages = fromStoredJson<AgentCheckpointState["messages"]>(row.messages) ?? [];
   if (!Array.isArray(messages) || messages.length === 0) return false;
 
   const last = messages[messages.length - 1];
@@ -282,7 +326,7 @@ export async function appendToConversation(taskId: string, text: string): Promis
 
   await prisma.agentTaskCheckpoint.update({
     where: { taskId },
-    data: { messages: messages as unknown as Prisma.InputJsonValue },
+    data: { messages: storedJson(messages) },
   });
   return true;
 }

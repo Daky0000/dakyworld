@@ -587,7 +587,7 @@ function rejectedTheBeta(err: unknown): boolean {
  * not take tool definitions, so an agent turn on it is a turn with no tools,
  * which is not an agent.
  */
-type AgentVendor = "nvidia" | "anthropic" | "openai" | "gemini";
+export type AgentVendor = "nvidia" | "anthropic" | "openai" | "gemini";
 
 /** The three that speak a wire this file writes by hand. Anthropic has an SDK. */
 type FetchVendor = Exclude<AgentVendor, "anthropic">;
@@ -1172,23 +1172,41 @@ function statusOf(err: unknown): number {
 }
 
 /**
- * What a person is told when the last vendor that could have done this failed.
+ * What a person is told when a vendor that could have done this failed.
  *
  * Names the vendor, because "the model failed" sends somebody to check the one
  * key they happen to remember. Names the *balance* on a 402, because a prepaid
  * account reads as a bug otherwise. Says "will be picked up again" only on a
  * rate limit, because that is the only one of these where waiting is the fix.
+ *
+ * `handedOn` is a failure the run moved past to another vendor. Its words end
+ * up in the same sentence as the last vendor's, and `retry.ts` reads that
+ * sentence whole, so they must not decide it on their own. Exported for
+ * `checks/agentThinkingResume.ts`.
  */
-function describeTurnFailure(vendor: AgentVendor, status: number, model: string, err: unknown): string {
+export function describeTurnFailure(vendor: AgentVendor, status: number, model: string, err: unknown, handedOn = false): string {
   const who = PROVIDERS[vendor].name;
+  const said = (err as Error)?.message ?? String(err);
   if (status === 429) return `${who} is rate-limiting this key. The task will be picked up again.`;
   if (status === 402) return `${who} has no credit left on this account. Top it up, or connect another model under Settings → AI models.`;
   if (KEY_LEVEL_STATUSES.includes(status)) return `${who} rejected the API key. Check it under Settings → AI models.`;
+  // Gemini answers a key it does not recognise with a 400, not a 401. Read as
+  // the request's shape, it sent the Owner looking for a fault in the app.
+  if (status === 400 && /api key not valid|api_key_invalid|invalid api key/i.test(said)) {
+    return `${who} rejected the API key. Check it under Settings → AI models.`;
+  }
   // Our request, not their availability. "Could not reach" read as temporary
   // in `retry.ts`, so a 400 that fails identically every time was paused and
   // replayed six times over two hours before anybody was asked. The same words
   // `callModel` uses, which `retry.ts` already hands to a person.
-  if (status === 400) return `${who} refused the request shape: ${(err as Error).message}`;
+  //
+  // **Only when nobody took the run on after it.** "refused the request shape"
+  // matches anywhere in the chain's sentence and is read before any status, so
+  // a Claude 400 followed by a ChatGPT that was only briefly down made a task
+  // that should have waited five minutes ask a person about a fault in the app.
+  // A 400 the run moved past is said in words `retry.ts` does not act on, so
+  // what decides is how the last vendor failed.
+  if (status === 400) return handedOn ? `${who} would not take this request (400): ${said}` : `${who} refused the request shape: ${said}`;
   if (status === 404) {
     return (
       `${who} does not have the model “${model}”. Change it under Settings → AI models, ` +
@@ -1782,7 +1800,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
           if (serving === "nvidia" && KEY_LEVEL_STATUSES.includes(status)) {
             nvidiaRefusedUntil = Date.now() + NVIDIA_COOLDOWN_MS;
           }
-          refusals.push(`${PROVIDERS[serving].name}: ${describeTurnFailure(serving, status, climbing ? ladder[rung] : await modelForVendor(serving, effort, level), err)}`);
+          refusals.push(`${PROVIDERS[serving].name}: ${describeTurnFailure(serving, status, climbing ? ladder[rung] : await modelForVendor(serving, effort, level), err, true)}`);
           await saying(
             climbing
               ? `every free model was tried (last: ${(err as Error).message}) — ${PROVIDERS[next].name} takes the rest of this run.`

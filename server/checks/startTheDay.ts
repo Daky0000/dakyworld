@@ -27,12 +27,19 @@
  * both stages go together exactly as they always did. The chain here is the
  * check's own (`after`), not the shipped one, so nothing touches a real agent.
  *
- * Database only. No key, no network: every agent here is a draft or has its
- * own ceiling, so nothing reaches a model.
+ * A database and a local stub. No key, no network: every agent here is a draft
+ * or has its own ceiling, so nothing the button starts reaches a model; the
+ * section on runs that ended short calls `runTask` itself, against a stub
+ * Anthropic on a port the OS picks.
  */
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { startTheDay } from "../src/services/agents/startTheDay.js";
 import { inChainOrder, raiseStandingWork } from "../src/services/agents/standingWork.js";
 import { isPaused } from "../src/services/agents/retry.js";
+import { failureClassOf, runTask } from "../src/services/agents/runner.js";
+import { recordCreated, transition } from "../src/services/agents/state.js";
+import { closeEscalation } from "../src/services/agents/escalationDigest.js";
 import { FLAG, flagOn, forgetFlags, setFlag } from "../src/lib/featureFlags.js";
 import { clearSettingsCache } from "../src/lib/settings.js";
 import { prisma } from "../src/lib/prisma.js";
@@ -60,6 +67,12 @@ async function clearWork() {
   await prisma.agentSchedule.deleteMany({ where: { agentKey: { in: KEYS } } });
   await prisma.agentTaskTransition.deleteMany({ where: { task: { agentKey: { in: KEYS } } } });
   await prisma.agentTaskStep.deleteMany({ where: { task: { agentKey: { in: KEYS } } } });
+  // What a real run leaves behind, in the section that runs one.
+  await prisma.agentTaskCheckpoint.deleteMany({ where: { task: { agentKey: { in: KEYS } } } });
+  await prisma.actionRequest.deleteMany({ where: { agentKey: { in: KEYS } } });
+  await prisma.llmCall.deleteMany({ where: { OR: [{ agentKey: { in: KEYS } }, { purpose: { in: KEYS.map((key) => `agent.${key}`) } }] } });
+  await prisma.toolCall.deleteMany({ where: { agentKey: { in: KEYS } } });
+  await prisma.agentMemory.deleteMany({ where: { OR: [{ agentKey: { in: KEYS } }, { authorKey: { in: KEYS } }] } });
   await prisma.agentTask.deleteMany({ where: { agentKey: { in: KEYS } } });
 }
 
@@ -218,19 +231,84 @@ async function warningsDuring(run: () => Promise<unknown>): Promise<string[]> {
 // and its timeline says why the one before it is still there. A BLOCKED task
 // that asked a question is different — its answer is the work — and still
 // holds the slot.
+//
+// **Every ending here is a real run**: `runTask` against a local Anthropic
+// stub, so the row is in exactly the state production leaves it in. The first
+// version of this section wrote its BLOCKED rows by hand, which skipped
+// `transition()` — and `transition()` sets `escalationStatus` PENDING on every
+// road into BLOCKED. The hand-made rows had none, so the check passed against
+// a fix that never fired on a real capped run. `runTask` ignores the agent's
+// ceiling of zero (only `runDueTasks` reads it), so these run while the button
+// sections above and below still start nothing.
 const SHORT_TITLE = "The job that ran out of turns";
-async function blockedWith(reason: string, extra: { escalationStatus?: "PENDING" } = {}) {
-  const task = await prisma.agentTask.create({
-    data: { agentKey: AGENT_KEY, title: SHORT_TITLE, brief: "b", origin: "SCHEDULE", status: "BLOCKED", blockedReason: reason.replace(/^\[[a-z-]+\]\s*/, ""), ...extra },
+
+type StubReply = { content: unknown[]; stop: string };
+let stubScript: (turn: number) => StubReply = () => ({ content: [{ type: "text", text: "Done." }], stop: "end_turn" });
+let stubTurns = 0;
+const stub = http.createServer((req, res) => {
+  let raw = "";
+  req.on("data", (chunk) => (raw += chunk));
+  req.on("end", () => {
+    const url = req.url ?? "";
+    if (!url.includes("/v1/messages")) {
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ type: "error", error: { type: "not_found_error", message: `no stub route for ${url}` } }));
+      return;
+    }
+    const asked = JSON.parse(raw || "{}") as { model?: string };
+    stubTurns += 1;
+    const { content, stop } = stubScript(stubTurns);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({
+        id: `msg_startday_${stubTurns}`,
+        type: "message",
+        role: "assistant",
+        model: asked.model ?? "claude-opus-5",
+        content,
+        stop_reason: stop,
+        stop_sequence: null,
+        usage: { input_tokens: 40, output_tokens: 10 },
+      }),
+    );
   });
-  await prisma.agentTaskTransition.createMany({
-    data: [
-      { taskId: task.id, from: "QUEUED", to: "RUNNING", reason: "Claimed.", actor: "runner" },
-      { taskId: task.id, from: "RUNNING", to: "BLOCKED", reason, actor: "runner", at: new Date(Date.now() + 1) },
+});
+await new Promise<void>((resolve) => stub.listen(0, "127.0.0.1", () => resolve()));
+const stubUrl = `http://127.0.0.1:${(stub.address() as AddressInfo).port}`;
+// Claude alone, at the stub: every other vendor's key out of the environment
+// and every base URL pointed here, so nothing can reach a real one.
+for (const name of ["OPENAI_API_KEY", "GEMINI_API_KEY", "NVIDIA_API_KEY", "PERPLEXITY_API_KEY"]) delete process.env[name];
+for (const name of ["ANTHROPIC_BASE_URL", "OPENAI_BASE_URL", "GEMINI_BASE_URL", "NVIDIA_BASE_URL", "PERPLEXITY_BASE_URL"]) process.env[name] = stubUrl;
+process.env.ANTHROPIC_API_KEY = "sk-ant-check-not-a-real-key";
+clearSettingsCache();
+
+const ENDINGS = {
+  // Sixteen turns of a tool every agent has, and never an answer.
+  "used every turn": (turn: number): StubReply => ({
+    content: [
+      { type: "text", text: `Still going, turn ${turn}.` },
+      { type: "tool_use", id: `call_startday_${turn}_${Date.now()}`, name: "remember", input: { kind: "LESSON", content: `Turn ${turn}: still at it.`, about: "myself" } },
     ],
-  });
-  return task;
+    stop: "tool_use",
+  }),
+  "was declined by the model": (): StubReply => ({ content: [], stop: "refusal" }),
+  asked: (turn: number): StubReply => ({
+    content: [{ type: "tool_use", id: `call_startday_ask_${turn}`, name: "escalate", input: { reason: "Which of the two lists should I work from this morning?" } }],
+    stop: "tool_use",
+  }),
+} as const;
+
+/** A scheduled run of the job, raised the way standing work raises one, and run for real. */
+async function endedBy(how: keyof typeof ENDINGS) {
+  const task = await prisma.agentTask.create({ data: { agentKey: AGENT_KEY, title: SHORT_TITLE, brief: "Work through the list.", origin: "SCHEDULE" } });
+  await recordCreated(task.id, task.traceId, task.status, { reason: "Raised by the check's schedule.", actor: "schedule" });
+  stubTurns = 0;
+  stubScript = ENDINGS[how];
+  await runTask(task.id);
+  return prisma.agentTask.findUniqueOrThrow({ where: { id: task.id } });
 }
+const newestBlocked = (taskId: string) =>
+  prisma.agentTaskTransition.findFirst({ where: { taskId, to: "BLOCKED" }, orderBy: [{ at: "desc" }, { id: "desc" }] });
 const shortSchedule = () =>
   prisma.agentSchedule.create({
     data: { agentKey: AGENT_KEY, title: SHORT_TITLE, brief: "b", runTimes: ["23:59"], timezone: "UTC", enabled: true, maxOpenTasks: 1, nextRunAt: new Date(Date.now() - 60_000) },
@@ -239,20 +317,24 @@ const raisedSince = (before: string[]) =>
   prisma.agentTask.findMany({ where: { agentKey: AGENT_KEY, origin: "SCHEDULE", id: { notIn: before } }, include: { steps: true } });
 
 console.log("\nA run that ended short does not stop the standing job");
-for (const [label, reason] of [
-  ["used every turn", "[iteration-cap] Used all 16 turns without finishing."],
-  ["was declined by the model", "[refusal] claude-opus-5-5 declined to continue."],
+for (const [label, failureClass] of [
+  ["used every turn", "iteration-cap"],
+  ["was declined by the model", "refusal"],
 ] as const) {
   await clearWork();
   await shortSchedule();
-  const blocked = await blockedWith(reason);
+  const blocked = await endedBy(label);
+  const reason = (await newestBlocked(blocked.id))?.reason ?? "";
+  check(`a run that ${label} really ends BLOCKED, classed ${failureClass}`, blocked.status === "BLOCKED" && failureClassOf(reason) === failureClass, `${blocked.status} / ${reason}`);
+  // The state the first version of this section never built.
+  check("with its escalation PENDING, as every road into BLOCKED leaves it", blocked.escalationStatus === "PENDING", String(blocked.escalationStatus));
   await raiseStandingWork(new Date());
   const fresh = await raisedSince([blocked.id]);
   check(`the next slot is raised beside a run that ${label}`, fresh.length === 1, `${fresh.length}`);
   const note = fresh[0]?.steps.find((one) => one.kind === "NOTED");
   check(
     "and its timeline says the slot before it ended short, and why",
-    Boolean(note && note.message.includes(blocked.id) && note.message.includes(reason.slice(1, reason.indexOf("]")))),
+    Boolean(note && note.message.includes(blocked.id) && note.message.includes(failureClass)),
     note?.message,
   );
   check("the blocked one is left waiting for a person", (await prisma.agentTask.findUniqueOrThrow({ where: { id: blocked.id } })).status === "BLOCKED");
@@ -264,37 +346,54 @@ for (const [label, reason] of [
 {
   await clearWork();
   await shortSchedule();
-  const blocked = await blockedWith("[iteration-cap] Used all 16 turns without finishing.");
+  const blocked = await endedBy("used every turn");
   const result = await startTheDay();
   const fresh = await raisedSince([blocked.id]);
   check("the button raises it too", fresh.length === 1 && result.raised >= 1, `${fresh.length} / ${result.raised}`);
   check("with the same note", fresh[0]?.steps.some((one) => one.kind === "NOTED" && one.message.includes(blocked.id)) === true);
 }
 {
-  // The negatives: a question waiting for an answer holds the slot, with or
-  // without the escalation status set, and so does a capped task somebody
-  // set going again.
+  // Closing the card on a capped run — "read and left as it is" — writes an
+  // untagged BLOCKED-to-BLOCKED entry. The run is still one that ended short.
   await clearWork();
   await shortSchedule();
-  const asked = await blockedWith("Which of the two lists should I work from?", { escalationStatus: "PENDING" });
+  const blocked = await endedBy("used every turn");
+  check("(a capped run's card can be closed)", await closeEscalation(blocked.id, { who: "the check" }));
+  await raiseStandingWork(new Date());
+  check("a capped run whose card was closed still does not hold the slot", (await raisedSince([blocked.id])).length === 1);
+}
+{
+  // The negatives: a question waiting for an answer holds the slot, and so do
+  // an ending with no class on it and a capped task somebody set going again.
+  await clearWork();
+  await shortSchedule();
+  const asked = await endedBy("asked");
+  check(
+    "(an agent that asked really ends BLOCKED, untagged and PENDING)",
+    asked.status === "BLOCKED" && asked.escalationStatus === "PENDING" && failureClassOf((await newestBlocked(asked.id))?.reason) === null,
+    `${asked.status} / ${asked.escalationStatus}`,
+  );
   await raiseStandingWork(new Date());
   check("a BLOCKED task waiting on an escalation answer still holds the slot", (await raisedSince([asked.id])).length === 0);
 
   await clearWork();
   await shortSchedule();
-  const untagged = await blockedWith("Blocked for a reason with no class on it.");
+  const untagged = await prisma.agentTask.create({ data: { agentKey: AGENT_KEY, title: SHORT_TITLE, brief: "b", origin: "SCHEDULE" } });
+  await recordCreated(untagged.id, untagged.traceId, untagged.status, { reason: "Raised by the check's schedule.", actor: "schedule" });
+  await transition(untagged.id, { to: "RUNNING", reason: "Claimed.", actor: "runner", expect: ["QUEUED"] });
+  await transition(untagged.id, { to: "BLOCKED", reason: "Blocked for a reason with no class on it.", actor: "runner", expect: ["RUNNING"] });
   await raiseStandingWork(new Date());
   check("so does a BLOCKED task with no class on its ending", (await raisedSince([untagged.id])).length === 0);
 
   await clearWork();
   await shortSchedule();
-  const carried = await blockedWith("[iteration-cap] Used all 16 turns without finishing.");
-  await prisma.agentTask.update({ where: { id: carried.id }, data: { status: "QUEUED" } });
-  await prisma.agentTaskTransition.create({ data: { taskId: carried.id, from: "BLOCKED", to: "QUEUED", reason: "Carry on.", actor: "owner", at: new Date(Date.now() + 2) } });
+  const carried = await endedBy("used every turn");
+  await transition(carried.id, { to: "QUEUED", reason: "Carry on.", actor: "owner", expect: ["BLOCKED"] });
   await raiseStandingWork(new Date());
   check("and so does a capped task somebody pressed Carry on for", (await raisedSince([carried.id])).length === 0);
 }
 await clearWork();
+stub.close();
 
 // --- The daily chain, behind flags.workflows --------------------------------
 const STAGE_A = "Stage A";

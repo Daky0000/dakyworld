@@ -199,8 +199,17 @@ export interface StandingSlot {
  * most likely to use all sixteen turns. So the blocked one waits for a person
  * and the next slot runs beside it, told why (`noteEndedShort`). Read off the
  * newest transition into BLOCKED, because the class lives there and nowhere
- * else that outlives a re-run; a task with an escalation still pending is held
- * as asking whatever its ending says.
+ * else that outlives a re-run — and on that alone. `escalationStatus` cannot
+ * tell the two apart: `transition()` sets it PENDING on every road into
+ * BLOCKED, capped and declined runs included, so reading it put every real
+ * ending back in the slot. A question is told apart by its reason instead:
+ * `escalate` and a blocking `needSkill` write their own words with no class,
+ * and the runner never takes a short ending once the agent has asked.
+ *
+ * A BLOCKED-to-BLOCKED entry is not an ending. Closing an escalation writes
+ * one, untagged, on a task that is still blocked for the reason it was before
+ * — so "read and left as it is" on a capped run must not turn it back into a
+ * question that holds the slot.
  */
 export async function standingSlot(schedule: { agentKey: string; title: string }): Promise<StandingSlot> {
   const where = { agentKey: schedule.agentKey, origin: "SCHEDULE" as const, title: schedule.title };
@@ -210,8 +219,12 @@ export async function standingSlot(schedule: { agentKey: string; title: string }
       where: { ...where, status: "BLOCKED" },
       select: {
         id: true,
-        escalationStatus: true,
-        transitions: { where: { to: "BLOCKED" }, orderBy: [{ at: "desc" }, { id: "desc" }], take: 1, select: { reason: true } },
+        transitions: {
+          where: { to: "BLOCKED", OR: [{ from: null }, { from: { not: "BLOCKED" } }] },
+          orderBy: [{ at: "desc" }, { id: "desc" }],
+          take: 1,
+          select: { reason: true },
+        },
       },
     }),
   ]);
@@ -221,7 +234,7 @@ export async function standingSlot(schedule: { agentKey: string; title: string }
   for (const task of blocked) {
     const reason = task.transitions[0]?.reason ?? "";
     const failureClass = failureClassOf(reason);
-    if (failureClass && ENDED_SHORT.has(failureClass) && task.escalationStatus !== "PENDING") {
+    if (failureClass && ENDED_SHORT.has(failureClass)) {
       endedShort.push({ id: task.id, failureClass, reason });
     } else {
       asking += 1;

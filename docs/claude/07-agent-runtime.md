@@ -704,7 +704,9 @@ conversation instead of starting one.
   `remember` or a spent consult — so every resume of a thinking run was a 400.
   The prefix rides on the checkpoint (`counters.prefix`) and `keptTools()` wires
   today's handlers to the stored definitions; what changed applies from the
-  agent's next task. A checkpoint saved before the prefix was kept is stripped
+  agent's next task. The prefix, `messages` and `pendingAssistant` are stored as
+  JSON text inside their `jsonb` columns, because `jsonb` re-sorts object keys
+  and a schema or `tool_use` input with its keys moved is a different prefix. A checkpoint saved before the prefix was kept is stripped
   of its thinking once, with a NOTED step. See
   [02](02-model-routing-and-cost.md) for the backstop in the loop and
   `checks/agentThinkingResume.ts`.
@@ -789,12 +791,20 @@ classed `iteration-cap` or `refusal` is left out of the count: it keeps waiting
 for a person, the next slot runs beside it, and the new task's timeline opens
 with a NOTED step naming the run that ended short and why
 (`noteEndedShort()`), so the stoppage is visible somewhere other than the log.
-**A BLOCKED task that asked** — `escalate`, a blocking `needSkill`, anything
-with an escalation still PENDING, or a BLOCKED with no class at all — still
-holds the slot, because its answer is the work. A capped task somebody set
-going again is QUEUED or RUNNING and counts as any open task does. Both the
-minute tick and "Start the day" read it; `checks/startTheDay.ts` covers the
-two endings and the three negatives.
+**A BLOCKED task that asked** — `escalate`, a blocking `needSkill`, or a
+BLOCKED with no class at all — still holds the slot, because its answer is the
+work. **The class alone decides it, never `escalationStatus`**: `transition()`
+sets that PENDING on every road into BLOCKED, capped and declined runs
+included, so the first version of this fix, which held any PENDING escalation
+as a question, never fired on a real ending — its check built the BLOCKED rows
+by hand and skipped the stamp. A question is told apart by its reason instead
+(`escalate` and `needSkill` write their own words, untagged, and the runner
+never takes a short ending once the agent has asked). A BLOCKED-to-BLOCKED entry
+is not an ending: closing a capped run's card writes one, untagged, and the run
+still does not hold the slot. A capped task somebody set going again is QUEUED
+or RUNNING and counts as any open task does. Both the minute tick and "Start the
+day" read it; `checks/startTheDay.ts` covers the two endings, the closed card
+and the three negatives with real `runTask` runs against a local stub.
 
 **The daily chain can wait for itself — behind `flags.workflows`, which ships
 off** (`FLAG_WORKFLOWS=true` turns it on). Standing work was ordered by nothing

@@ -478,7 +478,17 @@ until now.
   granted keeps its place and refuses). A conversation with no thinking in it
   takes the fresh prompt, so a new memory still reaches it. A checkpoint from
   before this has nothing to resend and is stripped of its thinking once, before
-  the first request, with a NOTED step. **The backstop** is in the loop: a
+  the first request, with a NOTED step. **Stored as text, because `jsonb`
+  re-sorts keys** (fixed the same day): the prefix, the messages and the
+  half-finished turn go into their `jsonb` columns as JSON *strings*
+  (`storedJson`/`fromStoredJson`), since an object comes back with its keys
+  reordered — every tool's `input_schema` and every `tool_use` input — and a
+  "kept" prefix that is not byte for byte what was sent is not the one the
+  reasoning was signed against. A live tool whose schema is the stored one in
+  everything but key order keeps its own object (`sameJson` in `keptTools`),
+  which is also what rescues a checkpoint written as an object. The check's fake
+  is key-order sensitive for exactly this reason; it used to sort keys, as
+  `jsonb` does, and passed the reordered prefix. **The backstop** is in the loop: a
   binding 400 (`Invalid signature in thinking block`) is answered with
   Anthropic's documented one-time recovery — every thinking block out, saved at
   once, the same model asked again, once per run — instead of a hand-off to a
@@ -486,7 +496,13 @@ until now.
   `rejectedTheBeta` used to read it as the fallback beta being refused and
   switch server-side fallbacks off for the life of the process; it no longer
   does. Any other 400 on the loop now reads "refused the request shape", the
-  words `callModel` uses, which `retry.ts` hands to a person instead of pausing.
+  words `callModel` uses, which `retry.ts` hands to a person instead of pausing
+  — **but only from the vendor the run ended on.** `retry.ts` reads the chain's
+  whole sentence and matches that phrase before any status, so a Claude 400
+  followed by a ChatGPT that was only busy asked a person about a fault in the
+  app instead of waiting five minutes. A 400 the run handed on from is worded
+  "would not take this request (400)", which decides nothing, and Gemini's 400
+  for a bad key (`API key not valid`) is worded as a rejected key.
   `checks/agentThinkingResume.ts` drives all of it through `runTask` against a
   fake Anthropic that enforces the binding the way the API does.
 

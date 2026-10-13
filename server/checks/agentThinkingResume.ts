@@ -22,12 +22,24 @@
  *     so the reasoning is stripped once, deliberately, and said so.
  *  5. **The backstop**: a binding 400 the runner did not prevent is stripped
  *     and retried once on Claude rather than handed to another vendor.
+ *  6. **`jsonb` re-sorts keys.** The prefix and the messages are stored as
+ *     JSON text so every schema and `tool_use` input comes back in the order
+ *     it was sent, and a prefix stored as an object before that is resent with
+ *     the live tools' own schemas.
+ *  7. **A 400 the run moved past does not decide how it failed**: Claude's 400
+ *     followed by a busy ChatGPT waits, rather than asking a person about the
+ *     request's shape.
  *
  * Against a fake Anthropic that enforces the binding the way the API does:
- * every thinking block it hands out is signed against a digest of the
- * canonical prefix (cache markers dropped, keys sorted, tools as a name-keyed
- * set), and a request replaying a block whose prefix no longer matches gets
- * the API's own 400. The negatives matter as much: a conversation with no
+ * every thinking block it hands out is signed against a digest of the prefix
+ * as it was sent (cache markers dropped, a bare string read as one text block,
+ * and nothing else forgiven), and a request replaying a block whose prefix no
+ * longer matches gets the API's own 400. **Key order counts**, as it does in
+ * the prompt the API renders: a tool schema or a `tool_use` input whose keys
+ * came back reordered is a different prefix. An earlier version of this fake
+ * sorted keys before hashing — exactly what `jsonb` does to everything stored
+ * in it — and so passed a checkpoint whose every stored schema had been
+ * reordered. The negatives matter as much: a conversation with no
  * thinking in it must resume on the *fresh* prompt (nothing to protect, and a
  * new memory is worth having), and a strip must happen once, not on every turn.
  *
@@ -53,12 +65,12 @@ function check(name: string, condition: boolean, detail?: string) {
 
 // --- The binding, as the API applies it ---------------------------------------
 
-/** Sorted keys, no cache markers, a bare string read as one text block. */
+/** No cache markers, and every key where it was sent: never sorted. */
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    for (const key of Object.keys(value as Record<string, unknown>)) {
       if (key === "cache_control") continue;
       out[key] = canonical((value as Record<string, unknown>)[key]);
     }
@@ -74,7 +86,7 @@ function asBlocks(content: unknown): unknown[] {
 function digest(system: unknown, tools: unknown, messages: { role: string; content: unknown }[]): string {
   const prefix = {
     system: asBlocks(system),
-    tools: [...((tools as { name: string }[]) ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
+    tools: (tools as unknown[]) ?? [],
     messages: messages.map((message) => ({ role: message.role, content: asBlocks(message.content) })),
   };
   return createHash("sha256").update(JSON.stringify(canonical(prefix))).digest("hex").slice(0, 16);
@@ -126,6 +138,7 @@ type Answer = { status: number; payload: unknown };
 type Seen = { body: Record<string, any>; loop: boolean; rejected: string | null };
 
 const seen: Seen[] = [];
+let openaiRequests = 0;
 let script: (turn: number, body: Record<string, any>) => Answer = () => message("end_turn", [{ type: "text", text: "Done." }]);
 let loopTurns = 0;
 
@@ -161,6 +174,13 @@ function fakeAnthropic(): Promise<{ server: Server; url: string }> {
         } catch {
           body = {};
         }
+        // ChatGPT, for the one scenario that connects it: busy.
+        if ((req.url ?? "").includes("/chat/completions")) {
+          openaiRequests += 1;
+          res.writeHead(503, { "content-type": "application/json", "x-should-retry": "false" });
+          res.end(JSON.stringify({ error: { type: "server_error", message: "The server is overloaded. Please try again shortly." } }));
+          return;
+        }
         // The loop's own turns carry the tools; a consult's colleague and any
         // other one-shot writer do not, and gets a plain structured answer.
         const loop = Array.isArray(body.tools) && body.tools.length > 0;
@@ -188,11 +208,14 @@ const thinkingIn = (body: Record<string, any>) =>
   (body.messages ?? []).flatMap((m: any) => asBlocks(m.content).filter((block: any) => isThinking(block)).map((block: any) => block.signature as string));
 const systemText = (body: Record<string, any>) => asBlocks(body.system).map((block: any) => block.text).join("");
 const toolNames = (body: Record<string, any>) => (body.tools ?? []).map((tool: any) => tool.name).sort().join(",");
+/** Tool definitions without their cache markers, which move and are not part of the binding. */
+const unmarked = (tools: any[] | undefined) => (tools ?? []).map(({ cache_control: _mark, ...tool }: any) => tool);
 
 async function main() {
   const { prisma } = await import("../src/lib/prisma.js");
   const { SETTING, clearSettingsCache, setSetting } = await import("../src/lib/settings.js");
-  const { runAgentLoop } = await import("../src/lib/claudeAgent.js");
+  const { describeTurnFailure, runAgentLoop } = await import("../src/lib/claudeAgent.js");
+  const { planFor } = await import("../src/services/agents/retry.js");
   const { runTask } = await import("../src/services/agents/runner.js");
   const { trimToFit } = await import("../src/services/agents/checkpoint.js");
 
@@ -293,6 +316,32 @@ async function main() {
       check("a changed system prompt is refused", bindingError({ ...honest, system: [{ type: "text", text: "S2" }] }) !== null);
       check("a changed tool set is refused", bindingError({ ...honest, tools: [] }) !== null);
       check("a changed earlier message is refused", bindingError({ ...honest, messages: [{ role: "user", content: "hello" }, ...honest.messages.slice(1)] }) !== null);
+      // What `jsonb` does to an object: the same keys, shortest first.
+      check(
+        "a tool schema with its keys reordered is refused",
+        bindingError({ ...honest, tools: [{ name: "a", input_schema: {}, description: "d" }] }) !== null,
+      );
+      const used = { ...body, messages: [{ role: "user", content: "hi" }, { role: "assistant", content: [{ type: "tool_use", id: "t", name: "a", input: { kind: "K", content: "c", about: "a" } }] }, { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: "ok" }] }] };
+      const later = think(used, "r2");
+      const replay = { ...used, messages: [...used.messages, { role: "assistant", content: [later] }, { role: "user", content: "more" }] };
+      check("an honest replay after a tool call passes", bindingError(replay) === null);
+      const reordered = JSON.parse(JSON.stringify(replay));
+      reordered.messages[1].content[0].input = { kind: "K", about: "a", content: "c" };
+      check("and a tool_use input with its keys reordered is refused", bindingError(reordered) !== null);
+    }
+
+    console.log("\nWhat a checkpoint stores comes back in the order it was sent");
+    {
+      // The round trip itself, through a real `jsonb` column: an object is
+      // re-sorted, the text the checkpoint stores is not.
+      const { storedJson, fromStoredJson, readPrefix } = await import("../src/services/agents/checkpoint.js");
+      const sent = { system: "S", tools: [{ name: "remember", description: "d", inputSchema: { type: "object", properties: { kind: { type: "string" }, content: { type: "string" }, about: { type: "string" } }, required: ["kind", "content"] } }] };
+      const [asObject] = await prisma.$queryRawUnsafe<{ v: unknown }[]>("select $1::jsonb as v", JSON.stringify(sent));
+      check("jsonb re-sorts an object's keys (why this exists)", JSON.stringify(asObject.v) !== JSON.stringify(sent), JSON.stringify(asObject.v));
+      const [asText] = await prisma.$queryRawUnsafe<{ v: unknown }[]>("select $1::jsonb as v", JSON.stringify(storedJson(sent)));
+      check("the stored text comes back byte for byte", JSON.stringify(fromStoredJson(asText.v)) === JSON.stringify(sent), JSON.stringify(asText.v).slice(0, 120));
+      check("and reads as a prefix", JSON.stringify(readPrefix(asText.v)) === JSON.stringify(sent));
+      check("an object stored before the text form is still read", readPrefix(asObject.v)?.tools[0]?.name === "remember");
     }
 
     console.log("\nResumed after it remembered something");
@@ -316,7 +365,33 @@ async function main() {
       // them rather than travel in from the checkpoint — and never a fifth.
       const marks = JSON.stringify(r.secondRun[0]?.body ?? {}).split('"cache_control"').length - 1;
       check("and four breakpoints at most, one of them on the tools only", marks <= 4 && (r.secondRun[0]?.body.tools ?? []).filter((tool: any) => tool.cache_control).length === 1, String(marks));
+      check(
+        "every kept tool definition is the one first sent, key order and all",
+        JSON.stringify(unmarked(r.secondRun[0]?.body.tools)) === JSON.stringify(unmarked(r.firstRun[0].body.tools)),
+      );
       rememberedSystem = systemText(r.firstRun[0].body);
+    }
+
+    console.log("\nResumed from a checkpoint whose prefix went through jsonb as an object");
+    {
+      // What a deploy between the prefix being kept and it being kept as text
+      // wrote: the same prefix, its every schema re-sorted by `jsonb`. The live
+      // tools that still say the same thing are sent as they were first built.
+      const r = await pauseAndResume(
+        "Thinking: a re-sorted prefix",
+        "Note a fourth thing, then finish.",
+        (body) => call(body, "Keep this too.", "remember", { kind: "LESSON", content: "Read the reply before the next step.", about: "myself", importance: 3 }),
+        async (taskId) => {
+          const row = await prisma.agentTaskCheckpoint.findUniqueOrThrow({ where: { taskId } });
+          const counters = row.counters as Record<string, unknown>;
+          check("the paused run's checkpoint holds its prefix as text", typeof counters.prefix === "string", typeof counters.prefix);
+          check("and its messages as text", typeof row.messages === "string", typeof row.messages);
+          const prefix = typeof counters.prefix === "string" ? JSON.parse(counters.prefix) : counters.prefix;
+          await prisma.agentTaskCheckpoint.update({ where: { taskId }, data: { counters: { ...counters, prefix } as never } });
+        },
+      );
+      check("the resumed request was not refused", r.secondRun.every((entry) => entry.rejected === null), r.secondRun.map((entry) => entry.rejected?.slice(0, 120)).join(" | "));
+      check("the task finished on Claude, with its reasoning", r.row.status === "DONE" && r.secondRun.length === 1 && thinkingIn(r.secondRun[0].body).length === 1, `${r.row.status} ${r.secondRun.length} turn(s)`);
     }
 
     console.log("\nA conversation with no reasoning in it resumes on the fresh prompt");
@@ -473,6 +548,44 @@ async function main() {
       const shapeRequests = seen.filter((entry) => entry.loop);
       check("an uncurable 400 is tried twice at most, not looped", shapeRequests.length === 2, `${shapeRequests.length} request(s)`);
       check("and named as the request's shape", Boolean(thrown?.message.includes("refused the request shape")) && !thrown?.message.includes("Could not reach"), thrown?.message);
+      check("which retry.ts asks a person about", thrown !== null && planFor(thrown, 0).remedy === "ask", thrown ? planFor(thrown, 0).remedy : "nothing thrown");
+    }
+
+    console.log("\nA 400 the run moved past does not decide how it failed");
+    {
+      // Claude 400s on something stripping cannot cure, the run hands on to
+      // ChatGPT, and ChatGPT is only busy. The task should wait five minutes,
+      // not ask a person about a fault in the app — which it did while every
+      // vendor's 400 in the chain said "refused the request shape".
+      process.env.OPENAI_API_KEY = "sk-check-not-a-real-key";
+      clearSettingsCache();
+      openaiRequests = 0;
+      begin(() => ({ status: 400, payload: { type: "error", error: { type: "invalid_request_error", message: "prompt is too long: 210000 tokens > 200000 maximum" } } }));
+      const thrown = await runAgentLoop({
+        purpose: `${PURPOSE}.handedOn`,
+        system: "You are a check.",
+        prompt: "Look one thing up.",
+        tools: [{ name: "look_up", description: "Looks something up.", inputSchema: { type: "object", properties: {} }, run: async () => ({ content: "Nothing." }) }],
+        effort: "medium",
+      }).then(
+        () => null,
+        (err: Error) => err,
+      );
+      delete process.env.OPENAI_API_KEY;
+      clearSettingsCache();
+      check("(the run was handed on to ChatGPT, which was busy)", openaiRequests >= 1 && thrown !== null, `${openaiRequests} request(s) / ${thrown?.message.slice(0, 160)}`);
+      check("Claude's 400 is still named in the sentence", Boolean(thrown?.message.includes("prompt is too long")), thrown?.message);
+      const plan = thrown ? planFor(thrown, 0) : null;
+      check("and the task waits, as the last vendor's failure says", plan?.remedy === "wait", `${plan?.remedy}: ${plan?.reason.slice(0, 160)}`);
+
+      // The words, for the vendor that answers a bad key with a 400.
+      const geminiKey = describeTurnFailure("gemini", 400, "gemini-3-pro", new Error("API key not valid. Please pass a valid API key."));
+      check("Gemini's 400 for a bad key is named as the key", geminiKey.includes("rejected the API key") && !geminiKey.includes("request shape"), geminiKey);
+      check("and asks a person to check it", planFor(new Error(geminiKey), 0).remedy === "ask");
+      check(
+        "a 400 nobody took on after is still the request's shape",
+        describeTurnFailure("openai", 400, "gpt-5", new Error("Unsupported parameter")).includes("refused the request shape"),
+      );
     }
   } catch (err) {
     failures.push(`the run stopped: ${(err as Error).message}`);

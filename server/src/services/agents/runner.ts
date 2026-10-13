@@ -13,8 +13,10 @@ import {
   loadCheckpoint,
   prefixOf,
   readPrefix,
+  sameJson,
   samePrefix,
   saveCheckpoint,
+  storedJson,
   stripThinking,
   type ConversationPrefix,
 } from "./checkpoint.js";
@@ -725,17 +727,26 @@ export async function toolsFor(agent: Agent, task: AgentTask, counters: Counters
  * The tools a resumed thinking conversation was first sent, wired to what this
  * claim can actually run.
  *
- * The definitions are the stored ones, byte for byte, because Claude's
- * reasoning is bound to them; the handlers are today's, because what a tool
- * may do is decided now. A tool that is no longer granted — a consult or a
- * hand-off spent, a key taken off the toolkit — keeps its place in the list
- * and refuses, which is the answer the tool itself would have given.
+ * The definitions are the stored ones, because Claude's reasoning is bound to
+ * them; the handlers are today's, because what a tool may do is decided now. A
+ * tool that is no longer granted — a consult or a hand-off spent, a key taken
+ * off the toolkit — keeps its place in the list and refuses, which is the
+ * answer the tool itself would have given.
+ *
+ * **Key order is part of a definition.** The stored prefix is JSON text
+ * (`storedJson`), so it comes back in the order it was sent. A live tool whose
+ * schema says the same thing keeps its own object anyway: it is the one this
+ * code builds every time, and it is what a checkpoint written before the text
+ * form — whose schemas `jsonb` re-sorted — needs to be sent as it first was.
  */
 function keptTools(kept: ConversationPrefix, live: AgentTool[]): AgentTool[] {
   const byName = new Map(live.map((tool) => [tool.name, tool]));
   return kept.tools.map((definition) => {
     const tool = byName.get(definition.name);
-    if (tool) return { ...tool, description: definition.description, inputSchema: definition.inputSchema };
+    if (tool) {
+      const inputSchema = sameJson(tool.inputSchema, definition.inputSchema) ? tool.inputSchema : definition.inputSchema;
+      return { ...tool, description: definition.description, inputSchema };
+    }
     return {
       ...definition,
       run: async () => ({
@@ -2668,8 +2679,8 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
         claimIteration: startedFrom,
         // What every thinking block in the messages saved beside it was
         // written against. In the same statement as those messages, so the
-        // two can never disagree.
-        prefix,
+        // two can never disagree — and as text, so its key order survives.
+        prefix: storedJson(prefix),
         ...(sized.effortFloor ? { effortFloor: sized.effortFloor } : {}),
         ...extra,
       });

@@ -958,8 +958,26 @@ settingsRouter.put("/models/:provider", async (req, res, next) => {
       })
       .parse(req.body);
 
+    // Everything that can refuse this request is asked before anything is
+    // written. A key and a model sent together used to save the key and then
+    // refuse the model, so the caller was told it failed about a request that
+    // had half happened — and the readiness cache the key changed was never
+    // cleared.
+    const model = input.model?.trim();
+    if (input.key !== undefined && guardEnv(definition.keySetting, `The ${definition.vendor} API key`, res)) return;
+    if (input.model !== undefined) {
+      if (guardEnv(definition.modelSetting, `The ${definition.vendor} model`, res)) return;
+      // Claude's model is the one every unsized turn and `callClaude` read, and
+      // the complex level falls back to it: held to the same test as a model
+      // chosen for a job or a level, or a model that refuses every request
+      // shape this app sends gets in through the one door left open.
+      if (model && provider === "anthropic") {
+        const refused = await whyNotChoosable(model);
+        if (refused) return res.status(400).json({ error: refused });
+      }
+    }
+
     if (input.key !== undefined) {
-      if (guardEnv(definition.keySetting, `The ${definition.vendor} API key`, res)) return;
       // Checked against the vendor before it is stored, the same way the Apify
       // token and the Anthropic key are: a key that fails on first use is a
       // support conversation, and one refused at the moment it is pasted is a
@@ -972,16 +990,6 @@ settingsRouter.put("/models/:provider", async (req, res, next) => {
     }
 
     if (input.model !== undefined) {
-      if (guardEnv(definition.modelSetting, `The ${definition.vendor} model`, res)) return;
-      const model = input.model?.trim();
-      // Claude's model is the one every unsized turn and `callClaude` read, and
-      // the complex level falls back to it: held to the same test as a model
-      // chosen for a job or a level, or a model that refuses every request
-      // shape this app sends gets in through the one door left open.
-      if (model && provider === "anthropic") {
-        const refused = await whyNotChoosable(model);
-        if (refused) return res.status(400).json({ error: refused });
-      }
       if (model) await setSetting(definition.modelSetting, model);
       else await deleteSetting(definition.modelSetting);
     }

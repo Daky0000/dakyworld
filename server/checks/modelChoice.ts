@@ -301,6 +301,25 @@ async function main() {
       check("a model that takes an effort is stored as before", taken.status === 200 && (await getSetting(SETTING.ANTHROPIC_MODEL)) === "claude-sonnet-5-5", `${taken.status}`);
       const cleared = await put({ model: "" });
       check("and blank still restores the shipped default", cleared.status === 200 && (await getSetting(SETTING.ANTHROPIC_MODEL)) == null, `${cleared.status}`);
+
+      // A key and a refused model in one request: refused whole, before the key
+      // is written. It used to verify and save the key, then 400 on the model.
+      // The key is the database's only while no environment variable holds it,
+      // so the check's own one steps aside for this and comes straight back.
+      const keyRowBefore = await prisma.appSetting.findUnique({ where: { key: SETTING.ANTHROPIC_KEY } });
+      const envKey = process.env.ANTHROPIC_API_KEY;
+      delete process.env.ANTHROPIC_API_KEY;
+      try {
+        const both = await put({ key: "sk-ant-check-a-second-key-not-real", model: "claude-haiku-4-5" });
+        const keyRowAfter = await prisma.appSetting.findUnique({ where: { key: SETTING.ANTHROPIC_KEY } });
+        check("a key sent with a refused model is refused with it", both.status === 400 && String(both.body?.error ?? "").includes("effort"), `${both.status}`);
+        check("and the key is not saved", keyRowAfter?.value === keyRowBefore?.value && Boolean(keyRowAfter) === Boolean(keyRowBefore), keyRowAfter ? "a key row was written" : "");
+      } finally {
+        process.env.ANTHROPIC_API_KEY = envKey;
+        await prisma.appSetting.deleteMany({ where: { key: SETTING.ANTHROPIC_KEY } });
+        if (keyRowBefore) await prisma.appSetting.create({ data: { key: keyRowBefore.key, value: keyRowBefore.value, secret: keyRowBefore.secret } });
+        clearSettingsCache();
+      }
     } finally {
       api.close();
       await deleteSetting(SETTING.ANTHROPIC_MODEL);

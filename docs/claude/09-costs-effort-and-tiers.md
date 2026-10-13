@@ -147,7 +147,7 @@ Claude request this app sends carries `output_config.effort` and Haiku 4.5
 400s on it — which the ladder reads as "hand the work to the next vendor".
 That covers every door, not only the job and level pickers: `PUT
 /settings/models/anthropic` refuses it with the same sentence
-(`whyNotChoosable`), and `anthropic.model` / `anthropic.model.economy` — and
+(`whyNotChoosable`) before it saves anything, a key sent alongside included, and `anthropic.model` / `anthropic.model.economy` — and
 `ANTHROPIC_MODEL` / `ANTHROPIC_MODEL_ECONOMY` in the environment, which nothing
 validates — are read through `claudeModelSetting()` in `claudePricing.ts`,
 which skips such a pin with one log line and falls back to the shipped model.
