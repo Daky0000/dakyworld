@@ -30,29 +30,168 @@ const EMBEDDING = new Set(["iframe", "frame", "object", "embed", "base"]);
 const ADDRESS_ATTRIBUTES = new Set(["href", "src", "action", "formaction", "xlink:href", "poster", "background", "to", "from", "values"]);
 
 /**
- * The elements `parse.ts` does not read into, by its own rule for a tag name.
+ * A copy of the page the parser can walk without a browser and it disagreeing
+ * about where things end.
  *
- * The parser was built to find editable words, so it skips the inside of a
- * `<style>`, a `<textarea>`, a `<title>` and an `<svg>`. A browser does not
- * always agree: inside an `<svg>` or a `<math>`, a `<style>` is an ordinary
- * element and an `<img onerror>` within it runs, and a `<textarea>` the browser
- * never opened (one inside an `<xmp>`) hides nothing from it. Comments differ
- * too — a browser ends `<!-->` at once and also stops at `--!>`, so text this
- * parser reads as a comment can be live markup. Every one of those would be a
- * place to put a handler this check cannot see.
+ * The parser in `parse.ts` was built to find editable words, so it treats
+ * `<style>`, `<textarea>`, `<title>` and `<svg>` as opaque and reads nothing
+ * else specially. A browser's rules for where an element ends are different in
+ * two ways that let a hostile rewrite hide a handler past the end of an element
+ * this check would otherwise read:
  *
- * So the check reads a transparent copy: those tag names are renamed, closing
- * tags included so the tree still nests, and their contents are walked; `<!`
- * and `<?` are broken so no comment or declaration hides anything. That reads
- * more as markup than any browser would, which can only make the check
- * stricter — and the same copy is made of both pages, so the site's own content
- * compares equal to itself. `<script>` keeps its meaning, because its full text
- * is what is compared.
+ * - **Raw-text and RCDATA elements end at their literal closing tag, not at a
+ *   quote.** A browser ends `<style>`, `<title>`, `<textarea>`, `<xmp>`,
+ *   `<noscript>`, `<noembed>`, `<noframes>` and `<iframe>` at the first
+ *   `</name>` regardless of any `"` opened inside, then parses what follows as
+ *   markup. An earlier version renamed the opaque ones so the parser would
+ *   *read* their contents as markup, on the theory that reading more can only
+ *   be stricter. It is not: a `<p title="</style><img onerror=…>">` then has
+ *   its quoted value swallow the real `</style>` and the live `<img>` after it,
+ *   and the check sees nothing. So each of these elements is ended here by the
+ *   browser's rule — its body dropped (inert, and never where a handler runs),
+ *   a clean closer put in its place — and scanning continues after it, where
+ *   the `<img onerror>` actually is. The opening tag is kept, because a handler
+ *   or an address *on it* (`<iframe src>`) still counts.
+ * - **Comments and CDATA end where the browser ends them.** `<!-->` and
+ *   `<!--->` are empty comments, `--!>` also closes one, and inside foreign
+ *   content `<![CDATA[ … ]]>` is text to `]]>`. The parser's own comment rule
+ *   (`indexOf('-->')`) misses the first two, so comments are resolved here and
+ *   collapsed to a space, and declarations and processing instructions end at
+ *   their `>`.
+ *
+ * Inside an `<svg>` or `<math>`, `<style>`, `<title>` and `<textarea>` are
+ * *not* raw-text — an `<img onerror>` within an SVG `<style>` runs — so there
+ * they are renamed to a plain tag the parser walks into, which matches the
+ * browser (a quoted value in that context really does span, as it would in the
+ * DOM). `<script>` is copied through its real `</script>` either way, so its
+ * full text is what gets compared and a `</style>` sitting inside a script
+ * string is not mistaken for structure.
+ *
+ * The same copy is made of both pages, so a site's own content always compares
+ * equal to itself.
  */
-const OPAQUE_TO_PARSER = /<(\/?)(style|textarea|title|svg)(?![a-zA-Z0-9:-])/gi;
+
+/** Raw-text and RCDATA elements: a browser ends them at `</name>`, not at a quote. */
+const TEXT_ELEMENTS = new Set(["style", "textarea", "title", "xmp", "noscript", "noembed", "noframes", "iframe", "plaintext"]);
+/** Those an `<svg>`/`<math>` subtree turns back into ordinary, walked markup. */
+const FOREIGN_WALKABLE = new Set(["style", "title", "textarea"]);
+const TAG_AT = /^<\/?([a-zA-Z][a-zA-Z0-9:-]*)/;
+
+/** Index just past the real `</tag>` from `from`, or the string's length when it never closes. */
+function closingTagEnd(html: string, tag: string, from: number): number {
+  const closer = new RegExp(`</${tag}(?=[\\s/>])`, "i").exec(html.slice(from));
+  if (!closer) return html.length;
+  const gt = html.indexOf(">", from + closer.index);
+  return gt < 0 ? html.length : gt + 1;
+}
+
+/** Index just past an opening or closing tag that starts at `lt`, skipping quoted attribute values. */
+function tagEndFrom(html: string, lt: number): number {
+  let i = TAG_AT.exec(html.slice(lt, lt + 64))![0].length + lt;
+  while (i < html.length && html[i] !== ">") {
+    const char = html[i]!;
+    if (char === '"' || char === "'") {
+      const close = html.indexOf(char, i + 1);
+      if (close < 0) return html.length;
+      i = close + 1;
+      continue;
+    }
+    i += 1;
+  }
+  return i < html.length ? i + 1 : html.length;
+}
 
 function transparent(html: string): string {
-  return html.replace(/<([!?])/g, "< $1").replace(OPAQUE_TO_PARSER, "<$1dw-transparent-$2");
+  const out: string[] = [];
+  let i = 0;
+  let foreign = 0; // depth of open <svg>/<math>, where the text elements are walked instead
+  while (i < html.length) {
+    const lt = html.indexOf("<", i);
+    if (lt < 0) {
+      out.push(html.slice(i));
+      break;
+    }
+    out.push(html.slice(i, lt));
+
+    if (html.startsWith("<!--", lt)) {
+      let resume: number;
+      const body = lt + 4;
+      if (html[body] === ">") resume = body + 1;
+      else if (html.startsWith("->", body)) resume = body + 2;
+      else {
+        const dashGt = html.indexOf("-->", body);
+        const dashBangGt = html.indexOf("--!>", body);
+        if (dashGt >= 0 && (dashBangGt < 0 || dashGt < dashBangGt)) resume = dashGt + 3;
+        else if (dashBangGt >= 0) resume = dashBangGt + 4;
+        else resume = html.length;
+      }
+      out.push(" ");
+      i = resume;
+      continue;
+    }
+    if (foreign > 0 && html.startsWith("<![CDATA[", lt)) {
+      const close = html.indexOf("]]>", lt + 9);
+      out.push(" ");
+      i = close < 0 ? html.length : close + 3;
+      continue;
+    }
+    if (html.startsWith("<!", lt) || html.startsWith("<?", lt)) {
+      const close = html.indexOf(">", lt);
+      out.push(" ");
+      i = close < 0 ? html.length : close + 1;
+      continue;
+    }
+
+    const match = TAG_AT.exec(html.slice(lt, lt + 64));
+    if (!match) {
+      out.push("<");
+      i = lt + 1;
+      continue;
+    }
+    const isEnd = html[lt + 1] === "/";
+    const tag = match[1]!.toLowerCase();
+    const tagEnd = tagEndFrom(html, lt);
+    const selfClosing = html[tagEnd - 2] === "/";
+    const raw = html.slice(lt, tagEnd);
+
+    if (isEnd) {
+      if (tag === "svg" || (foreign > 0 && FOREIGN_WALKABLE.has(tag))) out.push(`</dw-transparent-${raw.slice(2)}`);
+      else out.push(raw);
+      if ((tag === "svg" || tag === "math") && foreign > 0) foreign -= 1;
+      i = tagEnd;
+      continue;
+    }
+
+    if (tag === "svg" || tag === "math") {
+      out.push(tag === "svg" ? `<dw-transparent-${raw.slice(1)}` : raw);
+      if (!selfClosing) foreign += 1;
+      i = tagEnd;
+      continue;
+    }
+    if (tag === "script") {
+      const end = selfClosing ? tagEnd : closingTagEnd(html, "script", tagEnd);
+      out.push(html.slice(lt, end)); // verbatim, so its full text is what gets compared
+      i = end;
+      continue;
+    }
+    if (foreign > 0 && FOREIGN_WALKABLE.has(tag)) {
+      out.push(`<dw-transparent-${raw.slice(1)}`);
+      i = tagEnd;
+      continue;
+    }
+    if (foreign === 0 && TEXT_ELEMENTS.has(tag) && !selfClosing) {
+      const end = tag === "plaintext" ? html.length : closingTagEnd(html, tag, tagEnd);
+      out.push(raw); // the opening tag, where a handler or address still counts
+      out.push(" "); // the body is inert and dropped, so no quote in it spans the closer
+      if (tag !== "plaintext") out.push(`</${tag}>`);
+      i = end;
+      continue;
+    }
+
+    out.push(raw);
+    i = tagEnd;
+  }
+  return out.join("");
 }
 
 function character(code: number): string {

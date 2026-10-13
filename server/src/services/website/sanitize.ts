@@ -1,4 +1,4 @@
-import { parseHtml, type ElementNode } from "./parse.js";
+import { decodeEntities, parseHtml, type ElementNode } from "./parse.js";
 import { safeStyle } from "./regions.js";
 import { isScriptDataAttribute } from "../../shared/websiteElementSettings.js";
 
@@ -110,6 +110,12 @@ function render(source: string, element: ElementNode, depth: number): string {
     return element.selfClosing ? "" : renderChildren(source, element, depth);
   }
 
+  // Old Bootstrap renders `data-template` and `data-content` as HTML once
+  // `data-html` is on the element, so the two together are a markup sink even
+  // when neither name is script by itself; drop the payload when the flag is
+  // present rather than trust the value.
+  const hasHtmlFlag = element.attrs.some((candidate) => candidate.name === "data-html");
+
   const attrs: string[] = [];
   for (const attribute of element.attrs) {
     // `data-*` survives on purpose — the homepage figures are a
@@ -125,6 +131,18 @@ function render(source: string, element: ElementNode, depth: number): string {
       ALLOWED_ATTRS[element.tag]?.has(attribute.name) ||
       (attribute.name.startsWith("data-") && !attribute.name.startsWith("data-dw-") && !isScriptDataAttribute(attribute.name));
     if (!permitted) continue;
+    // `data-target`, `data-parent` and `data-container` are jQuery selectors to
+    // old Bootstrap, and a selector that starts with `<` is HTML it builds and
+    // runs instead. `data-target="70"` (the count-up) and `#section` have no
+    // `<` and stay; the test is on the decoded value, because `&lt;img` reaches
+    // the browser as `<img`. The `data-html` payloads go the same way.
+    if (hasHtmlFlag && (attribute.name === "data-template" || attribute.name === "data-content")) continue;
+    if (
+      (attribute.name === "data-target" || attribute.name === "data-parent" || attribute.name === "data-container") &&
+      decodeEntities(attribute.value).includes("<")
+    ) {
+      continue;
+    }
     if (attribute.name === "href") {
       const checked = checkLink(attribute.value);
       if (!checked.ok) continue;

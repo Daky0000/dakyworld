@@ -14,6 +14,13 @@
  * Half of it is negatives: a page that already runs scripts must keep working,
  * and every real section template must still be accepted.
  *
+ * It also holds the detector itself to the browser's parsing rules — a handler
+ * hidden by a quoted value that spans a raw-text, RCDATA or comment closer is
+ * found, not read past — and the rich-text sanitiser's one rule for the
+ * `data-` names a library runs as code (_hyperscript, Datastar, old Bootstrap's
+ * selector sinks), with the count-up figure proving an ordinary `data-target`
+ * still survives.
+ *
  * Database only. The pages are imported files (`sourceHtml`), so nothing is
  * fetched; the API binds port 0.
  */
@@ -26,6 +33,7 @@ import { errorHandler } from "../src/middleware/errorHandler.js";
 import { WebsiteError } from "../src/services/website/site.js";
 import { parseHtml, walk } from "../src/services/website/parse.js";
 import { DOCUMENT_KEY, buildPublishPlan, introducedActiveContent, sanitizeRich, type FieldValue } from "../src/services/website/index.js";
+import { isScriptDataAttribute } from "../src/shared/websiteElementSettings.js";
 import {
   applyAgentSitePlan,
   documentUpdateSignature,
@@ -127,6 +135,25 @@ equal(
   ["a script", "an onclick handler"],
 );
 
+// A quoted attribute value that spans a raw-text/RCDATA/comment closer. A
+// browser ends the element at its literal closer and runs the `<img onerror>`
+// after it; the check used to let the quote carry the value — and the live
+// markup inside it — past that closer, and saw nothing. Each of these executed
+// in a real browser.
+for (const [name, insert, found] of [
+  ["a </noscript> inside a quoted value", `<noscript><p title="</noscript><img src=x onerror=alert(1)>"></noscript>`, "an onerror handler"],
+  ["a </style> inside a quoted value", `<style><p title="</style><img src=x onerror=alert(1)>"></style>`, "an onerror handler"],
+  ["a </title> inside a quoted value", `<title><p alt="</title><img src=x onerror=alert(1)>"></title>`, "an onerror handler"],
+  ["a </textarea> inside a quoted value", `<textarea><p title="</textarea><img src=x onerror=alert(1)>"></textarea>`, "an onerror handler"],
+  ["a --> inside a quoted value", `<!-- <p title="--><img src=x onerror=alert(1)>"> -->`, "an onerror handler"],
+  ["a </xmp> inside a quoted value", `<xmp><p title="</xmp><img src=x onerror=alert(1)>"></xmp>`, "an onerror handler"],
+  ["a </noembed> inside a quoted value", `<noembed><p title="</noembed><img src=x onerror=alert(1)>"></noembed>`, "an onerror handler"],
+  ["a ]]> inside a quoted value in SVG CDATA", `<svg><![CDATA[<x title="]]><img src=x onerror=alert(1)>">]]></svg>`, "an onerror handler"],
+  ["a whole <script> after a spanned </style>", `<style><p title="</style><script>steal()</script>"></style>`, "a script"],
+] as const) {
+  equal(`${name} is found, not hidden by the quote`, introducedActiveContent(page, at(insert)), [found]);
+}
+
 // Every section the assistant can insert, on a page that already runs code.
 for (const [kind, template] of Object.entries(SECTION_TEMPLATES)) {
   const inserted = injectSectionIntoHtml(page, template.generateHtml({ siteName: "Acme" }));
@@ -143,6 +170,35 @@ ok("data-hx-get is dropped from rich text", !rich.includes("data-hx-get"));
 ok("data-hx-post in capitals is dropped too", !/data-hx-post/i.test(rich));
 ok("the editor's own marks are still dropped", !rich.includes("data-dw-"));
 ok("the words survive", rich.includes(">70</strong>"));
+
+// The names more libraries read as code. _hyperscript's `data-script`, and
+// Datastar's reactive set, run on a page that loads those libraries exactly as
+// `data-bind` runs on a Knockout one; the one rule the Settings panel and this
+// sanitiser share must know them.
+for (const name of ["data-script", "data-text", "data-show", "data-effect", "data-computed", "data-attr", "data-attr-href", "data-signals", "data-signals-x", "data-class", "data-class-on", "data-indicator", "data-init"]) {
+  ok(`${name} is refused by name`, isScriptDataAttribute(name));
+  ok(`…and dropped from rich text`, !sanitizeRich(`<span ${name}="alert(1)">x</span>`).includes(name));
+}
+// …without sweeping up ordinary data- names that merely start the same way.
+for (const name of ["data-target", "data-parent", "data-container", "data-html", "data-template", "data-content", "data-testid", "data-attribution", "data-classname", "data-section"]) {
+  ok(`${name} is not mistaken for code`, !isScriptDataAttribute(name));
+}
+
+// Old Bootstrap sinks. `data-target`/`data-parent`/`data-container` are jQuery
+// selectors, and one starting `<` is HTML it builds and runs; `data-template`/
+// `data-content` are rendered as HTML once `data-html` is on the element. The
+// browser decodes `&lt;` to `<`, so the test is on the decoded value.
+ok("a data-target holding <img> is dropped", !sanitizeRich(`<span data-target="<img src=x onerror=alert(1)>">x</span>`).includes("data-target"));
+ok("…even written as an entity", !sanitizeRich(`<span data-target="&lt;img src=x onerror=alert(1)>">x</span>`).includes("data-target"));
+ok("a data-parent holding < is dropped", !sanitizeRich(`<span data-parent="<x>">x</span>`).includes("data-parent"));
+ok("a data-container holding < is dropped", !sanitizeRich(`<span data-container="<x>">x</span>`).includes("data-container"));
+ok("data-template is dropped when data-html is present", !sanitizeRich(`<span data-html="true" data-template="<img src=x onerror=alert(1)>">x</span>`).includes("data-template"));
+ok("data-content is dropped when data-html is present", !sanitizeRich(`<span data-html="true" data-content="<img src=x onerror=alert(1)>">x</span>`).includes("data-content"));
+// The negatives that must survive: the count-up figure, a plain selector, and
+// a template with no data-html beside it.
+ok("the count-up figure keeps data-target=\"70\"", sanitizeRich(`<strong class="count-up" data-target="70">70</strong>`).includes(`data-target="70"`));
+ok("a data-target holding a selector survives", sanitizeRich(`<span data-target="#section">x</span>`).includes(`data-target="#section"`));
+ok("a data-template with no data-html survives", sanitizeRich(`<span data-template="plain">x</span>`).includes(`data-template="plain"`));
 
 /* ------------------------------------------------ against a real database */
 

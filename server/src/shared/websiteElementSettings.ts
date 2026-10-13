@@ -101,8 +101,21 @@ const ADDRESS_ATTRIBUTES = new Set([
  * framework there is — it does not need to be, because values are restricted as
  * well (no brackets, no semicolons, no script addresses) — but the names that
  * are code by design are refused by name, so the refusal says why.
+ *
+ * Two alternations, because the shapes differ. The first is prefixes that are
+ * always a dash away from an expression (`data-hx-*` htmx, `data-on*` inline
+ * and Datastar's `data-on-*`, `data-x-*`/`data-v-*`/`data-ng-*`/`data-wire:*`
+ * Alpine/Vue/Angular/Livewire): matched loosely because what follows is open.
+ * The second is whole names a library runs as code — `data-bind` (Knockout),
+ * `data-script` (_hyperscript's alias of `_`) and Datastar's reactive set
+ * (`data-text`, `data-show`, `data-effect`, `data-computed`, `data-attr[-*]`,
+ * `data-signals[-*]`, `data-class[-*]`, `data-indicator`, `data-init`) — held
+ * to the name itself or a dashed suffix, so an ordinary `data-attribution` or
+ * `data-classname` is not swept up and `data-target` (the count-up figures)
+ * still passes.
  */
-const SCRIPT_DATA = /^data-(?:hx-|on|x-|bind|v-|ng-|wire:|alpine)/;
+const SCRIPT_DATA =
+  /^data-(?:(?:hx-|on|x-|v-|ng-|wire:|alpine)|(?:bind|script|text|show|effect|computed|attr|signals|class|indicator|init)(?:$|[^a-z0-9]))/;
 
 /**
  * Whether a library would run this `data-` attribute as code. The one rule for

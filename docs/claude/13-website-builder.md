@@ -1026,9 +1026,19 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   refuses a rewrite that adds anything that runs which the page does not
   already have (a new or changed script, `on*`, a script address, `srcdoc`,
   frames, `base`, meta refresh) — because what a model writes can be steered
-  by the words on the page it is reading. Both client call sites send
-  `documentHtmlUpdates` back whole, or the signatures cannot survive.
-  `checks/websiteActiveContent.ts`.
+  by the words on the page it is reading. `introducedActiveContent` reads the
+  page the way the browser parses it: a raw-text or RCDATA element
+  (`<style>`, `<title>`, `<textarea>`, `<xmp>`, `<noscript>`, `<noembed>`,
+  `<noframes>`, `<iframe>`), a comment (`<!-->`, `--!>` and all) and an SVG
+  `<![CDATA[` end where the browser ends them, and the `<img onerror>` after
+  that closer is read as markup. The earlier copy renamed the opaque tags so
+  the parser *walked* their contents, on the theory that reading more can only
+  be stricter — it is not, because a `<p title="</style><img onerror=…>">` then
+  lets the quoted value swallow the real `</style>` and the live `<img>` after
+  it. Inside `<svg>`/`<math>` those elements are not raw-text, so there they
+  are still walked (the quote really does span, as in the DOM). Both client
+  call sites send `documentHtmlUpdates` back whole, or the signatures cannot
+  survive. `checks/websiteActiveContent.ts`.
 - **A value written into an attribute is escaped for the quote the page
   used** — `inAttribute()` in `regions.ts`, for a meta field's words, a
   picture's address, a link, alt text, a style and a class. A page's
@@ -1051,7 +1061,19 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
 - **One rule for script-ish `data-` names** — `isScriptDataAttribute` in
   `shared/websiteElementSettings.ts`, used by the Settings panel and by
   `sanitize.ts` alike. `data-bind` and `data-hx-*` run code on Knockout and
-  htmx sites; `data-target` (the count-up figures) must still survive.
+  htmx sites; so do `data-script` (_hyperscript's alias of `_`) and Datastar's
+  set (`data-text`, `data-show`, `data-effect`, `data-computed`, `data-attr`,
+  `data-signals`, `data-class`, `data-indicator`, `data-init` and the
+  `data-on-*` family). The rule anchors the ambiguous names to the whole word
+  or a dashed suffix, so `data-attribution`, `data-classname` and `data-target`
+  (the count-up figures) all still survive. The rest is old Bootstrap, handled
+  in `sanitize.ts` because the value is what is dangerous, not the name:
+  `data-template`/`data-content` are dropped when `data-html` is on the
+  element (both are rendered as HTML then), and a `data-target`/`data-parent`/
+  `data-container` whose **decoded** value holds `<` is dropped, because jQuery
+  builds and runs a selector that starts with one — `&lt;img…` reaches the
+  browser as `<img…`. A `data-target` holding a number or a plain selector
+  (`#section`) keeps working.
 - **A hosted picture whose bytes moved to R2 is a 302 to R2**, never a 404.
   `scripts/migrate-images-to-r2.mjs` sets `SiteAsset.content` to NULL after
   uploading, and the hosting route used to answer 404 for a NULL column.
