@@ -83,8 +83,10 @@ const ADDRESS_ATTRIBUTES = new Set(["href", "src", "action", "formaction", "xlin
  * The one thing that stack cannot know is the HTML around it — whether a
  * `</div>` closes a `<div>` the `<svg>` is inside depends on implied end tags,
  * table modes and misnesting this file does not model. At each such point the
- * page is read **both ways** (`readings`), and anything either reading finds
- * counts. A page that is well nested has no such point and is read once.
+ * page is read **both ways** (`readings`): on the rewrite anything either
+ * reading finds counts, and the page as it stands is credited only with what
+ * both find (`activeItems`). A page that is well nested has no such point and
+ * is read once.
  *
  * `<script>` is copied through its real `</script>` (escapes included), so its
  * full text is what gets compared and a `</style>` sitting inside a script
@@ -126,6 +128,29 @@ const NOT_ORDINARY = new Set([
 ]);
 /** Past this many readings a page's foreign markup is too tangled to read, and what follows is refused rather than guessed. */
 const MAX_READINGS = 32;
+/**
+ * Bounds on one reading, past which the page is "markup this check cannot
+ * read safely" (`readings` says why as a whole). The check runs synchronously inside the API on the
+ * customer's own source, which may be megabytes: an unclosed `<svg>` holding
+ * thousands of unclosed `<g>` and then as many stray end tags made every end
+ * tag walk the whole stack, and froze the process for over a minute at 56 KB.
+ * No real page nests foreign content, or the HTML inside an integration point,
+ * anywhere near `MAX_DEPTH` deep, misnests at `MAX_DECISIONS` points (after
+ * five, `MAX_READINGS` has given up already), or has end tags walk
+ * `MAX_STEPS` stack entries below the current node (an end tag that closes
+ * the current node costs nothing, so a huge well-formed SVG is read whole); a
+ * page that does is refused on change rather than read slowly.
+ */
+const MAX_DEPTH = 128;
+const MAX_DECISIONS = 64;
+const MAX_STEPS = 100_000;
+/**
+ * Each reading parses the whole page again, so 32 of a 1 MB page took four
+ * seconds. Past this many characters read in all, no further reading is
+ * started: up to about 125 KB a page still gets every one of `MAX_READINGS`,
+ * a 1 MB page four, and a larger page tangled past that is unreadable.
+ */
+const MAX_READ_CHARACTERS = 4_000_000;
 
 type ForeignElement = {
   tag: string;
@@ -248,24 +273,45 @@ function scriptCloser(html: string, from: number): number {
 /** Where the closing tag starting at `lt` ends — tokenized, so a `>` in a quoted value on it is not its end. */
 const closerEnd = (html: string, lt: number) => (lt < 0 ? html.length : readTag(html, lt).end);
 
+/** Where a reading stopped short of the end of the page, and what was open there. */
+type Cut = { at: number; state: string };
+
 /**
  * One reading of the page: the copy the parser walks, given an answer at each
  * point where the HTML around a foreign element decides what happens next.
- * `choices` holds those answers in order (0 when it runs out); `arities`,
- * `positions` and `states` say how many answers each point had, where it was,
- * and what was open there.
+ * `choices` holds those answers in order (0 when it runs out); `arities` and
+ * `positions` say how many answers each point had and where it was. `cut` is
+ * where the reading stopped at one of the bounds above, with what was open
+ * there; the copy ends at it.
+ *
+ * What was open at a point is serialised only for the one point `readings`
+ * asks about (`snapshotAt`), on a second run that stops there. Serialising it
+ * at every point, in case it was wanted, made a reading quadratic in time and
+ * memory.
  */
-function transparent(html: string, choices: number[]): { source: string; arities: number[]; positions: number[]; states: string[] } {
+function transparent(
+  html: string,
+  choices: number[],
+  snapshotAt = -1,
+): { source: string; arities: number[]; positions: number[]; cut: Cut | null } {
   const out: string[] = [];
   const arities: number[] = [];
   const positions: number[] = [];
-  const states: string[] = [];
+  let cut: Cut | null = null;
+  let steps = 0;
+  /** Stops the reading at `at`; the main loop drops whatever the tag there wrote. */
+  const stop = (at: number) => {
+    cut ??= { at, state: JSON.stringify([open, tableSeen]) };
+  };
   const decide = (count: number, at: number): number => {
-    if (count <= 1) return 0;
+    if (count <= 1 || cut) return 0;
     const index = arities.length;
+    if (index === snapshotAt || index >= MAX_DECISIONS) {
+      stop(at);
+      return 0;
+    }
     arities.push(count);
     positions.push(at);
-    states.push(JSON.stringify([open, tableSeen]));
     return Math.min(choices[index] ?? 0, count - 1);
   };
   const open: ForeignElement[] = [];
@@ -290,6 +336,7 @@ function transparent(html: string, choices: number[]): { source: string; arities
     outcomes.push(open.length);
     const pierces = tableSeen && TABLE_ENDS.has(name);
     for (let index = open.length - 1; index >= 0; index -= 1) {
+      if (index < open.length - 1) steps += 1;
       const element = open[index]!;
       // A boundary between the current node and the HTML below: out of scope.
       if (element.kind !== "plain" && !pierces) break;
@@ -314,13 +361,23 @@ function transparent(html: string, choices: number[]): { source: string; arities
   };
 
   let i = 0;
+  let mark = 0;
   while (i < html.length) {
+    if (cut) {
+      out.length = mark;
+      break;
+    }
+    if (steps > MAX_STEPS) {
+      stop(i);
+      break;
+    }
     const lt = html.indexOf("<", i);
     if (lt < 0) {
       out.push(html.slice(i));
       break;
     }
     out.push(html.slice(i, lt));
+    mark = out.length;
 
     if (html.startsWith("<!--", lt)) {
       let resume: number;
@@ -383,6 +440,7 @@ function transparent(html: string, choices: number[]): { source: string; arities
         // The HTML rules alone. An ordinary element closed in order is
         // followed; closed out of order, the point stops being readable.
         const last = current.html.lastIndexOf(name);
+        steps += current.html.length - 1 - last;
         if (last >= 0 && last === current.html.length - 1) current.html.pop();
         else if (last >= 0) current.tainted = true;
         htmlEndOutcomes(name, outcomes, viaHtml);
@@ -394,6 +452,7 @@ function transparent(html: string, choices: number[]): { source: string; arities
         outcomes.push(index);
       } else {
         for (let index = open.length - 1; index >= 0; index -= 1) {
+          if (index < open.length - 1) steps += 1;
           const element = open[index]!;
           if (element.tag === name) {
             outcomes.push(index);
@@ -439,6 +498,10 @@ function transparent(html: string, choices: number[]): { source: string; arities
         : ["mi", "mo", "mn", "ms", "mtext"].includes(name) ? "textIp"
         : name === "annotation-xml" ? (encoding === "text/html" || encoding === "application/xhtml+xml" ? "htmlIp" : "annotation")
         : "plain";
+      if (!tag.selfClosing && open.length >= MAX_DEPTH) {
+        stop(lt);
+        continue;
+      }
       if (!tag.selfClosing) open.push({ tag: name, ns, kind, below: false, html: [], tainted: false });
       out.push(rename(raw, name, false)); // walked, like the rest of the SVG — an SVG <script> included
       i = tag.end;
@@ -447,6 +510,10 @@ function transparent(html: string, choices: number[]): { source: string; arities
 
     // The HTML rules.
     if (name === "svg" || name === "math") {
+      if (!tag.selfClosing && open.length >= MAX_DEPTH) {
+        stop(lt);
+        continue;
+      }
       if (!tag.selfClosing) open.push({ tag: name, ns: name, kind: "plain", below: current ? htmlInside(current) : true, html: [], tainted: false });
       out.push(rename(raw, name, false));
       i = tag.end;
@@ -480,12 +547,16 @@ function transparent(html: string, choices: number[]): { source: string; arities
     current = top();
     if (current && isIntegrationPoint(current) && !VOID.has(name) && name !== "html" && name !== "head" && name !== "body") {
       if (NOT_ORDINARY.has(name)) current.tainted = true;
-      else current.html.push(name);
+      else if (current.html.length < MAX_DEPTH) current.html.push(name);
+      else {
+        stop(lt);
+        continue;
+      }
     }
     out.push(rename(raw, name, false));
     i = tag.end;
   }
-  return { source: out.join(""), arities, positions, states };
+  return { source: out.join(""), arities, positions, cut };
 }
 
 /**
@@ -495,17 +566,34 @@ function transparent(html: string, choices: number[]): { source: string; arities
  * so an edit above it cannot change how the same words below are read — is
  * returned as `unreadable`, and a change to it is refused rather than read
  * one way and run another.
+ *
+ * A page that reaches one of the bounds on the work instead (a reading `cut`
+ * short, or `MAX_READ_CHARACTERS`) is unreadable **as a whole**, and any change
+ * to it is refused. The open foreign elements are not the whole state: the
+ * HTML around them is what this file does not model, so the same words after
+ * the same stack can run on one page and not on the other — an unclosed
+ * `<svg>` 128 deep followed by `</div><style><img onerror>` is inert inside a
+ * `<div>` (the `</div>` closes it) and runs without one. Past `MAX_READINGS`
+ * that risk is taken so that an edit above a tangle still passes; no real page
+ * comes near these bounds, so here it is not.
  */
-function readings(html: string): { sources: string[]; unreadable: string | null } {
+function readings(html: string): { sources: string[]; unreadable: string[] } {
   const sources: string[] = [];
-  const left = { at: html.length + 1, state: "" };
+  const unreadable: string[] = [];
+  let whole = false;
+  const left = { at: html.length + 1, prefix: [] as number[], point: 0 };
   const explore = (prefix: number[]) => {
     const reading = transparent(html, prefix);
     sources.push(reading.source);
+    if (reading.cut) whole = true;
     for (let point = prefix.length; point < reading.arities.length; point += 1) {
       for (let choice = 1; choice < reading.arities[point]!; choice += 1) {
         if (sources.length >= MAX_READINGS) {
-          if (reading.positions[point]! < left.at) Object.assign(left, { at: reading.positions[point]!, state: reading.states[point]! });
+          if (reading.positions[point]! < left.at) Object.assign(left, { at: reading.positions[point]!, prefix, point });
+          return;
+        }
+        if ((sources.length + 1) * html.length > MAX_READ_CHARACTERS) {
+          whole = true;
           return;
         }
         explore([...prefix, ...new Array<number>(point - prefix.length).fill(0), choice]);
@@ -513,7 +601,12 @@ function readings(html: string): { sources: string[]; unreadable: string | null 
     }
   };
   explore([]);
-  return { sources, unreadable: left.at <= html.length ? `${left.state}\u0000${html.slice(left.at)}` : null };
+  if (whole) unreadable.push(createHash("sha256").update("whole\u0000").update(html).digest("hex"));
+  // What was open at the first point left unexplored, from one more run of
+  // the reading that found it, stopped there.
+  const stopped = left.at <= html.length ? transparent(html, left.prefix, left.point).cut : null;
+  if (stopped) unreadable.push(createHash("sha256").update(`${stopped.state}\u0000`).update(html.slice(stopped.at)).digest("hex"));
+  return { sources, unreadable };
 }
 
 function character(code: number): string {
@@ -616,42 +709,59 @@ function itemsOf(source: string): ActiveItem[] {
 }
 
 /**
- * What runs on the page, by every reading of it: an item counts as many times
- * as the reading that has the most of it, so whichever way the browser goes,
- * nothing it runs is missed.
+ * What runs on the page, by every reading of it. On the page being written
+ * (`most`) an item counts as many times as the reading that has the most of
+ * it, so whichever way the browser goes, nothing it runs is missed. On the page
+ * as it stands (`least`) it counts as many times as the reading with the
+ * fewest: only what every reading agrees is already there is credited. Until
+ * 13 Oct 2026 the page as it stands was read the generous way too, so a
+ * handler lying inert in a `<style>` that only an impossible reading walked
+ * into — `<div><svg></div><style><img onerror=…>`, where the browser closes
+ * both at `</div>` — paid for the same handler written live inside the SVG.
  */
-function activeItems(html: string): ActiveItem[] {
+function activeItems(html: string, merge: "most" | "least"): ActiveItem[] {
   const { sources, unreadable } = readings(html);
-  const most = new Map<string, { item: ActiveItem; count: number }>();
-  for (const source of sources) {
+  const merged = new Map<string, { item: ActiveItem; count: number }>();
+  sources.forEach((source, index) => {
     const counts = new Map<string, { item: ActiveItem; count: number }>();
     for (const item of itemsOf(source)) {
       const known = counts.get(item.key);
       if (known) known.count += 1;
       else counts.set(item.key, { item, count: 1 });
     }
-    for (const [key, entry] of counts) {
-      if ((most.get(key)?.count ?? 0) < entry.count) most.set(key, entry);
+    if (merge === "most") {
+      for (const [key, entry] of counts) {
+        if ((merged.get(key)?.count ?? 0) < entry.count) merged.set(key, entry);
+      }
+    } else if (index === 0) {
+      for (const [key, entry] of counts) merged.set(key, entry);
+    } else {
+      for (const [key, entry] of merged) {
+        const count = Math.min(entry.count, counts.get(key)?.count ?? 0);
+        if (count > 0) merged.set(key, { item: entry.item, count });
+        else merged.delete(key);
+      }
     }
-  }
-  const items = [...most.values()].flatMap(({ item, count }) => new Array<ActiveItem>(count).fill(item));
-  if (unreadable !== null) {
-    const digest = createHash("sha256").update(unreadable).digest("hex");
-    items.push({ key: `unreadable\u0000${digest}`, what: "markup this check cannot read safely" });
-  }
+  });
+  const items = [...merged.values()].flatMap(({ item, count }) => new Array<ActiveItem>(count).fill(item));
+  for (const digest of unreadable) items.push({ key: `unreadable\u0000${digest}`, what: "markup this check cannot read safely" });
   return items;
 }
 
 /**
  * What `after` has that runs or embeds and `before` does not, each named once
  * in words a person can read ("a script", "an onclick handler", "a
- * javascript: address"). Empty when the rewrite adds nothing of the kind.
+ * javascript: address"). Empty when the rewrite adds nothing of the kind —
+ * and always for a page handed back unchanged, which crediting the page as it
+ * stands by its least reading would otherwise refuse wherever its readings
+ * disagree.
  */
 export function introducedActiveContent(before: string, after: string): string[] {
+  if (before === after) return [];
   const remaining = new Map<string, number>();
-  for (const item of activeItems(before)) remaining.set(item.key, (remaining.get(item.key) ?? 0) + 1);
+  for (const item of activeItems(before, "least")) remaining.set(item.key, (remaining.get(item.key) ?? 0) + 1);
   const added: string[] = [];
-  for (const item of activeItems(after)) {
+  for (const item of activeItems(after, "most")) {
     const left = remaining.get(item.key) ?? 0;
     if (left > 0) {
       remaining.set(item.key, left - 1);

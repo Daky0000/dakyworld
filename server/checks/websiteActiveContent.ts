@@ -18,7 +18,9 @@
  * hidden by a quoted value that spans a raw-text, RCDATA or comment closer is
  * found, not read past; and through SVG and MathML, where a `<style>` is
  * walked until an integration point, a breakout tag or an end tag takes the
- * browser back to HTML, each shape of which ran in Chromium — and the
+ * browser back to HTML, each shape of which ran in Chromium; credits the page
+ * as it stands only with what every reading of it runs; and finishes a
+ * hostile page in milliseconds, because it runs inside the API — and the
  * rich-text sanitiser's one rule for the `data-` names a library runs as code
  * (_hyperscript, Datastar, old Bootstrap's
  * selector sinks), with the count-up figure proving an ordinary `data-target`
@@ -223,6 +225,76 @@ equal("…and refuses one after it", introducedActiveContent(tangled, tangled.re
 // The same words below the tangle read differently once a table is open above
 // it (its end tags close straight through foreign content), so that is a change too.
 equal("…or one above it that changes how the words after it are read", introducedActiveContent(tangled, tangled.replace("<h1>Hello</h1>", "<h1>Hello</h1><table></table>")), ["markup this check cannot read safely"]);
+
+// The page as it stands is credited only with what every reading of it runs.
+// The browser closes the <div> and the <svg> at </div>, so this <style> is raw
+// text and its <img> never runs; only the reading that ignores the </div>
+// walks into it. Crediting that reading let the same handler, written where it
+// does run, through as already present.
+const inert = `<div><svg></div><style><img src=x onerror=alert(1)></style>`;
+const live = `<div><svg><style><img src=x onerror=alert(1)></style></svg></div>`;
+equal("a handler only an impossible reading of the page sees does not pay for a live one", introducedActiveContent(inert, live), ["an onerror handler"]);
+equal("…the same as against a clean page", introducedActiveContent("<div></div>", live), ["an onerror handler"]);
+equal("…in a whole page too", introducedActiveContent(at(inert), at(live)), ["an onerror handler"]);
+equal("a page whose readings disagree, handed back unchanged, adds nothing", introducedActiveContent(at(inert), at(inert)), []);
+// The price, kept on purpose: an edit elsewhere on that page is refused, naming
+// the handler that only some readings of it run.
+equal("…and an edit to it names the handler it cannot vouch for", introducedActiveContent(at(inert), at(inert).replace("<h1>Hello</h1>", "<h1>Hi</h1>")), ["an onerror handler"]);
+// The page being written is still read by its most: the live handler in one
+// reading is found even when the other reading drops it.
+equal("…while a handler only one reading of the new page runs is still found", introducedActiveContent(page, at(inert)), ["an onerror handler"]);
+
+// Bounded work. The check runs synchronously in the API on the customer's own
+// source, up to 16 MB of it. An unclosed <svg> holding thousands of unclosed
+// <g> and as many stray end tags made each end tag a decision that serialised
+// the whole open stack: 18 KB took 2.4 s and nearly 1 GB, 56 KB 79 s or an
+// out-of-memory abort. Past a depth, a number of decisions or an amount of
+// stack walked, the page is refused as unreadable instead.
+const bounded = (name: string, html: string) => {
+  const rss = process.memoryUsage().rss;
+  const started = performance.now();
+  const found = introducedActiveContent(html, `${html}<p>x</p>`);
+  const took = performance.now() - started;
+  const grew = (process.memoryUsage().rss - rss) / 1e6;
+  ok(`${name} is read in well under 100 ms (took ${Math.round(took)} ms)`, took < 100);
+  ok(`…and without holding the stack once per end tag (grew ${Math.round(grew)} MB)`, grew < 256);
+  equal("…and a change after what it could not read is refused", found, ["markup this check cannot read safely"]);
+};
+const stray = (count: number) => `<svg>${"<g>".repeat(count)}${"</x>".repeat(count)}`;
+const misnested = (count: number) => `<div><svg>${"<g>".repeat(count)}${"</div>".repeat(count)}`;
+bounded("56 KB of unclosed <g> and stray end tags", stray(8_000));
+bounded("56 KB of unclosed <g> in an <svg> in a <div> and as many </div>", misnested(6_200));
+bounded("1 MB of unclosed <g> and stray end tags", stray(150_000));
+bounded("1 MB of unclosed <g> in an <svg> in a <div> and as many </div>", misnested(116_000));
+// Under the depth, with no decision at all, each stray end tag still walks the
+// stack down to the integration point: that is what the step bound is for.
+bounded("1 MB of stray end tags under a stack a hundred deep", `<svg><foreignObject><svg>${"<g>".repeat(100)}${"</x>".repeat(250_000)}`);
+// A page cut short at a bound is unreadable as a whole, not from the cut on:
+// what was open there does not include the HTML around it, and that is what
+// decides. This <style> is raw text inside the <div> (its </div> closes the
+// <svg>) and live without it (the </div> is ignored, and the <img> breaks out).
+const cutShort = `<p>Hi</p><div><svg>${"<g>".repeat(130)}</div><style><img src=x onerror=alert(1)></style>`;
+equal("an edit above where a reading was cut short is refused", introducedActiveContent(cutShort, cutShort.replace("<div><svg>", "<svg>")), ["markup this check cannot read safely"]);
+equal("…and the same page handed back unchanged is not", introducedActiveContent(cutShort, cutShort), []);
+// Each reading parses the whole page again, so thirty-two readings of a large
+// tangled page took four seconds of straight-line work. Past a budget of
+// characters read, a large tangled page is unreadable; a large page with a
+// little misnesting is still read every way.
+const paragraphs = "<p class=a>Words and more words.</p>";
+const largeTangle = at(`${`<div><svg><path d="M0 0"></div>`.repeat(5)}${paragraphs.repeat(30_000)}`);
+const largeStarted = performance.now();
+equal("a 1 MB tangled page handed back unchanged adds nothing", introducedActiveContent(largeTangle, largeTangle), []);
+equal("…an edit to it is refused", introducedActiveContent(largeTangle, largeTangle.replace("<h1>Hello</h1>", "<h1>Hi</h1>")), ["markup this check cannot read safely"]);
+const largeTook = performance.now() - largeStarted;
+ok(`…read in under three seconds, not thirty-two parses each side (took ${Math.round(largeTook)} ms)`, largeTook < 3_000);
+const largeTwice = at(`${`<div><svg><path d="M0 0"></div>`.repeat(2)}${paragraphs.repeat(25_000)}`);
+equal("a 0.9 MB page misnested twice takes an edit", introducedActiveContent(largeTwice, largeTwice.replace("<p class=a>Words", "<p class=b>Words")), []);
+equal("…and finds a handler added to it", introducedActiveContent(largeTwice, largeTwice.replace("<p class=a>Words", "<p class=a onclick=x()>Words")), ["an onclick handler"]);
+// …and none of it touches a real page: an SVG nested a hundred deep is read
+// whole, so an edit after it is not refused.
+const nested = at(`<svg>${"<g>".repeat(100)}<rect/>${"</g>".repeat(100)}</svg><p>After</p>`);
+equal("an SVG nested a hundred deep takes an edit after it", introducedActiveContent(nested, nested.replace("<p>After</p>", "<p>Later</p>")), []);
+equal("…and still finds a handler after it", introducedActiveContent(nested, nested.replace("<p>After</p>", `<p>After</p><img src=x onerror=alert(1)>`)), ["an onerror handler"]);
 
 // Every section the assistant can insert, on a page that already runs code.
 for (const [kind, template] of Object.entries(SECTION_TEMPLATES)) {

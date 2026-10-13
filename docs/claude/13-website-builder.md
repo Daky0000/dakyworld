@@ -1053,9 +1053,26 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   color>`…), `</p>`/`</br>`, and an HTML end tag closing what an unclosed
   `<svg>` sits in. The HTML around an `<svg>` is not modelled, so where it
   decides (a misnested end tag, table modes, out-of-order HTML inside a
-  `<foreignObject>`) the page is **read both ways** and either reading's
-  finding counts; past 32 readings the rest of the page is refused as
-  "markup this check cannot read safely" rather than guessed. Tags are
+  `<foreignObject>`) the page is **read both ways**: on the rewrite either
+  reading's finding counts, while the page as it stands is credited only with
+  what *every* reading finds — crediting its most let a handler lying inert in
+  a `<style>` that only an impossible reading walked into pay for the same
+  handler written live. The price is that an edit to a page whose readings
+  disagree about a handler is refused naming it; an unchanged page is never
+  refused (`before === after` is nothing introduced). Past 32 readings the rest
+  of the page is refused as "markup this check cannot read safely" rather than
+  guessed. **The check runs synchronously in the API on the customer's own
+  source**, so the work is bounded too: foreign nesting (or HTML inside an
+  integration point) past 128 deep, 64 decision points, 100,000 stack entries
+  walked below the current node, or 4 million characters parsed across
+  readings (a 1 MB page gets four readings, not 32) makes the **whole page**
+  unreadable, so any change to it is refused. Not "from there on": the open
+  foreign stack does not hold the HTML around it, and an unclosed `<svg>` 128
+  deep followed by `</div><style><img onerror>` is inert inside a `<div>` and
+  live without one — same stack, same words after it. What was open at a point
+  is serialised once, for the one point that needs it: serialising it at
+  every point made `<svg>` + `<g>`×8000 + `</x>`×8000 (56 KB) take 79 s or
+  abort out of memory (13 Oct 2026). Tags are
   tokenized as a browser does (a quote opens a value only after `=`; `<svg.x>`
   is not an SVG; `</style\v>` does not close), `<style/>` opens raw text, and
   CDATA on an integration point is read both ways because Chromium and the
