@@ -91,21 +91,102 @@ const removeFromR2: MediaRemover = async (key) => {
 };
 const defaultRemover = (): MediaRemover | null => (isR2Configured() ? removeFromR2 : null);
 
-/** The R2 keys a site's uploads occupy — read before the row cascades them away. */
-async function siteMediaKeys(siteId: string): Promise<string[]> {
-  const assets = await prisma.siteAsset.findMany({ where: { siteId }, select: { repoPath: true } });
-  return [...new Set(assets.map((asset) => asset.repoPath.replace(/^\/+/, "")).filter(Boolean))];
+/**
+ * An object an erasure left in the bucket on purpose, and why. Once the site
+ * has gone this, and the log line written with it, is the only record of the
+ * key — which is what somebody needs to remove it by hand if the customer asks.
+ */
+export type KeptObject = { key: string; why: string };
+
+/**
+ * What an erasure has to decide about a site's media, read before its rows
+ * cascade away: every key it may own, and — for a site with a repository —
+ * which of those its own pages still mention.
+ */
+type SiteMedia = { siteId: string; name: string; repository: string | null; keys: string[]; onPages: Map<string, string[]> };
+
+/** An upload's uuid, read off its key, and the same shape found anywhere in a page. */
+const UPLOAD_ID = /^assets\/dw\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/;
+const UPLOAD_ID_IN_TEXT = "assets/dw/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})";
+
+/**
+ * The keys a site may own, and the pages that still load each one.
+ *
+ * Two sources, because the remaining asset rows are not all of it. When the
+ * delete route removes a row but keeps the object (`storedObjectStillNeeded`
+ * in websiteAssets.ts), the only record of that key is the route's
+ * ASSET_DELETED event — which cascades away with the site. Reading the rows
+ * alone left every such object in the public bucket for good.
+ *
+ * A repository's pages are files in the customer's own repository, and with R2
+ * on the editor writes the R2 address into them, so their live site loads
+ * those pictures from this bucket whatever happens here. Which uploads the
+ * site's pages mention — published copy, source or draft, hidden pages
+ * included, as the delete route counts them — is worked out in the database,
+ * by the upload's uuid: every address an upload can be written as contains
+ * `assets/dw/<uuid>` (`mentionsAsset`), no other file has that uuid, and so
+ * each page is read once, in Postgres, rather than once per key — and none of
+ * its HTML comes back here. Testing every key against every page instead took
+ * eight to eleven seconds on a 60-page site with 400 uploads; this takes a
+ * quarter of one.
+ */
+async function siteMedia(siteId: string): Promise<SiteMedia | null> {
+  const site = await prisma.site.findUnique({ where: { id: siteId }, select: { name: true, repoOwner: true, repoName: true } });
+  if (!site) return null;
+  const [assets, deletions] = await Promise.all([
+    prisma.siteAsset.findMany({ where: { siteId }, select: { repoPath: true } }),
+    prisma.siteAuditEvent.findMany({ where: { siteId, kind: "ASSET_DELETED", detail: { path: ["storedObject"], equals: "kept" } }, select: { detail: true } }),
+  ]);
+  const keptOnDelete = deletions.map((event) => (event.detail as { repoPath?: unknown } | null)?.repoPath).filter((key): key is string => typeof key === "string");
+  const keys = [...new Set([...assets.map((asset) => asset.repoPath), ...keptOnDelete].map((key) => key.replace(/^\/+/, "")).filter(Boolean))];
+  const repository = site.repoName ? [site.repoOwner, site.repoName].filter(Boolean).join("/") : null;
+  const onPages = new Map<string, string[]>();
+  if (repository && keys.some(isUploadKey)) {
+    const found = await prisma.$queryRaw<Array<{ id: string; titles: string[] }>>`
+      SELECT mention.id, array_agg(mention.title ORDER BY mention."sortOrder", mention.path) AS titles
+      FROM (
+        SELECT DISTINCT m[1] AS id, p."title" AS title, p."sortOrder", p."path" AS path
+        FROM "SitePage" p
+        CROSS JOIN LATERAL regexp_matches(concat_ws(' ', p."publishedHtml", p."sourceHtml", p."draft"::text), ${UPLOAD_ID_IN_TEXT}, 'g') AS m
+        WHERE p."siteId" = ${siteId}
+      ) mention
+      GROUP BY mention.id`;
+    const titles = new Map(found.map((row) => [row.id, row.titles]));
+    for (const key of keys.filter(isUploadKey)) {
+      const pages = titles.get(UPLOAD_ID.exec(key)?.[1] ?? "");
+      if (pages) onPages.set(key, pages);
+    }
+  }
+  return { siteId, name: site.name, repository, keys, onPages };
+}
+
+/**
+ * Reads a site's media for an erasure without ever failing it: a site whose
+ * media could not be read is erased with nothing removed from the bucket,
+ * which strands objects but never breaks a page somebody else still serves.
+ */
+async function readSiteMedia(siteId: string, remove: MediaRemover | null): Promise<SiteMedia | null> {
+  if (!remove) return null;
+  try {
+    return await siteMedia(siteId);
+  } catch (error) {
+    console.error(`[website deletion] could not read website ${siteId}'s media, so none of it will be removed from object storage: ${(error as Error).message}`);
+    return null;
+  }
 }
 
 /**
  * Which of an erased site's keys may go: an upload's own key (`isUploadKey`)
- * that no other site's library still names.
+ * that nothing outside the site still holds — no other site's library, and no
+ * other site's delete that kept the object.
  *
  * The bucket is shared and a key is a bare repoPath, so a package import's
  * `images/logo.png` may be another customer's or the company's own, and erasing
  * one customer must not take somebody else's picture with it. An upload's uuid
  * path can still be on two sites when one exported a package another imported,
- * hence the second test.
+ * hence the second test — and the site that deleted its copy's row first kept
+ * the object because the other still had one, so its record counts as a hold
+ * until that site is erased in turn.
  */
 export function mediaKeysToRemove(siteKeys: string[], heldElsewhere: Iterable<string>): string[] {
   const kept = new Set(heldElsewhere);
@@ -121,13 +202,32 @@ export function mediaKeysToRemove(siteKeys: string[], heldElsewhere: Iterable<st
  * bucket for ever — which is not what "erased within the month" promises. It
  * never throws: object storage being down must not make an erasure fail or be
  * retried, so a failure is logged with the key and the sweep goes on.
+ *
+ * **A site with a repository keeps every upload its own pages mention**, and
+ * says so: that site is still live on the customer's host and loads them from
+ * here. Only a site DakyX served itself (no repository) has nothing outside
+ * this system pointing at its objects, so only there does everything go.
  */
-async function removeErasedSiteMedia(keys: string[], remove: MediaRemover | null): Promise<string[]> {
-  if (!remove || !keys.length) return [];
+async function removeErasedSiteMedia(media: SiteMedia | null, remove: MediaRemover | null): Promise<{ removed: string[]; kept: KeptObject[] }> {
   const removed: string[] = [];
+  const kept: KeptObject[] = [];
+  if (!remove || !media?.keys.length) return { removed, kept };
   try {
-    const shared = await prisma.siteAsset.findMany({ where: { repoPath: { in: keys } }, select: { repoPath: true } });
-    for (const key of mediaKeysToRemove(keys, shared.map((asset) => asset.repoPath))) {
+    // Read after the cascade, so whatever still holds a key belongs to another site.
+    const [rows, deletions] = await Promise.all([
+      prisma.siteAsset.findMany({ where: { repoPath: { in: media.keys } }, select: { repoPath: true } }),
+      prisma.$queryRaw<Array<{ key: string }>>`
+        SELECT DISTINCT "detail"->>'repoPath' AS key FROM "SiteAuditEvent"
+        WHERE "kind" = 'ASSET_DELETED' AND "detail"->>'storedObject' = 'kept' AND "detail"->>'repoPath' = ANY(${media.keys}::text[])`,
+    ]);
+    for (const key of mediaKeysToRemove(media.keys, [...rows.map((row) => row.repoPath), ...deletions.map((row) => row.key)])) {
+      const pages = media.onPages.get(key);
+      if (pages?.length) {
+        const why = `${media.repository} still loads it from object storage, on ${pages.join(", ")}`;
+        kept.push({ key, why });
+        console.log(`[website deletion] kept ${key} after erasing website ${media.siteId} ("${media.name}"): ${why}`);
+        continue;
+      }
       try {
         await remove(key);
         removed.push(key);
@@ -138,21 +238,23 @@ async function removeErasedSiteMedia(keys: string[], remove: MediaRemover | null
   } catch (error) {
     console.error(`[website deletion] could not clear an erased website's media: ${(error as Error).message}`);
   }
-  return removed;
+  return { removed, kept };
 }
 
 /**
  * Erases a website straight away, for the person who is sure. Pages, versions,
  * assets, members, review links and the audit trail cascade from the site row
  * (schema.prisma), so there is nothing to restore afterwards; its media in R2
- * goes after it. `remove` is there for checks — it defaults to R2 when R2 is
- * configured and to nothing when it is not.
+ * goes after it, except what a repository's pages still load (`mediaKept`).
+ * `remove` is there for checks — it defaults to R2 when R2 is configured and
+ * to nothing when it is not.
  */
-export async function eraseSiteNow(siteId: string, remove: MediaRemover | null = defaultRemover()): Promise<{ mediaRemoved: string[] }> {
-  const keys = await siteMediaKeys(siteId);
+export async function eraseSiteNow(siteId: string, remove: MediaRemover | null = defaultRemover()): Promise<{ mediaRemoved: string[]; mediaKept: KeptObject[] }> {
+  const media = await readSiteMedia(siteId, remove);
   const erased = await prisma.site.deleteMany({ where: { id: siteId } });
   if (!erased.count) throw new WebsiteError(404, "No such website.");
-  return { mediaRemoved: await removeErasedSiteMedia(keys, remove) };
+  const { removed, kept } = await removeErasedSiteMedia(media, remove);
+  return { mediaRemoved: removed, mediaKept: kept };
 }
 
 /**
@@ -234,20 +336,25 @@ async function anonymiseAccount(userId: string): Promise<void> {
  * The daily sweep: websites and accounts whose hold has run out. Each delete
  * re-checks the date, so a restore that lands while this runs wins.
  */
-export async function purgeDueDeletions(now = new Date(), remove: MediaRemover | null = defaultRemover()): Promise<{ websites: number; accounts: number; mediaRemoved: string[] }> {
+export async function purgeDueDeletions(now = new Date(), remove: MediaRemover | null = defaultRemover()): Promise<{ websites: number; accounts: number; mediaRemoved: string[]; mediaKept: KeptObject[] }> {
   const sites = await prisma.site.findMany({ where: { deletionScheduledFor: { lte: now } }, select: { id: true } });
   let websites = 0;
   const mediaRemoved: string[] = [];
+  const mediaKept: KeptObject[] = [];
   for (const site of sites) {
     // Pages, versions, assets, members, review links and the audit trail all
     // cascade from the site row (schema.prisma); the R2 objects do not, so
-    // their keys are read first and removed only if the delete really happened.
-    const keys = await siteMediaKeys(site.id);
+    // what decides them is read first — the same read and the same rules as
+    // `eraseSiteNow` — and acted on only if the delete really happened.
+    const media = await readSiteMedia(site.id, remove);
     const erased = (await prisma.site.deleteMany({ where: { id: site.id, deletionScheduledFor: { lte: now } } })).count;
     websites += erased;
-    if (erased) mediaRemoved.push(...(await removeErasedSiteMedia(keys, remove)));
+    if (!erased) continue;
+    const { removed, kept } = await removeErasedSiteMedia(media, remove);
+    mediaRemoved.push(...removed);
+    mediaKept.push(...kept);
   }
   const due = await prisma.user.findMany({ where: { deletionScheduledFor: { lte: now }, active: false }, select: { id: true } });
   for (const account of due) await anonymiseAccount(account.id);
-  return { websites, accounts: due.length, mediaRemoved };
+  return { websites, accounts: due.length, mediaRemoved, mediaKept };
 }

@@ -1109,8 +1109,21 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   is no repository copy; the row or the R2 object is the only one. For every
   site the R2 object is kept whenever something published may still point at
   it, because with R2 on, the editor writes the R2 address into the page
-  itself. Erasing a site removes its own upload keys from R2, best effort,
-  never another site's.
+  itself — and the route's `ASSET_DELETED` event (`storedObject: "kept"`
+  beside the `repoPath`) is then the only record of that key. **Erasing a
+  site reads those events as well as its remaining rows**, before both
+  cascade away, and removes its upload keys from R2, best effort: never a
+  package path, never a key another site's library holds or another site's
+  delete kept. A hosted site's all go. **A repository site keeps every upload
+  its own pages mention** (published, source or draft, hidden pages too),
+  because the customer's repository is still live and loads them from the
+  bucket; each kept key is logged with the site, the repository and the pages
+  (`mediaKept`) — the only record once the site is gone, for removing them by
+  hand on request — and the erase dialog says so in one sentence. Which pages
+  mention a key is found by the upload's uuid, each page read once in
+  Postgres: a join testing every key against every page took 8–11 s on a
+  60-page site with 400 uploads, this a quarter of a second.
+  `checks/websiteDeletion.ts`.
 - **No address is ever invented under dakyx.com, nor one the site is not
   served at.** Without `WEBSITE_HOST_DOMAIN` a hosted site gets
   `https://<label>.hosting.invalid` (a reserved name that never resolves) and

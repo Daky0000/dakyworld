@@ -248,9 +248,17 @@ export function isUploadKey(key: string): boolean {
  * Every page counts, hidden ones included: hidden means kept out of the
  * editor's list, not off the web, and a repository's hidden page is still
  * served. Keeping an object costs a few kilobytes; removing a needed one costs
- * a customer a broken page, and the site's erasure removes it in the end.
+ * a customer a broken page.
  * `elsewhere` is how many other sites' libraries hold the same path — one
  * package exported from a site and imported into another carries its uploads.
+ *
+ * **Once the row has gone, the delete route's ASSET_DELETED event is the only
+ * record of a kept key** (`storedObject: "kept"` beside its `repoPath`). The
+ * site's erasure reads those events back before they cascade away
+ * (`websiteDeletion.ts`) and decides the object by the same rules as the
+ * site's remaining uploads: removed, unless another site still holds the key
+ * or the site has a repository whose pages still load it — kept and logged.
+ * Change that detail and kept objects are stranded in the public bucket again.
  */
 export function storedObjectStillNeeded(
   asset: { repoPath: string; publishedAt: Date | null },

@@ -196,6 +196,7 @@ function SiteRow({ site }: { site: SiteSummary }) {
             {held || now
               ? "The website is erased straight away, with its pages, pictures and history. This cannot be undone."
               : "The website goes offline straight away and is erased in 30 days, with its pages, pictures and history. You can restore it from here until then."}{" "}
+            {site.repo && <>Pictures that the pages in {site.repo} still load are kept, so your live site does not break.{" "}</>}
             Download a copy first if you might want it.
           </p>
           {!held && (

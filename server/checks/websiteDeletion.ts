@@ -3,12 +3,21 @@
  * thirty days, then really gone — and the refusals that stop a customer
  * deleting the wrong thing.
  *
+ * What an erasure takes out of object storage is asserted with an injected
+ * remover, so no bucket and no network are needed. Two things it must find
+ * that no remaining row names: an object the asset delete route kept when it
+ * deleted the row (recorded only in that route's audit event), and — the
+ * other way round — a picture a repository site's own pages still load from
+ * the bucket, which has to stay or the customer's live site breaks.
+ *
  * Needs an isolated local database (its name must contain test, check or
  * editor); it creates and removes its own rows.
  *   npx tsx checks/websiteDeletion.ts
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import express from "express";
+import type { AddressInfo } from "node:net";
 
 const url = new URL(process.env.DATABASE_URL ?? "postgresql://invalid/invalid");
 if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || !/(test|check|editor)/i.test(url.pathname)) {
@@ -20,6 +29,7 @@ const { hashPassword } = await import("../src/lib/password.js");
 const { createSession } = await import("../src/lib/session.js");
 const { WebsiteError } = await import("../src/services/website/site.js");
 const { scheduleSiteDeletion, cancelSiteDeletion, requestAccountDeletion, purgeDueDeletions, assertSiteNotPendingDeletion, eraseSiteNow, mediaKeysToRemove, DELETION_HOLD_DAYS } = await import("../src/services/websiteDeletion.js");
+const { registerWebsiteManagement } = await import("../src/services/websiteManagement.js");
 
 let passed = 0;
 const failures: string[] = [];
@@ -166,6 +176,168 @@ try {
   check("…and not those of one restored inside the hold", () => assert.ok(!sweptKeys.includes(keptKey)));
   const keptRows = await prisma.siteAsset.count({ where: { siteId: kept.id } });
   check("…whose library is still there", () => assert.equal(keptRows, 1));
+
+  console.log("\nPictures a delete kept, and pictures a repository still loads");
+  // The asset delete route keeps the stored object when something published may
+  // still point at it, and its audit event is the only record of that key once
+  // the row has gone. It is driven through the real route, so what the erasure
+  // reads back is what the route writes. Every delete here is one the route
+  // keeps the object for: one it removed would go to R2 for real.
+  const app = express();
+  const router = express.Router();
+  registerWebsiteManagement(router, {
+    loadSite: async (_req, id) => prisma.site.findUniqueOrThrow({ where: { id } }),
+    loadPage: async () => { throw new Error("Not used by this route."); },
+  });
+  app.use("/api/website", router);
+  app.use((error: { status?: number; message?: string }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    res.status(error.status ?? 500).json({ error: error.message });
+  });
+  const server = app.listen(0, "127.0.0.1");
+  server.unref();
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const routeBase = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/website`;
+  const media = "https://media.deletioncheck.invalid";
+  // A bucket that does not exist as well as made-up credentials, so a fixture
+  // that went wrong can never reach a real object.
+  const r2Env: Record<string, string> = { R2_ACCOUNT_ID: "check", R2_ACCESS_KEY_ID: "check", R2_SECRET_ACCESS_KEY: "check", R2_BUCKET_NAME: `${mark}-no-such-bucket`, R2_PUBLIC_URL: media };
+  /** DELETE /sites/:id/assets/:id with R2 configured, and what its audit event says about the object. */
+  const deleteRow = async (siteId: string, assetId: string) => {
+    const before = Object.fromEntries(Object.keys(r2Env).map((name) => [name, process.env[name]]));
+    Object.assign(process.env, r2Env);
+    let status: number;
+    try {
+      status = (await fetch(`${routeBase}/sites/${siteId}/assets/${assetId}`, { method: "DELETE" })).status;
+    } finally {
+      for (const [name, value] of Object.entries(before)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+    const event = await prisma.siteAuditEvent.findFirst({ where: { kind: "ASSET_DELETED", detail: { path: ["assetId"], equals: assetId } }, select: { detail: true } });
+    return { status, storedObject: (event?.detail as { storedObject?: string } | null)?.storedObject };
+  };
+
+  type Kept = { key: string; why: string };
+  type Outcome = { removed: string[]; kept: Kept[]; logged: string[] };
+  /** Runs an erasure with its log lines collected rather than printed. */
+  const logged: string[] = [];
+  const quietly = async <T>(run: () => Promise<T>): Promise<T> => {
+    const print = console.log;
+    console.log = (...parts: unknown[]) => { logged.push(parts.join(" ")); };
+    try { return await run(); } finally { console.log = print; }
+  };
+  /**
+   * One hosted website and one with a repository, with every kind of key the
+   * erasure has to decide about, and a neighbour that is never erased.
+   */
+  const erasureFixture = async (tag: string) => {
+    const hosted = await prisma.site.create({ data: { slug: `${mark}-${tag}-hosted`, name: `${mark} ${tag} hosted`, publicUrl: "https://shop.hosting.invalid", hostedEnabled: true } });
+    const repo = await prisma.site.create({ data: { slug: `${mark}-${tag}-repo`, name: `${mark} ${tag} repo`, publicUrl: `https://owner.github.io/${tag}`, repoOwner: "owner", repoName: `${mark}-${tag}` } });
+    const neighbour = await prisma.site.create({ data: { slug: `${mark}-${tag}-neighbour`, name: `${mark} ${tag} neighbour`, publicUrl: "https://example.test" } });
+    siteIds.push(hosted.id, repo.id, neighbour.id);
+    const k = {
+      hostedRow: key(), hostedHiddenOnly: key(), hostedPackage: `images/${mark}-${tag}-banner.png`, hostedShared: key(),
+      repoLive: key(), repoLiveRowDeleted: key(), repoSource: key(), repoDraft: key(), repoHiddenPage: key(),
+      repoUnused: key(), repoDropped: key(), repoPackage: `images/${mark}-${tag}-logo.png`, repoShared: key(), cross: key(),
+    };
+    const r2 = (repoPath: string) => `<img src="${media}/${repoPath}">`;
+    const rows: Record<string, { id: string }> = {};
+    for (const [role, repoPath] of Object.entries(k)) {
+      if (role.startsWith("hosted")) rows[role] = await upload(hosted.id, repoPath);
+      else rows[role] = await upload(repo.id, repoPath);
+    }
+    // The same upload in two libraries, as after a package export and import.
+    await upload(neighbour.id, k.hostedShared);
+    await upload(neighbour.id, k.repoShared);
+    await upload(hosted.id, k.cross);
+    await prisma.sitePage.createMany({ data: [
+      { siteId: hosted.id, title: "Home", path: "/", filePath: "index.html", sortOrder: 0, sourceHtml: "<h1>Shop</h1>", publishedHtml: "<h1>Shop</h1>" },
+      // Not served, so the route lets its picture go — and keeps the object.
+      { siteId: hosted.id, title: "Old offer", path: "/old", filePath: "old.html", sortOrder: 1, status: "HIDDEN", sourceHtml: "<h1>Old</h1>", publishedHtml: r2(k.hostedHiddenOnly) },
+      { siteId: repo.id, title: "Home", path: "/", filePath: "index.html", sortOrder: 0, publishedHtml: [k.repoLive, k.repoLiveRowDeleted, k.repoDropped].map(r2).join("") + `<img src="/${tag}/${k.repoPackage}">` },
+      { siteId: repo.id, title: "About", path: "/about", filePath: "about.html", sortOrder: 1, sourceHtml: `<img src="/${tag}/${k.repoSource}">` },
+      { siteId: repo.id, title: "Pricing", path: "/pricing", filePath: "pricing.html", sortOrder: 2, draft: { hero: { src: `${media}/${k.repoDraft}` } } },
+      // Hidden from the editor's list, still a file in the repository.
+      { siteId: repo.id, title: "Old offer", path: "/old", filePath: "old.html", sortOrder: 3, status: "HIDDEN", publishedHtml: r2(k.repoHiddenPage) },
+    ] });
+    const deletions = {
+      hostedHiddenOnly: await deleteRow(hosted.id, rows.hostedHiddenOnly!.id),
+      hostedPackage: await deleteRow(hosted.id, rows.hostedPackage!.id),
+      hostedShared: await deleteRow(hosted.id, rows.hostedShared!.id),
+      repoLiveRowDeleted: await deleteRow(repo.id, rows.repoLiveRowDeleted!.id),
+      repoDropped: await deleteRow(repo.id, rows.repoDropped!.id),
+      cross: await deleteRow(repo.id, rows.cross!.id),
+    };
+    // Republished without it: kept when its row went, and loaded by nothing now.
+    const home = await prisma.sitePage.findFirstOrThrow({ where: { siteId: repo.id, path: "/" } });
+    await prisma.sitePage.update({ where: { id: home.id }, data: { publishedHtml: home.publishedHtml!.replace(r2(k.repoDropped), "") } });
+    return { hosted, repo, neighbour, k, deletions };
+  };
+
+  const outcomes: Array<[string, Outcome, Awaited<ReturnType<typeof erasureFixture>>]> = [];
+  const nowFixture = await erasureFixture("now");
+  check("the route deleted every row and kept every object (the fixture is what it claims)", () => {
+    for (const [role, deletion] of Object.entries(nowFixture.deletions)) assert.deepEqual(deletion, { status: 204, storedObject: "kept" }, role);
+  });
+  {
+    const removed: string[] = [];
+    const remover = async (objectKey: string) => { removed.push(objectKey); };
+    logged.length = 0;
+    const first = await quietly(() => eraseSiteNow(nowFixture.hosted.id, remover));
+    check("an upload another website kept when it deleted its row is not taken by this site's erasure", () => assert.ok(!removed.includes(nowFixture.k.cross)));
+    const second = await quietly(() => eraseSiteNow(nowFixture.repo.id, remover));
+    check("…but goes with the last website that knew about it", () => assert.equal(removed.filter((objectKey) => objectKey === nowFixture.k.cross).length, 1));
+    check("each erasure reports only what it removed", () => assert.deepEqual([...first.mediaRemoved, ...second.mediaRemoved].sort(), [...removed].sort()));
+    outcomes.push(["erased now", { removed, kept: [...(first.mediaKept ?? []), ...(second.mediaKept ?? [])], logged: [...logged] }, nowFixture]);
+  }
+  const heldFixture = await erasureFixture("held");
+  {
+    const removed: string[] = [];
+    await scheduleSiteDeletion(heldFixture.hosted.id, { id: owner.id });
+    await scheduleSiteDeletion(heldFixture.repo.id, { id: owner.id });
+    logged.length = 0;
+    const swept = await quietly(() => purgeDueDeletions(new Date(Date.now() + (DELETION_HOLD_DAYS + 1) * DAY), async (objectKey) => { removed.push(objectKey); }));
+    check("after the hold: the cross-site upload goes exactly once, whichever site the sweep reaches first", () => assert.equal(removed.filter((objectKey) => objectKey === heldFixture.k.cross).length, 1));
+    outcomes.push(["after the hold", { removed: swept.mediaRemoved, kept: swept.mediaKept ?? [], logged: [...logged] }, heldFixture]);
+  }
+
+  for (const [when, outcome, { k, repo, neighbour }] of outcomes) {
+    const mine = new Set(Object.values(k));
+    const removedHere = outcome.removed.filter((objectKey) => mine.has(objectKey)).sort();
+    const keptHere = outcome.kept.filter((entry) => mine.has(entry.key));
+    const keptKeys = keptHere.map((entry) => entry.key).sort();
+    const why = (objectKey: string) => keptHere.find((entry) => entry.key === objectKey)?.why ?? "";
+    check(`${when}: a hosted site's objects all go, the ones its delete route kept included`, () => {
+      assert.ok(removedHere.includes(k.hostedRow), "its library's own upload");
+      assert.ok(removedHere.includes(k.hostedHiddenOnly), "the upload only a hidden page carried, kept when its row was deleted");
+    });
+    check(`${when}: a repository site keeps exactly the uploads its own pages mention`, () =>
+      assert.deepEqual(keptKeys, [k.repoLive, k.repoLiveRowDeleted, k.repoSource, k.repoDraft, k.repoHiddenPage].sort()));
+    check(`${when}: …and removes the rest, a kept-on-delete one nothing loads any more included`, () =>
+      assert.deepEqual(removedHere, [k.hostedRow, k.hostedHiddenOnly, k.repoUnused, k.repoDropped, k.cross].sort()));
+    check(`${when}: …saying for each which pages and which repository still load it`, () => {
+      assert.match(why(k.repoLiveRowDeleted), /Home/);
+      assert.match(why(k.repoDraft), /Pricing/);
+      assert.match(why(k.repoHiddenPage), /Old offer/);
+      for (const entry of keptHere) assert.ok(entry.why.includes(repo.repoName!), entry.why);
+    });
+    check(`${when}: …and the log carries each kept key with the website and the reason, the only record once the site is gone`, () => {
+      for (const entry of keptHere) {
+        assert.ok(outcome.logged.some((line) => line.includes(entry.key) && line.includes(repo.id) && line.includes(entry.why)), entry.key);
+      }
+      assert.equal(outcome.logged.filter((line) => line.includes(repo.id)).length, keptHere.length);
+    });
+    check(`${when}: a key another site's library holds is never removed, nor reported as kept for this one`, () => {
+      for (const shared of [k.hostedShared, k.repoShared]) { assert.ok(!removedHere.includes(shared), shared); assert.ok(!keptKeys.includes(shared), shared); }
+    });
+    check(`${when}: a package's own path is never removed, from a row or from a delete that kept it`, () => {
+      for (const path of [k.hostedPackage, k.repoPackage]) { assert.ok(!removedHere.includes(path), path); assert.ok(!keptKeys.includes(path), path); }
+    });
+    const neighbourRows = await prisma.siteAsset.count({ where: { siteId: neighbour.id } });
+    check(`${when}: the neighbour's library is untouched`, () => assert.equal(neighbourRows, 2));
+  }
+  server.close();
 
   console.log("\nA customer's account");
   const customer = await person("customer");
