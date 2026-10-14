@@ -390,6 +390,19 @@ export async function downloadScreenshot(
   };
 
   try {
+    if (url.startsWith("data:")) {
+      const comma = url.indexOf(",");
+      const base64 = comma >= 0 ? url.slice(comma + 1) : url;
+      const bytes = Buffer.from(base64, "base64");
+      if (options.maxBytes && bytes.byteLength > options.maxBytes) {
+        return {
+          ok: false,
+          message: `it is ${(bytes.byteLength / 1_000_000).toFixed(1)}MB, past the ${Math.round(options.maxBytes / 1_000_000)}MB ceiling`,
+        };
+      }
+      return { ok: true, bytes };
+    }
+
     let response = await attempt(null);
     if (response.status === 401 || response.status === 403) {
       const token = await getApifyToken().catch(() => null);

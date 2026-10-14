@@ -6,6 +6,7 @@ import {
   screenshotActorId,
   type ScreenshotRow,
 } from "./apifyScreenshot.js";
+import { runHybridScreenshot } from "./scraping/hybridScreenshotService.js";
 
 /**
  * A picture of a prospect's homepage.
@@ -274,7 +275,8 @@ async function captureViews(requests: ShotRequest[]): Promise<Map<string, ShotRe
   const first = requests[0];
   if (!first) return results;
 
-  if (!(await apifyConfigured())) {
+  const preferApify = (process.env.SCRAPER_SCREENSHOT_PROVIDER || "").toLowerCase().trim() === "apify";
+  if (preferApify && !(await apifyConfigured())) {
     const note = "No screenshot was taken — Apify is not connected. Add a token under Lead Sources → Connection.";
     for (const entry of requests) results.set(entry.key, none(note));
     return results;
@@ -289,7 +291,7 @@ async function captureViews(requests: ShotRequest[]): Promise<Map<string, ShotRe
   // one, and giving up early would throw away a run that has been paid for.
   const giveUpAfterMs = Math.min(600_000, 60_000 + requests.length * 20_000);
 
-  const run = await runScreenshotActor(
+  const run = await runHybridScreenshot(
     {
       // Every page carries its own viewport and its own crop, which is what
       // lets one run hold the laptop picture and the phone picture of the same
