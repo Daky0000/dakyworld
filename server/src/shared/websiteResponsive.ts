@@ -64,8 +64,14 @@ export function responsiveStyleCss(entries: ResponsiveStyleEntry[], attribute: "
       const style = responsive[device];
       if (!style) return [];
       const selector = `[${attribute}="${token}"]`.repeat(3);
-      const declarations = style.split("; ").map((declaration) => `${declaration} !important`).join("; ");
-      return [`${selector}{${declarations};}`];
+      const declarations = style.split("; ").map((declaration) => `${declaration} !important`);
+      const elementRule = `${selector}{${declarations.join("; ")};}`;
+      const textDeclarations = declarations.filter((d) => /^(?:font-size|line-height|letter-spacing|word-spacing)\s*:/i.test(d));
+      if (textDeclarations.length > 0) {
+        const textRule = `${selector} *{${textDeclarations.join("; ")};}`;
+        return [elementRule, textRule];
+      }
+      return [elementRule];
     });
     return rules.length ? `@media (max-width: ${RESPONSIVE_BREAKPOINTS[device]}px){\n${rules.join("\n")}\n}` : "";
   }).filter(Boolean).join("\n");
