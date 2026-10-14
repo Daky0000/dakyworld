@@ -36,6 +36,7 @@ export function WebsiteCanvasOverlay({
   canDelete,
   hasParent,
   agent,
+  device,
   onEdit,
   onBold,
   onItalic,
@@ -59,6 +60,7 @@ export function WebsiteCanvasOverlay({
   canDelete: boolean;
   hasParent: boolean;
   agent: boolean;
+  device?: string;
   onEdit: () => void;
   onBold: () => void;
   onItalic: () => void;
@@ -92,19 +94,25 @@ export function WebsiteCanvasOverlay({
     const win = element.ownerDocument.defaultView;
     const observer = new ResizeObserver(measure);
     observer.observe(element);
+    const mutObserver = new MutationObserver(measure);
+    mutObserver.observe(element, { attributes: true, attributeFilter: ["style", "class", "data-dw-style", "data-dw-selected"] });
+    if (element.ownerDocument.head) {
+      mutObserver.observe(element.ownerDocument.head, { childList: true, subtree: true, characterData: true });
+    }
     win?.addEventListener("scroll", measure, { passive: true });
     win?.addEventListener("resize", measure);
     stage.current?.addEventListener("scroll", measure, { passive: true });
     window.addEventListener("resize", measure);
     return () => {
       observer.disconnect();
+      mutObserver.disconnect();
       win?.removeEventListener("scroll", measure);
       win?.removeEventListener("resize", measure);
       stage.current?.removeEventListener("scroll", measure);
       window.removeEventListener("resize", measure);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [element, zoom, tick]);
+  }, [element, zoom, tick, device]);
 
   // Words highlighted inside the element.
   useEffect(() => {

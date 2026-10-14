@@ -66,7 +66,7 @@ export function responsiveStyleCss(entries: ResponsiveStyleEntry[], attribute: "
       const selector = `[${attribute}="${token}"]`.repeat(3);
       const declarations = style.split("; ").map((declaration) => `${declaration} !important`);
       const elementRule = `${selector}{${declarations.join("; ")};}`;
-      const textDeclarations = declarations.filter((d) => /^(?:font-size|line-height|letter-spacing|word-spacing)\s*:/i.test(d));
+      const textDeclarations = declarations.filter((d) => /^(?:font-size|line-height|letter-spacing|word-spacing|font-family|font-weight|color|text-align|text-transform|font-style|text-decoration)\s*:/i.test(d));
       if (textDeclarations.length > 0) {
         const textRule = `${selector} *{${textDeclarations.join("; ")};}`;
         return [elementRule, textRule];

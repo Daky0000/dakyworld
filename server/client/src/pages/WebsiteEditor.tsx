@@ -93,7 +93,7 @@ import {
   IconXCircle,
 } from "../components/WebsiteIcons";
 import { useWebsiteAccess } from "../components/WebsiteMembers";
-import { responsivePreviewCss, safeResponsiveStyle, writeResponsivePreview } from "../lib/websiteResponsive";
+import { responsivePreviewCss, safeResponsiveStyle, writeResponsivePreview, syncAllResponsiveStylesToIframe } from "../lib/websiteResponsive";
 import { rewriteWebsiteMediaStyle, websiteMediaPreviewUrl, websiteMediaSourceUrl, type WebsiteMediaAsset } from "../lib/websiteMedia";
 import { WebsiteIconPicker } from "../components/WebsiteIconPicker";
 import { iconPreviewSrc } from "../lib/websiteIconPreview";
@@ -350,6 +350,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const frame = useRef<HTMLIFrameElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [device, setDevice] = useState<Device>(() => typeof window !== "undefined" && window.innerWidth <= 600 ? "mobile" : "desktop");
+  const latestDevice = useRef(device);
+  latestDevice.current = device;
   useEffect(() => {
     const adapt = () => {
       if (window.innerWidth > 600) return;
@@ -703,7 +705,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     if (!el) return "absent";
 
     if (kind === "responsive") {
-      writeResponsivePreview(doc, el, id, JSON.parse(value ?? "{}"));
+      const resp = JSON.parse(value ?? "{}");
+      const activeDev = latestDevice.current;
+      const allFieldsList = (page.data?.sections ?? []).flatMap(s => s.fields);
+      const f = allFieldsList.find(item => item.id === id);
+      const baseStyle = latestEdits.current[id]?.style ?? f?.style ?? "";
+      writeResponsivePreview(doc, el, id, resp, activeDev, baseStyle);
       return "written";
     }
     if (kind === "image") {
@@ -880,6 +887,20 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       if (edit.icon !== undefined) writeInFrame("icon", id, JSON.stringify(edit.icon));
     }
   }, [mediaAssets.data, writeInFrame, page.data?.sections, page.data?.draft.values]);
+
+  // When the preview viewport switches between Desktop, Tablet and Phone,
+  // update the preview iframe's inline styles so that overrides are applied
+  // directly and immediately to the DOM with the exact same reliability as Desktop.
+  useEffect(() => {
+    try {
+      const doc = frame.current?.contentDocument;
+      if (!doc || !doc.body) return;
+      const fields = (page.data?.sections ?? []).flatMap(section => section.fields);
+      syncAllResponsiveStylesToIframe(doc, device, edits, fields, previewStyle);
+    } catch {
+      /* cross-origin fallback */
+    }
+  }, [device, edits, page.data?.sections, previewStyle]);
 
   const change = useCallback(
     (fieldId: string, next: FieldEdit, options?: { fromFrame?: boolean; commit?: boolean }) => {
@@ -2088,6 +2109,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     try {
       const doc = frame.current?.contentDocument;
       if (!doc) return;
+      const fields = (page.data?.sections ?? []).flatMap(section => section.fields);
+      syncAllResponsiveStylesToIframe(doc, device, edits, fields, previewStyle);
       const docAny = doc as Document & { __dwCtxBound?: boolean };
       if (docAny.__dwCtxBound) return;
       docAny.__dwCtxBound = true;
@@ -2187,6 +2210,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           label={picked.label}
           kind={picked.kind}
           zoom={zoom}
+          device={device}
           typing={typingId === picked.id}
           readOnly={readOnly}
           canDuplicate={!readOnly && Boolean(picked.structure?.duplicate)}
