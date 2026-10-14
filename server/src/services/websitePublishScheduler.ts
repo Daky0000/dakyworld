@@ -18,6 +18,12 @@
  * - **A revert is "publish this version"** of whatever was live just before, the
  *   same emergency rollback a person can press, so it goes through the same
  *   guards and leaves the same record.
+ * - **Paused for non-payment, nothing is scheduled and nothing due runs.** A
+ *   due job is marked FAILED, saying so, rather than left PENDING for the
+ *   payment: a publish that goes out on whatever day the card clears is not
+ *   the one anybody scheduled (a sale that starts after it was meant to end),
+ *   and a revert that waited would change the site at a moment nobody chose.
+ *   The draft stays, so scheduling it again is one step once editing is back.
  */
 
 import type { Request, Response, Router } from "express";
@@ -26,6 +32,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { WITH_ACCESS, effectivePermissions } from "../lib/accessRoles.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
+import { assertEditingNotPaused } from "./websiteTierPlans.js";
 import { publishPageCommand, publishVersionCommand } from "./websitePagePublication.js";
 import type { WebsiteActor } from "./websiteActor.js";
 import { WebsiteError } from "./website/site.js";
@@ -65,6 +72,8 @@ export function registerWebsiteSchedulerRoutes(router: Router): void {
       const page = await prisma.sitePage.findUnique({ where: { id: req.params.pageId }, select: { id: true, siteId: true, title: true, draft: true, draftRevision: true } });
       if (!page) throw new WebsiteError(404, "That page is not in the editor.");
       await assertWebsiteSiteAccess(req, page.siteId, "publish");
+      // A schedule made while paused would only fail when it came due.
+      await assertEditingNotPaused(req, page.siteId);
       const parsed = scheduleInput.safeParse(req.body ?? {});
       if (!parsed.success) throw new WebsiteError(400, parsed.error.issues[0]?.message ?? "Check the date and time.");
       const body = parsed.data;
@@ -140,6 +149,20 @@ async function actorFor(job: ScheduledPublish): Promise<WebsiteActor | null> {
   return { dbUser: user, permissions: effectivePermissions(user), headers: {} };
 }
 
+/**
+ * Refuses a due job while its site is paused for non-payment, in words for the
+ * job's history. The publish commands refuse as well; this is asked first so
+ * the job says what happened rather than what a person at the editor is told.
+ */
+async function assertNotPausedWhenDue(actor: WebsiteActor, siteId: string, instead: string): Promise<void> {
+  try {
+    await assertEditingNotPaused(actor, siteId);
+  } catch (error) {
+    if (error instanceof WebsiteError && error.status === 402) throw new Error(`Editing was paused for non-payment when this was due, so ${instead}`);
+    throw error;
+  }
+}
+
 function reason(error: unknown): string {
   return error instanceof Error ? error.message : "The publish did not happen.";
 }
@@ -164,6 +187,7 @@ export async function tickScheduledPublishes(now = new Date()): Promise<{ execut
       if (page.draftRevision !== job.draftRevision) throw new Error("The draft changed after it was scheduled, so it was not published. Schedule it again.");
       const actor = await actorFor(job);
       if (!actor) throw new Error("The person who scheduled this no longer has an active account.");
+      await assertNotPausedWhenDue(actor, job.siteId, "it was not published. Schedule it again once the payment is resolved.");
       const before = await prisma.sitePageVersion.findFirst({ where: { pageId: job.pageId }, orderBy: { number: "desc" }, select: { id: true } });
       const result = await publishPageCommand(actor, { pageId: job.pageId, body: { ifRevision: job.draftRevision } }) as { version?: number };
       const published = typeof result?.version === "number"
@@ -194,6 +218,7 @@ export async function tickScheduledPublishes(now = new Date()): Promise<{ execut
       if (!job.revertToVersionId) throw new Error("There was no earlier version to put back.");
       const actor = await actorFor(job);
       if (!actor) throw new Error("The person who scheduled this no longer has an active account.");
+      await assertNotPausedWhenDue(actor, job.siteId, "the page was left as it is. Publish the earlier version from its history once the payment is resolved.");
       await publishVersionCommand(actor, { pageId: job.pageId, versionId: job.revertToVersionId });
       await prisma.scheduledPublish.update({ where: { id: job.id }, data: { status: "REVERTED", revertedAt: new Date(), error: null } });
       reverted++;

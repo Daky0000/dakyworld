@@ -442,8 +442,15 @@ async function main() {
     const afterBenign = await fresh(forgedPage.id);
     ok("…and is the page's draft document", (afterBenign.draft as Record<string, FieldValue>)[DOCUMENT_KEY]?.document?.html === benign);
     const stale = signedFor(editor.id, benign.replace("<h2>New</h2>", "<h2>Newer</h2>"));
-    const staleOutcome = await applyAgentSitePlan(forgedSite.site, [afterBenign], stale, editor.id);
-    ok("a rewrite made against an older revision is said to conflict, not silently dropped", staleOutcome.results[0]?.success === false && /modified in another session/.test(staleOutcome.results[0]?.message ?? ""));
+    // Refused whole, as a 409: it used to be one failed line in a 200, with
+    // the rest of the plan written around it.
+    await assert.rejects(
+      () => applyAgentSitePlan(forgedSite.site, [afterBenign], stale, editor.id),
+      (error: unknown) => error instanceof WebsiteError && error.status === 409 && /Home was saved after the assistant read it/.test(error.message),
+      "a rewrite made against an older revision refuses the plan as a conflict",
+    );
+    checks += 1;
+    equal("…and writes nothing", (await fresh(forgedPage.id)).draftRevision, afterBenign.draftRevision);
 
     /* ---- the real planner, a page that already runs code, and the HTTP routes */
     const scripted = `<!doctype html><html><head><title>Shop</title><meta name="description" content="Ends &lt;/script&gt;&lt;script&gt;alert(2)&lt;/script&gt; here">

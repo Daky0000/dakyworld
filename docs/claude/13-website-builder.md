@@ -1224,12 +1224,31 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   **`applyAgentSitePlan` works the whole plan out in memory and then writes
   each page once**, allowed for every page it changes and in one transaction
   against the revisions it read: it used to write as it went, so a page saved
-  meanwhile left a plan half applied. Paused for non-payment refuses all of
-  them, and every publish route too — the page and version publishes, the
+  meanwhile left a plan half applied. **Whole means before it starts, too**:
+  every page the plan touches (`pages`, `structuralActions`,
+  `documentHtmlUpdates`) must still be at `pageRevisions[pageId]` (else its
+  page plan's `draftRevision`; a layout action on a page neither names is
+  refused, not assumed current), and any part that fails — a layout action
+  naming an element that is gone, a rewrite that will not restore — refuses
+  the plan with a 409 before anything is written or counted. A failed part
+  used to be one line in a 200 with the rest written around it, and only a
+  rewrite compared revisions, so field edits planned minutes earlier landed
+  over a colleague's save. The editor's chat sends **its own** revision for
+  the page open in it (an autosave while the assistant thinks is not somebody
+  else's work) and awaits a layout change before sending the edits after it;
+  a rewrite is always sent at the plan's revision, because it replaces the
+  page. Paused for non-payment refuses all of
+  them, and every publish too — the page and version publishes, the
   agent's batch publish, a source file's publish (in `websiteSource.ts`'s
   default `authorize`, before GitHub is read) and `/seo/page` with
   `publishNow`, whose allowance is asked before the commit — which with
-  admission off had checked nothing. Publishing on its own never counts. A
+  admission off had checked nothing. **`publishPageCommand` and
+  `publishVersionCommand` ask it themselves**, because the scheduler and the
+  work queue call them directly: a scheduled publish, and its timed revert,
+  went live while paused. Scheduling (`POST /pages/:id/schedule`) is refused
+  while paused, and a job that comes due then is marked FAILED with the
+  reason, not left PENDING — a publish that goes out whenever the card clears
+  is not the one anybody scheduled. Publishing on its own never counts. A
   route that writes a page's draft without it is free at the limit and open
   while paused — give a new one the guard. `checks/websiteEditGuard.ts`, which
   also proves each SEO tool and the agent answer a save that lands mid-request
@@ -1310,8 +1329,12 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   session (it runs on every request, signed in or not), and the website ids
   in `/sites/%zz`, `/pages/%zz` and `/shared/%zz` are the gate's 404
   (`websitePathId`, also behind `websiteRequestSiteId`). Code that decodes
-  something no request brought — a scraped page's `mailto:` — catches its
-  own, or its accident is answered as the visitor's. `checks/monitoring.ts`.
+  something no request brought — a scraped page's `mailto:`, the
+  `/demos/<slug>` in a site's stored `publicUrl` (`findLinkedDemo`, on every
+  opening of a page: a slug that does not decode is no slug, and the brief
+  finds the demo), a pasted Maps link's place name ("100% Dental" is kept as
+  written) — catches its own, or its accident is answered as the visitor's.
+  `checks/monitoring.ts`, `checks/websiteStoredDecode.ts`.
   Before anything leaves, cookies, bodies, auth headers, IP, frame
   variables, query values and Prisma's echoed arguments are removed (Prisma
   prints the call's values, which here means customer HTML and visitors'

@@ -184,6 +184,7 @@ export function WebsiteAgentChat({
   onUndo,
   onRedo,
   onStructureAction,
+  draftRevision,
   onDiscardDraft,
   onReloadPreview,
   open,
@@ -204,11 +205,19 @@ export function WebsiteAgentChat({
   onApplyLocalEdits: (values: Record<string, FieldEdit>) => void;
   onUndo?: () => void;
   onRedo?: () => void;
+  /** Settles once the layout change has saved, so the apply after it is sent against the new revision. */
   onStructureAction?: (
     kind: "remove" | "duplicate" | "before" | "after",
     fieldId: string,
     targetId?: string,
-  ) => void;
+  ) => void | Promise<unknown>;
+  /**
+   * The revision of this page the editor last saved or loaded. The apply sends
+   * it for this page instead of the plan's: the editor's own autosave landing
+   * while the assistant thinks is not somebody else's work, and the server
+   * refuses a whole plan whose page has moved on.
+   */
+  draftRevision?: () => number;
   onDiscardDraft?: () => void;
   onReloadPreview?: () => void;
   /**
@@ -483,16 +492,22 @@ export function WebsiteAgentChat({
       }
 
       // 2. Handle structural actions (remove / duplicate / move before or after)
+      //
+      // Each is saved before the field edits below are sent, and the revision
+      // it saved is the one those edits go against — the plan's own is a
+      // revision behind by then, and the server refuses a stale plan whole.
+      const revisedHere = new Map<string, number>();
       if (plan.structuralActions && plan.structuralActions.length > 0) {
         for (const action of plan.structuralActions) {
           if (action.pageId === pageId && onStructureAction) {
-            onStructureAction(action.kind, action.fieldId, action.targetId);
+            await onStructureAction(action.kind, action.fieldId, action.targetId);
           } else {
-            await api.post(`/website/pages/${action.pageId}/structure`, {
+            const saved = await api.post<{ revision?: number }>(`/website/pages/${action.pageId}/structure`, {
               kind: action.kind,
               fieldId: action.fieldId,
               targetId: action.targetId,
             });
+            if (typeof saved?.revision === "number") revisedHere.set(action.pageId, saved.revision);
           }
         }
       }
@@ -529,10 +544,21 @@ export function WebsiteAgentChat({
           onApplyLocalEdits(currentPagePlan.edits);
         }
 
+        // Field edits merge into whatever the page holds now, so this page's
+        // own autosave since the plan, or a layout change just made above, is
+        // not a conflict: those go against the editor's revision. A whole-page
+        // rewrite replaces the page, so it is always sent at the plan's.
         const pageRevisions = Object.fromEntries(
           plan.pages
             .filter((p) => filteredPages.some((kept) => kept.pageId === p.pageId) || Boolean(documentHtmlUpdates?.[p.pageId]))
-            .map((p) => [p.pageId, p.draftRevision]),
+            .map((p) => [
+              p.pageId,
+              documentHtmlUpdates?.[p.pageId]
+                ? p.draftRevision
+                : p.pageId === pageId && draftRevision
+                  ? draftRevision()
+                  : revisedHere.get(p.pageId) ?? p.draftRevision,
+            ]),
         );
         result = await api.post<SiteAgentApplyResult>(
           `/website/sites/${siteId}/agent/apply`,

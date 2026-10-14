@@ -3828,9 +3828,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           canRedo={historyState.canRedo}
           onUndo={() => void restore(-1)}
           onRedo={() => void restore(1)}
-          onStructureAction={(kind, fieldId, targetId) => {
-            void runStructure(kind, fieldId, targetId);
-          }}
+          onStructureAction={(kind, fieldId, targetId) => runStructure(kind, fieldId, targetId)}
+          draftRevision={() => revision.current}
           onDiscardDraft={() => discard.mutate()}
           onReloadPreview={() => {
             dirty.current = false;

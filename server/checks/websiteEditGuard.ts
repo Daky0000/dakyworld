@@ -26,6 +26,13 @@
  * writes and counts nothing (the agent's plan refused whole), proved by
  * holding the row until the request is waiting on it.
  *
+ * The agent's plan is held to "whole or not at all" over the minutes between
+ * planning and applying too: a part that cannot be applied, or a page saved
+ * since the plan was made, refuses the whole plan before anything is written.
+ * And the pause reaches the publish commands themselves, so the scheduler —
+ * which calls them directly — neither publishes nor reverts while paused, and
+ * a publish cannot be scheduled then.
+ *
  * Needs Postgres and nothing else. Every row it makes is removed at the end.
  */
 import assert from "node:assert/strict";
@@ -65,6 +72,9 @@ const { createSession } = await import("../src/lib/session.js");
 const { attachUser, requireAuth } = await import("../src/middleware/auth.js");
 const { websiteRouter } = await import("../src/routes/website.js");
 const { usagePeriod } = await import("../src/services/websiteEntitlement.js");
+const { tickScheduledPublishes } = await import("../src/services/websitePublishScheduler.js");
+const { publishPageCommand, publishVersionCommand } = await import("../src/services/websitePagePublication.js");
+const { WITH_ACCESS, effectivePermissions } = await import("../src/lib/accessRoles.js");
 
 await ensureSystemRoles();
 const mark = `editguard-${randomUUID().slice(0, 8)}`;
@@ -298,6 +308,78 @@ try {
     assert.equal(await editsUsed(), 10);
   });
 
+  /* ------------------------------------------- scheduled publishing ------ */
+
+  // The routes asked about the pause and the publish commands did not, so the
+  // worker — which calls the commands as the person who scheduled — put a page
+  // live while its customer was paused, and put it back again on time.
+  console.log("\nScheduled publishing and the publish commands, while paused");
+  const pauseStarter = () => prisma.$executeRaw`UPDATE "WebsitePurchase" SET "billingState" = 'PAST_DUE', "nextBillingAt" = NULL, "updatedAt" = ${new Date(Date.now() - 15 * 86_400_000)} WHERE "id" = ${purchase.id}`;
+  const unpauseStarter = () => prisma.websitePurchase.update({ where: { id: purchase.id }, data: { billingState: "ACTIVE", nextBillingAt: new Date(Date.now() + 20 * 86_400_000) } });
+  const ownerActor = async () => {
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: owner.id }, include: WITH_ACCESS });
+    return { dbUser: user, permissions: effectivePermissions(user), headers: {} };
+  };
+  const draftWith = (pageId: string, words: string) => prisma.sitePage.update({ where: { id: pageId }, data: { draft: { "s0.0": { value: words } }, draftRevision: { increment: 1 } } });
+  const schedule = (pageId: string, at: Date, revertAt?: Date) => call("POST", `/pages/${pageId}/schedule`, { scheduledAt: at.toISOString(), ...(revertAt ? { revertAt: revertAt.toISOString() } : {}) });
+  const live = async (pageId: string) => (await row(pageId)).publishedHtml ?? "";
+  await check("a publish scheduled before the pause does not go out during it, and the job says why", async () => {
+    await draftWith(pageA, "Scheduled while paid");
+    const soon = new Date(Date.now() + 60_000);
+    const scheduled = await schedule(pageA, soon);
+    assert.equal(scheduled.status, 201, scheduled.body.error);
+    const jobId = (scheduled.body.job as { id: string }).id;
+    await pauseStarter();
+    try {
+      const tick = await tickScheduledPublishes(new Date(soon.getTime() + 1_000));
+      assert.equal(tick.executed, 0);
+    } finally { await unpauseStarter(); }
+    assert.ok(!(await live(pageA)).includes("Scheduled while paid"), "the page did not go live");
+    const job = await prisma.scheduledPublish.findUniqueOrThrow({ where: { id: jobId } });
+    assert.equal(job.status, "FAILED");
+    assert.match(job.error ?? "", /paused for non-payment/);
+    assert.ok((await draftText(pageA)).includes("Scheduled while paid"), "the draft is kept for when it is scheduled again");
+  });
+  await check("scheduling a publish is refused while paused, and no job is made", async () => {
+    await draftWith(pageA, "Scheduled while paused");
+    await pauseStarter();
+    try { paused(await schedule(pageA, new Date(Date.now() + 60_000))); } finally { await unpauseStarter(); }
+    assert.equal(await prisma.scheduledPublish.count({ where: { pageId: pageA, status: "PENDING" } }), 0);
+  });
+  await check("the publish command refuses on its own, whoever calls it", async () => {
+    const actor = await ownerActor();
+    const version = await prisma.sitePageVersion.findFirstOrThrow({ where: { pageId: pageC }, orderBy: { number: "asc" } });
+    await draftWith(pageC, "Published by a caller that never asked");
+    const liveBefore = await live(pageC);
+    await pauseStarter();
+    try {
+      await assert.rejects(publishPageCommand(actor, { pageId: pageC }), (error: { status?: number; message?: string }) => error.status === 402 && /Editing is paused/.test(error.message ?? ""));
+      await assert.rejects(publishVersionCommand(actor, { pageId: pageC, versionId: version.id }), (error: { status?: number; message?: string }) => error.status === 402 && /Editing is paused/.test(error.message ?? ""));
+    } finally { await unpauseStarter(); }
+    assert.equal(await live(pageC), liveBefore, "nothing went live");
+  });
+  await check("a timed revert does not happen while paused either, and a paid-up schedule still publishes", async () => {
+    await draftWith(pageB, "Weekend sale");
+    const soon = new Date(Date.now() + 60_000);
+    const later = new Date(Date.now() + 120_000);
+    const scheduled = await schedule(pageB, soon, later);
+    assert.equal(scheduled.status, 201, scheduled.body.error);
+    const jobId = (scheduled.body.job as { id: string }).id;
+    const published = await tickScheduledPublishes(new Date(soon.getTime() + 1_000));
+    assert.equal(published.executed, 1, "paid up, it goes out on time");
+    assert.ok((await live(pageB)).includes("Weekend sale"));
+    assert.equal((await prisma.scheduledPublish.findUniqueOrThrow({ where: { id: jobId } })).status, "ACTIVE_TEMPORARY");
+    await pauseStarter();
+    try {
+      const reverted = await tickScheduledPublishes(new Date(later.getTime() + 1_000));
+      assert.equal(reverted.reverted, 0);
+    } finally { await unpauseStarter(); }
+    assert.ok((await live(pageB)).includes("Weekend sale"), "the page was not changed");
+    const job = await prisma.scheduledPublish.findUniqueOrThrow({ where: { id: jobId } });
+    assert.equal(job.status, "FAILED");
+    assert.match(job.error ?? "", /paused for non-payment/);
+  });
+
   /* ------------------------------------- the SEO tools and the AI agent -- */
 
   // A second website on its own client and plan: the SEO tools are Pro, the
@@ -470,6 +552,81 @@ try {
     for (const pageId of [proA, proB]) assert.equal(await draftOrSourceHas(pageId, "Agent words, raced"), false, "neither page was written");
     assert.equal((await row(proA)).draftRevision, before[0]!.draftRevision);
     assert.equal(await editsUsed(), 10);
+  });
+  // A plan lands whole or not at all: one part that cannot be applied, or one
+  // page that moved on since the plan was made, refuses every page of it.
+  // Both used to answer 200 with that part marked failed and the rest written.
+  const unchangedSince = async (before: Awaited<ReturnType<typeof row>>[], words: string) => {
+    for (const page of before) {
+      const now = await row(page.id);
+      assert.equal(now.draftRevision, page.draftRevision, `${page.title} was not written`);
+      assert.equal(JSON.stringify(now.draft ?? null).includes(words), false, `${page.title} does not carry the plan's words`);
+    }
+  };
+  await check("a plan with one part that cannot be applied is refused whole, before any page is written or counted", async () => {
+    await countedYesterday(proA, proB);
+    await setEdits(10);
+    const plan = await agentPlan([proA, proB], "Agent words, half a plan");
+    const before = await Promise.all([proA, proB].map(row));
+    const refused = await call("POST", `/sites/${proSiteId}/agent/apply`, {
+      ...plan,
+      plan: { ...plan.plan, structuralActions: [{ pageId: proA, pageTitle: "Home", kind: "remove", fieldId: "does.not.exist", label: "Gone" }] },
+    });
+    assert.ok(refused.status === 400 || refused.status === 409, `${refused.status}: ${refused.body.error}`);
+    assert.match(refused.body.error ?? "", /no longer available/);
+    assert.match(refused.body.error ?? "", /Nothing was changed/);
+    await unchangedSince(before, "half a plan");
+    assert.equal(await editsUsed(), 10);
+  });
+  await check("a plan made before a colleague saved one of its pages is refused whole, and the colleague's words stay", async () => {
+    await setEdits(10);
+    const plan = await agentPlan([proA, proB], "Stale plan words");
+    // The colleague saves page B while the owner is reading the plan.
+    await prisma.sitePage.update({ where: { id: proB }, data: { draft: { "s0.1": { value: "Colleague words" } }, draftRevision: { increment: 1 } } });
+    const before = await Promise.all([proA, proB].map(row));
+    const refused = await call("POST", `/sites/${proSiteId}/agent/apply`, plan);
+    assert.equal(refused.status, 409, refused.body.error);
+    assert.match(refused.body.error ?? "", /Services/);
+    await unchangedSince(before, "Stale plan words");
+    assert.ok((await draftText(proB)).includes("Colleague words"), "the colleague's save is still the draft");
+    assert.equal(await editsUsed(), 10);
+  });
+  await check("so is a stale layout change, though only its page's revision says so", async () => {
+    const page = await row(proA);
+    const refused = await call("POST", `/sites/${proSiteId}/agent/apply`, {
+      pageRevisions: { [proA]: page.draftRevision - 1 },
+      plan: { explanation: "Copy it", pages: [], structuralActions: [{ pageId: proA, pageTitle: "Home", kind: "duplicate", fieldId: "s0.1", label: "First words" }] },
+    });
+    assert.equal(refused.status, 409, refused.body.error);
+    assert.equal((await row(proA)).draftRevision, page.draftRevision);
+  });
+  await check("and a layout change that does not say which revision it was made against is not guessed at", async () => {
+    const page = await row(proA);
+    const refused = await call("POST", `/sites/${proSiteId}/agent/apply`, {
+      pageRevisions: {},
+      plan: { explanation: "Copy it", pages: [], structuralActions: [{ pageId: proA, pageTitle: "Home", kind: "duplicate", fieldId: "s0.1", label: "First words" }] },
+    });
+    assert.equal(refused.status, 409, refused.body.error);
+    assert.equal((await row(proA)).draftRevision, page.draftRevision);
+  });
+  await check("a current plan with a layout change and words on two pages still applies, each page once", async () => {
+    await countedYesterday(proA, proB);
+    await setEdits(10);
+    const plan = await agentPlan([proA, proB], "Whole plan words");
+    const before = await Promise.all([proA, proB].map(row));
+    const applied = await call("POST", `/sites/${proSiteId}/agent/apply`, {
+      ...plan,
+      plan: { ...plan.plan, structuralActions: [{ pageId: proA, pageTitle: "Home", kind: "duplicate", fieldId: "s0.1", label: "First words" }] },
+    });
+    assert.equal(applied.status, 200, applied.body.error);
+    assert.equal(applied.body.appliedPages, 2);
+    for (const [index, page] of before.entries()) {
+      const now = await row(page.id);
+      assert.equal(now.draftRevision, page.draftRevision + 1, `${page.title} written once`);
+      assert.ok(JSON.stringify(now.draft).includes("Whole plan words"), `${page.title} has the plan's words`);
+      if (index === 0) assert.ok(JSON.stringify(now.draft).includes("$document"), "the layout change landed with the words");
+    }
+    assert.equal(await editsUsed(), 12);
   });
   await check("publishing the agent's pages is refused while paused, and nothing goes live", async () => {
     await pause();

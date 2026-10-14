@@ -104,7 +104,13 @@ function mapsPhrase(url: URL): CaptureItem | null {
   const at = parts.indexOf("place");
   const named = at >= 0 ? parts[at + 1] : undefined;
   const query = url.searchParams.get("q") ?? url.searchParams.get("query");
-  const phrase = decodeURIComponent(named ?? query ?? "").replace(/\+/g, " ").trim();
+  // A place name with a bare `%` in it ("100% Dental") does not decode; it is
+  // kept as written rather than thrown as a URIError, which the error handler
+  // would answer as "That address is not valid." about a perfectly good link.
+  const written = named ?? query ?? "";
+  let decoded = written;
+  try { decoded = decodeURIComponent(written); } catch { /* kept as written */ }
+  const phrase = decoded.replace(/\+/g, " ").trim();
   if (!phrase) return null;
   return { kind: "MAPS_SEARCH", value: phrase, raw: url.toString() };
 }

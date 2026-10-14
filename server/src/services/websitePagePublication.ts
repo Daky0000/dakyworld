@@ -8,7 +8,7 @@ import { createBranch, openPullRequest } from "../lib/github.js";
 import { withWebsitePublishLock, commitPublication } from "./websitePublishing.js";
 import { publishFrameworkPage } from "./websiteFrameworkPublish.js";
 import { hasSourceManifest } from "./websitePageManifest.js";
-import { assertTierFeatureAccess } from "./websiteTierPlans.js";
+import { assertEditingNotPaused, assertTierFeatureAccess } from "./websiteTierPlans.js";
 import { advancePublishJob, failPublishJob, publishJobCommitted, publishJobView, startPublishJob } from "./websitePublishJobs.js";
 import { ensureHostedAddress } from "./websiteHosting.js";
 import { runPublishGuardChecks } from "./websitePublishGuard.js";
@@ -29,7 +29,13 @@ export async function publishPageCommand(actor: WebsiteActor, input: {
     body?: unknown;
 }) {
     const body = publicationInput.parse(input.body ?? {});
-    await assertWebsiteSiteAccess(actor, (await loadPage(actor, input.pageId)).site.id, "publish");
+    const siteId = (await loadPage(actor, input.pageId)).site.id;
+    await assertWebsiteSiteAccess(actor, siteId, "publish");
+    // Paused for non-payment means nothing changes on the site. Asked here as
+    // well as by the routes, because the scheduler and the work queue call
+    // this directly: a scheduled publish went live while its customer was
+    // paused, and its timed revert after it.
+    await assertEditingNotPaused(actor, siteId);
     const result = await withWebsitePublishLock(input.pageId, async () => {
         const { page, site } = await loadPage(actor, input.pageId);
         assertSiteNotPendingDeletion(site);
@@ -281,7 +287,10 @@ export async function publishVersionCommand(actor: WebsiteActor, input: {
     body?: unknown;
 }) {
     const body = publicationInput.parse(input.body ?? {});
-    await assertWebsiteSiteAccess(actor, (await loadPage(actor, input.pageId)).site.id, "publish");
+    const siteId = (await loadPage(actor, input.pageId)).site.id;
+    await assertWebsiteSiteAccess(actor, siteId, "publish");
+    // The same pause as `publishPageCommand`, for the same callers.
+    await assertEditingNotPaused(actor, siteId);
     const result = await withWebsitePublishLock(input.pageId, async (db) => {
         const { page, site } = await loadPage(actor, input.pageId);
         assertSiteNotPendingDeletion(site);

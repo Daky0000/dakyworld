@@ -36,7 +36,15 @@ export async function findLinkedDemo(site: {
     publicUrl: string;
 }, pageId: string): Promise<{ id: string; slug: string } | null> {
     const slugMatch = site.publicUrl.match(/\/demos\/([^/?#]+)/i);
-    const slugFromUrl = slugMatch?.[1] ? decodeURIComponent(slugMatch[1]) : null;
+    // The address was stored, not sent: a stray `%` in it (an imported
+    // business's own address) is no slug, and the brief below still finds the
+    // demo. Uncaught, it was a URIError, which the error handler answers as a
+    // 400 blaming the request — on every opening of every page of the site.
+    let slugFromUrl: string | null = null;
+    if (slugMatch?.[1]) {
+        try { slugFromUrl = decodeURIComponent(slugMatch[1]); }
+        catch { slugFromUrl = null; }
+    }
     const bySlug = slugFromUrl
         ? await prisma.demo.findUnique({ where: { slug: slugFromUrl }, select: { id: true, slug: true } })
         : null;
