@@ -64,7 +64,7 @@ const ALLOWED = [
   /`-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----`/,
   /postgres(?:ql)?:\/\/postgres:postgres@/,
   /postgres(?:ql)?:\/\/user:password@/,
-  /postgres(?:ql)?:\/\/[^\s:@"']+:(?:password|changeme|your[-_]?password|xxx+|\.\.\.)@/i,
+  /postgres(?:ql)?:\/\/[^\s:@"']+:(?:password|changeme|your[-_]?password|hunter2|xxx+|\.\.\.)@/i,
   /sk-ant-(?:api03-)?(?:xxx|your|example|placeholder|check|not-a-real|\.\.\.)/i,
   /sk-(?:xxx|your|example|placeholder|\.\.\.)/i,
 ];

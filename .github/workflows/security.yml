@@ -43,6 +43,8 @@ jobs:
           node-version: 22
       - run: npm ci
         working-directory: server
+      - run: npm ci
+        working-directory: server/client
       - run: npx prisma generate
         working-directory: server
       - run: npx prisma migrate deploy
