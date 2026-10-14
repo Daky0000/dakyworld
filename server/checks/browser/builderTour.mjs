@@ -71,6 +71,7 @@ try {
 
   // The tour asks the editor for the Style tab, where Normal / Hover lives.
   await step("Style normal and hover").waitFor();
+  await page.locator('button[role="tab"][aria-selected="true"]:has-text("Style")').waitFor();
   assert.equal(await page.getByRole("tab", { name: "Style", exact: true }).getAttribute("aria-selected"), "true", "A step that points into Style opens it");
   await next();
   await step("Your tools live here").waitFor();
