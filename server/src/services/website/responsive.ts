@@ -1,6 +1,6 @@
 import { attrNode, decodeEntities, findTag, parseHtml, walk, type ElementNode } from "./parse.js";
-import { normalizeResponsive, responsiveStyleCss, RESPONSIVE_TOKEN, type ResponsiveStyles } from "../../shared/websiteResponsive.js";
-export { normalizeResponsive, responsiveEqual, safeResponsiveStyle, renderResponsiveCss, responsiveStyleCss, RESPONSIVE_BREAKPOINTS, RESPONSIVE_TOKEN } from "../../shared/websiteResponsive.js";
+import { isTextElement, normalizeResponsive, responsiveStyleCss, RESPONSIVE_TOKEN, TEXT_TAGS, type ResponsiveStyles } from "../../shared/websiteResponsive.js";
+export { isTextElement, normalizeResponsive, responsiveEqual, safeResponsiveStyle, renderResponsiveCss, responsiveStyleCss, RESPONSIVE_BREAKPOINTS, RESPONSIVE_TOKEN, TEXT_METRICS } from "../../shared/websiteResponsive.js";
 export type { ResponsiveStyles, ResponsiveStyleEntry } from "../../shared/websiteResponsive.js";
 
 /** The parser preserves raw attribute bytes; JSON must see decoded quotes. */
@@ -11,12 +11,17 @@ export function responsiveOf(node: ElementNode): ResponsiveStyles {
 }
 
 /** Regenerate only the editor-owned block; include nodes the editor cannot edit. */
-export function regenerateResponsiveStyles(source: string): string {
+export function regenerateResponsiveStyles(source: string, options: { sourcePage?: boolean } = {}): string {
   const root = parseHtml(source);
   const nodes = [...walk(root)];
+  // The element's own inline style and whether it is a run of words decide
+  // which of its sizes reach the words inside it (see TEXT_METRICS).
   const entries = nodes.flatMap((node) => {
     const token = attrNode(node, "data-dw-style")?.value;
-    return token && RESPONSIVE_TOKEN.test(token) ? [{ token, responsive: responsiveOf(node) }] : [];
+    if (!token || !RESPONSIVE_TOKEN.test(token)) return [];
+    const style = attrNode(node, "style")?.value;
+    if (options.sourcePage) return [{ token, responsive: responsiveOf(node), text: TEXT_TAGS.has(node.tag) }];
+    return [{ token, responsive: responsiveOf(node), base: style === undefined ? undefined : decodeEntities(style), text: isTextElement(node.children.map((child) => child.tag)) }];
   });
   const css = responsiveStyleCss(entries);
   const block = css ? `<style data-dw-responsive-styles>\n${css}\n</style>` : "";

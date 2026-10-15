@@ -93,7 +93,7 @@ import {
   IconXCircle,
 } from "../components/WebsiteIcons";
 import { useWebsiteAccess } from "../components/WebsiteMembers";
-import { responsivePreviewCss, safeResponsiveStyle, writeResponsivePreview, syncAllResponsiveStylesToIframe, effectiveDeviceStyle } from "../lib/websiteResponsive";
+import { responsivePreviewCss, safeResponsiveStyle, writeResponsivePreview } from "../lib/websiteResponsive";
 import { rewriteWebsiteMediaStyle, websiteMediaPreviewUrl, websiteMediaSourceUrl, type WebsiteMediaAsset } from "../lib/websiteMedia";
 import { WebsiteIconPicker } from "../components/WebsiteIconPicker";
 import { iconPreviewSrc } from "../lib/websiteIconPreview";
@@ -350,8 +350,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const frame = useRef<HTMLIFrameElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [device, setDevice] = useState<Device>(() => typeof window !== "undefined" && window.innerWidth <= 600 ? "mobile" : "desktop");
-  const latestDevice = useRef(device);
-  latestDevice.current = device;
   useEffect(() => {
     const adapt = () => {
       if (window.innerWidth > 600) return;
@@ -523,6 +521,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     queryKey: ["website", "page", pageId],
     queryFn: ({ signal }) => api.get<SitePageDetail>(`/website/pages/${pageId}`, signal),
   });
+  /** The page as last loaded, for callbacks that must not hold an old copy of it. */
+  const latestPage = useRef(page.data);
+  latestPage.current = page.data;
 
   const mediaAssets = useQuery({
     queryKey: ["website", "assets", page.data?.site.id],
@@ -704,13 +705,14 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     const el = doc.querySelector(`[data-dw-field="${id.replace(/"/g, "")}"]`);
     if (!el) return "absent";
 
+    // A field's preview sheet is built from its Desktop style and its screen-size
+    // overrides together, the two facts the published rules come from, so both
+    // kinds of write refresh it. `change` updates `latestEdits` before pushing,
+    // which is what makes the other half current here.
+    const field = latestPage.current?.sections.flatMap((section) => section.fields).find((item) => item.id === id);
+    const sourcePage = Boolean(latestPage.current?.builtFrom);
     if (kind === "responsive") {
-      const resp = JSON.parse(value ?? "{}");
-      const activeDev = latestDevice.current;
-      const allFieldsList = (page.data?.sections ?? []).flatMap(s => s.fields);
-      const f = allFieldsList.find(item => item.id === id);
-      const baseStyle = latestEdits.current[id]?.style ?? f?.style ?? "";
-      writeResponsivePreview(doc, el, id, resp, activeDev, baseStyle);
+      writeResponsivePreview(doc, el, id, JSON.parse(value ?? "{}"), latestEdits.current[id]?.style ?? field?.style ?? "", sourcePage);
       return "written";
     }
     if (kind === "image") {
@@ -799,18 +801,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         const currentStyle = el.getAttribute("style") || "";
         const isCurrentPreview = currentStyle.includes("/api/website/sites/") && currentStyle.includes("/assets/");
         const isUnresolvedUpload = nextStyle.includes("/assets/dw/") && !nextStyle.includes("/api/website/");
-        if (!isCurrentPreview || !isUnresolvedUpload) {
-          el.setAttribute("style", nextStyle);
-          if (el instanceof HTMLElement) {
-            el.setAttribute("data-dw-base-style", nextStyle);
-          }
-        }
+        if (!isCurrentPreview || !isUnresolvedUpload) el.setAttribute("style", nextStyle);
       } else {
         el.removeAttribute("style");
-        if (el instanceof HTMLElement) {
-          el.removeAttribute("data-dw-base-style");
-        }
       }
+      writeResponsivePreview(doc, el, id, latestEdits.current[id]?.responsive ?? field?.responsive ?? {}, value ?? "", sourcePage);
       return "written";
     }
     if (kind === "variant") {
@@ -849,20 +844,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         setAbsentIds((current) => (current.has(id) ? current : new Set(current).add(id)));
         return;
       }
-      const allFieldsList = (page.data?.sections ?? []).flatMap(s => s.fields);
-      const f = allFieldsList.find(item => item.id === id);
-      const baseStyle = latestEdits.current[id]?.style ?? f?.style ?? "";
       tell(
         kind === "style"
           ? { type: "style", id, style: previewStyle(value) }
           : kind === "responsive"
-            ? {
-                type: "responsive",
-                id,
-                css: responsivePreviewCss(id, JSON.parse(value)),
-                effective: effectiveDeviceStyle(latestDevice.current, baseStyle, JSON.parse(value)),
-                device: latestDevice.current,
-              }
+            ? { type: "responsive", id, css: responsivePreviewCss(id, JSON.parse(value)) }
           : kind === "image"
             ? { type: "image", id, src: resolveImagePreview(value) }
           : kind === "icon"
@@ -903,20 +889,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     }
   }, [mediaAssets.data, writeInFrame, page.data?.sections, page.data?.draft.values]);
 
-  // When the preview viewport switches between Desktop, Tablet and Phone,
-  // update the preview iframe's inline styles so that overrides are applied
-  // directly and immediately to the DOM with the exact same reliability as Desktop.
-  useEffect(() => {
-    try {
-      const doc = frame.current?.contentDocument;
-      if (!doc || !doc.body) return;
-      const fields = (page.data?.sections ?? []).flatMap(section => section.fields);
-      syncAllResponsiveStylesToIframe(doc, device, edits, fields, previewStyle);
-    } catch {
-      /* cross-origin fallback */
-    }
-  }, [device, edits, page.data?.sections, previewStyle]);
-
   const change = useCallback(
     (fieldId: string, next: FieldEdit, options?: { fromFrame?: boolean; commit?: boolean }) => {
       if (!canEdit || reviewOpen || showVersions || publishPending.current || structurePending.current) return;
@@ -929,6 +901,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       dirty.current = true;
       setPublished(null);
       if (Object.keys(next).some((key) => !LIVE_KEYS.has(key))) needsReload.current = true;
+      // Ahead of the render, so a push below reads this edit's style and
+      // overrides together (a visibility change writes both at once).
+      latestEdits.current = { ...latestEdits.current, [fieldId]: next };
       // Push what the frame can show straight into it, so the page changes
       // while the slider is still moving rather than after the next save.
       if (!options?.fromFrame) {
@@ -2124,8 +2099,6 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     try {
       const doc = frame.current?.contentDocument;
       if (!doc) return;
-      const fields = (page.data?.sections ?? []).flatMap(section => section.fields);
-      syncAllResponsiveStylesToIframe(doc, device, edits, fields, previewStyle);
       const docAny = doc as Document & { __dwCtxBound?: boolean };
       if (docAny.__dwCtxBound) return;
       docAny.__dwCtxBound = true;

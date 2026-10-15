@@ -111,6 +111,62 @@ const fragmentUpdated = applyValues(fragment, { "fragment-title": { responsive: 
 equal("fragments retain field identity", discoverFields(fragmentUpdated.html).fields.map((field) => field.id), ["fragment-title"]);
 check("fragments receive responsive CSS", fragmentUpdated.html.includes("data-dw-responsive-styles"));
 
+// What a text element's typography reaches inside it (15 Oct 2026). Sizes reach
+// every word, from the widest screen that sets them; emphasis never does; a
+// container never pushes anything; a word's own setting always wins.
+{
+  const page = '<!doctype html><html><head><style>.big{font-size:60px}.lead a{color:green}</style></head><body><section data-dw-field="zone"><h1 data-dw-field="title">Build <span class="big">faster</span></h1><p class="lead" data-dw-field="lead">With <strong>bold</strong> and <a href="/x">a link</a>.</p></section></body></html>';
+  const fields = discoverFields(page).fields;
+  const byId = (id: string) => fields.find((field) => field.id === id)!;
+  const reach = (html: string, property: string) => (html.match(new RegExp(`:where\\(\\[data-dw-style="dw-[a-f0-9]{24}"\\]\\) :not\\(sub, sup, \\[style\\*="${property}"\\]\\)\\{${property}: inherit !important;\\}`, "g")) ?? []).length;
+  const block = (html: string) => /<style data-dw-responsive-styles>([\s\S]*?)<\/style>/.exec(html)?.[1] ?? "";
+
+  const phone = applyValues(page, { title: sanitizeValue(byId("title"), { responsive: { mobile: "font-size: 20px; color: red; font-weight: 300; font-style: italic; text-decoration: underline" } }) }).html;
+  equal("a phone font size on a heading reaches the words inside it", reach(phone, "font-size"), 1);
+  check("and only from 640px down", block(phone).indexOf(":where(") > block(phone).indexOf("max-width: 640px"));
+  check("colour, weight, style and decoration stay on the heading itself", block(phone).includes("color: red !important") && !/\{(?:color|font-weight|font-style|text-decoration): inherit/.test(block(phone)) && !/\] \*\{/.test(block(phone)));
+
+  const zone = applyValues(page, { zone: sanitizeValue(byId("zone"), { responsive: { tablet: "font-size: 13px" } }) }).html;
+  equal("a container's font size reaches nothing: its heading keeps its own size", reach(zone, "font-size"), 0);
+  check("the container's own rule is still written", block(zone).includes("font-size: 13px !important"));
+
+  const lead = applyValues(page, { lead: sanitizeValue(byId("lead"), { responsive: { tablet: "font-weight: 300; color: gray" } }) }).html;
+  check("a paragraph's weight and colour leave its bold words and link alone", !block(lead).includes(":where("));
+
+  const desktop = applyValues(page, { title: sanitizeValue(byId("title"), { style: "font-size: 40px; line-height: 1.1" }) }).html;
+  check("a Desktop size on a heading with words inside gives it a token", /<h1[^>]*data-dw-style="dw-[a-f0-9]{24}"/.test(desktop));
+  equal("and reaches its words at every width", [reach(desktop, "font-size"), reach(desktop, "line-height")], [1, 1]);
+  check("outside any media rule", !/@media[^{]*\{[^}]*:where\(/.test(block(desktop)));
+  equal("regenerating it changes nothing", regenerateResponsiveStyles(desktop), desktop);
+
+  const both = applyValues(page, { title: sanitizeValue(byId("title"), { style: "font-size: 40px", responsive: { tablet: "font-size: 30px", mobile: "font-size: 20px" } }) }).html;
+  equal("set on Desktop, Tablet and Phone, the words are reached once, from the widest", reach(both, "font-size"), 1);
+
+  const colourOnly = applyValues(page, { title: sanitizeValue(byId("title"), { style: "color: maroon" }) }).html;
+  check("a Desktop colour adds no token and no rules", !colourOnly.includes("data-dw-style") && !colourOnly.includes("data-dw-responsive-styles"));
+
+  const desktopFields = discoverFields(desktop).fields;
+  const titled = desktopFields.find((field) => field.id === "title")!;
+  const removed = applyValues(desktop, { title: sanitizeValue(titled, { style: "color: maroon" }) }).html;
+  equal("taking the size away takes the reach away", [reach(removed, "font-size"), reach(removed, "line-height")], [0, 0]);
+
+  const plain = '<!doctype html><html><head></head><body><h2 data-dw-field="t">Just words</h2></body></html>';
+  const plainOut = applyValues(plain, { t: sanitizeValue(discoverFields(plain).fields.find((field) => field.id === "t")!, { style: "font-size: 30px" }) }).html;
+  check("a heading with nothing inside it needs no token", !plainOut.includes("data-dw-style"));
+
+  // A framework page's canvas follows its published stylesheet: by tag, and
+  // from Tablet or Phone only, because a Desktop size goes into its source.
+  const sourceDesktop = applyValues(page, { title: sanitizeValue(byId("title"), { style: "font-size: 40px" }) }, { sourcePage: true }).html;
+  check("on a framework page a Desktop size adds no token", !sourceDesktop.includes("data-dw-style"));
+  const sourcePhone = applyValues(page, { title: sanitizeValue(byId("title"), { style: "font-size: 40px", responsive: { mobile: "font-size: 20px" } }) }, { sourcePage: true }).html;
+  equal("on a framework page a phone size on a heading reaches its words, from 640px down", [reach(sourcePhone, "font-size"), block(sourcePhone).indexOf(":where(") > block(sourcePhone).indexOf("max-width: 640px")], [1, true]);
+
+  // The browser-facing half: the rule's specificity is (0,1,0) — under a
+  // field's own (0,3,0) — and a word with its own inline value is skipped.
+  const css = renderResponsiveCss("dw-bbbbbbbbbbbbbbbbbbbbbbbb", { mobile: "font-size: 20px" });
+  check("a rule with no text flag reaches nothing", !css.includes(":where("));
+}
+
 const summaries = describeChanges(original.fields, { [heading.id]: edit });
 equal("reviews identify both device changes", summaries.map((summary) => [summary.part, summary.label]), [["styling", "Main heading (tablet)"], ["styling", "Main heading (phone)"]]);
 check("responsive summaries are categorized as styling", categoriseChanges(summaries).styles);

@@ -852,7 +852,7 @@ websiteRouter.get("/pages/:pageId/preview", async (req, res, next) => {
     // not type it on, so the shared draft belongs here as much as in the panel.
     const shared = await sharedOnPage(page, editingSource(source.html, own));
     const values = { ...own, ...shared.values };
-    const applied = applyValues(editingSource(source.html, values), fieldValues(values));
+    const applied = applyValues(editingSource(source.html, values), fieldValues(values), { sourcePage: Boolean(source.sourceFile) });
     // `?pick=1` is the visual editor asking for a preview it can click on. The
     // plain preview stays exactly as it was — it is what "Preview" means, and a
     // page covered in selection outlines is not a preview of anything.

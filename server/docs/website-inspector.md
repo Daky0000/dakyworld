@@ -156,6 +156,26 @@ Conventions:
 What is **Desktop only**, because a tablet or phone rule can carry less: picture
 layers in Background, Text stroke, and Clipping → Text.
 
+On Tablet and Phone, an element with changes for that size only shows one line
+above the sections — "2 changes for phones only" — with **Reset**, which drops
+them all and goes back to what the wider screen hands down. Desktop has no such
+line: the device switch in the bar already says which size is being edited.
+
+**What typography reaches inside an element.** The same on every screen size:
+
+| Selected | Font size · Line height · Letter spacing · Word spacing | Weight · Style · Colour · Decoration · Family · Transform |
+|---|---|---|
+| A **text element** — heading, paragraph, button, link, list item: its children are all words (`span`, `strong`, `a`, an icon…) | Reach **every word inside**, even one whose class gives it a size of its own, from the widest screen that sets them. A word with its own setting keeps it. | Inherited the ordinary way. Bold words stay bold, links keep their colour and underline, a coloured accent word keeps its colour. |
+| A **container** — section, div, card | Inherited the ordinary way: a heading or paragraph inside keeps its own size. | Inherited the ordinary way. |
+
+On a page built from framework source files, whether an element is a text
+element is decided by its tag, and its words are reached from a Tablet or Phone
+size only. Superscripts and subscripts keep their smaller size.
+
+A Desktop value is written as the element's inline style, so a rule in the
+website's own stylesheet marked `!important` still wins over it (the canvas
+shows the same). A Tablet or Phone value wins over such a rule.
+
 ---
 
 ## 4. INTERACTIONS tab (identical for every element)
@@ -215,6 +235,7 @@ How they play, and the limits that follow from adding **no script** to a page:
 | Content (words, link, picture, alt, button style, icon) | `draft.values[fieldId]` — only what changed, with what the page said at the time | A splice at recorded offsets; nothing else in the file moves |
 | Style, Desktop | `draft.values[fieldId].style` | The element's inline `style` |
 | Style, Tablet / Phone | `draft.values[fieldId].responsive` | `data-dw-style` token + generated media rules |
+| A text element's sizes reaching its words | Derived: the inline style and the overrides | One `:where([token]) :not(…)` rule per size, from the widest screen that sets it; a Desktop size gives a text element its token |
 | Hover state | `--dw-hover-*` in the inline style | Fixed `:hover` rules reading them |
 | Settings: tag, ID, attributes, video | A structure change (`kind: "settings"`) folded into the draft document | The tag renamed, attributes written; field identities pinned with `data-dw-node` |
 | Display conditions | `display: none` in the base style or a screen-size override | As style |

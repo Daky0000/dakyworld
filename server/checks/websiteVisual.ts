@@ -132,8 +132,14 @@ for (const name of pages) {
   check(`${name}: onto the element it was aimed at`, styled?.style === "color: #3157FF; font-size: 40px", styled?.style);
   check(`${name}: and nothing else on the page moved`, after.fields.every((field) => field.id === target.id || field.value === content.fields.find((f) => f.id === field.id)?.value));
 
-  const changedLines = html.split("\n").filter((line, index) => line !== applied.html.split("\n")[index]).length;
-  check(`${name}: the file diff is one line`, changedLines === 1, `${changedLines} lines`);
+  // A font size on an element with words inside it also reaches them, through
+  // the editor's own generated stylesheet (TEXT_METRICS). That block is the one
+  // other thing a style may add, and it may hold nothing but that reach.
+  const generated = /<style data-dw-responsive-styles>[\s\S]*?<\/style>/.exec(applied.html)?.[0] ?? "";
+  const withoutGenerated = generated ? applied.html.replace(generated, "") : applied.html;
+  const changedLines = html.split("\n").filter((line, index) => line !== withoutGenerated.split("\n")[index]).length;
+  check(`${name}: the file diff is one line, besides the editor's own stylesheet`, changedLines === 1, `${changedLines} lines`);
+  check(`${name}: which, when there is one, only lets the new size reach the words inside`, !generated || /^<style data-dw-responsive-styles>\n:where\(\[data-dw-style="dw-[a-f0-9]{24}"\]\) :not\(sub, sup, \[style\*="font-size"\]\)\{font-size: inherit !important;\}\n<\/style>$/.test(generated), generated.slice(0, 200));
 }
 
 console.log("Keeping what the developer wrote");

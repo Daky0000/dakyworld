@@ -83,33 +83,15 @@ export function WebsiteStyleTab(props: Props) {
 
   return (
     <fieldset disabled={readOnly} className="dx-style">
-      <div className="dx-device-scope mb-2 rounded-xl border border-line bg-surface-2/60 p-2.5 text-xs text-muted" data-tour="device-scope">
-        <div className="flex items-center justify-between gap-1.5">
-          <span className="font-semibold text-ink flex items-center gap-1.5">
-            {device === "desktop" ? "🖥️ Desktop (Base)" : device === "tablet" ? "📱 Tablet Override" : "📱 Phone Override"}
-          </span>
-          <span className="rounded-md border border-line bg-white/80 px-2 py-0.5 text-[11px] font-medium text-ink shadow-sm">
-            {device === "desktop" ? "All screen sizes" : device === "tablet" ? "≤ 1024px" : "≤ 640px"}
-          </span>
+      {/* No line naming the screen size: the device switch in the bar says it
+          (removed on purpose 12 Oct 2026). What earns a line is something to
+          act on — overrides that only this screen size has, and a way to drop them. */}
+      {device !== "desktop" && Object.keys(raw).length > 0 && (
+        <div className="dx-fl dx-overrides">
+          <span className="dx-hint">{Object.keys(raw).length} {Object.keys(raw).length === 1 ? "change" : "changes"} for {device === "tablet" ? "tablets" : "phones"} only</span>
+          <button type="button" className="dx-rs" aria-label={`Reset ${device} overrides`} onClick={() => onChange("", true)}>Reset</button>
         </div>
-        <p className="mt-1 text-[11px] leading-relaxed text-muted">
-          {device === "desktop"
-            ? "Base styles applied across all screens. Tablet & Phone inherit these unless overridden."
-            : `Custom styles for ${device === "tablet" ? "Tablet" : "Phone"}. Empty fields inherit wider screen values.`}
-        </p>
-        {device !== "desktop" && Object.keys(c.map).length > 0 && (
-          <div className="mt-2 flex items-center justify-between border-t border-line/60 pt-1.5 text-[11px]">
-            <span className="text-blue font-medium">{Object.keys(c.map).length} override(s) active on {device}</span>
-            <button
-              type="button"
-              className="font-medium text-danger-text hover:underline text-[11px]"
-              onClick={() => onChange("", true)}
-            >
-              Reset {device} overrides
-            </button>
-          </div>
-        )}
-      </div>
+      )}
       <LayoutSection c={c} facts={facts} effective={effective} changed={changed} />
       <SpacingSection c={c} changed={changed} />
       <SizeSection c={c} facts={facts} changed={changed} />

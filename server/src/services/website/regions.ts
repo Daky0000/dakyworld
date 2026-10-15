@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { iconChoiceMarkup, type IconChoice, type IconFrame } from "../../shared/websiteIcons.js";
 import { DOCUMENT_KEY, draftDocument, fieldValues, sourceHash, type DraftDocument } from "./document.js";
 import { attrNode, decodeEntities, findTag, parseHtml, textOf, walk, type ElementNode } from "./parse.js";
-import { normalizeResponsive, regenerateResponsiveStyles, responsiveEqual, responsiveOf, RESPONSIVE_TOKEN, type ResponsiveStyles } from "./responsive.js";
+import { isTextElement, normalizeResponsive, regenerateResponsiveStyles, responsiveEqual, responsiveOf, RESPONSIVE_TOKEN, TEXT_METRICS, type ResponsiveStyles } from "./responsive.js";
 
 /**
  * Turning a hand-built page into a list of things somebody can change.
@@ -1572,6 +1572,15 @@ function normalizeDeclaration(d: string): string {
   return `${prop}: ${val}`;
 }
 
+/** One declaration's value in a style string, normalised; undefined when it is not declared. */
+function metricOf(style: string, property: string): string | undefined {
+  for (const declaration of splitDeclarations(style)) {
+    const colon = declaration.indexOf(":");
+    if (colon > 0 && declaration.slice(0, colon).trim().toLowerCase() === property) return declaration.slice(colon + 1).replace(/s+/g, " ").trim();
+  }
+  return undefined;
+}
+
 export function safeStyle(style: string, originalStyle = ""): string {
   const original = new Set(splitDeclarations(originalStyle).map(normalizeDeclaration).filter(Boolean));
   return splitDeclarations(style)
@@ -1623,11 +1632,16 @@ export type ApplyResult = {
  * touched — which is what makes a publish a readable diff instead of a
  * reformatting of somebody's whole page.
  */
-export function applyValues(source: string, values: Record<string, FieldValue>): ApplyResult {
+/**
+ * `sourcePage` is a page built from framework source files, shown as its
+ * rendered HTML: its words are reached by tag and from Tablet or Phone only, as
+ * its published stylesheet does it (`pageEditorCss`), so the canvas matches.
+ */
+export function applyValues(source: string, values: Record<string, FieldValue>, options: { sourcePage?: boolean } = {}): ApplyResult {
   const document = draftDocument(values);
   if (document) {
     if (document.baseHash !== sourceHash(source)) return { html: source, changed: [], missing: [], conflicts: [{ id: DOCUMENT_KEY, expected: "The original page used for these layout changes", found: "The source changed. Discard the layout draft or restore it against the latest page before publishing." }] };
-    const applied = applyValues(document.html, fieldValues(values));
+    const applied = applyValues(document.html, fieldValues(values), options);
     return { ...applied, changed: document.html !== source ? [DOCUMENT_KEY, ...applied.changed] : applied.changed };
   }
   const page = readPage(source);
@@ -1636,7 +1650,9 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
   const changed: string[] = [];
   const conflicts: ApplyResult["conflicts"] = [];
   const missing: string[] = [];
-  const responsiveNodes = Object.values(values).some((edit) => edit.responsive !== undefined)
+  // Style edits need the nodes too: a text element's font size reaches its
+  // words through a generated rule, which needs a token on the element.
+  const responsiveNodes = Object.values(values).some((edit) => edit.responsive !== undefined || edit.style !== undefined)
     ? [...walk(parseHtml(source))] : [];
   const responsiveNodeAt = new Map(responsiveNodes.map((node) => [node.attrInsert, node]));
   const tokenCounts = new Map<string, number>();
@@ -1736,27 +1752,39 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
         touched = true;
       }
     }
-    if (edit.responsive !== undefined && field.attrInsert !== undefined && !responsiveEqual(edit.responsive, field.responsive)) {
-      const node = responsiveNodeAt.get(field.attrInsert);
-      if (node) {
-        const responsive = normalizeResponsive(edit.responsive);
-        let token = attrNode(node, "data-dw-style")?.value;
-        if (!token || !RESPONSIVE_TOKEN.test(token) || tokenCounts.get(token) !== 1) {
-          let attempt = 0;
-          do {
-            token = `dw-${createHash("sha256").update(`${id}:${node.start}:${attempt++}:${source}`).digest("hex").slice(0, 24)}`;
-          } while (tokenCounts.has(token));
-          tokenCounts.set(token, 1);
-        }
-        // Whole attributes also handle malformed duplicate markers safely.
-        for (const attr of node.attrs.filter((candidate) => candidate.name === "data-dw-responsive" || candidate.name === "data-dw-style")) {
-          edits.push({ span: withLeadingSpace(source, attr), text: "" });
-        }
-        const data = Object.keys(responsive).length ? ` data-dw-responsive="${attrEscape(JSON.stringify(responsive))}"` : "";
-        edits.push({ insertAt: field.attrInsert, text: ` data-dw-style="${token}"${data}` });
-        responsiveChanged = true;
-        touched = true;
+    const responsiveEdit = edit.responsive !== undefined && !responsiveEqual(edit.responsive, field.responsive);
+    const styledNode = field.attrInsert !== undefined && (responsiveEdit || edit.style !== undefined) ? responsiveNodeAt.get(field.attrInsert) : undefined;
+    // A Desktop change to a text element's size reaches its words through the
+    // generated stylesheet (see TEXT_METRICS), so it needs what a Tablet or
+    // Phone change needs: a token, and the rules regenerated.
+    const nextStyle = edit.style !== undefined ? safeStyle(edit.style, field.style) : field.style ?? "";
+    const metricsEdit = !options.sourcePage && !responsiveEdit && styledNode !== undefined && edit.style !== undefined
+      && isTextElement(styledNode.children.map((child) => child.tag))
+      && TEXT_METRICS.some((property) => metricOf(nextStyle, property) !== metricOf(field.style ?? "", property));
+    const ownToken = styledNode ? attrNode(styledNode, "data-dw-style")?.value : undefined;
+    const reusable = ownToken !== undefined && RESPONSIVE_TOKEN.test(ownToken) && tokenCounts.get(ownToken) === 1;
+    if (metricsEdit && reusable) {
+      // The attributes already say everything; only the rules change.
+      responsiveChanged = true;
+    } else if (styledNode && field.attrInsert !== undefined && (responsiveEdit || (metricsEdit && TEXT_METRICS.some((property) => metricOf(nextStyle, property) !== undefined)))) {
+      const node = styledNode;
+      const responsive = normalizeResponsive(responsiveEdit ? edit.responsive : field.responsive ?? {});
+      let token = ownToken;
+      if (!token || !reusable) {
+        let attempt = 0;
+        do {
+          token = `dw-${createHash("sha256").update(`${id}:${node.start}:${attempt++}:${source}`).digest("hex").slice(0, 24)}`;
+        } while (tokenCounts.has(token));
+        tokenCounts.set(token, 1);
       }
+      // Whole attributes also handle malformed duplicate markers safely.
+      for (const attr of node.attrs.filter((candidate) => candidate.name === "data-dw-responsive" || candidate.name === "data-dw-style")) {
+        edits.push({ span: withLeadingSpace(source, attr), text: "" });
+      }
+      const data = Object.keys(responsive).length ? ` data-dw-responsive="${attrEscape(JSON.stringify(responsive))}"` : "";
+      edits.push({ insertAt: field.attrInsert, text: ` data-dw-style="${token}"${data}` });
+      responsiveChanged = true;
+      touched = true;
     }
     // A button's style, swapped one token for another inside its own class
     // attribute. Every other class on the element survives — `mt-9` is a
@@ -1847,7 +1875,7 @@ export function applyValues(source: string, values: Record<string, FieldValue>):
     previousStart = edit.start;
   }
 
-  if (responsiveChanged) html = regenerateResponsiveStyles(html);
+  if (responsiveChanged) html = regenerateResponsiveStyles(html, options);
   if (USES_INTERACTION_CSS.test(html) || html.includes("data-dw-interaction-styles")) html = regenerateInteractionStyles(html);
   return { html, changed, conflicts, missing };
 }

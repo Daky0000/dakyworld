@@ -84,8 +84,8 @@ readonly.send({ type: "edit", id: "hero.title" });
 assert.equal(readonly.heading.hasAttribute("contenteditable"), false, "viewer picker cannot start in-place editing");
 
 const direct = fixture();
-writeResponsivePreview(direct.doc as unknown as Document, direct.heading as unknown as Element, "hero.title", map);
+writeResponsivePreview(direct.doc as unknown as Document, direct.heading as unknown as Element, "hero.title", map, "");
 assert.equal(direct.sheets[0]?.textContent, expected, "same-origin direct path writes identical CSS");
-writeResponsivePreview(direct.doc as unknown as Document, direct.heading as unknown as Element, "hero.title", {});
+writeResponsivePreview(direct.doc as unknown as Document, direct.heading as unknown as Element, "hero.title", {}, "");
 assert.equal(direct.sheets[0]?.removed, true);
 console.log("websitePreviewRuntime: picker origin checks, responsive preview parity/reset, image replacement and viewer controls passed (DOM double; no browser rendering)");

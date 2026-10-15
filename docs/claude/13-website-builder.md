@@ -947,6 +947,43 @@ is here is why it is built this way, and what cost time.
   colour or gradient layer added on a smaller screen *replaces* the desktop
   layers there — that is what a `background-image` override is — and the panel
   says so.
+- **What a text element's typography reaches inside it (15 Oct 2026).** A font
+  size, line height, letter or word spacing set on a *text element* — one whose
+  children are all phrasing content (`isTextElement`): a heading with a span, a
+  button with an icon — reaches every word inside it, from the widest screen
+  that sets it, on every screen alike. That is what Dan's "font size does
+  nothing on tablet and phone" was: AI-builder pages size headings through an
+  inner `<span class="text-4xl">`, whose class beats inheritance. The rule is
+  `:where([token]) :not(sub, sup, [style*="font-size"]){font-size: inherit !important}`,
+  specificity (0,1,0): it beats the span's class, never a field's own rule
+  (0,3,0), and skips a word with its own inline value. A Desktop size needs a
+  token for that, so `applyValues` gives a text element one when its Desktop
+  metrics change; the rules are regenerated from the inline style.
+  **Nothing else reaches.** Three fixes on 14–15 Oct had pushed all eleven text
+  properties onto `*` on tablet and phone only: a paragraph's weight un-bolded
+  its bold words, its colour recoloured its links, "None" removed their
+  underline, and a *section's* size flattened its heading to paragraph size and
+  could beat the heading's own setting by stylesheet order. Desktop never did
+  any of it. Containers reach nothing — normal inheritance only. On a framework
+  page the children are not read, so `TEXT_TAGS` decides, and only from Tablet
+  or Phone (a Desktop size there is written into the block's own style).
+  `checks/websiteResponsive.ts` holds it, and fails on the 14 Oct generator.
+- **The traps that let those three fixes ship green.** Their browser checks used
+  a hand-written preview with no CSP, no server, no published page; and the
+  inline-style "cascade" they added (`applyEffectiveWithCascade`,
+  `syncAllResponsiveStylesToIframe`) never ran in the editor at all, because
+  `el instanceof HTMLElement` is false for an element from the iframe's realm.
+  Both are gone. Test a property through the server's own `readPage` /
+  `applyValues` / `previewDocument` and measure the published page, not the
+  fixture. And `change()` now writes `latestEdits` before it pushes, because the
+  preview sheet is built from a field's style and overrides together and a
+  visibility change sends both at once.
+- **A site's own `!important` beats a Desktop change.** Desktop is an inline
+  style without `!important`, so `.nav-cta{font-size:15px!important}` on
+  dakyx.com wins on the canvas and live, while a Tablet or Phone override
+  (`!important`, (0,3,0)) wins over it. Known and not yet decided: making
+  Desktop win means mirroring Desktop declarations into the generated
+  stylesheet for every edited element.
 - **Custom CSS is the declarations no control owns.** One inline style holds
   everything, so the box shows what is left over (a `text-shadow`, a `cursor`)
   and refuses, with the reason, anything a control owns, anything `--dw-*`, and

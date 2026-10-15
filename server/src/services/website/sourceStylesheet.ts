@@ -29,7 +29,8 @@
  * region whenever the page uses any of them.
  */
 import { interactionCss } from "../../shared/websiteInteraction.js";
-import { responsiveStyleCss, RESPONSIVE_TOKEN, normalizeResponsive, type ResponsiveStyles } from "./responsive.js";
+import { responsiveStyleCss, RESPONSIVE_TOKEN, normalizeResponsive, type ResponsiveStyleEntry } from "./responsive.js";
+import { TEXT_TAGS } from "../../shared/websiteResponsive.js";
 import { readBlocks } from "./sourceAttributes.js";
 import { isMarkdownPath } from "./markdown.js";
 
@@ -61,12 +62,15 @@ const safePage = (filePath: string) => filePath.replace(/[^A-Za-z0-9_./-]/g, "_"
 /** The CSS this page needs, derived from the page itself. Empty when it needs none. */
 export function pageEditorCss(source: string, filePath: string): string {
   if (isMarkdownPath(filePath)) return "";
-  const entries: Array<{ token: string; responsive: ResponsiveStyles }> = [];
+  // A source block's children are not read, so whether its words are reached
+  // is decided by its tag; and only from a Tablet or Phone setting, because a
+  // Desktop one is written into the block's own style rather than given a token.
+  const entries: ResponsiveStyleEntry[] = [];
   for (const block of readBlocks(source, filePath)) {
     const token = block.attributes.find((attribute) => attribute.name.toLowerCase() === "data-dw-style")?.value;
     const raw = block.attributes.find((attribute) => attribute.name.toLowerCase() === "data-dw-responsive")?.value;
     if (!token || !RESPONSIVE_TOKEN.test(token) || !raw) continue;
-    try { entries.push({ token, responsive: normalizeResponsive(JSON.parse(raw)) }); } catch { /* a broken annotation writes no rule */ }
+    try { entries.push({ token, responsive: normalizeResponsive(JSON.parse(raw)), text: TEXT_TAGS.has(block.tag.toLowerCase()) }); } catch { /* a broken annotation writes no rule */ }
   }
   const media = responsiveStyleCss(entries);
   // The interaction block is the same for every page, and one copy in the file
