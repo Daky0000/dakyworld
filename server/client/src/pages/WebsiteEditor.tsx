@@ -1585,6 +1585,30 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     assetCallback.current = apply;
     setAssetModalOpen(true);
   };
+  /**
+   * A video file into the site's media, answering with the address to play it
+   * from. Sent as base64 in JSON like a picture, so the request's own ceiling
+   * (16 MB, about 12 MB of file) is checked here first: past it the server's
+   * parser refuses before the plan's limit can say anything useful.
+   */
+  const uploadVideo = async (file: File): Promise<string> => {
+    const siteId = page.data?.site.id;
+    if (!siteId) throw new Error("The page is still loading. Try again in a moment.");
+    if (file.size > 11 * 1024 * 1024) {
+      throw new Error(`That video is ${(file.size / (1024 * 1024)).toFixed(1)} MB. Videos up to 10 MB can be uploaded here: make a smaller copy (720p is plenty for a page) or paste the address of one hosted elsewhere.`);
+    }
+    const data = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+      reader.onerror = () => reject(new Error("That file could not be read."));
+      reader.readAsDataURL(file);
+    });
+    const uploaded = await api.post<{ id: string; url: string }>(`/website/sites/${siteId}/assets`, { filename: file.name, alt: "", data });
+    void qc.invalidateQueries({ queryKey: ["website", "assets", siteId] });
+    void qc.invalidateQueries({ queryKey: ["website", "assets", "all"] });
+    notifyTierStatusChanged();
+    return uploaded.url;
+  };
 
 
   const syncPageColorsFromFrame = useCallback(() => {
@@ -3449,7 +3473,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                       <StyleSection name="content" title="Content" open>
                         {!canEdit && <p className="dx-note">You can look at this site's settings but not change them.</p>}
                         {mediaKind(picked.tag) && (
-                          <MediaSettings field={picked} readOnly={readOnly} lockedReason={sharedMarkupLock} onSettings={(next) => void runStructure("settings", picked.id, undefined, false, next)} onPickPoster={pickImage} resolveImage={resolveImagePreview} />
+                          <MediaSettings field={picked} readOnly={readOnly} lockedReason={sharedMarkupLock} onSettings={(next) => void runStructure("settings", picked.id, undefined, false, next)} onPickPoster={pickImage} onUpload={uploadVideo} element={pickedElement} resolveImage={resolveImagePreview} />
                         )}
                         {picked.kind === "image" && (() => {
                           const rawImgVal = (edits[picked.id]?.value ?? picked.value ?? "").trim();

@@ -962,6 +962,13 @@ function ImportDemoDrawer({
             </div>
             <h3 className="mt-2 font-display text-lg font-medium text-ink">{savedDemo.businessName}</h3>
             <p className="text-xs text-muted">{savedDemo.title}</p>
+            {/* What the import changed or could not bring: forms made inert, and
+                files the page names that were never uploaded with it. */}
+            {(savedDemo as Demo & { notes?: string[] }).notes?.length ? (
+              <ul role="status" className="mt-3 list-disc space-y-1 rounded-xl border border-warn-line bg-warn-surface py-2 pl-7 pr-3 text-xs text-warn-text">
+                {(savedDemo as Demo & { notes?: string[] }).notes!.map((note) => <li key={note}>{note}</li>)}
+              </ul>
+            ) : null}
 
             <div className="mt-4 rounded-xl border border-line bg-white p-3">
               <div className="font-sans text-[10px] uppercase tracking-[.06em] text-muted">Shareable Public URL</div>

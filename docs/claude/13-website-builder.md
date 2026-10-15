@@ -893,6 +893,27 @@ is here is why it is built this way, and what cost time.
   file per browser and are refused. Autoplay is sent with `muted`, because a
   browser will not start an unmuted video on its own and a switch that does
   nothing reads as broken.
+- **A video's file can be uploaded, and a missing one is named (15 Oct 2026).**
+  A demo imported as one HTML file played `nevermind-venue-tour.mp4` from beside
+  it: the file never reached the server, the editor's preview and the demo link
+  both answered 404 on every load, nothing said why, and no screen could upload
+  a video — the library held pictures, and the panel's advice ("put the file
+  where the site keeps its media") has no answer for a demo or a hosted site.
+  Now `POST /sites/:id/assets` takes MP4 and WebM, judged by `sniffVideo` from
+  the bytes (`.mov` and `.mkv` refused with the reason: they upload fine and then
+  never play), stored like a picture (`assets/dw/<uuid>`, R2 when configured,
+  which also serves byte ranges), within the plan's single-file size; **Upload
+  video** sits under Video file. The panel watches the canvas player
+  (`networkState === 3` or `error`, with a capture listener because a `<source>`
+  child's error does not bubble) and names the file it cannot load. Demo import
+  lists the files a page names locally (`localFilesNamed`) in its notes, which
+  the import screen now shows. In the library a video is a video tile and never
+  fills a picture's place. On the canvas the picker swallowed every click, so a
+  player could not be started at all; a selected player with `controls` now
+  keeps its clicks. `checks/websiteVideoFiles.ts`, `checks/browser/videoUpload.mjs`.
+- **A structure refusal is a 409.** `StructureError` extends `WebsiteError(409)`,
+  so a refused setting ("Use an https address…") reads in the HTTP log exactly
+  like a revision race. Read the message on screen before chasing revisions.
 - **Every settings change is an edit on the plan, so a video's switches are
   sent together.** The structure route counts one edit against the monthly
   allowance (30 on the entry plan) and shares a 20-a-minute limit with publish.

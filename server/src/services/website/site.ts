@@ -1140,6 +1140,10 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
     }
     // While typing, a click inside the same element is the caret being placed.
     if (editing && el === editing) return;
+    // A player that is already selected keeps its own controls: the first click
+    // chooses it, the next ones press play, scrub and set the volume. Swallowing
+    // them all left a video on the canvas that could never be played.
+    if (el && el.hasAttribute("data-dw-selected") && /^(?:VIDEO|AUDIO)$/.test(el.tagName) && el.hasAttribute("controls")) return;
     // A click on nothing in particular clears the selection rather than
     // leaving the panel describing something the eye has moved on from.
     event.preventDefault();

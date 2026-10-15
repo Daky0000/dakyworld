@@ -706,7 +706,33 @@ export function prepareImportedDemoHtml(
   }
 
   html = withNoIndex(html);
+  const missing = localFilesNamed(html);
+  if (missing.length) notes.push(missingFilesNote(missing));
   return { html, notes };
+}
+
+/**
+ * Pictures and players the page names by a file beside it, which an imported
+ * HTML file cannot have brought: the import is one file. They show as broken
+ * pictures and as videos that never play, on the canvas and on the demo link,
+ * and nothing said why. An address with a scheme (https:, data:) is somewhere
+ * else and fine; one the editor uploaded (`assets/dw/`) is on the server.
+ */
+export function localFilesNamed(html: string): string[] {
+  const names = new Set<string>();
+  for (const tag of html.matchAll(/<(?:img|video|audio|source|track)\b[^>]*>/gi)) {
+    for (const attribute of tag[0].matchAll(/\s(src|poster)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/gi)) {
+      const value = (attribute[2] ?? attribute[3] ?? attribute[4] ?? "").replace(/&amp;/g, "&").trim();
+      if (!value || /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(value) || value.includes("assets/dw/")) continue;
+      names.add(value.replace(/[?#].*$/, ""));
+    }
+  }
+  return [...names];
+}
+
+function missingFilesNote(files: string[]): string {
+  const listed = files.slice(0, 6).join(", ") + (files.length > 6 ? ` and ${files.length - 6} more` : "");
+  return `${files.length === 1 ? "This page uses a file" : `This page uses ${files.length} files`} that ${files.length === 1 ? "was" : "were"} not uploaded with it: ${listed}. An HTML file brings no other files with it, so ${files.length === 1 ? "it shows" : "they show"} as missing. Open the page in the Website Builder, select ${files.length === 1 ? "it" : "each one"} and upload the file there: a video under its Video file, a picture with Replace.`;
 }
 
 /**

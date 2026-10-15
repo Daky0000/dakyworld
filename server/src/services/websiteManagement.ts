@@ -6,7 +6,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { buildPublishPlan, discoverFields, describeChanges, parse, editingSource } from "./website/index.js";
 import { pageSource, WebsiteError } from "./website/site.js";
-import { sniff } from "../lib/fileType.js";
+import { sniff, sniffVideo } from "../lib/fileType.js";
 import { optimizeImageBuffer } from "../lib/imageOptimization.js";
 import { looksLikeSvg, SvgRejected, SVG_CONTENT_SECURITY_POLICY } from "../lib/svgSanitize.js";
 import { assetUrl, embedWebsiteAssets, pagesUsingAsset, storedObjectStillNeeded, unpublishedUsesOf } from "./websiteAssets.js";
@@ -163,12 +163,34 @@ export function registerWebsiteManagement(router: Router, access: Access) {
   router.post("/sites/:siteId/assets", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
     const input = z.object({ filename: z.string().min(1).max(200), data: z.string().max(15_000_000), alt: z.string().max(500).default("") }).parse(req.body);
-    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(input.data)) throw new WebsiteError(400, "The image data is not valid base64.");
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(input.data)) throw new WebsiteError(400, "The file data is not valid base64.");
     const content = Buffer.from(input.data, "base64");
+    // A video is stored as it came: there is nothing to optimise in the browser's
+    // own formats, and re-encoding one is a job for the person who made it.
+    const video = sniffVideo(content);
+    if (video === "video/quicktime") throw new WebsiteError(400, "That is a QuickTime (.mov) video, which most browsers can't play. Export it as MP4 (H.264) and upload that.");
+    if (video === "video/x-matroska") throw new WebsiteError(400, "That is a Matroska (.mkv) video, which most browsers can't play. Export it as MP4 (H.264) or WebM and upload that.");
+    if (video) {
+      await assertMediaStorageAllowance(req, content.length, site.id);
+      const repoPath = `assets/dw/${randomUUID()}.${video === "video/mp4" ? "mp4" : "webm"}`;
+      const r2Url = isR2Configured() ? (await uploadToR2(content, { mimeType: video, key: repoPath })).url : null;
+      const uploaded = await prisma.$transaction(async (tx) => {
+        const created = await tx.siteAsset.create({
+          data: { siteId: site.id, filename: input.filename, repoPath, contentType: video, content: r2Url ? null : content, size: content.length, alt: input.alt },
+        });
+        await tx.siteAuditEvent.create({
+          data: { siteId: site.id, kind: "ASSET_UPLOAD", summary: `Uploaded ${input.filename}`, ...actor(req), detail: { assetId: created.id, contentType: video, bytes: content.length, storage: r2Url ? "cloudflare_r2" : "postgres" } },
+        });
+        return created;
+      });
+      recordMediaStorageAdded(req, content.length);
+      res.status(201).json({ id: uploaded.id, url: r2Url || assetUrl(site, uploaded.repoPath), alt: uploaded.alt, size: content.length, contentType: video });
+      return;
+    }
     const mime = sniff(content);
     const formats: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" };
     const svg = !mime && looksLikeSvg(content);
-    if (!svg && (!mime || !formats[mime])) throw new WebsiteError(400, "Upload a PNG, JPEG, WebP, GIF or SVG image.");
+    if (!svg && (!mime || !formats[mime])) throw new WebsiteError(400, "Upload a PNG, JPEG, WebP, GIF or SVG image, or an MP4 or WebM video.");
     if (!content.length) throw new WebsiteError(400, "Choose a non-empty image file.");
     await assertMediaStorageAllowance(req, content.length, site.id);
     let optimized: Awaited<ReturnType<typeof optimizeImageBuffer>>;

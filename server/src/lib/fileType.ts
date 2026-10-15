@@ -63,6 +63,27 @@ export function sniff(buffer: Buffer): string | null {
   return null;
 }
 
+/**
+ * Which video a file is, from its bytes, or null when it is not one.
+ *
+ * MP4 and QuickTime share a container: an `ftyp` box at byte 4 whose major
+ * brand says which. WebM and Matroska share another: the EBML header, whose
+ * doctype says which. Both pairs are told apart because only one of each plays
+ * in every browser — a `.mov` or `.mkv` would upload fine and then sit on the
+ * page as a black box with a play button that does nothing.
+ */
+export function sniffVideo(buffer: Buffer): "video/mp4" | "video/webm" | "video/quicktime" | "video/x-matroska" | null {
+  if (startsWith(buffer, [0x66, 0x74, 0x79, 0x70], 4)) {
+    const brand = buffer.subarray(8, 12).toString("latin1");
+    return brand === "qt  " ? "video/quicktime" : "video/mp4";
+  }
+  if (startsWith(buffer, [0x1a, 0x45, 0xdf, 0xa3])) {
+    const head = buffer.subarray(0, 64).toString("latin1");
+    return head.includes("webm") ? "video/webm" : head.includes("matroska") ? "video/x-matroska" : null;
+  }
+  return null;
+}
+
 /** Text with no NUL bytes in the first kilobyte — good enough to separate a CSV from a binary blob wearing its name. */
 export function looksLikeText(buffer: Buffer): boolean {
   const head = buffer.subarray(0, 1024);

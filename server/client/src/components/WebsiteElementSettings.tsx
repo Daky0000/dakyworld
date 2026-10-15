@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   MEDIA_ATTRIBUTES, TAG_LABEL, attributeProblem, mediaKind, readMediaTime, writeMediaTime, type ElementSettingsChange,
 } from "../../../src/shared/websiteElementSettings";
@@ -215,15 +215,21 @@ export function MediaSettings({
   readOnly,
   onSettings,
   onPickPoster,
+  onUpload,
   resolveImage,
   lockedReason,
+  element,
 }: {
   field: SiteFieldRow;
   readOnly: boolean;
   lockedReason?: string;
   onSettings: (change: ElementSettingsChange) => void;
   onPickPoster?: (apply: (url: string) => void) => void;
+  /** Stores a video file with the site's media and answers with its address. */
+  onUpload?: (file: File) => Promise<string>;
   resolveImage?: (url: string) => string;
+  /** The player on the canvas, to say when its file cannot be loaded. */
+  element?: Element | null;
 }) {
   const media = mediaKind(field.tag)!;
   const saved = Object.fromEntries((field.attributes ?? []).map((attr) => [attr.name, attr.value])) as Record<string, string>;
@@ -253,6 +259,45 @@ export function MediaSettings({
   const disabled = readOnly || field.structure === undefined || Boolean(lockedReason);
   const controls = (attrs.controlslist ?? "").split(/\s+/).filter(Boolean);
   const waiting = Object.keys(pending).length;
+
+  // A player the browser could not fetch a file for looks like any other on the
+  // canvas: a box with a play button that does nothing. An HTML file brings no
+  // other files with it, so a video named by a file beside it is missing until
+  // it is uploaded here — and nothing said so.
+  const [missing, setMissing] = useState(false);
+  useEffect(() => {
+    const player = element as (Element & { networkState?: number; error?: unknown }) | null | undefined;
+    if (!player || !/^(?:video|audio)$/i.test(player.tagName)) { setMissing(false); return; }
+    // 3 is NETWORK_NO_SOURCE: every source it was given failed.
+    const check = () => setMissing(player.networkState === 3 || Boolean(player.error));
+    check();
+    // A <source> child's error does not bubble; capture reaches it.
+    player.addEventListener("error", check, true);
+    player.addEventListener("loadedmetadata", check);
+    player.addEventListener("emptied", check);
+    return () => {
+      player.removeEventListener("error", check, true);
+      player.removeEventListener("loadedmetadata", check);
+      player.removeEventListener("emptied", check);
+    };
+  }, [element, signature]);
+  const fileInput = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProblem, setUploadProblem] = useState<string | null>(null);
+  const upload = async (file: File) => {
+    if (!onUpload) return;
+    setUploading(true);
+    setUploadProblem(null);
+    try {
+      set({ src: writeMediaTime(await onUpload(file), time.start, time.end) });
+    } catch (error) {
+      setUploadProblem(error instanceof Error ? error.message : "That file could not be uploaded.");
+    } finally {
+      setUploading(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  };
+  const canUpload = Boolean(onUpload) && media === "video";
   const toggle = (label: string, on: boolean, change: () => void, hint?: string) => (
     <label className="dx-toggle" title={hint}>
       <span>{label}</span>
@@ -267,6 +312,20 @@ export function MediaSettings({
       ) : (
         <>
           <MediaText label={media === "video" ? "Video file" : "Audio file"} value={time.base} placeholder="/media/intro.mp4 or https://…" disabled={disabled} onSave={(base) => set({ src: base ? writeMediaTime(base, time.start, time.end) : null })} tag={field.tag} />
+          {canUpload && (
+            <div className="dx-g2">
+              <button type="button" className="dx-btn dx-soft" disabled={disabled || uploading} onClick={() => fileInput.current?.click()}>
+                {uploading ? "Uploading…" : "Upload video"}
+              </button>
+              <input ref={fileInput} type="file" aria-label="Choose a video to upload" accept="video/mp4,video/webm,.mp4,.webm" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); }} />
+            </div>
+          )}
+          {uploadProblem && <p className="dx-err" role="alert">{uploadProblem}</p>}
+          {missing && pending.src === undefined && (
+            <p className="dx-note warn" role="status">
+              {missingSentence(media, time.base)} {canUpload ? "Upload the video here" : "Paste an https address where it is"}, then press Apply.
+            </p>
+          )}
           <div className="dx-g2">
             <MediaNumber label="Start time" value={time.start} disabled={disabled || !time.base} onSave={(start) => set({ src: writeMediaTime(time.base, start, time.end) })} />
             <MediaNumber label="End time" value={time.end} disabled={disabled || !time.base} onSave={(end) => set({ src: writeMediaTime(time.base, time.start, end) })} />
@@ -310,9 +369,17 @@ export function MediaSettings({
         </button>
         <button type="button" className="dx-btn dx-ghost" disabled={disabled || waiting === 0} onClick={() => setPending({})}>Reset</button>
       </div>
-      <p className="dx-hint">{waiting ? "Nothing is changed until you press Apply." : `A ${media} is added by its address: put the file where the site keeps its media, then paste its path here.`}</p>
+      <p className="dx-hint">{waiting ? "Nothing is changed until you press Apply." : canUpload ? "Upload an MP4 or WebM file, or paste the address of one." : `A ${media} is added by its address: put the file where the site keeps its media, then paste its path here.`}</p>
     </div>
   );
+}
+
+/** Why a player has nothing to play, in the terms of what its address is. */
+function missingSentence(media: string, address: string): string {
+  if (!address) return `This ${media} has no file.`;
+  const shown = address.length > 60 ? `…${address.slice(-57)}` : address;
+  if (/^https?:\/\//i.test(address)) return `This ${media}'s file can't be loaded: nothing plays at “${shown}”.`;
+  return `This ${media}'s file can't be loaded: there is no “${shown}” on the server. An HTML file brings no other files with it, so a video saved beside it has to be uploaded too.`;
 }
 
 function MediaText({ label, value, placeholder, disabled, tag, onSave }: { label: string; value: string; placeholder: string; disabled: boolean; tag: string; onSave: (next: string) => void }) {

@@ -16,7 +16,9 @@ export type CapturedHtmlImage = {
 
 export type WebsiteAssetSelection = { url: string; alt: string; preview?: string };
 
-type Asset = { id: string; filename: string; alt: string; url: string; preview: string; byteSize?: number };
+type Asset = { id: string; filename: string; alt: string; url: string; preview: string; byteSize?: number; contentType?: string };
+/** Videos share the library with pictures (uploaded from a video's own settings) but never fill a picture's place. */
+const isVideo = (asset: { contentType?: string }) => Boolean(asset.contentType?.startsWith("video/"));
 
 export function WebsiteAssetLibrary({
   siteId,
@@ -353,21 +355,25 @@ export function WebsiteAssetLibrary({
               >
                 <button
                   type="button"
-                  disabled={!onSelect}
+                  disabled={!onSelect || isVideo(asset)}
                   onClick={() => {
-                    if (onSelect) {
+                    if (onSelect && !isVideo(asset)) {
                       onSelect({ url: asset.url, alt: asset.alt, preview: asset.preview });
                     }
                   }}
                   className="relative h-28 w-full overflow-hidden bg-sunken text-left"
-                  title={`Use ${asset.filename}`}
+                  title={isVideo(asset) ? `${asset.filename} is a video: it plays from a video's own settings` : `Use ${asset.filename}`}
                 >
-                  <img
-                    src={asset.preview}
-                    alt={asset.alt}
-                    className="h-full w-full object-contain transition duration-200 group-hover:scale-105"
-                  />
-                  {onSelect && (
+                  {isVideo(asset) ? (
+                    <video src={asset.preview} muted playsInline preload="metadata" aria-label={asset.filename} className="h-full w-full object-contain" />
+                  ) : (
+                    <img
+                      src={asset.preview}
+                      alt={asset.alt}
+                      className="h-full w-full object-contain transition duration-200 group-hover:scale-105"
+                    />
+                  )}
+                  {onSelect && !isVideo(asset) && (
                     <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/80 via-ink/40 to-transparent px-2 py-1.5 text-center text-[11px] font-semibold text-white opacity-0 transition group-hover:opacity-100">
                       Use Image
                     </span>
@@ -430,7 +436,9 @@ export function WebsiteAssets() {
       {shown && <p className="text-xs text-muted">{shown.length} {shown.length === 1 ? "image" : "images"}{more ? " so far" : ""}</p>}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
         {shown?.map((asset) => <article key={asset.id} className="overflow-hidden rounded-xl border border-line bg-white">
-          <img src={asset.preview} alt={asset.alt || asset.filename} loading="lazy" className="h-36 w-full bg-sunken object-contain" />
+          {isVideo(asset)
+            ? <video src={asset.preview} muted playsInline controls preload="metadata" aria-label={asset.filename} className="h-36 w-full bg-sunken object-contain" />
+            : <img src={asset.preview} alt={asset.alt || asset.filename} loading="lazy" className="h-36 w-full bg-sunken object-contain" />}
           <div className="space-y-1 p-3 text-xs">
             <p className="truncate font-semibold text-ink" title={asset.filename}>{asset.filename}</p>
             <p className="truncate text-muted">{asset.siteName}</p>
