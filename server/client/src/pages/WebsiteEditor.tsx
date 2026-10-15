@@ -93,7 +93,7 @@ import {
   IconXCircle,
 } from "../components/WebsiteIcons";
 import { useWebsiteAccess } from "../components/WebsiteMembers";
-import { responsivePreviewCss, safeResponsiveStyle, writeResponsivePreview, syncAllResponsiveStylesToIframe } from "../lib/websiteResponsive";
+import { responsivePreviewCss, safeResponsiveStyle, writeResponsivePreview, syncAllResponsiveStylesToIframe, effectiveDeviceStyle } from "../lib/websiteResponsive";
 import { rewriteWebsiteMediaStyle, websiteMediaPreviewUrl, websiteMediaSourceUrl, type WebsiteMediaAsset } from "../lib/websiteMedia";
 import { WebsiteIconPicker } from "../components/WebsiteIconPicker";
 import { iconPreviewSrc } from "../lib/websiteIconPreview";
@@ -801,9 +801,15 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         const isUnresolvedUpload = nextStyle.includes("/assets/dw/") && !nextStyle.includes("/api/website/");
         if (!isCurrentPreview || !isUnresolvedUpload) {
           el.setAttribute("style", nextStyle);
+          if (el instanceof HTMLElement) {
+            el.setAttribute("data-dw-base-style", nextStyle);
+          }
         }
       } else {
         el.removeAttribute("style");
+        if (el instanceof HTMLElement) {
+          el.removeAttribute("data-dw-base-style");
+        }
       }
       return "written";
     }
@@ -843,11 +849,20 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         setAbsentIds((current) => (current.has(id) ? current : new Set(current).add(id)));
         return;
       }
+      const allFieldsList = (page.data?.sections ?? []).flatMap(s => s.fields);
+      const f = allFieldsList.find(item => item.id === id);
+      const baseStyle = latestEdits.current[id]?.style ?? f?.style ?? "";
       tell(
         kind === "style"
           ? { type: "style", id, style: previewStyle(value) }
           : kind === "responsive"
-            ? { type: "responsive", id, css: responsivePreviewCss(id, JSON.parse(value)) }
+            ? {
+                type: "responsive",
+                id,
+                css: responsivePreviewCss(id, JSON.parse(value)),
+                effective: effectiveDeviceStyle(latestDevice.current, baseStyle, JSON.parse(value)),
+                device: latestDevice.current,
+              }
           : kind === "image"
             ? { type: "image", id, src: resolveImagePreview(value) }
           : kind === "icon"

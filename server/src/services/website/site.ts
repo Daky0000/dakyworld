@@ -1380,6 +1380,23 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
         if (!sheet) { sheet = document.createElement("style"); sheet.setAttribute("data-dw-responsive-preview", data.id); (document.head || document.body).appendChild(sheet); }
         sheet.textContent = String(data.css);
       }
+      if (data.effective != null && responsiveElement instanceof HTMLElement) {
+        if (data.effective) responsiveElement.setAttribute("style", String(data.effective));
+        else responsiveElement.removeAttribute("style");
+        var textProps = ["font-size", "line-height", "letter-spacing", "word-spacing", "font-family", "font-weight", "color", "text-align", "text-transform", "font-style", "text-decoration"];
+        var children = responsiveElement.querySelectorAll("*");
+        for (var cIdx = 0; cIdx < children.length; cIdx++) {
+          var ch = children[cIdx];
+          if (ch instanceof HTMLElement) {
+            for (var pIdx = 0; pIdx < textProps.length; pIdx++) {
+              var pName = textProps[pIdx];
+              var pVal = responsiveElement.style.getPropertyValue(pName);
+              if (pVal && data.device !== "desktop") ch.style.setProperty(pName, pVal, "important");
+              else ch.style.removeProperty(pName);
+            }
+          }
+        }
+      }
       post({ type: "applied", id: data.id, want: "responsive" });
     } else if (data.type === "image") {
       var picture = find(data.id);

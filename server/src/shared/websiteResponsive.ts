@@ -57,14 +57,14 @@ export type ResponsiveStyleEntry = { token: string; responsive: ResponsiveStyles
 /** All tablet rules precede all phone rules, so phones inherit tablet values. */
 export function responsiveStyleCss(entries: ResponsiveStyleEntry[], attribute: "data-dw-style" | "data-dw-field" = "data-dw-style"): string {
   if (attribute !== "data-dw-style" && attribute !== "data-dw-field") return "";
-  const identifier = attribute === "data-dw-style" ? RESPONSIVE_TOKEN : /^[a-zA-Z][a-zA-Z0-9_.:-]{0,199}$/;
+  const identifier = attribute === "data-dw-style" ? RESPONSIVE_TOKEN : /^[a-zA-Z0-9_.:-]{1,200}$/;
   const clean = entries.filter((entry) => identifier.test(entry.token)).map((entry) => ({ ...entry, responsive: normalizeResponsive(entry.responsive) }));
   return (["tablet", "mobile"] as const).map((device) => {
     const rules = clean.flatMap(({ token, responsive }) => {
       const style = responsive[device];
       if (!style) return [];
       const selector = `[${attribute}="${token}"]`.repeat(3);
-      const declarations = style.split("; ").map((declaration) => `${declaration} !important`);
+      const declarations = style.split(";").map((s) => s.trim()).filter(Boolean).map((d) => `${d.replace(/\s*!\s*important\s*$/i, "")} !important`);
       const elementRule = `${selector}{${declarations.join("; ")};}`;
       const textDeclarations = declarations.filter((d) => /^(?:font-size|line-height|letter-spacing|word-spacing|font-family|font-weight|color|text-align|text-transform|font-style|text-decoration)\s*:/i.test(d));
       if (textDeclarations.length > 0) {

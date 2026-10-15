@@ -17,6 +17,56 @@ export function effectiveDeviceStyle(device: string, baseStyle = "", responsive:
   return writeStyle({ ...base, ...tablet, ...mobile });
 }
 
+export const TEXT_PROPERTIES = [
+  "font-size",
+  "line-height",
+  "letter-spacing",
+  "word-spacing",
+  "font-family",
+  "font-weight",
+  "color",
+  "text-align",
+  "text-transform",
+  "font-style",
+  "text-decoration",
+];
+
+export function applyEffectiveWithCascade(
+  element: HTMLElement,
+  effectiveStyle: string,
+  isDesktop: boolean
+): void {
+  if (effectiveStyle) {
+    element.setAttribute("style", effectiveStyle);
+  } else {
+    const base = element.getAttribute("data-dw-base-style");
+    if (base) element.setAttribute("style", base);
+    else element.removeAttribute("style");
+  }
+
+  const children = element.querySelectorAll<HTMLElement>("*");
+  if (isDesktop) {
+    children.forEach((child) => {
+      if (child.getAttribute("data-dw-responsive-child") === "true") {
+        TEXT_PROPERTIES.forEach((prop) => child.style.removeProperty(prop));
+        child.removeAttribute("data-dw-responsive-child");
+      }
+    });
+  } else {
+    const parsed = parseStyle(effectiveStyle);
+    children.forEach((child) => {
+      child.setAttribute("data-dw-responsive-child", "true");
+      for (const prop of TEXT_PROPERTIES) {
+        if (parsed[prop]) {
+          child.style.setProperty(prop, parsed[prop], "important");
+        } else {
+          child.style.removeProperty(prop);
+        }
+      }
+    });
+  }
+}
+
 /** A complete override map replaces saved media rules for this one element. */
 export function writeResponsivePreview(
   doc: Document,
@@ -40,10 +90,12 @@ export function writeResponsivePreview(
     sheet.textContent = css;
   }
   if (activeDevice && element instanceof HTMLElement) {
-    const effective = effectiveDeviceStyle(activeDevice, baseStyle ?? element.getAttribute("style") ?? "", responsive);
-    if (effective) element.setAttribute("style", effective);
-    else if (baseStyle) element.setAttribute("style", baseStyle);
-    else element.removeAttribute("style");
+    const rawBase = (baseStyle || element.getAttribute("data-dw-base-style") || element.getAttribute("style")) ?? "";
+    if (!element.hasAttribute("data-dw-base-style") && rawBase) {
+      element.setAttribute("data-dw-base-style", rawBase);
+    }
+    const effective = effectiveDeviceStyle(activeDevice, rawBase, responsive);
+    applyEffectiveWithCascade(element, effective, activeDevice === "desktop");
   }
 }
 
@@ -61,12 +113,13 @@ export function syncAllResponsiveStylesToIframe(
     const field = fields.find(f => f.id === id);
     const edit = edits[id];
     if (edit?.style === undefined && edit?.responsive === undefined && !field?.responsive) continue;
-    const baseStyle = edit?.style ?? field?.style ?? "";
+    const baseStyle = edit?.style ?? field?.style ?? el.getAttribute("data-dw-base-style") ?? "";
     const responsive = edit?.responsive ?? field?.responsive ?? {};
+    if (!el.hasAttribute("data-dw-base-style") && baseStyle) {
+      el.setAttribute("data-dw-base-style", baseStyle);
+    }
     let effective = effectiveDeviceStyle(device, baseStyle, responsive);
     if (previewStyle && effective) effective = previewStyle(effective);
-    if (effective) el.setAttribute("style", effective);
-    else if (baseStyle) el.setAttribute("style", previewStyle ? previewStyle(baseStyle) : baseStyle);
-    else el.removeAttribute("style");
+    applyEffectiveWithCascade(el, effective, device === "desktop");
   }
 }
