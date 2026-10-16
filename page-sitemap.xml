@@ -3,7 +3,7 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
   <url>
     <loc>https://dakyx.com/</loc>
-    <lastmod>2026-10-09</lastmod>
+    <lastmod>2026-10-16</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
     <image:image><image:loc>https://dakyx.com/assets/img/hero.webp</image:loc></image:image>
@@ -14,73 +14,79 @@
   </url>
   <url>
     <loc>https://dakyx.com/services</loc>
-    <lastmod>2026-10-09</lastmod>
+    <lastmod>2026-10-16</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://dakyx.com/pricing</loc>
-    <lastmod>2026-10-09</lastmod>
+    <lastmod>2026-10-16</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://dakyx.com/products</loc>
-    <lastmod>2026-10-09</lastmod>
+    <lastmod>2026-10-16</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://dakyx.com/website-builder</loc>
-    <lastmod>2026-10-09</lastmod>
+    <lastmod>2026-10-16</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://dakyx.com/website-builder-setup</loc>
-    <lastmod>2026-10-09</lastmod>
+    <lastmod>2026-10-16</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
   <url>
     <loc>https://dakyx.com/work</loc>
-    <lastmod>2026-10-09</lastmod>
+    <lastmod>2026-10-16</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
     <loc>https://dakyx.com/how-we-work</loc>
-    <lastmod>2026-10-09</lastmod>
+    <lastmod>2026-10-16</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
     <loc>https://dakyx.com/about</loc>
-    <lastmod>2026-10-09</lastmod>
+    <lastmod>2026-10-16</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
     <loc>https://dakyx.com/insights</loc>
-    <lastmod>2026-10-09</lastmod>
+    <lastmod>2026-10-16</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.6</priority>
   </url>
   <url>
     <loc>https://dakyx.com/contact</loc>
-    <lastmod>2026-10-09</lastmod>
+    <lastmod>2026-10-16</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://dakyx.com/privacy</loc>
-    <lastmod>2026-10-09</lastmod>
+    <lastmod>2026-10-16</lastmod>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
   </url>
   <url>
+    <loc>https://dakyx.com/data-deletion</loc>
+    <lastmod>2026-10-16</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.4</priority>
+  </url>
+  <url>
     <loc>https://dakyx.com/terms</loc>
-    <lastmod>2026-10-09</lastmod>
+    <lastmod>2026-10-16</lastmod>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
   </url>
