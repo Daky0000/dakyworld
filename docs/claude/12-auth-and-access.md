@@ -104,3 +104,23 @@ or the webhook intake. Four rules from it that are easy to undo by accident:
   wrong." The client now appends the log reference to that sentence so the
   useless version is at least traceable.
 
+
+**Other DakyX products sign in through this one.** The Marketing SaaS
+(`Daky0000/Saas`) sends people to `/api/auth/oauth/authorize`, and asks
+`/api/partner/v1/entitlements/:sub` what they hold. `services/entitlements.ts`
+is the one answer to "what does this person get". A retainer reaches the
+people listed in `ClientMember`, and nobody else. Three rules that are easy to
+undo:
+
+- **The redirect is an exact string match, and an unknown one is answered here
+  with a 400, never redirected to.** Redirecting to a URI before checking it is
+  the open redirect.
+- **Spend the code in the statement that checks it is unspent.** That is
+  `updateMany … where usedAt: null`, then a count of 1. `checks/oauth.ts` fires
+  three redemptions at once and expects exactly one to succeed.
+- **An entitlement event carries the subject and nothing else.** The receiver
+  re-reads the grants over the authenticated API, so a forged or replayed
+  event grants nothing. Never add tiers to it to save a round trip.
+
+The design, the environment variables and what differs from the design are in
+[docs/cross-product-access.md](../cross-product-access.md) §0.

@@ -14,6 +14,7 @@ import {
   syncCarePlanSchedule,
 } from "../services/carePlanBilling.js";
 import { gateBy } from "../middleware/permissionGate.js";
+import { announceClientChange, announceSoon } from "../services/entitlements.js";
 
 export const carePlansRouter = Router();
 
@@ -186,6 +187,8 @@ carePlansRouter.post("/", async (req, res, next) => {
       },
       include: planInclude,
     });
+    // A new retainer reaches every member of the client, in every DakyX app.
+    announceSoon(() => announceClientChange(plan.clientId));
     res.status(201).json(plan);
   } catch (err) {
     next(err);
@@ -224,6 +227,7 @@ carePlansRouter.patch("/:id", async (req, res, next) => {
 
     // The billing day, the timezone or auto-invoicing may just have moved.
     await syncCarePlanSchedule(existing.id);
+    if (data.tier && data.tier !== existing.tier) announceSoon(() => announceClientChange(existing.clientId));
     res.json(await prisma.carePlan.findUnique({ where: { id: existing.id }, include: planInclude }));
   } catch (err) {
     next(err);
@@ -237,10 +241,11 @@ carePlansRouter.patch("/:id", async (req, res, next) => {
  */
 carePlansRouter.post("/:id/pause", async (req, res, next) => {
   try {
-    await prisma.carePlan.update({
+    const changed = await prisma.carePlan.update({
       where: { id: req.params.id },
       data: { status: "PAUSED", pausedAt: new Date(), nextBillingAt: null },
     });
+    announceSoon(() => announceClientChange(changed.clientId));
     res.json(await prisma.carePlan.findUnique({ where: { id: req.params.id }, include: planInclude }));
   } catch (err) {
     next(err);
@@ -249,11 +254,12 @@ carePlansRouter.post("/:id/pause", async (req, res, next) => {
 
 carePlansRouter.post("/:id/resume", async (req, res, next) => {
   try {
-    await prisma.carePlan.update({
+    const changed = await prisma.carePlan.update({
       where: { id: req.params.id },
       data: { status: "ACTIVE", pausedAt: null, churnedAt: null, churnReason: null },
     });
     await syncCarePlanSchedule(req.params.id);
+    announceSoon(() => announceClientChange(changed.clientId));
     res.json(await prisma.carePlan.findUnique({ where: { id: req.params.id }, include: planInclude }));
   } catch (err) {
     next(err);
@@ -263,7 +269,7 @@ carePlansRouter.post("/:id/resume", async (req, res, next) => {
 carePlansRouter.post("/:id/churn", async (req, res, next) => {
   try {
     const { reason } = z.object({ reason: z.string().max(500).optional() }).parse(req.body ?? {});
-    await prisma.carePlan.update({
+    const changed = await prisma.carePlan.update({
       where: { id: req.params.id },
       data: {
         status: "CHURNED",
@@ -273,6 +279,7 @@ carePlansRouter.post("/:id/churn", async (req, res, next) => {
         nextReviewAt: null,
       },
     });
+    announceSoon(() => announceClientChange(changed.clientId));
     res.json(await prisma.carePlan.findUnique({ where: { id: req.params.id }, include: planInclude }));
   } catch (err) {
     next(err);

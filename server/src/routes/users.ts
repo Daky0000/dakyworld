@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
+import { announceEntitlementChange, announceSoon } from "../services/entitlements.js";
 import { hashPassword } from "../lib/password.js";
 import { assertPasswordAcceptable, WeakPasswordError } from "../lib/passwordPolicy.js";
 import { revokeAllSessionsFor } from "../lib/session.js";
@@ -321,6 +322,8 @@ usersRouter.patch("/:id/active", requirePermission("team.deactivate"), async (re
     }
 
     const user = await prisma.user.update({ where: { id: req.params.id }, data: { active }, select: TEAM_MEMBER });
+    // Switched off holds nothing in any DakyX app; switched back on may hold something again.
+    announceSoon(() => announceEntitlementChange([req.params.id!]));
     // A deactivated account with a live session is still a live account.
     if (!active) await revokeAllSessionsFor(req.params.id);
     res.json(user);

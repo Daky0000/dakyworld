@@ -16,6 +16,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import express, { Router, type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
+import { oauthRouter, partnerRouter } from "./routes/partner.js";
 import { attachUser, bootstrapOwner, requireAuth, scopeExternal, DEV_NO_AUTH, DEV_NO_AUTH_REFUSED } from "./middleware/auth.js";
 import { DEV_MODE, DEV_MODE_REFUSED } from "./services/tools/devMode.js";
 import { ensureStarterRoles, ensureSystemRoles } from "./lib/accessRoles.js";
@@ -304,6 +305,8 @@ app.use(attachUser);
 // GitHub sends the browser back after an install, sometimes to somebody not
 // signed in here; they get a page saying what happened instead of a 401.
 app.get("/api/website/github/callback", githubCallbackSignedOut());
+app.use("/api/auth/oauth", oauthRouter);
+app.use("/api/partner", partnerRouter);
 app.use("/api/auth", authRouter);
 app.use("/api", requireAuth);
 // Signed in is not the same as "belongs in here" — see scopeExternal.

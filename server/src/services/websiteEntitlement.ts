@@ -4,6 +4,7 @@ import type { Prisma, WebsitePlanTier } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { IS_PRODUCTION } from "../middleware/auth.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
+import { RETAINER_TIERS, retainerFor, tierRank } from "./entitlements.js";
 
 /**
  * Who somebody is, what they are paying for, and what they have used.
@@ -77,8 +78,11 @@ export type Entitlement = {
   /** The live subscription behind this tier, when the tier came from one. */
   purchaseId: string | null;
   currency: string;
-  /** "subscription", "staff", "default", or "site" (the website owner's) — worth showing on screen and in support. */
-  source: "subscription" | "staff" | "default" | "test-switch" | "site";
+  /**
+   * "subscription", "retainer" (their client's), "staff", "default", or "site"
+   * (the website owner's) — worth showing on screen and in support.
+   */
+  source: "subscription" | "retainer" | "staff" | "default" | "test-switch" | "site";
   /** Local only: pretend the promotional months have passed. */
   simulateAfter3Months: boolean;
 };
@@ -237,7 +241,27 @@ async function loadEntitlement(req: WebsiteActor): Promise<Entitlement> {
     };
   }
 
-  const subscription = await liveSubscription(user.id, user.email);
+  const [subscription, retainer] = await Promise.all([liveSubscription(user.id, user.email), retainerFor(user.id)]);
+  // A client on a retainer gets the builder with it (services/entitlements.ts).
+  // Until 16 Oct 2026 nothing here looked at a retainer, so a retainer client
+  // signing in was given Starter. A seat of their own still wins when it is
+  // higher, and keeps its purchase id so the dunning rules still apply to it.
+  const retainerTier = retainer ? (RETAINER_TIERS[retainer.tier]["website-builder"] as WebsitePlanTier) : null;
+  if (retainer && retainerTier && (!subscription || tierRank("website-builder", retainerTier) > tierRank("website-builder", subscription.tier))) {
+    return {
+      userId: user.id,
+      email: user.email,
+      name: user.name,
+      chargedUserId: user.id,
+      siteClientId: null,
+      tier: retainerTier,
+      subscribedAt: user.createdAt ?? new Date(),
+      purchaseId: null,
+      currency: "GHS",
+      source: "retainer",
+      simulateAfter3Months,
+    };
+  }
   if (subscription) {
     return {
       userId: user.id,
@@ -334,7 +358,7 @@ export function resolveSiteEntitlement(req: WebsiteActor, siteId?: string | null
 async function loadSiteEntitlement(req: WebsiteActor, siteId: string): Promise<Entitlement> {
   await assertWebsiteSiteAccess(req, siteId);
   const [own, payer] = await Promise.all([resolveEntitlement(req), sitePayer(siteId)]);
-  if (!payer) return own;
+  if (!payer) return withSiteRetainer(own, siteId);
   // Staff keep the whole product on a client's website — fixing something a
   // client asked for must not stop at the client's limit, and a Pro client's
   // included developer time is spent in tools Pro does not sell — and what they
@@ -354,6 +378,23 @@ async function loadSiteEntitlement(req: WebsiteActor, siteId: string): Promise<E
     currency: payer.currency,
     source: "site",
   };
+}
+
+/**
+ * A website whose client is on a retainer is worked on at the retainer's tier
+ * by everybody who may work on it — a colleague the client invited to the site
+ * is not a ClientMember, but the website is still covered by what the client
+ * pays for. Only ever raises: somebody on a higher plan of their own keeps it.
+ */
+async function withSiteRetainer(own: Entitlement, siteId: string): Promise<Entitlement> {
+  if (own.source === "staff") return own;
+  const site = await prisma.site.findUnique({ where: { id: siteId }, select: { clientId: true } });
+  if (!site?.clientId) return own;
+  const plan = await prisma.carePlan.findFirst({ where: { clientId: site.clientId, status: "ACTIVE" }, select: { tier: true } });
+  if (!plan) return own;
+  const tier = RETAINER_TIERS[plan.tier]["website-builder"] as WebsitePlanTier;
+  if (tierRank("website-builder", tier) <= tierRank("website-builder", own.tier)) return own;
+  return { ...own, tier, purchaseId: null, source: "retainer", siteClientId: site.clientId };
 }
 
 /* -------------------------------------------------------------- usage ----- */

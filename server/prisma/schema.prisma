@@ -166,6 +166,9 @@ model User {
   sharedElementDrafts SharedElement[]     @relation("SharedElementDrafts")
   publishJobs         PublishJob[]        @relation("PublishJobs")
   productPrices       Product[]           @relation("ProductPrices")
+  clientMemberships   ClientMember[]
+  productGrants       ProductGrant[]
+  oauthCodes          OAuthCode[]
 }
 
 /// A logged-in browser session. Only the SHA-256 of the session token is
@@ -285,6 +288,90 @@ model Client {
   mailThreads      MailThread[]
   sites            Site[]
   websitePurchases WebsitePurchase[]
+  members          ClientMember[]
+}
+
+enum ClientMemberRole {
+  OWNER
+  MEMBER
+}
+
+/// Who belongs to a client business.
+///
+/// A retainer (`CarePlan`) is the client's, and until this table nothing said
+/// which people are the client — so "is this person on a retainer" could not be
+/// answered, and a retainer client signed in to the builder was given Starter.
+/// Set by staff from the client page, never inferred from an email domain:
+/// a gmail.com retainer contact is the ordinary case here.
+model ClientMember {
+  id        String           @id @default(cuid())
+  clientId  String
+  client    Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      ClientMemberRole @default(MEMBER)
+  addedById String?
+  createdAt DateTime         @default(now())
+
+  @@unique([clientId, userId])
+  @@index([userId])
+}
+
+/// Access to a product given by hand — a comp, a trial, a partner — rather than
+/// bought or included with a retainer. Without it every exception becomes a
+/// fake CarePlan that then shows up in MRR. See services/entitlements.ts.
+model ProductGrant {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// `website-builder` or `marketing-suite` (PRODUCT_KEYS).
+  productKey  String
+  /// A tier in that product's own vocabulary (EDITOR/CARE/MANAGED, starter/…/agency).
+  tier        String
+  reason      String
+  /// Null is open-ended until revoked.
+  validUntil  DateTime?
+  revokedAt   DateTime?
+  grantedById String?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+}
+
+/// "This person's entitlements may have changed" — one row per person, sent to
+/// every partner product (the Marketing SaaS) by the background runtime and
+/// retried until it lands. A row first and a request second, for the same
+/// reason as the Slack queue: a failed delivery must be something you can see.
+/// It carries no tiers; the receiver fetches them over the partner API.
+model EntitlementEvent {
+  id            String    @id @default(cuid())
+  /// No relation: a deleted account still has to be announced as having nothing.
+  userId        String
+  createdAt     DateTime  @default(now())
+  deliveredAt   DateTime?
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lastError     String?
+
+  @@index([deliveredAt, nextAttemptAt])
+}
+
+/// A single-use sign-in code handed to a partner product (services/oauth.ts).
+/// Sixty seconds, stored as a hash, bound to the client, the exact redirect and
+/// the PKCE challenge it was issued for.
+model OAuthCode {
+  id            String    @id @default(cuid())
+  codeHash      String    @unique
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientId      String
+  redirectUri   String
+  codeChallenge String
+  expiresAt     DateTime
+  usedAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([expiresAt])
 }
 
 model Contact {

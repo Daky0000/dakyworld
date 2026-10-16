@@ -6,6 +6,8 @@ import { useAuth } from "../lib/auth";
 import { useWebsiteSites } from "./WebsiteGuard";
 import { CLIENT_NAV, useWorkspaceMode } from "../lib/clientWorkspace";
 import { Loading } from "./ui";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../lib/api";
 import { currentSurface, setPageTitle } from "../lib/surface";
 
 type NavEntry = { to: string; label: string; end?: boolean; needs?: string };
@@ -161,6 +163,16 @@ export function Layout() {
       menuRef.current?.focus();
     };
   }, [mobileOpen]);
+  // The other DakyX product. Signing in there goes through this account
+  // (docs/cross-product-access.md), so the link is the whole hand-off.
+  const products = useQuery({
+    queryKey: ["auth", "products"],
+    queryFn: ({ signal }) => api.get<{ marketing: { url: string; included: boolean } }>("/auth/oauth/products", signal),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const marketing = products.data?.marketing;
+
   const allowed = (item: NavEntry) => (item.to === "/website" || item.to === "/website/sites")
     ? Boolean(client || can("website.view") || websites.data?.length)
     : !client && (!item.needs || can(item.needs));
@@ -226,6 +238,11 @@ export function Layout() {
         </section>;
       })}
       {!visibleGroups.length && <p className="os-nav-empty">No matching pages.</p>}
+      {marketing && !filter.trim() && (
+        <a href={marketing.url} className="os-nav-link" title={marketing.included ? "Included with your retainer" : "Opens DakyX Marketing"}>
+          Marketing{marketing.included ? " · included" : ""} ↗
+        </a>
+      )}
       {workspaceMode === "client" && !user?.external && (
         <div className="mt-4 px-1 pt-3 border-t border-line">
           <button

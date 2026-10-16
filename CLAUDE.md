@@ -111,6 +111,7 @@ one is dense and every paragraph in it was paid for by a defect.
 | Lead sheets, plans, `repairPlan`, worksheets, tags on import, workbooks | [10-lead-sheets-and-imports.md](docs/claude/10-lead-sheets-and-imports.md) |
 | The React client, Prisma, encrypted keys, company details, lead tags, lists, actor choice | [11-client-data-and-actors.md](docs/claude/11-client-data-and-actors.md) |
 | `DEV_NO_AUTH`, permissions as data, access roles, SECURITY.md | [12-auth-and-access.md](docs/claude/12-auth-and-access.md) |
+| Retainers → products, `ClientMember`, signing in to the Marketing SaaS, partner API | [cross-product-access.md](docs/cross-product-access.md) §0 |
 | The Website Builder, drafts, publishing, rollback, the editor, the inspector's three tabs | [13-website-builder.md](docs/claude/13-website-builder.md) |
 | Generated site metadata, the brand design system, the OS UI semantic tier | [14-brand-and-metadata.md](docs/claude/14-brand-and-metadata.md) |
 

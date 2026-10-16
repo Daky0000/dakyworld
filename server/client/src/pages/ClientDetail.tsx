@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { Badge, Button, Card, CopyButton, EmptyState, Loading, Money, PageHeader, StatGrid, StatTile } from "../components/ui";
 import { EmailComposer, type ComposerTarget } from "../components/EmailComposer";
+import { ClientPeople } from "../components/ClientPeople";
 
 interface ClientDetailData {
   id: string;
@@ -265,6 +266,10 @@ export function ClientDetail() {
           </div>
         </div>
       </div>
+
+      <Card className="p-5">
+        <ClientPeople clientId={client.id} />
+      </Card>
 
       <EmailComposer target={emailing} open={emailing !== null} onClose={() => setEmailing(null)} />
     </div>

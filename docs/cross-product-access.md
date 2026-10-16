@@ -1,8 +1,9 @@
 # Cross-product access: DakyXTech OS × Marketing SaaS
 
-**Status:** proposal, 16 Oct 2026. Supersedes the ChatGPT draft
-("Dakyworld × Marketing SaaS Integration Plan"); what it got right is kept,
-what it missed is the first half of this document.
+**Status:** built, 16 Oct 2026, in both repositories. Sections 1–8 are the
+design as it was argued; **§0 is what shipped, how to switch it on, and where
+it differs from the design.** Supersedes the ChatGPT draft ("Dakyworld ×
+Marketing SaaS Integration Plan").
 
 **The promise being enforced:** a client on a retainer gets every DakyX product.
 Somebody who bought only the Website Builder gets the Website Builder. Somebody
@@ -15,6 +16,91 @@ who bought only the Marketing SaaS gets the Marketing SaaS.
 | Session | DB row, hashed token, `__Host-` cookie | 7-day JWT in `localStorage` (`auth_token`) |
 | What they paid for | `CarePlan` (retainers), `WebsitePurchase` (builder seats), `Product` | `subscriptions` → `pricing_plans`, credits |
 | Plan → limits | `Entitlement.tier` (EDITOR / CARE / MANAGED) | `getUserPlanName()` → `resolvePlanQuotaLimits()` |
+
+---
+
+## 0. As built
+
+### Where it lives
+
+| | OS (this repo, `server/`) | Marketing SaaS (`Daky0000/Saas`, `packages/`) |
+|---|---|---|
+| The decision | `src/services/entitlements.ts` (`decideEntitlements`, `entitlementsFor`, `RETAINER_TIERS`) | `user-auth.ts` `getEffectivePlan()`; `middleware/planQuotaMiddleware.ts` tier keys |
+| Sign-in | `src/routes/partner.ts` + `src/services/oauth.ts`; `/sso/continue` in `client/src/main.tsx` | `api/src/server/dakyxRoutes.ts`; "Continue with DakyX" in `web/src/pages/Auth.tsx` |
+| Change events | `EntitlementEvent` outbox, `src/services/entitlementEvents.ts`, delivered every 15 s by `backgroundRuntime.ts` | `POST /api/internal/dakyx/events`, hourly `reconcileDakyxGrants()` |
+| Screens | "People with access" on the client page (`components/ClientPeople.tsx`); Marketing link in the nav; "included with your DakyX retainer" on the plan panel | Billing banner; plan name and source in the sidebar |
+| Proof | `checks/entitlements.ts` (37), `checks/oauth.ts` (35); `tmp/crossProductE2E.ts` drives both real servers | `test/dakyx.test.ts` (runs on CI's Postgres) |
+
+### Switching it on
+
+Nothing happens until these are set. Without them the Marketing link still
+shows in the OS nav but the SaaS hides "Continue with DakyX", and no events are
+queued.
+
+Generate two long random values: **CLIENT_SECRET** and **PARTNER_KEY**.
+
+**OS service (Railway, `server`):**
+
+```
+OAUTH_ISSUER=https://os.dakyx.com
+OAUTH_CLIENT_MARKETING_SECRET=<CLIENT_SECRET>
+OAUTH_CLIENT_MARKETING_REDIRECTS=https://marketing.dakyx.com/api/auth/dakyx/callback
+PARTNER_MARKETING_API_KEY=<PARTNER_KEY>
+PARTNER_MARKETING_EVENTS_URL=https://marketing.dakyx.com/api/internal/dakyx/events
+MARKETING_APP_URL=https://marketing.dakyx.com
+```
+
+**SaaS service:**
+
+```
+DAKYX_BASE_URL=https://os.dakyx.com      # the host customers sign in at; app.dakyx.com works too
+DAKYX_ISSUER=https://os.dakyx.com        # must equal the OS's OAUTH_ISSUER
+DAKYX_CLIENT_SECRET=<CLIENT_SECRET>
+DAKYX_PARTNER_KEY=<PARTNER_KEY>
+# optional: DAKYX_CLIENT_ID (default "marketing"), DAKYX_REDIRECT_URI
+```
+
+Then, on each retainer client's page in the OS, add the people under
+**People with access**. The migration already added everyone who paid for a
+builder seat to that seat's client.
+
+### Decisions taken (§7), as proposed
+
+- **D1:** only `CarePlan.status = ACTIVE` counts. Paused and churned give nothing.
+- **D2:** every retainer → builder MANAGED. Marketing: Foundation → growth,
+  Growth → pro, Transformation → agency. Change it in `RETAINER_TIERS`; a
+  check fails if it names a tier a product does not have.
+- **D3:** any active OS account may use "Continue with DakyX". With no grant it
+  lands on the SaaS's own Free plan.
+- **D4:** billing stays where it is. A grant only ever raises a plan.
+- **D5:** per person. Every member of a retainer client gets their own SaaS
+  account.
+
+### Where it differs from the design below
+
+- **Codes are their own table (`OAuthCode`), not a new `AuthToken` kind.**
+  They carry the client, the redirect and the PKCE challenge, which
+  `AuthToken` has no columns for. This also avoids the two-migration enum dance.
+- **The SaaS reuses its own `social_login_identities` table** (provider
+  `dakyx`, subject = OS `User.id`) instead of a new `external_identities`. A
+  partial unique index keeps it to one DakyX account per SaaS user.
+- **An existing SaaS account with the same email is linked when the OS says the
+  address is verified.** This is the rule the SaaS's Google and GitHub sign-in
+  already used. An OS address is verified only after its owner followed an
+  emailed link. An unverified match is still never merged: the person signs in
+  with their password and the link completes then (§4.3 case 4).
+- **The SaaS callback always lands on `/login#auth_token=…`**, which its SPA
+  already handles. The `next` parameter is accepted and ignored.
+- **The SaaS's DakyX routes are mounted before its social-auth router.** That
+  router's `/api/auth/:provider/start` took "dakyx" for an unknown provider and
+  answered 404. Only the two-server run caught it. `test/dakyx.test.ts` now
+  asserts the order.
+- **Two SaaS defects fixed on the way:** Pro allowed 8 social accounts (now
+  50), and the SPA never copied `planName` from `/auth/me`, so every paying
+  customer's sidebar said "Free".
+- **No `Product` row for `marketing-suite`.** `publicCatalogue()` maps every
+  product to a builder tier, so a Marketing row would have shown on dakyx.com
+  priced as the Starter editor. The product keys live in `PRODUCT_KEYS` instead.
 
 ---
 

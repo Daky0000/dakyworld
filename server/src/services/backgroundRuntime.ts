@@ -9,6 +9,8 @@ import { deliverInvalidations } from "./cacheInvalidation.js";
 import { prisma } from "../lib/prisma.js";
 import { renewBackgroundOwnership, stopBackgroundOwnership } from "../lib/backgroundOwnership.js";
 import { appSurface } from "../middleware/appSurface.js";
+import { deliverEntitlementEvents, pruneEntitlementEvents } from "./entitlementEvents.js";
+import { purgeOAuthCodes } from "../routes/partner.js";
 
 export let backgroundReady = false;
 export function startBackgroundRuntime() {
@@ -19,6 +21,7 @@ export function startBackgroundRuntime() {
   let busy = false;
   let stopQueue: (() => Promise<void>) | undefined;
   let delivery: ReturnType<typeof setInterval> | undefined;
+  let partnerDelivery: ReturnType<typeof setInterval> | undefined;
   let lastCleanup = 0;
   const heartbeat = async () => {
     if (stopped || busy) return;
@@ -44,12 +47,16 @@ export function startBackgroundRuntime() {
         }
         if (capacity.admission) stopQueue = startWebsiteWorkQueue();
         delivery = setInterval(() => { void deliverInvalidations().catch(() => undefined); }, 1000);
+        // Retainer and grant changes, told to the Marketing SaaS. services/entitlementEvents.ts.
+        partnerDelivery = setInterval(() => { void deliverEntitlementEvents().catch((err) => console.error("Entitlement delivery failed:", (err as Error).message)); }, 15_000);
         backgroundReady = true;
       }
       if (Date.now() - lastCleanup > 60_000) {
         lastCleanup = Date.now();
         await prisma.cacheInvalidation.deleteMany({ where: { deliveredAt: { lt: new Date(Date.now() - 15 * 60_000) } } });
         // Keep quota/idempotency records for 30 days; never delete unfinished work.
+        await pruneEntitlementEvents();
+        await purgeOAuthCodes();
         await prisma.websiteWorkJob.deleteMany({ where: { completedAt: { lt: new Date(Date.now() - 30 * 86_400_000) }, state: { in: ["COMPLETED", "FAILED", "CANCELLED"] } } });
       }
     } catch {
@@ -62,7 +69,7 @@ export function startBackgroundRuntime() {
   return async () => {
     stopped = true;
     stopBackgroundOwnership();
-    clearInterval(timer); if (delivery) clearInterval(delivery);
+    clearInterval(timer); if (delivery) clearInterval(delivery); if (partnerDelivery) clearInterval(partnerDelivery);
     backgroundReady = false;
     const osStops = appSurface() === "os" ? [stopScheduler(), stopWatcher()] : [];
     const results = await Promise.allSettled([...osStops, Promise.resolve().then(() => stopQueue?.())]);

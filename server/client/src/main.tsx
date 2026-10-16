@@ -45,6 +45,13 @@ function Gate() {
   if (path.startsWith("/review/")) return <Suspense fallback={<div className="min-h-screen bg-cream" />}><ClientApprovalReview /></Suspense>;
 
   if (loading) return <div className="min-h-screen bg-cream" />;
+  // Signing in to another DakyX product (the Marketing SaaS). The server sent a
+  // signed-out browser here with the request it was given; once signed in, it
+  // goes straight back to the authorize step with exactly that query.
+  if (user && path === "/sso/continue") {
+    window.location.replace(`/api/auth/oauth/authorize${window.location.search}`);
+    return <div className="min-h-screen bg-cream" />;
+  }
   return user ? <><App /><QueuedWork /></> : <Login />;
 }
 

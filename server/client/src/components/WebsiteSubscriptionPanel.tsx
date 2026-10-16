@@ -73,7 +73,7 @@ export function WebsiteSubscriptionPanel() {
         <p className="mt-2 text-sm leading-relaxed text-muted">
           There is no paid subscription on this account. You are on the {data.tier === "MANAGED" ? "full" : "starter"}{" "}
           feature set
-          {data.source === "staff" ? " because you work here" : ""}.
+          {data.source === "staff" ? " because you work here" : data.source === "retainer" ? ", included with your DakyX retainer" : ""}.
         </p>
       </Card>
     );

@@ -1,4 +1,5 @@
 import type { User } from "@prisma/client";
+import { announceEntitlementChange } from "./entitlements.js";
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { prisma } from "../lib/prisma.js";
 import { getR2Client, isR2Configured } from "../lib/r2.js";
@@ -300,6 +301,8 @@ export async function requestAccountDeletion(user: Pick<User, "id" | "name" | "p
     prisma.session.deleteMany({ where: { userId: user.id } }),
     prisma.authToken.deleteMany({ where: { userId: user.id } }),
   ]);
+  // A closing account holds nothing in the Marketing SaaS either.
+  await announceEntitlementChange([user.id]).catch(() => undefined);
   return { deletesOn, websites: theirsAlone.map((site) => site.name) };
 }
 
@@ -310,6 +313,8 @@ export async function requestAccountDeletion(user: Pick<User, "id" | "name" | "p
 async function anonymiseAccount(userId: string): Promise<void> {
   await prisma.$transaction([
     prisma.siteMember.deleteMany({ where: { userId } }),
+    prisma.clientMember.deleteMany({ where: { userId } }),
+    prisma.productGrant.deleteMany({ where: { userId } }),
     prisma.session.deleteMany({ where: { userId } }),
     prisma.authToken.deleteMany({ where: { userId } }),
     prisma.user.update({

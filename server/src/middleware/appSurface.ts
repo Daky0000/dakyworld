@@ -49,6 +49,8 @@ const COMMON_PUBLIC_PATHS = [
   "/api/health",
   "/api/ready",
   "/api/auth",
+  // Server-to-server from the Marketing SaaS, which talks to whichever host its customers sign in at.
+  "/api/partner",
   "/api/public",
   "/api/github/webhook",
   "/api/webhooks/stripe",
