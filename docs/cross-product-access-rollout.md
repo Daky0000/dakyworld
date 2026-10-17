@@ -9,12 +9,15 @@ completely before running anything. Background and design:
 
 - **The code is merged and pushed.** The OS is on `Daky0000/dakyworld` `main`
   (commit `d27bd9d`); Railway deploys the `server/` service from it. The SaaS
-  is on `Daky0000/Saas` `master` (commit `d26a319`).
+  is on `Daky0000/Saas` `master` (commit `0d81825`).
 - **Both apps are tested.** OS checks `entitlements.ts` (37) and `oauth.ts`
   (37) pass, as does the SaaS `test/dakyx.test.ts`. A run of both real servers
   side by side passed: a retainer client signed in to the SaaS on Pro, and
   churning the retainer signed them out 6 s later. So did a real-browser
   sign-in hop.
+- **Both deploys were confirmed live on 17 Oct 2026, 12:25 UTC.** The OS
+  `/api/partner/v1/…` answered `invalid_token` with no key, and the SaaS
+  `/api/auth/dakyx/config` answered `{"enabled":false}`.
 - **Everything is dormant until the environment variables below are set.**
   With them unset, the OS queues no events and shows no Marketing link, and
   the SaaS hides "Continue with DakyX".
