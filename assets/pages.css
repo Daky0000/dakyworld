@@ -620,3 +620,7 @@ main > section.expect,main > section.journal{background:var(--soft)}
 .submit span{width:auto;height:auto;border-radius:0;background:none;color:inherit;transition:transform .2s ease}
 .submit:hover{transform:none;box-shadow:none;background:var(--blue-d)}
 .submit:hover span{transform:translateX(3px)}
+
+/* Buying a plan outright sits above the softer "ask whether it fits" link. */
+.plan-buy{margin-top:auto;width:100%;justify-content:center}
+.plan-buy + .plan-link{margin-top:0;padding-top:14px}

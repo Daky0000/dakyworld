@@ -195,6 +195,18 @@ export const PAGES = [
     noindexReason: "The checkout. It is a step in a purchase, not a page to arrive at from a search.",
   },
   {
+    file: "retainer-checkout.html",
+    path: "/retainer-checkout",
+    priority: "0.1",
+    changefreq: "yearly",
+    keywords: "",
+    schema: [],
+    // The monthly-plan checkout. Same reasoning as /checkout: /pricing is the
+    // page that explains what is being bought.
+    noindex: true,
+    noindexReason: "The monthly-plan checkout. It is a step in a purchase, not a page to arrive at from a search.",
+  },
+  {
     file: "products.html",
     path: "/products",
     priority: "0.8",

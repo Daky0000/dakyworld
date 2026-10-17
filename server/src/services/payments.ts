@@ -206,6 +206,15 @@ async function settleInvoice(invoice: Invoice, paidAt: Date, paidVia: string | n
         console.error(`[payments] recurring billing did not start for ${purchase.email}:`, (error as Error).message),
       );
     }
+
+    // A monthly plan bought on the pricing page is created paused and waits
+    // for this invoice. Same reasoning as above: paying is what starts it.
+    if (invoice.carePlanId) {
+      const { activatePaidRetainer } = await import("./retainerCheckout.js");
+      await activatePaidRetainer(invoice.id, paidAt).catch((error) =>
+        console.error(`[payments] the monthly plan paid by ${invoice.invoiceNumber} did not start:`, (error as Error).message),
+      );
+    }
   }
   return result;
 }

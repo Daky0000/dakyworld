@@ -14,6 +14,7 @@ import { resolveCurrency } from "../services/websitePricing.js";
 import { settleFromProvider } from "../services/payments.js";
 import { issueToken } from "../services/accountAccess.js";
 import { customerAppUrl } from "../services/emailSender.js";
+import { RETAINER_PRODUCT_KEYS, startRetainerPurchase, type RetainerPlanKey } from "../services/retainerCheckout.js";
 
 /**
  * The product catalogue: one door for the public website, one for the office.
@@ -267,12 +268,32 @@ publicProductsRouter.post("/website-purchases", commerceRateLimit, async (req, r
   } catch (err) { next(err); }
 });
 
+const retainerPurchaseInput = z.object({
+  plan: z.enum(Object.keys(RETAINER_PRODUCT_KEYS) as [RetainerPlanKey, ...RetainerPlanKey[]]),
+  recurringConsent: z.literal(true),
+  businessName: z.string().trim().min(2).max(160),
+  contactName: z.string().trim().min(2).max(120),
+  email: z.string().trim().email().max(200),
+  phone: z.string().trim().max(40).optional(),
+  notes: z.string().trim().max(2000).optional(),
+  callbackUrl: z.string().trim().url().max(1000).optional(),
+});
+
+/** A monthly plan off the pricing page: the first month is paid on Paystack, and paying starts the plan. */
+publicProductsRouter.post("/retainer-purchases", commerceRateLimit, async (req, res, next) => {
+  try {
+    publicCors(req, res);
+    const { recurringConsent: _consent, ...input } = retainerPurchaseInput.parse(req.body ?? {});
+    res.status(201).json(await startRetainerPurchase(input));
+  } catch (err) { next(err); }
+});
+
 publicProductsRouter.post("/managed-bookings", commerceRateLimit, async (req, res, next) => {
   try { publicCors(req, res); const booking = await createManagedBooking(bookingInput.parse(req.body)); res.status(201).json({ id: booking.id, status: booking.status, requestedAt: booking.requestedAt }); }
   catch (err) { next(err); }
 });
 
-publicProductsRouter.options(["/website-check", "/website-purchases", "/website-payment-status", "/managed-bookings"], (req, res) => {
+publicProductsRouter.options(["/website-check", "/website-purchases", "/retainer-purchases", "/website-payment-status", "/managed-bookings"], (req, res) => {
   publicCors(req, res); res.set("Access-Control-Allow-Methods", "POST, OPTIONS").set("Access-Control-Allow-Headers", "Content-Type").status(204).end();
 });
 

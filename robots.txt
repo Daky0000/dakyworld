@@ -20,6 +20,8 @@ Disallow: /AGENT_SYSTEM_PLAN.html
 
 # The checkout. It is a step in a purchase, not a page to arrive at from a search.
 Disallow: /checkout
+# The monthly-plan checkout. It is a step in a purchase, not a page to arrive at from a search.
+Disallow: /retainer-checkout
 # Alias redirecting to /data-deletion.
 Disallow: /user-data-deletion
 
@@ -48,6 +50,7 @@ Disallow: /website-drafts/
 Disallow: /admin
 Disallow: /AGENT_SYSTEM_PLAN.html
 Disallow: /checkout
+Disallow: /retainer-checkout
 Disallow: /user-data-deletion
 
 Sitemap: https://dakyx.com/sitemap_index.xml
