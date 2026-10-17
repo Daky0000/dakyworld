@@ -1,4 +1,5 @@
 import { DeferredPanel } from "../components/DeferredPanel";
+import { EditorTips } from "../components/EditorTips";
 import { applyTextFormat, editableInnerHtml, formatActiveText, type TextToggle } from "../lib/websiteTextSelection";
 import { WebsiteCanvasOverlay } from "../components/WebsiteCanvasOverlay";
 import { WebsiteRichText } from "../components/WebsiteRichText";
@@ -2543,6 +2544,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
 
   return (
     <div className={`website-editor dx-editor editor-${editorTheme} flex h-full min-h-0 flex-col`}>
+      <EditorTips frame={frame} />
       {reviewOpen && <PublishReview pageId={pageId} siteId={site.id} hasRepository={Boolean(site.repo)} pending={publish.isPending} onClose={() => setReviewOpen(false)} onConfirm={review => publish.mutate(review)} />}
       {showAI && canEdit && <WebsiteAssistant pageId={pageId} selectedFieldId={pickedId} fieldLabel={picked?.label} values={edits} onClose={() => setShowAI(false)} onApply={async (values, structuralActions) => {
         if (structuralActions && structuralActions.length > 0) {

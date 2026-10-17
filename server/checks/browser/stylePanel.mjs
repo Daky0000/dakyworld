@@ -89,9 +89,9 @@ try {
   await typography.getByRole("radio", { name: "Align center" }).click();
   assert.equal(await computedOf("text-align"), "center");
   await more(typography);
-  await typography.getByTitle("Italic").click();
+  await typography.getByRole("radio", { name: "Italic" }).click();
   assert.equal(await computedOf("font-style"), "italic");
-  await typography.getByTitle("Underline").click();
+  await typography.getByRole("radio", { name: "Underline" }).click();
   await typography.getByRole("radio", { name: "Uppercase" }).click();
   assert.equal(await computedOf("text-transform"), "uppercase");
 

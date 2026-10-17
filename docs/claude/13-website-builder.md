@@ -1076,6 +1076,45 @@ Three things that cost time writing them:
   CRLF file.** Write a patch script with the Write tool, read the file as LF,
   and write it back with the endings it had.
 
+### Hover tips (17 Oct 2026)
+
+Dan asked what the "B · O · W · None" chips under *Button style* meant. They are
+the suffixes of the site's own classes (`btn-b`, `btn-o`, `btn-w`, via
+`variantLabel`), so the label is only as clear as whoever wrote the stylesheet.
+He asked for hover explanations on things like that, everywhere.
+
+`components/EditorTips.tsx` is one tooltip for the whole editor, mounted once in
+`WebsiteEditor`. Controls do not import it. A control gets a tip from:
+
+- **`data-tip`** (plus `data-tip-heading`) written by the component. Wins.
+- **The glossary**, `lib/editorTips.ts`, keyed by the words on screen: a
+  `label`, `.dx-lt` or `.dx-row-l` by its text, and a button in a labelled
+  group by `Group/Option` (`Display/In-blk`). Add a line there to explain a new
+  label. The control does not need to change.
+- **Any `title` already in the editor**, moved onto `data-tip` so every hint looks
+  the same. A title that only repeats the visible words stays a title, because it
+  is there for truncation. A button that was named only by its title is given
+  that name as `aria-label` first.
+
+A `MutationObserver` on the editor root re-annotates as panels open.
+
+Button-style chips carry `data-tip-field` / `data-tip-variant`. On hover the
+button is cloned *in the preview*, given that class, measured with
+`getComputedStyle`, and removed. The tip draws a sample on the backdrop colour
+the button really sits on, with a summary ("Outline, no fill · 2px #1A4FFF
+border"). This was chosen over guessing that "o" means outline: the
+measurement cannot be wrong. A preview on another origin gives no sample, and
+the words still show.
+
+Two traps:
+
+- **The bubble is portalled to `document.body`.** Rendered inside the editor
+  root, it was drawn *under* the inspector, which has its own stacking layer.
+  `editorTips.mjs` asserts nothing covers it, and `elementFromPoint` needs the
+  tip's `pointer-events:none` switched off to make that test mean anything.
+- **Moving `title` breaks `getByTitle`.** `stylePanel.mjs` clicked Italic and
+  Underline by title. Find icon buttons by role and name, which the move keeps.
+
 ## Launch hardening (12 Oct 2026)
 
 A launch audit, then fixes. What each rule is for, so nobody undoes it.

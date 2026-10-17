@@ -9,6 +9,23 @@ export function variantLabel(stem: string | undefined, variant: string): string 
 }
 
 /**
+ * The hover tip on a style chip. A style is a class from the site's own
+ * stylesheet, so its label is only as clear as whoever named it ("B", "O");
+ * the tip names the class and asks `EditorTips` for a sample of how it looks.
+ */
+function styleTip(field: SiteFieldRow, choices: string[], candidate: string | null) {
+  return {
+    "data-tip-heading": candidate ? variantLabel(field.variantStem, candidate) : "No style",
+    "data-tip": candidate
+      ? `Your site's “${candidate}” button style.`
+      : "Takes the style class off, leaving the button's base look.",
+    "data-tip-field": field.id,
+    "data-tip-variant": candidate ?? "",
+    "data-tip-variants": choices.join(" "),
+  };
+}
+
+/**
  * The extra choices a button carries: its style variant, and whether it opens in a new tab.
  */
 export function ButtonControls({
@@ -47,11 +64,11 @@ export function ButtonControls({
             <div className="dx-fl"><label>Button style</label></div>
             <div className="dx-chips" role="group" aria-label="Button style">
               {choices.map((candidate) => (
-                <button key={candidate} type="button" className="dx-chip" aria-pressed={variant === candidate} disabled={readOnly} onClick={() => onChange({ ...edit, variant: candidate })}>
+                <button key={candidate} type="button" className="dx-chip" aria-pressed={variant === candidate} disabled={readOnly} onClick={() => onChange({ ...edit, variant: candidate })} {...styleTip(field, choices, candidate)}>
                   {variantLabel(field.variantStem, candidate)}
                 </button>
               ))}
-              <button type="button" className="dx-chip" aria-pressed={variant === null} disabled={readOnly} onClick={() => onChange({ ...edit, variant: null })}>None</button>
+              <button type="button" className="dx-chip" aria-pressed={variant === null} disabled={readOnly} onClick={() => onChange({ ...edit, variant: null })} {...styleTip(field, choices, null)}>None</button>
             </div>
           </div>
         )}
