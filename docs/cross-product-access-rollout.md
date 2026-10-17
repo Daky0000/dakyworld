@@ -5,6 +5,41 @@ Written 17 Oct 2026 by the cloud session that built the feature. Read this file
 completely before running anything. Background and design:
 [cross-product-access.md](cross-product-access.md) (§0 is the as-built summary).
 
+## Status: switched on, 17 Oct 2026, 12:38 UTC
+
+Steps 1–7 below were run on the founder's machine, by Claude Code with Railway
+access. They are kept as the record and as the procedure for rotating the two
+secrets.
+
+- **Where the variables live.** All three hosts (os., app., editor.dakyx.com)
+  are served by the `dakyworld` service in project `discerning-recreation`,
+  environment `production`. The six OS variables are set on `dakyworld` and on
+  `worker`. `dakyworld` runs `SERVICE_ROLE=api`, so event delivery happens in
+  `worker`. The four SaaS variables are on `rare-creation` →
+  `contentflow-api`.
+- **The `dakyx-editor` project is not involved.** Its `editor-api` service has
+  its own Postgres and only a `*.up.railway.app` domain; editor.dakyx.com does
+  not route to it. Nothing was set there.
+- **The secrets were rotated once before going live.** The first pair
+  appeared in a session transcript. They were replaced before any deploy read
+  them, and all three services were checked to hold the same values
+  (compared by SHA-256 fingerprint, never printed).
+- **Step 5 results:** config `enabled:true`; a bad redirect got a 400 with no
+  Location header; start returned a 302 to os.dakyx.com authorize with S256;
+  the partner API answered 401, 401, then 200 with the right key; a forged
+  event got a 401.
+- **Step 7, run against production with a throwaway `+xprod` account on a
+  Growth retainer:**
+  - The builder showed MANAGED from the retainer, and the nav offered
+    Marketing as included.
+  - Continue with DakyX landed in the SaaS on Pro (`planSource: dakyx`).
+  - Replaying the callback URL was refused.
+  - After the retainer was churned, the SaaS session returned 401 within
+    seconds. Both events show `deliveredAt` set, with no `lastError`.
+  - The builder dropped to EDITOR, and signing in again showed Free.
+  - The test client, plan, person and SaaS account were deleted from both
+    databases.
+
 ## What is already done
 
 - **The code is merged and pushed.** The OS is on `Daky0000/dakyworld` `main`
