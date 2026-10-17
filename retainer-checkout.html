@@ -77,41 +77,45 @@
   <div class="checkout-grid">
 
     <section class="checkout-form-col">
-      <h1 class="checkout-title">Subscribe to a monthly plan</h1>
-      <p class="checkout-sub">You pay the first month on Paystack by card, mobile money or bank transfer. Nothing is charged until you confirm there.</p>
+      <h1 class="checkout-title" id="retainerTitle">Subscribe to Foundation</h1>
+      <p class="checkout-sub">You pay on Paystack by card, mobile money or bank transfer. Nothing is charged until you confirm there.</p>
 
       <div class="builder-form-status info" id="retainerReturned" role="status" hidden>Thank you. If you completed the payment, your plan starts as soon as Paystack confirms it, and we will email you to arrange onboarding.</div>
 
       <form class="builder-form" id="retainerForm" novalidate>
+        <input type="hidden" name="plan" id="retainerPlan" value="foundation">
+
         <div class="checkout-section">
-          <h2 class="checkout-legend">Plan</h2>
-          <div class="builder-plan-choice" role="radiogroup" aria-label="Plan">
+          <h2 class="checkout-legend">Your plan</h2>
+          <div class="retainer-chosen">
+            <div>
+              <p class="retainer-chosen-name" id="retainerPlanName">Foundation</p>
+              <p class="retainer-chosen-desc" id="retainerPlanDesc">One primary website and essential digital support</p>
+            </div>
+            <a class="retainer-change" href="/pricing#plans">Change plan</a>
+          </div>
+        </div>
+
+        <div class="checkout-section">
+          <h2 class="checkout-legend">How you pay</h2>
+          <div class="builder-plan-choice" role="radiogroup" aria-label="Billing">
             <label class="builder-plan-option">
-              <input type="radio" name="plan" value="foundation" data-label="Foundation" data-promo="3150" data-standard="4500" checked>
+              <input type="radio" name="billingCycle" value="monthly" checked>
               <span class="builder-plan-option-body">
-                <span class="builder-plan-option-name">Foundation</span>
-                <span class="builder-plan-option-desc">One primary website and essential digital support</span>
-                <span class="builder-plan-option-price">GHS 3,150</span>
-                <span class="builder-plan-option-cycle">Then GHS 4,500/month</span>
+                <span class="builder-plan-option-name">Monthly</span>
+                <span class="builder-plan-option-desc">30% off your first three months</span>
+                <span class="builder-plan-option-price" id="retainerMonthlyPrice">GHS 3,150/month</span>
+                <span class="builder-plan-option-cycle" id="retainerMonthlyAfter">Then GHS 4,500/month from month 4</span>
               </span>
             </label>
             <label class="builder-plan-option">
-              <input type="radio" name="plan" value="growth" data-label="Growth" data-promo="8400" data-standard="12000">
+              <input type="radio" name="billingCycle" value="annual">
               <span class="builder-plan-option-body">
-                <span class="builder-plan-option-badge">Most chosen</span>
-                <span class="builder-plan-option-name">Growth</span>
-                <span class="builder-plan-option-desc">Development, automation, integrations and priority support</span>
-                <span class="builder-plan-option-price">GHS 8,400</span>
-                <span class="builder-plan-option-cycle">Then GHS 12,000/month</span>
-              </span>
-            </label>
-            <label class="builder-plan-option">
-              <input type="radio" name="plan" value="transformation" data-label="Transformation" data-promo="19600" data-standard="28000">
-              <span class="builder-plan-option-body">
-                <span class="builder-plan-option-name">Transformation</span>
-                <span class="builder-plan-option-desc">Advanced systems, higher capacity and emergency cover</span>
-                <span class="builder-plan-option-price">GHS 19,600</span>
-                <span class="builder-plan-option-cycle">Then GHS 28,000/month</span>
+                <span class="builder-plan-option-badge" id="retainerAnnualSave">Save GHS 12,150</span>
+                <span class="builder-plan-option-name">Yearly</span>
+                <span class="builder-plan-option-desc">The 30% price for all twelve months</span>
+                <span class="builder-plan-option-price" id="retainerAnnualPrice">GHS 37,800/year</span>
+                <span class="builder-plan-option-cycle" id="retainerAnnualPer">GHS 3,150/month, paid once</span>
               </span>
             </label>
           </div>
@@ -148,7 +152,7 @@
           <p class="checkout-terms" id="retainerTerms"></p>
           <label class="checkout-consent">
             <input type="checkbox" name="recurringConsent" required>
-            <span>I agree to the monthly price shown and to the <a href="/terms" target="_blank" rel="noopener">terms</a>. No minimum term; cancel any time.</span>
+            <span>I agree to the price shown and to the <a href="/terms" target="_blank" rel="noopener">terms</a>. No minimum term; cancel any time.</span>
           </label>
         </div>
 
@@ -167,16 +171,16 @@
         <div class="checkout-summary-price">
           <span class="builder-sum-curr">GHS</span>
           <span class="builder-sum-val" id="retainerSummaryPrice">3,150</span>
-          <span class="builder-sum-cycle">/month</span>
+          <span class="builder-sum-cycle" id="retainerSummaryCycle">/month</span>
         </div>
         <p class="checkout-summary-renews" id="retainerSummaryRenews">30% off for your first three months</p>
         <div class="checkout-lines">
           <div class="checkout-line">
-            <span>Months 1&ndash;3</span>
+            <span id="retainerLinePromoLabel">Months 1&ndash;3</span>
             <span id="retainerLinePromo">GHS 3,150/month</span>
           </div>
           <div class="checkout-line checkout-line--muted">
-            <span>From month 4</span>
+            <span id="retainerLineStandardLabel">From month 4</span>
             <span id="retainerLineStandard">GHS 4,500/month</span>
           </div>
           <div class="checkout-line checkout-line--total">

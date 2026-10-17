@@ -1627,3 +1627,9 @@ b,strong{font-weight:600}
 .section.on-dark .case h3,.section.on-dark .case .display{color:var(--ink)}
 .section.on-dark .case p{color:var(--muted)}
 .evidence.on-dark .section-head p{color:rgba(255,255,255,.72)}
+
+/* The monthly-plan checkout names the one plan chosen on /pricing. */
+.retainer-chosen{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 18px;border:1.5px solid rgba(8,16,31,.14);border-radius:14px;background:#fff}
+.retainer-chosen-name{font-weight:650;font-size:17px;margin:0}
+.retainer-chosen-desc{font-size:13px;color:var(--muted,#5b6572);margin:2px 0 0;line-height:1.45}
+.retainer-change{flex:none;font-size:13px;font-weight:600;color:var(--blue,#2563eb);text-decoration:underline;text-underline-offset:2px}

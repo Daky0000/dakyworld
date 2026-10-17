@@ -270,6 +270,7 @@ publicProductsRouter.post("/website-purchases", commerceRateLimit, async (req, r
 
 const retainerPurchaseInput = z.object({
   plan: z.enum(Object.keys(RETAINER_PRODUCT_KEYS) as [RetainerPlanKey, ...RetainerPlanKey[]]),
+  billingCycle: z.enum(["monthly", "annual"]).default("monthly"),
   recurringConsent: z.literal(true),
   businessName: z.string().trim().min(2).max(160),
   contactName: z.string().trim().min(2).max(120),
