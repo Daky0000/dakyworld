@@ -21,6 +21,8 @@ const I = {
   spark: icon("M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"),
   copy: icon("M9 9h11v11H9zM5 15V5a1 1 0 011-1h10"),
   trash: icon("M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"),
+  up: icon("M12 19V5M6 11l6-6 6 6"),
+  down: icon("M12 5v14M6 13l6 6 6-6"),
 };
 
 export function WebsiteCanvasOverlay({
@@ -46,6 +48,8 @@ export function WebsiteCanvasOverlay({
   onAgent,
   onDuplicate,
   onDelete,
+  onMoveUp,
+  onMoveDown,
   onFormat,
 }: {
   stage: RefObject<HTMLElement | null>;
@@ -70,6 +74,9 @@ export function WebsiteCanvasOverlay({
   onAgent: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  /** Absent when there is nothing on that side to move past. */
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
   onFormat: (html: string) => void;
 }) {
   const [box, setBox] = useState<Box | null>(null);
@@ -188,6 +195,12 @@ export function WebsiteCanvasOverlay({
           )}
           <button type="button" className="dx-ib" title="Select parent" aria-label="Select parent" disabled={!hasParent} onClick={onParent}>↑</button>
           {agent && <button type="button" className="dx-ib" title="Ask the agent" aria-label="Ask the agent" onClick={onAgent}>{I.spark}</button>}
+          {(onMoveUp || onMoveDown) && (
+            <>
+              <button type="button" className="dx-ib" title="Move up" aria-label="Move up" disabled={!onMoveUp} onClick={onMoveUp}>{I.up}</button>
+              <button type="button" className="dx-ib" title="Move down" aria-label="Move down" disabled={!onMoveDown} onClick={onMoveDown}>{I.down}</button>
+            </>
+          )}
           <button type="button" className="dx-ib" title="Duplicate" aria-label="Duplicate" disabled={!canDuplicate} onClick={onDuplicate}>{I.copy}</button>
           <button type="button" className="dx-ib" title="Delete" aria-label="Delete" disabled={!canDelete} onClick={onDelete}>{I.trash}</button>
         </div>

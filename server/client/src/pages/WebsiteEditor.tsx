@@ -1291,7 +1291,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         void (async () => {
           try {
             if (dirty.current) await save.mutateAsync(latestEdits.current);
-            if (event.key === "Enter") setReviewOpen(true);
+            if (event.key === "Enter" && !dirty.current) publishNow();
           } catch {}
         })();
         return;
@@ -1373,7 +1373,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       setEdits({});
       dirty.current = false;
       try { sessionStorage.removeItem(localDraftKey); } catch { /* Optional recovery storage. */ }
-      if (result.draftRetained) setFailure("Published the reviewed version. A newer saved draft was preserved and is being reloaded.");
+      if (result.draftRetained) setFailure("Published. A newer saved draft was preserved and is being reloaded.");
       history.current = { list: [{ kind: "content", values: {} }], index: 0 };
       syncHistoryButtons();
       setPreviewToken((token) => token + 1);
@@ -1401,6 +1401,17 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       void qc.invalidateQueries({ queryKey: ["website", "page", pageId] });
     },
   });
+
+  /**
+   * Publish is one click, for a customer's page as much as a demo (Dan,
+   * 17 Oct 2026). The review screen — asset references, guard findings, the
+   * diff — read as a wall of faults on a page that was fine, so it no longer
+   * stands between the button and the site. The server still refuses what
+   * would really break: a draft that moved, a page that changed under it.
+   */
+  const publishNow = () => {
+    publish.mutate({ revision: revision.current, sourceHash: "", prTitle: "" } as unknown as WebsiteReview);
+  };
 
   const problems = useMemo(() => {
     const map = new Map<string, string>();
@@ -2239,6 +2250,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           onAgent={() => setAgentOpen(true)}
           onDuplicate={() => void runStructure("duplicate", picked.id)}
           onDelete={() => void runStructure("remove", picked.id)}
+          onMoveUp={!readOnly && picked.structure?.previousId ? () => void runStructure("before", picked.id, picked.structure?.previousId) : undefined}
+          onMoveDown={!readOnly && picked.structure?.nextId ? () => void runStructure("after", picked.id, picked.structure?.nextId) : undefined}
           onFormat={(html) => { change(picked.id, { ...edits[picked.id], value: html }, { fromFrame: true, commit: true }); setFrameEdit((token) => token + 1); }}
         />
       )}
@@ -2255,20 +2268,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         try {
           if (dirty.current) await save.mutateAsync(latestEdits.current);
           if (dirty.current) {
-            setFailure("Your latest edit is still saving. Review once it has saved.");
+            setFailure("Your latest edit is still saving. Publish once it has saved.");
             return;
           }
-          // A demo is DakyXTech's own sales page and goes out in one
-          // click. Everything a customer owns goes through the review.
-          if (isDemo) {
-            publish.mutate({
-              revision: revision.current,
-              sourceHash: "",
-              prTitle: "",
-            } as unknown as WebsiteReview);
-            return;
-          }
-          setReviewOpen(true);
+          publishNow();
         } catch {
           /* The save error is displayed by its mutation. */
         }
@@ -2668,7 +2671,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             localStorage.setItem("website-editor-theme", next);
           } catch {}
         }}
-        onOpenPublishReview={() => setReviewOpen(true)}
+        onOpenPublishReview={publishNow}
       /></DeferredPanel>
       {assetModalOpen && site && picked && (
         <WebsiteAssetPickerModal
@@ -2951,6 +2954,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 >
                   <IconDownload size={15} /><span>Download .html</span>
                 </a>
+                {canPublish && !isDemo && (
+                  <button type="button" role="menuitem" className="dx-row" disabled={save.isPending || publish.isPending || changedCount === 0} onClick={() => { setMenu(null); setReviewOpen(true); }}>
+                    <IconUploadCloud size={15} /><span>Schedule, or send for approval…</span>
+                  </button>
+                )}
                 <button type="button" role="menuitem" className="dx-row" aria-label="Versions" disabled={save.isPending || publish.isPending || structureBusy} onClick={() => { setMenu(null); void openVersions(); }}>
                   <IconHistory size={15} /><span>Version history</span>
                 </button>
@@ -3136,7 +3144,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                           change(targetId, { ...edits[targetId], style: writeStyle(map) }, { commit: true });
                         }
                   }
-                  onMove={!designerMode || readOnly || save.isPending ? undefined : (id, target, position) => void runStructure(position, id, target)}
+                  onMove={readOnly || save.isPending ? undefined : (id, target, position) => void runStructure(position, id, target)}
                 />
               )}
               {panel === "theme" && (tierStatus?.features && !tierStatus.features.themeSettings ? lockedNotice("Site colours and page surface", tierStatus) : themePanel)}
@@ -3833,8 +3841,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               showQuickToast("Back to the website default");
             }, { disabled: busy || (!edits[ctxField.id]?.style && !edits[ctxField.id]?.responsive) })}
             <hr />
-            {item("Move up", <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>, () => void runStructure("before", ctxField.id, ctxField.structure?.previousId), { disabled: busy || !designerMode || !ctxField.structure?.previousId, title: designerMode ? undefined : "Turn on Designer controls to move things" })}
-            {item("Move down", <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6" /></svg>, () => void runStructure("after", ctxField.id, ctxField.structure?.nextId), { disabled: busy || !designerMode || !ctxField.structure?.nextId, title: designerMode ? undefined : "Turn on Designer controls to move things" })}
+            {item("Move up", <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>, () => void runStructure("before", ctxField.id, ctxField.structure?.previousId), { disabled: busy || !ctxField.structure?.previousId })}
+            {item("Move down", <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6" /></svg>, () => void runStructure("after", ctxField.id, ctxField.structure?.nextId), { disabled: busy || !ctxField.structure?.nextId })}
             {item("Select parent", <IconLayers size={15} />, () => parent && pick(parent.id), { disabled: !parent })}
             {item(hiddenOnPhone ? "Show on phone" : "Hide on phone", hiddenOnPhone ? <IconEye size={15} /> : <IconEyeOff size={15} />, () => {
               const responsive = { ...(edits[ctxField.id]?.responsive ?? ctxField.responsive ?? {}) };

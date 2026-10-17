@@ -289,7 +289,7 @@ export function WebsiteCommandPaletteModal({
       },
       {
         id: "act-publish-review",
-        title: "Review Changes & Publish to GitHub",
+        title: "Publish this page",
         category: "Publishing",
         icon: IconUploadCloud,
         run: () => {

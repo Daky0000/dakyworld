@@ -120,6 +120,12 @@ function parseHexColor(color: string): { r: number; g: number; b: number } | nul
 
 /**
  * Executes all 18 pre-flight publish guard checks against candidate HTML.
+ *
+ * Only a page control the source did not have (a redirect, a security policy,
+ * a cookie, a base address) stops a publish. Everything else — a missing H1,
+ * an empty heading, a duplicate id, a `#` button — is a warning: Publish
+ * publishes (Dan, 17 Oct 2026), and a customer held up by an SEO opinion reads
+ * it as a page they are not allowed to change.
  */
 export function runPublishGuardChecks(input: {
   candidateHtml: string;
@@ -178,20 +184,20 @@ export function runPublishGuardChecks(input: {
       const alt = attr(node, "alt");
       if (!src || src === "#" || src === "about:blank") {
         checks.brokenImages = false;
-        blockers.push({
+        warnings.push({
           id: `broken-img-${node.start}`,
           category: "safe_publish",
-          severity: "blocker",
+          severity: "warning",
           title: "Broken Image Source",
           description: "An image tag has an empty or invalid 'src' attribute.",
           suggestion: "Upload or specify a valid image URL.",
         });
       } else if (src.includes(" ") || src.startsWith("htp://") || src.startsWith("htps://")) {
         checks.malformedUrls = false;
-        blockers.push({
+        warnings.push({
           id: `malformed-img-url-${node.start}`,
           category: "safe_publish",
-          severity: "blocker",
+          severity: "warning",
           title: "Malformed Image URL",
           description: `Image URL '${src.slice(0, 60)}' contains invalid characters or protocol.`,
           suggestion: "Check the image link for typos or spaces.",
@@ -249,10 +255,10 @@ export function runPublishGuardChecks(input: {
       
       if (href === undefined || href.trim() === "") {
         checks.brokenLinks = false;
-        blockers.push({
+        warnings.push({
           id: `empty-href-${node.start}`,
           category: "safe_publish",
-          severity: "blocker",
+          severity: "warning",
           title: isButtonLook ? "Button Has No Destination" : "Empty Link Destination",
           description: isButtonLook
             ? `Your '${linkText || "Action"}' button no longer has a destination.`
@@ -261,10 +267,10 @@ export function runPublishGuardChecks(input: {
         });
       } else if (href.trim() === "#" && isButtonLook) {
         checks.brokenLinks = false;
-        blockers.push({
+        warnings.push({
           id: `placeholder-btn-${node.start}`,
           category: "safe_publish",
-          severity: "blocker",
+          severity: "warning",
           title: "Button Destination Incomplete",
           description: `Your '${linkText || "Action"}' button has a placeholder '#' destination.`,
           suggestion: "Add the real page link, email, or section target.",
@@ -307,10 +313,10 @@ export function runPublishGuardChecks(input: {
 
       if (!headingText) {
         checks.accidentalEmptyHeadings = false;
-        blockers.push({
+        warnings.push({
           id: `empty-heading-${node.start}`,
           category: "safe_publish",
-          severity: "blocker",
+          severity: "warning",
           title: `Accidental Empty Heading <${node.tag}>`,
           description: `A <${node.tag}> element has no text content. Empty headings hurt SEO and screen readers.`,
           suggestion: "Add text to this heading or delete the empty element.",
@@ -332,10 +338,10 @@ export function runPublishGuardChecks(input: {
   // 4. Accessibility: Main H1 Heading Check
   if (h1Count === 0) {
     checks.accessibilityH1 = false;
-    blockers.push({
+    warnings.push({
       id: "missing-h1-heading",
       category: "accessibility",
-      severity: "blocker",
+      severity: "warning",
       title: "Missing Main Heading (H1)",
       description: "This page no longer has a main <h1> heading. Every webpage requires exactly one H1 for accessibility and SEO.",
       suggestion: "Add a main <h1> heading to the top hero section.",
@@ -395,10 +401,10 @@ export function runPublishGuardChecks(input: {
   for (const [id, count] of idCounts.entries()) {
     if (count > 1) {
       checks.duplicateIds = false;
-      blockers.push({
+      warnings.push({
         id: `dup-id-${id}`,
         category: "safe_publish",
-        severity: "blocker",
+        severity: "warning",
         title: `Duplicate HTML ID '#${id}'`,
         description: `The ID '#${id}' is used ${count} times on this page. HTML IDs must be strictly unique.`,
         suggestion: `Rename duplicate instances of id="${id}".`,

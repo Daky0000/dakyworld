@@ -149,7 +149,7 @@ export function PublishReview({
   const busy = useRef(pending);
   const [mode, setMode] = useState<"commit" | "pull_request">("commit");
   const [prTitle, setPrTitle] = useState("");
-  const [viewTab, setViewTab] = useState<"guard" | "diff" | "regression" | "visual" | "prepublish" | "approval">("guard");
+  const [viewTab, setViewTab] = useState<"guard" | "diff" | "regression" | "visual" | "prepublish" | "approval">("diff");
   const [copiedLink, setCopiedLink] = useState(false);
   const [regressionDevice, setRegressionDevice] = useState<"desktop" | "tablet" | "mobile">("desktop");
 
