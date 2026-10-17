@@ -11,6 +11,7 @@ import {
   hashCode,
   issuer,
   newCode,
+  oauthClients,
   partnerKeyMatches,
   pkceMatches,
   redirectAllowed,
@@ -125,6 +126,9 @@ oauthRouter.get("/products", async (req, res, next) => {
   try {
     if (!req.dbUser) return res.status(401).json({ error: "Not authenticated" });
     const entitlements = await entitlementsFor(req.dbUser.id);
+    // Until the Marketing SaaS is registered as a client there is nothing to
+    // sign in to, and a nav link would land on its "not available" error.
+    if (!oauthClients().length) return res.json({ grants: entitlements.grants, marketing: null });
     const marketingUrl = process.env.MARKETING_APP_URL?.trim().replace(/\/$/, "") || "https://marketing.dakyx.com";
     res.json({
       grants: entitlements.grants,

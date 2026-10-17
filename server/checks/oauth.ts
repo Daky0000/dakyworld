@@ -146,6 +146,14 @@ try {
   equal("an account switched off between authorize and token is refused", (await redeem(late)).status, 400);
   await prisma.user.update({ where: { id: person.id }, data: { active: true } });
 
+  const nav = await fetch(`${base}/api/auth/oauth/products`, { headers: { "x-check-user": person.id } }).then((r) => r.json()) as { marketing: { included: boolean } | null };
+  equal("the nav offers Marketing as included to a retainer member", nav.marketing?.included, true);
+  const savedSecret = process.env.OAUTH_CLIENT_MARKETING_SECRET;
+  delete process.env.OAUTH_CLIENT_MARKETING_SECRET;
+  const hidden = await fetch(`${base}/api/auth/oauth/products`, { headers: { "x-check-user": person.id } }).then((r) => r.json()) as { marketing: unknown };
+  equal("and offers nothing while the SaaS is not registered", hidden.marketing, null);
+  process.env.OAUTH_CLIENT_MARKETING_SECRET = savedSecret;
+
   /* -------------------------------------------------- partner entitlements -- */
 
   const partner = (sub: string, key?: string) => fetch(`${base}/api/partner/v1/entitlements/${sub}`, { headers: key ? { authorization: `Bearer ${key}` } : {} });

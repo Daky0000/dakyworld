@@ -167,7 +167,7 @@ export function Layout() {
   // (docs/cross-product-access.md), so the link is the whole hand-off.
   const products = useQuery({
     queryKey: ["auth", "products"],
-    queryFn: ({ signal }) => api.get<{ marketing: { url: string; included: boolean } }>("/auth/oauth/products", signal),
+    queryFn: ({ signal }) => api.get<{ marketing: { url: string; included: boolean } | null }>("/auth/oauth/products", signal),
     staleTime: 5 * 60_000,
     retry: false,
   });
