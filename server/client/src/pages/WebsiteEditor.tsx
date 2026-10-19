@@ -24,6 +24,7 @@ import { startTour, tourAction, TOUR_EVENTS, TOURS, type TourId } from "../lib/t
 import { tourSeen, useUiState } from "../lib/uiState";
 import { LinkDestinationField } from "../components/LinkDestinationField";
 import { PublishedToast } from "../components/PublishedToast";
+import { PUBLISH_DELAY_NOTICE, PublishDelayNotice } from "../components/PublishDelayNotice";
 
 
 import { WebsiteImageFraming } from "../components/WebsiteImageFraming";
@@ -363,6 +364,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   }, []);
   const [previewToken, setPreviewToken] = useState(0);
   const [published, setPublished] = useState<PublishResult | null>(null);
+  /** The "it takes a few minutes" notice, for the publish that opened it. */
+  const [delayNotice, setDelayNotice] = useState<PublishResult | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   /** Bumped when the server's copy replaces local state, to remount the uncontrolled fields. */
   const [loadToken, setLoadToken] = useState(0);
@@ -1369,6 +1372,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     onSuccess: (result) => {
       setFailure(null);
       setPublished(result);
+      // Only where a host rebuilds the site from the commit: a hosted site is
+      // live at once, a demo says so itself, and a pull request is not live yet
+      // at all.
+      if (!isDemo && !result.hosted && result.mode !== "pull_request" && !tourSeen(uiState, PUBLISH_DELAY_NOTICE)) setDelayNotice(result);
       setReviewOpen(false);
       setEdits({});
       dirty.current = false;
@@ -3079,6 +3086,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           onClose={() => setPublished(null)}
         />
       )}
+      <PublishDelayNotice open={Boolean(delayNotice)} liveUrl={delayNotice?.url} onClose={() => setDelayNotice(null)} />
+
 
       {/* ---------------------------------------------------------- body */}
       {/* ---------------------------------------------------------- body
