@@ -26,7 +26,8 @@ export type TourAction =
   | "publish-review-opened"
   | "approval-opened"
   | "versions-opened"
-  | "asset-picker-opened";
+  | "asset-picker-opened"
+  | "context-menu-opened";
 
 export type TourStep = {
   id: string;
@@ -126,8 +127,10 @@ export const TOURS: Record<TourId, Tour> = {
         id: "rightclick",
         target: '[data-tour="canvas"]',
         title: "Right-click for quick actions",
+        mode: "visual",
         body: "Copy, paste, duplicate, copy a style to reuse, move things up or down, hide on phone, or delete. Highlight words while typing for bold, colour and links.",
-        tip: ["Right-click any element"],
+        waitFor: "context-menu-opened",
+        doText: "Try it: right-click anything on your page",
       },
       {
         id: "search",

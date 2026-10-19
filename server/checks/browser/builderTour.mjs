@@ -76,8 +76,11 @@ try {
   await next();
   await step("Your tools live here").waitFor();
   await next();
+  // Right-clicking is the step, so the page has to receive it.
   await step("Right-click for quick actions").waitFor();
-  await next();
+  assert.equal(await page.locator(".dx-t-block").count(), 0, "The right-click step lets the page receive the right-click");
+  await page.frameLocator('iframe[title="Page"]').locator("h1").click({ button: "right" });
+  await page.getByRole("menu", { name: "Element actions" }).waitFor();
   await step("Search every tool").waitFor();
   await next();
   // The agent step is optional: it is skipped on a plan without the agent.

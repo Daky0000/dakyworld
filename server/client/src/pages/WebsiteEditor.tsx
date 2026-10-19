@@ -1549,6 +1549,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   useEffect(() => { if (reviewOpen) tourAction("publish-review-opened"); }, [reviewOpen]);
   useEffect(() => { if (showVersions) tourAction("versions-opened"); }, [showVersions]);
   useEffect(() => { if (assetModalOpen) tourAction("asset-picker-opened"); }, [assetModalOpen]);
+  useEffect(() => { if (contextMenu) tourAction("context-menu-opened"); }, [contextMenu]);
   // A step that needs a particular mode asks for it.
   useEffect(() => {
     const onMode = (event: Event) => {
