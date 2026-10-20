@@ -10,6 +10,9 @@
 import assert from "node:assert/strict";
 import { sniffVideo } from "../src/lib/fileType.js";
 import { localFilesNamed, prepareImportedDemoHtml } from "../src/services/demoBuilder.js";
+import { readPage } from "../src/services/website/regions.js";
+import { changeStructure } from "../src/services/website/structure.js";
+import { editingSource } from "../src/services/website/document.js";
 
 let checks = 0;
 const equal = (name: string, actual: unknown, expected: unknown) => { assert.deepEqual(actual, expected, name); checks++; };
@@ -40,5 +43,23 @@ assert.match(note!, /a video under its Video file/, "and says where to put it ri
 const many = prepareImportedDemoHtml(`<html><body>${Array.from({ length: 8 }, (_, i) => `<img src="p${i}.jpg">`).join("")}</body></html>`, { businessName: "Venue", senderName: "D", senderSite: "dakyx.com", includeBanner: false });
 assert.match(many.notes.join(" "), /This page uses 8 files that were not uploaded with it: p0\.jpg, p1\.jpg, p2\.jpg, p3\.jpg, p4\.jpg, p5\.jpg and 2 more\./, "a long list is cut short and counted"); checks++;
 equal("a page that names nothing local gets no such note", prepareImportedDemoHtml('<html><body><p>Hi</p></body></html>', { businessName: "V", senderName: "D", senderSite: "dakyx.com", includeBanner: false }).notes.filter((text) => text.includes("not uploaded")), []);
+
+// 20 Oct 2026: on the same demo nothing could be uploaded, changed or deleted.
+// Its player sat alone in a frame <div> with the usual fallback words, which
+// made the <div> read as a paragraph — so the video was never a field — and the
+// page, pictures inlined, was 4.6 MB, over a size guard every action answered to.
+const framed = `<html><body><main><section><h2>Tour</h2><div class="frame">
+  <video controls playsinline><source src="nevermind-venue-tour.mp4" type="video/mp4">Your browser does not support HTML video.</video>
+</div><p>A look inside</p></section></main></body></html>`;
+const player = readPage(framed).fields.find((field) => field.tag === "video");
+assert.ok(player, "a player alone in a frame with fallback words is a field of its own"); checks++;
+equal("and the frame around it is not a paragraph holding it", readPage(framed).fields.some((field) => field.kind !== "unsupported" && String(field.value ?? "").includes("<video")), false);
+const heavy = framed.replace("</h2>", `</h2><img alt="" src="data:image/png;base64,${"A".repeat(3.5 * 1024 * 1024)}">`);
+const heavyPlayer = readPage(heavy).fields.find((field) => field.tag === "video")!;
+const given = changeStructure(heavy, {}, { kind: "settings", fieldId: heavyPlayer.id, settings: { attributes: { src: "https://media.test/assets/dw/tour.mp4" } } });
+assert.ok(editingSource(heavy, given.values).includes('<source src="https://media.test/assets/dw/tour.mp4"'), "a page over the size ceiling still takes a new video file"); checks++;
+const gone = changeStructure(heavy, {}, { kind: "remove", fieldId: heavyPlayer.id, force: true });
+assert.ok(!/<video/.test(editingSource(heavy, gone.values)), "and can lose the video"); checks++;
+assert.throws(() => changeStructure(heavy, {}, { kind: "duplicate", fieldId: readPage(heavy).fields.find((field) => field.tag === "p")!.id }), /too large to duplicate/, "a copy is still what the ceiling refuses"); checks++;
 
 console.log(`websiteVideoFiles: ${checks} checks passed`);

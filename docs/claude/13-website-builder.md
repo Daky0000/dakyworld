@@ -911,6 +911,17 @@ is here is why it is built this way, and what cost time.
   fills a picture's place. On the canvas the picker swallowed every click, so a
   player could not be started at all; a selected player with `controls` now
   keeps its clicks. `checks/websiteVideoFiles.ts`, `checks/browser/videoUpload.mjs`.
+- **On the real demo none of that was reachable (20 Oct 2026).** Its player sat
+  alone in a frame `<div>` with the usual fallback words ("Your browser does not
+  support HTML video."), and words made `isField` read the `<div>` as a
+  paragraph, so the `<video>` was never a field: a click selected the frame and
+  no video panel ever opened. Players and embeds now make their parent descend,
+  as an `<img>` always did (`PLAYERS` in `regions.ts`). Behind it, the page was
+  4.6 MB with its pictures inlined, and the 3 MB guard in `changeStructure`
+  refused *any* action that grew it — measured against the unpinned page, so a
+  move or a new video address counted as growth. It now applies to Duplicate
+  only, which is what its message always said. The browser check uses the
+  framed shape; `checks/websiteVideoFiles.ts` covers both.
 - **A structure refusal is a 409.** `StructureError` extends `WebsiteError(409)`,
   so a refused setting ("Use an https address…") reads in the HTTP log exactly
   like a revision race. Read the message on screen before chasing revisions.

@@ -377,9 +377,12 @@ export function changeStructure(source: string, values: Record<string, FieldValu
   }
   html = regenerateResponsiveStyles(html);
   if (USES_INTERACTION_CSS.test(html) || html.includes("data-dw-interaction-styles")) html = regenerateInteractionStyles(html);
-  // Only growth is refused. A page already over the ceiling must still be able
-  // to lose a block or rearrange one, or the advice in the message cannot be followed.
-  if (Buffer.byteLength(html) > 3 * 1024 * 1024 && Buffer.byteLength(html) > Buffer.byteLength(current.html)) throw new StructureError("This page is too large to duplicate more content. Remove unused blocks first.");
+  // Only a copy is refused for size. A page already over the ceiling must still be
+  // able to lose a block, rearrange one or change one's settings, or the advice in
+  // the message cannot be followed. Measured on every action, a move or a new video
+  // address "grew" the page — `identifyFields` pins each field first — so on an
+  // imported demo with its pictures inlined (4–5 MB) nothing could be changed at all.
+  if (action.kind === "duplicate" && Buffer.byteLength(html) > 3 * 1024 * 1024 && Buffer.byteLength(html) > Buffer.byteLength(current.html)) throw new StructureError("This page is too large to duplicate more content. Remove unused blocks first.");
   const verb = action.kind === "remove" ? "Removed" : action.kind === "duplicate" ? "Duplicated" : "Moved";
   const document: DraftDocument = { baseHash: previous?.baseHash ?? sourceHash(source), html, changes: [...current.changes, line ?? `${verb} ${field.label}`].slice(-100), summary: [...(current.summary ?? []), ...describeChanges(readPage(current.html).fields, current.values)], undo: boundedHistory([...(previous?.undo ?? []), current]), redo: [] };
   return { values: { [DOCUMENT_KEY]: { document } }, selectedId };

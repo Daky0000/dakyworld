@@ -30,7 +30,7 @@ const { chromium } = await import(process.env.PLAYWRIGHT_URL ?? "playwright");
 const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Venue</title>
 <style>body{margin:0;font-family:Georgia,serif}.tour{padding:24px}video{display:block;width:480px;height:270px;background:#000}</style></head>
 <body><main><section class="tour"><h2>Take the tour</h2>
-<video controls playsinline preload="auto"><source src="nevermind-venue-tour.mp4" type="video/mp4"></video>
+<div class="frame"><video controls playsinline preload="auto"><source src="nevermind-venue-tour.mp4" type="video/mp4">Your browser does not support HTML video.</video></div>
 </section></main></body></html>`;
 
 const browser = await chromium.launch({ headless: true });

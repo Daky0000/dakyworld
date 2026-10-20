@@ -274,6 +274,9 @@ const BLOCK = new Set([
   "pre", "section", "table", "tbody", "td", "th", "thead", "tr", "ul",
 ]);
 
+/** Players and embeds: each is a field of its own, never words inside somebody else's. */
+const PLAYERS = new Set(["video", "audio", "iframe", "canvas", "object", "embed"]);
+
 /**
  * Elements where an inline link belongs to the sentence rather than standing on
  * its own. A link inside a paragraph is part of the paragraph and is edited with
@@ -589,7 +592,11 @@ function isField(source: string, element: ElementNode): boolean {
   if (textOf(source, element) === "") return false;
   // An image inside would put its attributes inside the span we are about to
   // hand somebody to type in. It gets its own field instead, so descend.
-  if (hasDescendant(element, (child) => child.tag === "img")) return false;
+  // A player is the same: a <video>'s fallback words ("Your browser does not
+  // support HTML video.") are text, so a frame <div> holding nothing but the
+  // player read as a paragraph, and the video was never an element of its own —
+  // it could not be selected, given a file, or removed.
+  if (hasDescendant(element, (child) => child.tag === "img" || PLAYERS.has(child.tag))) return false;
   if (PROSE.has(element.tag)) return true;
   // When a non-prose container (such as <div class="brand-type"> or a pill list)
   // wraps 2+ element children with no bare text outside those children, descend
