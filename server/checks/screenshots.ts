@@ -195,6 +195,10 @@ PORT = (server.address() as AddressInfo).port;
 
 process.env.APIFY_BASE_URL = `http://127.0.0.1:${PORT}/v2`;
 process.env.APIFY_TOKEN = TOKEN;
+// This check is about the Apify actor. Without this it only reached the actor
+// because the machine had no local browser; once CI installed Chromium, the
+// local browser answered first and every actor assertion failed.
+process.env.SCRAPER_SCREENSHOT_PROVIDER = "apify";
 
 const settings = await import("../src/lib/settings.js");
 settings.clearSettingsCache();
