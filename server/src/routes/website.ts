@@ -596,6 +596,13 @@ websiteRouter.delete("/pages/:pageId/presence", async (req, res, next) => {
 });
 
 /**
+ * A draft holds the whole page and its undo history. On an imported demo with its
+ * pictures inlined that is 10 MB of JSON, which took six seconds to write and met
+ * Prisma's five-second default: the change was thrown away as a 500 (20 Oct 2026).
+ */
+const DRAFT_WRITE = { maxWait: 10_000, timeout: 30_000 };
+
+/**
  * Saves a draft.
  *
  * Two things happen here that are easy to miss and both matter. Every value is
@@ -682,7 +689,7 @@ websiteRouter.put("/pages/:pageId/draft", async (req, res, next) => {
       draftSavedAt: empty ? null : new Date(),
       draftSavedById: empty ? null : req.dbUser?.id ?? null,
       draftRevision: { increment: 1 },
-    }));
+    }), DRAFT_WRITE);
 
     if (written.count === 0) {
       // Somebody else saved between this editor loading the page and pressing
@@ -794,7 +801,7 @@ websiteRouter.post("/pages/:pageId/structure", async (req, res, next) => {
       const changed = await writePageEdit(tx, allowance, { id: page.id, draftRevision: body.ifRevision }, { draft: result.values as unknown as Prisma.InputJsonValue, draftRevision: { increment: 1 }, draftSavedAt: new Date(), draftSavedById: req.dbUser?.id ?? null });
       if (!changed.count) throw new WebsiteError(409, "Another editor saved first. Nothing was changed. Reload the page and try again.");
       await tx.siteAuditEvent.create({ data: { siteId: site.id, kind: "LAYOUT_EDIT", summary: `${body.kind} · ${page.title}`, actorName: req.dbUser?.name ?? "Website editor", actorId: req.dbUser?.id, detail: { pageId: page.id, fieldId: body.fieldId, targetId: body.targetId, ...(body.settings ? { settings: body.settings } : {}), revision: body.ifRevision + 1 } } });
-    });
+    }, DRAFT_WRITE);
     const renderedStructureHtml = applyValues(editingSource(source.html, result.values), fieldValues(result.values)).html;
     await syncDemoFromSitePage(site, page.id, renderedStructureHtml, false);
     res.json({ revision: body.ifRevision + 1, selectedId: result.selectedId });
@@ -995,7 +1002,7 @@ websiteRouter.post("/pages/:pageId/versions/:versionId/cherry-pick", async (req,
       draftSavedAt: new Date(),
       draftSavedById: req.dbUser?.id ?? null,
       draftRevision: { increment: 1 },
-    }));
+    }), DRAFT_WRITE);
     if (!written.count) throw new WebsiteError(409, "The draft changed while that field was being copied. Reopen the page and copy it again.");
 
     res.json({ ok: true, draftRevision: page.draftRevision + 1, copiedField: body.fieldId });
@@ -1040,7 +1047,7 @@ websiteRouter.post("/pages/:pageId/versions/:versionId/restore", async (req, res
       draftSavedAt: empty ? null : new Date(),
       draftSavedById: empty ? null : req.dbUser?.id ?? null,
       draftRevision: { increment: 1 },
-    }, { counts }));
+    }, { counts }), DRAFT_WRITE);
     if (!restored.count) throw new WebsiteError(409, "The draft changed while that version was being restored. Reopen the page before restoring.");
     res.json({ restored: Object.keys(values).length, dropped, empty });
   } catch (err) {

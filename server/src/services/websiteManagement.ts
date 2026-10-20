@@ -163,7 +163,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
   }));
   router.post("/sites/:siteId/assets", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
-    const input = z.object({ filename: z.string().min(1).max(200), data: z.string().max(15_000_000), alt: z.string().max(500).default("") }).parse(req.body);
+    const input = z.object({ filename: z.string().min(1).max(200), data: z.string().max(15_000_000), alt: z.string().max(500).default(""), kind: z.enum(["video"]).optional() }).parse(req.body);
     if (!/^[A-Za-z0-9+/]*={0,2}$/.test(input.data)) throw new WebsiteError(400, "The file data is not valid base64.");
     const content = Buffer.from(input.data, "base64");
     // A video is stored as it came: there is nothing to optimise in the browser's
@@ -188,6 +188,9 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       res.status(201).json({ id: uploaded.id, url: r2Url || assetUrl(site, uploaded.repoPath), alt: uploaded.alt, size: content.length, contentType: video });
       return;
     }
+    // Asked for as a video (Upload video under a player), a picture is refused
+    // rather than stored and handed back as the player's file, which then never plays.
+    if (input.kind === "video") throw new WebsiteError(400, "That file is not a video. Upload an MP4 or WebM file.");
     const mime = sniff(content);
     const formats: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" };
     const svg = !mime && looksLikeSvg(content);

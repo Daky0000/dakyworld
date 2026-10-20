@@ -1625,7 +1625,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       reader.onerror = () => reject(new Error("That file could not be read."));
       reader.readAsDataURL(file);
     });
-    const uploaded = await api.post<{ id: string; url: string }>(`/website/sites/${siteId}/assets`, { filename: file.name, alt: "", data });
+    const uploaded = await api.post<{ id: string; url: string }>(`/website/sites/${siteId}/assets`, { filename: file.name, alt: "", data, kind: "video" });
     void qc.invalidateQueries({ queryKey: ["website", "assets", siteId] });
     void qc.invalidateQueries({ queryKey: ["website", "assets", "all"] });
     notifyTierStatusChanged();
