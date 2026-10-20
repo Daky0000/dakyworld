@@ -11,7 +11,9 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { decideVerification, livePageShowsChange, verificationText, PUBLISH_JOB_STATES } from "../src/services/websitePublishJobs.js";
+import type { PublishJob } from "@prisma/client";
+import { decideVerification, livePageShowsChange, publishJobView, verificationText, HOST_LATE_LABEL, PUBLISH_JOB_STATES } from "../src/services/websitePublishJobs.js";
+import { componentsFor, githubTroubleFor, hostFromHeaders, parseGithubComponents, GITHUB_TROUBLE_NOTICE } from "../src/services/githubStatus.js";
 
 let checks = 0;
 function check(name: string, condition: unknown) { assert.ok(condition, name); checks++; }
@@ -41,26 +43,66 @@ check("with nothing to look for at all, there is nothing to wait for", livePageS
 
 /* ------------------------------------------------------ the backoff */
 
-equal("a page that shows the change is done", decideVerification({ verified: true, attempts: 1 }), { state: "COMPLETED" });
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
 
-const waits: number[] = [];
-for (let attempts = 1; attempts < 8; attempts++) {
-  const step = decideVerification({ verified: false, attempts });
-  assert.equal(step.state, "VERIFYING", `attempt ${attempts} keeps waiting`);
-  waits.push((step as { nextCheckInMs: number }).nextCheckInMs);
+equal("a page that shows the change is done", decideVerification({ verified: true, attempts: 1, elapsedMs: 10_000 }), { state: "COMPLETED" });
+
+/**
+ * Walks the watch the way the scheduler does: one look, wait what it says, look
+ * again. `liveAt` is when the host finally shows the change, or never.
+ */
+function watch(liveAt: number | null, error?: string) {
+  const looks: Array<{ at: number; state: string; wait?: number }> = [];
+  let at = 10_000;
+  let previousError = false;
+  for (let attempts = 1; attempts < 1_000; attempts++) {
+    const verified = liveAt !== null && at >= liveAt;
+    const step = decideVerification({ verified, attempts, elapsedMs: at, error: verified ? undefined : error, previousError });
+    looks.push({ at, state: step.state, wait: step.state === "VERIFYING" ? step.nextCheckInMs : undefined });
+    if (step.state !== "VERIFYING") return { looks, last: step };
+    previousError = Boolean(error);
+    at += step.nextCheckInMs;
+  }
+  throw new Error("the watch never ended");
 }
-checks++;
-check("each look waits longer than the one before it", waits.every((wait, index) => index === 0 || wait > waits[index - 1]!));
-check("the first look comes quickly", waits[0]! <= 45_000);
-check("and the last is minutes rather than hours", waits[waits.length - 1]! <= 300_000);
-check("the whole watch covers a slow static host", waits.reduce((total, wait) => total + wait, 0) >= 8 * 60_000);
 
-const given = decideVerification({ verified: false, attempts: 8 });
-equal("it stops asking rather than waiting for ever", given.state, "VERIFY_FAILED");
-check("and says the commit is there while the page is not", /commit is in the repository/.test((given as { reason: string }).reason));
+const quick = watch(40_000);
+equal("a host that rebuilds in forty seconds is seen as live", quick.last.state, "COMPLETED");
+check("within a minute of it going live", quick.looks[quick.looks.length - 1]!.at < 40_000 + MINUTE);
 
-const unreachable = decideVerification({ verified: false, attempts: 8, error: "getaddrinfo ENOTFOUND example.test" });
-check("a site that could not be read reports that, not a wrong story about caching", (unreachable as { reason: string }).reason.includes("ENOTFOUND"));
+const early = watch(null).looks.filter((look) => look.at < 5 * MINUTE).map((look) => look.wait!);
+check("the first look comes quickly", early[0]! <= 45_000);
+check("and the early looks spread out rather than hammering the host", early.every((wait, index) => index === 0 || wait >= early[index - 1]!));
+check("after the first five minutes it looks every two minutes", watch(null).looks.filter((look) => look.at >= 5 * MINUTE && look.at < 2 * HOUR).every((look) => look.wait === 2 * MINUTE));
+
+// 19 Oct 2026: a GitHub Actions incident held the africon-app rebuild (commit
+// 20a09f5) for about forty minutes. The old watch gave up at twelve and recorded
+// a publish that worked as "the live page has not changed".
+const nineteenth = watch(40 * MINUTE);
+equal("the 19 October publish ends live, not failed", nineteenth.last.state, "COMPLETED");
+check("and was never reported as failed on the way", nineteenth.looks.every((look) => look.state !== "VERIFY_FAILED"));
+check("and was seen within two minutes of going live", nineteenth.looks[nineteenth.looks.length - 1]!.at <= 42 * MINUTE + 10_000);
+
+const slow = watch(5 * HOUR);
+equal("a host five hours late is still seen when it finally rebuilds", slow.last.state, "COMPLETED");
+check("looking every fifteen minutes once it is two hours late", slow.looks.filter((look) => look.at >= 2 * HOUR && look.wait).every((look) => look.wait === 15 * MINUTE));
+
+const never = watch(null);
+equal("a host that never rebuilds is reported, not waited on for ever", never.last.state, "VERIFY_FAILED");
+check("only after a day", never.looks[never.looks.length - 1]!.at >= 24 * HOUR);
+check("and says the commit is there while the page is not", /commit is in the repository/.test((never.last as { reason: string }).reason));
+check("in fewer than two hundred looks", never.looks.length < 200);
+
+const unreachable = watch(null, "getaddrinfo ENOTFOUND example.test");
+equal("an address that never answers is reported", unreachable.last.state, "VERIFY_FAILED");
+check("as what it is, not a wrong story about caching", (unreachable.last as { reason: string }).reason.includes("ENOTFOUND"));
+check("after two hours, not a day", (() => { const at = unreachable.looks[unreachable.looks.length - 1]!.at; return at >= 2 * HOUR && at < 3 * HOUR; })());
+equal(
+  "one failed read at the two-hour mark is a blip, not a verdict",
+  decideVerification({ verified: false, attempts: 70, elapsedMs: 2 * HOUR + MINUTE, error: "socket hang up", previousError: false }).state,
+  "VERIFYING",
+);
 
 /* ------------------------------------------------------- the words */
 
@@ -68,4 +110,44 @@ check("every state has something a person can read", Object.values(PUBLISH_JOB_S
 equal("and 'published' is never claimed before it is live", PUBLISH_JOB_STATES.COMMITTED, "Committed");
 equal("only the live state says live", PUBLISH_JOB_STATES.COMPLETED, "Live");
 
-console.log(`websitePublishVerify: ${checks} checks — what to look for, what the live page proves, and a backoff that neither gives up early nor waits for ever`);
+/* ------------------------------------------------ when GitHub is the hold-up */
+
+const github = (status: Record<string, string>) => parseGithubComponents({ components: Object.entries(status).map(([name, value]) => ({ name, status: value })) });
+const allWell = github({ Pages: "operational", Actions: "operational", Webhooks: "operational", Issues: "major_outage" });
+const actionsDown = github({ Pages: "operational", Actions: "degraded_performance", Webhooks: "operational" });
+const webhooksDown = github({ Pages: "operational", Actions: "operational", Webhooks: "partial_outage" });
+
+equal("only the parts a deploy goes through are read", Object.keys(allWell).sort(), ["Actions", "Pages", "Webhooks"]);
+equal("an outage somewhere irrelevant says nothing", githubTroubleFor(allWell, "github-pages"), null);
+equal("a GitHub Pages site waiting through degraded Actions is told why", githubTroubleFor(actionsDown, "github-pages"), GITHUB_TROUBLE_NOTICE);
+equal("a Vercel site is not blamed on Actions", githubTroubleFor(actionsDown, "vercel"), null);
+equal("but is held up by webhooks", githubTroubleFor(webhooksDown, "vercel"), GITHUB_TROUBLE_NOTICE);
+equal("a host not yet known is told about any of the three", githubTroubleFor(webhooksDown, null), GITHUB_TROUBLE_NOTICE);
+equal("not knowing GitHub's health is not a notice", githubTroubleFor(null, "github-pages"), null);
+check("the notice says the change is saved and not to publish again", /saved/.test(GITHUB_TROUBLE_NOTICE) && /No need to publish again/.test(GITHUB_TROUBLE_NOTICE));
+equal("a page with no components is no answer, not a crash", parseGithubComponents({ nope: true }), {});
+
+equal("GitHub Pages is known by its request id", hostFromHeaders({ server: "cloudflare", "x-github-request-id": "C926:1" }), "github-pages");
+equal("or by its server name", hostFromHeaders({ server: "GitHub.com" }), "github-pages");
+equal("Vercel", hostFromHeaders({ server: "Vercel", "x-vercel-id": "cpt1::x" }), "vercel");
+equal("Netlify", hostFromHeaders({ server: "Netlify" }), "netlify");
+equal("a bare Cloudflare proxy is not taken for any host behind it", hostFromHeaders({ server: "cloudflare" }), "cloudflare");
+equal("and is watched like an unknown host", componentsFor("cloudflare"), componentsFor(null));
+equal("no headers, no guess", hostFromHeaders({}), null);
+
+/* ------------------------------------------------------- the words */
+
+const jobAt = (state: "VERIFYING" | "VERIFY_FAILED", ageMs: number, detail: Record<string, string> = {}): PublishJob => ({
+  id: "job", siteId: "site", kind: "PAGE", state, pageId: null, sharedElementId: null, startedById: null, detail, commitSha: "20a09f5", commitUrl: null,
+  verifyUrl: "https://africon.example/", verifyText: "Words", expectedHash: null, attempts: 3, nextCheckAt: null, verifiedAt: null, lastError: null,
+  createdAt: new Date(Date.now() - ageMs), updatedAt: new Date(), finishedAt: null,
+});
+equal("two hours on, the host is late, not failed", publishJobView(jobAt("VERIFYING", 2 * HOUR + MINUTE)).stateLabel, HOST_LATE_LABEL);
+check("and never says the live page has not changed", !/has not changed/.test(HOST_LATE_LABEL));
+equal("an hour in, it is still just waiting", publishJobView(jobAt("VERIFYING", HOUR)).late, false);
+equal("GitHub's trouble is shown on a waiting GitHub Pages publish", publishJobView(jobAt("VERIFYING", MINUTE, { servedBy: "github-pages" }), { github: actionsDown }).notice, GITHUB_TROUBLE_NOTICE);
+equal("and is what it is labelled with", publishJobView(jobAt("VERIFYING", MINUTE, { servedBy: "github-pages" }), { github: actionsDown }).stateLabel, GITHUB_TROUBLE_NOTICE);
+equal("but not on one that has finished", publishJobView(jobAt("VERIFY_FAILED", MINUTE, { servedBy: "github-pages" }), { github: actionsDown }).notice, null);
+equal("and not on a Vercel site, whose deploy does not go through Actions", publishJobView(jobAt("VERIFYING", MINUTE, { servedBy: "vercel" }), { github: actionsDown }).notice, null);
+
+console.log(`websitePublishVerify: ${checks} checks — what to look for, what the live page proves, a watch that outlasts a bad day at GitHub without waiting for ever, and saying when GitHub is the hold-up`);

@@ -43,14 +43,17 @@ export function isTlsOrConnectionError(error: unknown): boolean {
   );
 }
 
-async function executeFetchWebsiteText(address: string): Promise<string> {
+/** A page's text, and the response headers that say which host sent it. */
+export type WebsitePage = { text: string; headers: Record<string, string> };
+
+async function executeFetchWebsitePage(address: string): Promise<WebsitePage> {
   const allowLoopback = process.env.NODE_ENV === "development" && process.env.DEV_NO_AUTH === "true";
   const signal = AbortSignal.timeout(20_000);
   let url = new URL(address);
   for (let hop = 0; hop <= 5; hop++) {
     const pinned = await resolveWebsiteAddress(url, allowLoopback);
     if (signal.aborted) throw new Error("The website took too long to respond.");
-    const result = await new Promise<{ location?: string; text: string }>((resolve, reject) => {
+    const result = await new Promise<{ location?: string; text: string; headers?: Record<string, string> }>((resolve, reject) => {
       const request = (url.protocol === "https:" ? https : http).request(url, {
         signal, method: "GET", headers: { "User-Agent": "DakyXTech-OS-Editor", "Accept-Encoding": "identity" },
         // Keep the original hostname for Host/TLS, but connect only to the vetted IP.
@@ -68,13 +71,15 @@ async function executeFetchWebsiteText(address: string): Promise<string> {
           if (bytes > 2 * 1024 * 1024) { response.destroy(new Error("This page exceeds the editor's 2 MB limit.")); return; }
           chunks.push(chunk);
         });
-        response.on("end", () => resolve({ text: Buffer.concat(chunks).toString("utf8") }));
+        const headers: Record<string, string> = {};
+        for (const [name, value] of Object.entries(response.headers)) if (value !== undefined) headers[name] = Array.isArray(value) ? value.join(", ") : value;
+        response.on("end", () => resolve({ text: Buffer.concat(chunks).toString("utf8"), headers }));
         response.on("error", reject);
       });
       request.on("error", reject);
       request.end();
     });
-    if (!result.location) return result.text;
+    if (!result.location) return { text: result.text, headers: result.headers ?? {} };
     url = new URL(result.location, url);
   }
   throw new Error("The website redirected too many times.");
@@ -82,12 +87,17 @@ async function executeFetchWebsiteText(address: string): Promise<string> {
 
 /** Pin DNS for each request and revalidate every redirect; never forward a session. Falls back to HTTP if HTTPS TLS handshake fails. */
 export async function fetchWebsiteText(address: string): Promise<string> {
+  return (await fetchWebsitePage(address)).text;
+}
+
+/** `fetchWebsiteText`, plus the headers of the response that answered, which say what host is serving the site. */
+export async function fetchWebsitePage(address: string): Promise<WebsitePage> {
   try {
-    return await executeFetchWebsiteText(address);
+    return await executeFetchWebsitePage(address);
   } catch (error) {
     if (/^https:\/\//i.test(address) && isTlsOrConnectionError(error)) {
       try {
-        return await executeFetchWebsiteText(address.replace(/^https:\/\//i, "http://"));
+        return await executeFetchWebsitePage(address.replace(/^https:\/\//i, "http://"));
       } catch {
         throw error;
       }

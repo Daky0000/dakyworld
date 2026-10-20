@@ -24,6 +24,7 @@ import { startTour, tourAction, TOUR_EVENTS, TOURS, type TourId } from "../lib/t
 import { tourSeen, useUiState } from "../lib/uiState";
 import { LinkDestinationField } from "../components/LinkDestinationField";
 import { PublishedToast } from "../components/PublishedToast";
+import { PublishFollow } from "../components/PublishFollow";
 import { PUBLISH_DELAY_NOTICE, PublishDelayNotice } from "../components/PublishDelayNotice";
 
 
@@ -3069,8 +3070,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         </div>
       )}
       {/* A publish is announced in the corner and gets out of the way: the
-          page itself is the evidence. The full detail is in History. */}
-      {published && (
+          page itself is the evidence. The full detail is in History. A commit
+          to a site a host rebuilds keeps following the publish, and speaks
+          again only if GitHub holds it up, the host is late, or it goes live. */}
+      {published && !isDemo && !published.hosted && published.mode !== "pull_request" && published.job?.id && page.data?.site.id ? (
+        <PublishFollow key={published.job.id} siteId={page.data.site.id} jobId={published.job.id} liveUrl={published.url} />
+      ) : published && (
         <PublishedToast
           message={
             isDemo

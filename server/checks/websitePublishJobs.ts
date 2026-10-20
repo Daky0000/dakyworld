@@ -46,7 +46,7 @@ const { createServer } = await import("node:http");
  */
 const liveServer = createServer((_request, response) => {
   if (liveFails) { response.destroy(new Error(liveFails)); return; }
-  response.writeHead(200, { "Content-Type": "text/html" });
+  response.writeHead(200, { "Content-Type": "text/html", Server: "GitHub.com" });
   response.end(livePage);
 });
 await new Promise<void>(resolve => liveServer.listen(0, "127.0.0.1", resolve));
@@ -126,6 +126,8 @@ try {
   equal("but it is now actively being watched", row.state, "VERIFYING");
   equal("and has been looked at once", row.attempts, 1);
   check("with another look scheduled", row.nextCheckAt !== null);
+  equal("and knows which host answered", (row.detail as { servedBy?: string }).servedBy, "github-pages");
+  equal("without losing what else the job recorded", typeof (row.detail as { expectedHtmlHash?: string }).expectedHtmlHash, "string");
 
   /* --------------------------------------------------- the host rebuilds */
 
@@ -149,9 +151,16 @@ try {
     html,
     summary: [{ id: "a", label: "Heading", kind: "text", part: "words", from: "x", to: "Ready to improve your systems?" }],
   });
-  for (let attempt = 0; attempt < 9; attempt++) await verifyDuePublishJobs(new Date(Date.now() + (attempt + 1) * 20 * 60_000));
+  // 19 Oct 2026: the old watch gave up after twelve minutes, while GitHub was
+  // forty minutes behind. Three hours on, a host that is only late is still
+  // being watched.
+  for (let hour = 1; hour <= 3; hour++) await verifyDuePublishJobs(new Date(Date.now() + hour * 60 * 60_000));
   row = await prisma.publishJob.findUniqueOrThrow({ where: { id: stubborn.id } });
-  equal("a live page that never changes is reported, not retried for ever", row.state, "VERIFY_FAILED");
+  equal("a host three hours late is still watched, not failed", row.state, "VERIFYING");
+  equal("and is labelled late, not broken", publishJobView(row, { now: new Date(Date.now() + 3 * 60 * 60_000) }).stateLabel, "Your host hasn't updated yet. We'll keep checking.");
+  for (let hour = 4; hour <= 25; hour += 3) await verifyDuePublishJobs(new Date(Date.now() + hour * 60 * 60_000));
+  row = await prisma.publishJob.findUniqueOrThrow({ where: { id: stubborn.id } });
+  equal("a live page that never changes is reported after a day, not retried for ever", row.state, "VERIFY_FAILED");
   check("and says what is actually true", /live page still shows the old version|could not be read/i.test(row.lastError ?? ""));
   check("the commit is still recorded, because it did happen", row.commitSha === "def456");
 
@@ -170,6 +179,31 @@ try {
   await verifyDuePublishJobs(new Date(Date.now() + 60_000));
   row = await prisma.publishJob.findUniqueOrThrow({ where: { id: styled.id } });
   equal("a styling change is verified by the whole file instead", row.state, "COMPLETED");
+
+  /* ---------------------------- a later publish overtakes an earlier one */
+
+  // The earlier publish's words were replaced by the later one before the host
+  // rebuilt, so they will never appear. The later one going live is the proof
+  // that the host has deployed past both.
+  livePage = "<!doctype html><html><body><h1>The heading before either publish</h1></body></html>";
+  const earlierWords = await startPublishJob({ site, kind: "PAGE", pageId: page.id, detail: {} });
+  await publishJobCommitted({
+    id: earlierWords.id, commit: { sha: "aaa111", url: "https://github.com/fixture/site/commit/aaa111" }, site, page,
+    html: "<!doctype html><html><body><h1>The first new heading, soon replaced</h1></body></html>",
+    summary: [{ id: "a", label: "Heading", kind: "text", part: "words", from: "x", to: "The first new heading, soon replaced" }],
+  });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const laterWords = await startPublishJob({ site, kind: "PAGE", pageId: page.id, detail: {} });
+  const laterHtml = "<!doctype html><html><body><h1>The second heading that replaced it</h1></body></html>";
+  await publishJobCommitted({
+    id: laterWords.id, commit: { sha: "bbb222", url: "https://github.com/fixture/site/commit/bbb222" }, site, page,
+    html: laterHtml,
+    summary: [{ id: "a", label: "Heading", kind: "text", part: "words", from: "x", to: "The second heading that replaced it" }],
+  });
+  livePage = laterHtml;
+  await verifyDuePublishJobs(new Date(Date.now() + 60_000));
+  equal("the later publish is live", (await prisma.publishJob.findUniqueOrThrow({ where: { id: laterWords.id } })).state, "COMPLETED");
+  equal("and so is the earlier one it overtook, instead of waiting a day for words that are gone", (await prisma.publishJob.findUniqueOrThrow({ where: { id: earlierWords.id } })).state, "COMPLETED");
 
   /* ------------------------------------- a live site that cannot be read */
 

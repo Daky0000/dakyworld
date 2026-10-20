@@ -25,6 +25,11 @@ export type PublishJobStatus = {
   deployedInSeconds: number | null;
   attempts: number;
   lastError: string | null;
+  /** Set while waiting when a part of GitHub this site's deploy runs through is not working. */
+  notice?: string | null;
+  /** Still waiting two hours after the publish: the host is late, not failed. */
+  late?: boolean;
+  createdAt?: string;
 };
 
 const WAITING = new Set(["QUEUED", "VALIDATING", "COMMITTING", "COMMITTED", "DEPLOYING", "VERIFYING"]);
@@ -61,7 +66,7 @@ export function PublishProgress({ status }: { status: PublishJobStatus }) {
   try { const url = new URL(status.verifyUrl ?? ""); if (["https:", "http:"].includes(url.protocol)) liveUrl = url.href; } catch { /* No public address. */ }
   return <section aria-label="Publishing progress" className="mt-3 rounded-xl border border-line bg-white p-3">
     <ol className="flex flex-wrap gap-3 text-sm">{["Draft saved", "Publishing", "Checking live site", "Live"].map((label, index) => <li key={label} aria-current={index === active ? "step" : undefined} className={index <= active ? "font-semibold text-ink" : "text-muted"}><span aria-hidden>{`${index + 1}. `}</span>{label}</li>)}</ol>
-    <p role="status" aria-live="polite" className="mt-2 text-sm">{complete ? liveUrl ? "Your changes are live." : "Saved as the live version. This website has no public address yet, so nobody can see it until one is set up in Website settings, under “Where this website is served”." : waiting ? checking ? status.fromSource ? "Changes committed. Your host is building the site — this usually takes a few minutes." : "Changes sent. Waiting for the live website to update…" : "Sending the reviewed changes…" : guidance[status.state] ?? status.label}</p>
+    <p role="status" aria-live="polite" className="mt-2 text-sm">{complete ? liveUrl ? "Your changes are live." : "Saved as the live version. This website has no public address yet, so nobody can see it until one is set up in Website settings, under “Where this website is served”." : waiting ? checking ? status.notice || status.late ? status.label : status.fromSource ? "Changes committed. Your host is building the site — this usually takes a few minutes." : "Changes sent. Waiting for the live website to update…" : "Sending the reviewed changes…" : guidance[status.state] ?? status.label}</p>
     {!waiting && !complete && status.lastError && <details className="mt-2 text-xs text-muted"><summary>Details for your website manager</summary><p>{status.lastError}</p></details>}
     {status.cdnState === "PENDING" && <p role="status" className="mt-2 text-sm">Published. Updating the public cache.</p>}
     {liveUrl && <a href={liveUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-sm text-blue underline">Open live website</a>}

@@ -3,9 +3,11 @@ import { createHash } from "node:crypto";
 import type { Prisma, PublishJob, PublishJobState, Site, SitePage } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { readFile } from "../lib/github.js";
-import { fetchWebsiteText } from "../lib/websiteFetch.js";
+import { mapConcurrent } from "../lib/concurrency.js";
+import { fetchWebsitePage } from "../lib/websiteFetch.js";
 import { pageUrl, repoFilePath, siteRepo } from "./website/site.js";
 import { hostedUrlFor } from "./websiteHosting.js";
+import { githubHealth, githubTroubleFor, hostFromHeaders, type GithubHealth } from "./githubStatus.js";
 import type { FieldChangeSummary } from "./website/index.js";
 
 /**
@@ -35,14 +37,31 @@ import type { FieldChangeSummary } from "./website/index.js";
 
 export type PublishJobKind = "PAGE" | "SHARED" | "ROLLBACK";
 
-/** How long to keep asking the live site, and how often. */
-const VERIFY_ATTEMPTS = 8;
-// The first look is early on purpose: a static host can rebuild in well under a
-// minute, and starting at twenty seconds left those jobs sitting in VERIFYING
-// for minutes after the page was already live. The number of looks and the
-// twelve minutes they span are unchanged — only their spacing is, so a slow
-// host is given exactly as long as it was before.
-const VERIFY_BACKOFF_MS = [10_000, 20_000, 30_000, 45_000, 60_000, 90_000, 180_000, 300_000];
+/**
+ * How long to keep asking the live site, and how often, measured from when the
+ * publish started rather than by counting looks.
+ *
+ * The watch used to stop after eight looks spanning twelve minutes. On 19 Oct
+ * 2026 a GitHub Actions incident held a GitHub Pages rebuild for forty minutes,
+ * and a publish that worked was recorded as "the live page has not changed". A
+ * host that is merely slow must never be reported as failed, so:
+ *
+ * - quick looks for the first five minutes, because a static host can rebuild
+ *   in well under one and the page should say "live" as soon as it is;
+ * - then every two minutes up to two hours, which covers a bad day at GitHub;
+ * - then every fifteen minutes up to a day, saying the host has not updated yet
+ *   rather than that anything failed;
+ * - and only then stopping, because a day without a rebuild is something a
+ *   person has to look at.
+ */
+const QUICK_LOOKS_MS = [10_000, 20_000, 30_000, 45_000, 60_000, 90_000];
+const QUICK_PHASE_MS = 5 * 60_000;
+const STEADY_EVERY_MS = 2 * 60_000;
+/** From here on the host is late rather than busy, and the words say so. */
+export const HOST_LATE_AFTER_MS = 2 * 60 * 60_000;
+const LATE_EVERY_MS = 15 * 60_000;
+export const GIVE_UP_AFTER_MS = 24 * 60 * 60_000;
+export const HOST_LATE_LABEL = "Your host hasn't updated yet. We'll keep checking.";
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 
@@ -125,7 +144,7 @@ export async function publishJobCommitted(input: {
       verifyUrl: isLocalHosted ? hostedUrl : pageUrl(input.site, input.page),
       verifyText: verificationText(input.summary),
       expectedHash: hash(input.html),
-      nextCheckAt: isLocalHosted ? null : new Date(Date.now() + VERIFY_BACKOFF_MS[0]!),
+      nextCheckAt: isLocalHosted ? null : new Date(Date.now() + QUICK_LOOKS_MS[0]!),
       verifiedAt: isLocalHosted ? now : undefined,
       finishedAt: isLocalHosted ? now : undefined,
       attempts: isLocalHosted ? 1 : 0,
@@ -169,7 +188,7 @@ export async function sourcePublishCommitted(input: {
       verifyUrl: input.page ? pageUrl(input.site, input.page) : input.site.publicUrl,
       verifyText,
       expectedHash: null,
-      nextCheckAt: new Date(Date.now() + VERIFY_BACKOFF_MS[0]!),
+      nextCheckAt: new Date(Date.now() + QUICK_LOOKS_MS[0]!),
       attempts: 0,
     },
   });
@@ -193,11 +212,11 @@ export async function failPublishJob(id: string, state: PublishJobState, message
  * neither signal is completed rather than reported as unverified: saying "we
  * could not confirm it" about a host that can never confirm anything is noise.
  */
-async function verifyOne(job: PublishJob): Promise<{ verified: boolean; error?: string }> {
+async function verifyOne(job: PublishJob): Promise<{ verified: boolean; error?: string; servedBy?: string | null }> {
   if (!job.verifyUrl) return { verified: true };
   try {
-    const body = await fetchWebsiteText(job.verifyUrl);
-    return { verified: livePageShowsChange({ body, verifyText: job.verifyText, expectedHash: job.expectedHash }) };
+    const page = await fetchWebsitePage(job.verifyUrl);
+    return { verified: livePageShowsChange({ body: page.text, verifyText: job.verifyText, expectedHash: job.expectedHash }), servedBy: hostFromHeaders(page.headers) };
   } catch (error) {
     return { verified: false, error: error instanceof Error ? error.message : "The live page could not be read." };
   }
@@ -212,21 +231,32 @@ export type VerificationStep =
  * What one look at the live page means, decided without a database in the way.
  *
  * Pulled out because this is the part that can be wrong in a way nobody notices:
- * a backoff that gives up too early reports a working site as broken, and one
- * that never gives up leaves a row saying "waiting" for ever, which is the same
- * silence the whole feature was built to end.
+ * a watch that gives up too early reports a working site as broken (19 Oct
+ * 2026), and one that never gives up leaves a row saying "waiting" for ever,
+ * which is the same silence the whole feature was built to end.
+ *
+ * A page that could not be read at all is a different story from a page that
+ * still shows the old version, and is not given a day: two hours of the address
+ * not answering, on this look and the one before it, is reported as that.
  */
-export function decideVerification(input: { verified: boolean; attempts: number; error?: string }): VerificationStep {
+export function decideVerification(input: { verified: boolean; attempts: number; elapsedMs: number; error?: string; previousError?: boolean }): VerificationStep {
   if (input.verified) return { state: "COMPLETED" };
-  if (input.attempts >= VERIFY_ATTEMPTS) {
+  if (input.error && input.previousError && input.elapsedMs >= HOST_LATE_AFTER_MS) {
+    return { state: "VERIFY_FAILED", reason: input.error };
+  }
+  if (input.elapsedMs >= GIVE_UP_AFTER_MS) {
     return {
       state: "VERIFY_FAILED",
       reason:
         input.error ??
-        "The commit is in the repository, but the live page still shows the old version. The host may not have rebuilt, or it may be serving a cached copy.",
+        "The commit is in the repository, but a day later the live page still shows the old version. The host may have stopped rebuilding the site, or it may be serving a cached copy. Check the host's deploy page.",
     };
   }
-  return { state: "VERIFYING", nextCheckInMs: VERIFY_BACKOFF_MS[input.attempts] ?? 300_000 };
+  const nextCheckInMs =
+    input.elapsedMs < QUICK_PHASE_MS ? QUICK_LOOKS_MS[input.attempts] ?? STEADY_EVERY_MS
+      : input.elapsedMs < HOST_LATE_AFTER_MS ? STEADY_EVERY_MS
+        : LATE_EVERY_MS;
+  return { state: "VERIFYING", nextCheckInMs };
 }
 
 /**
@@ -242,48 +272,94 @@ export function livePageShowsChange(input: { body: string; verifyText: string | 
   return !input.verifyText && !input.expectedHash;
 }
 
+const WAITING_STATES: PublishJobState[] = ["DEPLOYING", "VERIFYING"];
+
+const jobDetail = (job: PublishJob): Record<string, unknown> =>
+  job.detail && typeof job.detail === "object" && !Array.isArray(job.detail) ? (job.detail as Record<string, unknown>) : {};
+
 /**
  * Every job waiting to be seen live, checked once.
  *
- * Runs on the app's own minute tick. Deliberately not a tight poll: a static
- * host takes tens of seconds to a couple of minutes, so the backoff walks from
- * twenty seconds out to five minutes and then stops asking. Stopping is a
- * result — `VERIFY_FAILED` means the commit is in the repository and the live
- * site did not change, which is a real thing that happens and needs somebody.
+ * Runs on the app's own minute tick. Deliberately not a tight poll: see the
+ * schedule above. Stopping is a result: `VERIFY_FAILED` means the commit is in
+ * the repository and a day later the live site still has not changed, which is
+ * a real thing that happens and needs somebody.
+ *
+ * Every write is conditional on the job still waiting, because a newer publish
+ * on the same site settling in the same tick may already have settled it.
  */
 export async function verifyDuePublishJobs(now = new Date()): Promise<number> {
   const due = await prisma.publishJob.findMany({
-    where: { state: { in: ["DEPLOYING", "VERIFYING"] }, nextCheckAt: { lte: now } },
+    where: { state: { in: WAITING_STATES }, nextCheckAt: { lte: now } },
     orderBy: { nextCheckAt: "asc" },
-    take: 10,
+    take: 25,
   });
 
-  let settled = 0;
-  for (const job of due) {
-    const attempts = job.attempts + 1;
-    const result = await verifyOne(job);
-    const step = decideVerification({ verified: result.verified, attempts, error: result.error });
+  // A few at a time: each look can take up to twenty seconds, and the rest of
+  // the tick (billing, capture) waits behind this.
+  const settledEach = await mapConcurrent(due, 5, (job) => verifyDueJob(job, now).catch((error) => {
+    console.error(`[publish-jobs] verifying ${job.id} failed:`, error);
+    return 0;
+  }));
+  return settledEach.reduce((total, count) => total + count, 0);
+}
 
-    if (step.state === "COMPLETED") {
-      await prisma.publishJob.update({
-        where: { id: job.id },
-        data: { state: "COMPLETED", attempts, verifiedAt: now, finishedAt: now, nextCheckAt: null, lastError: null },
-      });
-      settled += 1;
-    } else if (step.state === "VERIFY_FAILED") {
-      await prisma.publishJob.update({
-        where: { id: job.id },
-        data: { state: "VERIFY_FAILED", attempts, nextCheckAt: null, finishedAt: now, lastError: step.reason },
-      });
-      settled += 1;
-    } else {
-      await prisma.publishJob.update({
-        where: { id: job.id },
-        data: { state: "VERIFYING", attempts, nextCheckAt: new Date(now.getTime() + step.nextCheckInMs), lastError: result.error ?? null },
-      });
-    }
+async function verifyDueJob(job: PublishJob, now: Date): Promise<number> {
+  const attempts = job.attempts + 1;
+  const result = await verifyOne(job);
+  const step = decideVerification({
+    verified: result.verified,
+    attempts,
+    elapsedMs: now.getTime() - job.createdAt.getTime(),
+    error: result.error,
+    previousError: Boolean(job.lastError),
+  });
+  const stillWaiting = { id: job.id, state: { in: WAITING_STATES } };
+  // Which host answered, kept on the job so a reader in another process can tell
+  // which parts of GitHub this site's deploy depends on.
+  const detail = jobDetail(job);
+  const servedBy = result.servedBy && detail.servedBy !== result.servedBy ? { detail: { ...detail, servedBy: result.servedBy } as Prisma.InputJsonValue } : {};
+
+  if (step.state === "COMPLETED") {
+    const { count } = await prisma.publishJob.updateMany({
+      where: stillWaiting,
+      data: { state: "COMPLETED", attempts, verifiedAt: now, finishedAt: now, nextCheckAt: null, lastError: null, ...servedBy },
+    });
+    if (!count) return 0;
+    return 1 + (await settleOvertakenJobs(job, now));
   }
-  return settled;
+  if (step.state === "VERIFY_FAILED") {
+    const { count } = await prisma.publishJob.updateMany({
+      where: stillWaiting,
+      data: { state: "VERIFY_FAILED", attempts, nextCheckAt: null, finishedAt: now, lastError: step.reason, ...servedBy },
+    });
+    return count;
+  }
+  await prisma.publishJob.updateMany({
+    where: stillWaiting,
+    data: { state: "VERIFYING", attempts, nextCheckAt: new Date(now.getTime() + step.nextCheckInMs), lastError: result.error ?? null, ...servedBy },
+  });
+  return 0;
+}
+
+/**
+ * Older publishes on the same site, settled by a newer one going live.
+ *
+ * A host deploys the whole repository at a commit, so a page from a later
+ * publish being live means every earlier commit is deployed too. Without this,
+ * an earlier publish whose words the later one replaced would wait a day for
+ * words that are never coming back, and then say it had failed.
+ *
+ * Only when the newer job proved it: one with nothing to look for completes
+ * without having seen anything, and proves nothing about the others.
+ */
+async function settleOvertakenJobs(job: PublishJob, now: Date): Promise<number> {
+  if (!job.verifyText && !job.expectedHash) return 0;
+  const { count } = await prisma.publishJob.updateMany({
+    where: { siteId: job.siteId, id: { not: job.id }, state: { in: WAITING_STATES }, createdAt: { lt: job.createdAt } },
+    data: { state: "COMPLETED", verifiedAt: now, finishedAt: now, nextCheckAt: null, lastError: null },
+  });
+  return count;
 }
 
 /**
@@ -342,24 +418,45 @@ export async function reconcileInterruptedPublishJobs(before?: Date): Promise<nu
   return handled;
 }
 
-/** What the editor shows after a publish, and on the site's activity screen. */
-export function publishJobView(job: PublishJob) {
+/**
+ * What the editor shows after a publish, and on the site's activity screen.
+ *
+ * `github` is what githubstatus.com said, when the caller asked: a waiting
+ * publish on a site whose deploy runs through a part of GitHub that is not
+ * working says so, because otherwise the wait looks like our fault or theirs.
+ */
+export function publishJobView(job: PublishJob, context: { github?: GithubHealth | null; now?: Date } = {}) {
   // A framework publish commits a source file, and nobody sees it until the
   // host has built the project — minutes, not the seconds a static host takes.
   // "Waiting for the host to rebuild" is true of both and useless for this one,
   // because the thing being waited on is a build that can fail on its own terms.
-  const built = Boolean((job.detail as { source?: unknown } | null)?.source);
+  const detail = jobDetail(job);
+  const built = Boolean(detail.source);
+  const waiting = WAITING_STATES.includes(job.state);
+  const servedBy = typeof detail.servedBy === "string" ? detail.servedBy : null;
+  const notice = waiting ? githubTroubleFor(context.github ?? null, servedBy) : null;
+  const late = waiting && (context.now ?? new Date()).getTime() - job.createdAt.getTime() >= HOST_LATE_AFTER_MS;
   return {
     id: job.id,
     kind: job.kind,
     state: job.state,
     /** True when what was committed is source that has to be built first. */
     fromSource: built,
-    stateLabel: built && (job.state === "DEPLOYING" || job.state === "VERIFYING")
-      ? "Committed — waiting for the build and deploy"
-      : built && job.state === "VERIFY_FAILED"
-        ? "Committed, but the built site still shows the old version — check the build on your host"
-        : PUBLISH_JOB_STATES[job.state],
+    /** Which host answered the last look at the live page, when it could tell. */
+    servedBy,
+    /** A reason for the wait that is nobody's fault here: GitHub having problems. */
+    notice,
+    /** Still waiting two hours on: the host is late, not failed. */
+    late,
+    stateLabel: notice
+      ? notice
+      : late
+        ? HOST_LATE_LABEL
+        : built && waiting
+          ? "Committed — waiting for the build and deploy"
+          : built && job.state === "VERIFY_FAILED"
+            ? "Committed, but the built site still shows the old version — check the build on your host"
+            : PUBLISH_JOB_STATES[job.state],
     pageId: job.pageId,
     sharedElementId: job.sharedElementId,
     commit: job.commitSha ? { sha: job.commitSha, url: job.commitUrl } : null,
@@ -413,13 +510,14 @@ export function registerWebsitePublishJobs(
       take: 25,
       include: { page: { select: { id: true, title: true, path: true } }, startedBy: { select: { id: true, name: true } } },
     });
+    // Only asked when something is still waiting: nobody needs GitHub's health
+    // to read a list of finished publishes.
+    const github = jobs.some((job) => WAITING_STATES.includes(job.state)) ? await githubHealth() : null;
     res.json({
-      jobs: jobs.map((job) => ({
-        ...publishJobView(job),
-        page: job.page,
-        startedBy: job.startedBy,
-        label: publishJobView(job).stateLabel,
-      })),
+      jobs: jobs.map((job) => {
+        const view = publishJobView(job, { github });
+        return { ...view, page: job.page, startedBy: job.startedBy, label: view.stateLabel };
+      }),
     });
   }));
 
@@ -431,6 +529,7 @@ export function registerWebsitePublishJobs(
       return;
     }
     const pending = capacity.edge ? await prisma.cacheInvalidation.count({ where: { siteId: site.id, resource: "pages", deliveredAt: null } }) : 0;
-    res.json({ ...publishJobView(job), label: publishJobView(job).stateLabel, cdnState: capacity.edge ? pending ? "PENDING" : "PROPAGATED" : "DISABLED" });
+    const view = publishJobView(job, { github: WAITING_STATES.includes(job.state) ? await githubHealth() : null });
+    res.json({ ...view, label: view.stateLabel, cdnState: capacity.edge ? pending ? "PENDING" : "PROPAGATED" : "DISABLED" });
   }));
 }

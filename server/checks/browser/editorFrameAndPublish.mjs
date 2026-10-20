@@ -79,7 +79,7 @@ async function open({ drawnByScript }) {
       publishes.push(route.request().postDataJSON());
       return route.fulfill({ json: { version: publishes.length, changed: 1, summary: [], touched: { text: true, links: false, images: false, styles: false, seo: false }, commit: { sha: `c${publishes.length}`, url: null }, url: "https://example.com/", note: "" } });
     }
-    if (url.pathname.endsWith("/auth/me")) return route.fulfill({ json: { id: "tester", name: "Client", external: true, permissions: [], uiState: { tours: { editor: { status: "dismissed", at: "2026-10-07T00:00:00.000Z" } } } } });
+    if (url.pathname.endsWith("/auth/me")) return route.fulfill({ json: { id: "tester", name: "Client", external: true, permissions: [], uiState: { tours: { editor: { status: "dismissed", at: "2026-10-07T00:00:00.000Z" }, "publish-delay-notice": { status: "dismissed", at: "2026-10-19T00:00:00.000Z" } } } } });
     if (url.pathname.endsWith("/access")) return route.fulfill({ json: { capabilities } });
     if (url.pathname.endsWith("/assets")) return route.fulfill({ json: [] });
     if (url.pathname.endsWith("/design")) return route.fulfill({ json: { options: { colours: [], fonts: [], presets: [], aiEnabled: true } } });
@@ -115,7 +115,6 @@ try {
     /* ------------------------------------------- publishing, and looking again */
     const publishOnce = async (count) => {
       await page.keyboard.press("Control+Enter");
-      await page.getByRole("button", { name: "Publish these changes" }).click();
       await page.waitForFunction((expected) => window.__looks.length === expected, count * 3);
       check(`publish ${count} went out`, publishes.length === count);
     };
