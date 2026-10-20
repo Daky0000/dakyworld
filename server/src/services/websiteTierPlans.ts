@@ -192,6 +192,15 @@ function yourPlan(status: PlanStatus): string {
 export const MB = 1024 * 1024;
 export const GB = 1024 * MB;
 
+/**
+ * A video's single-file ceiling, the same on every plan (Dan, 20 Oct 2026).
+ * Pictures keep each plan's own limit and every file still counts against the
+ * plan's storage. A video this size never passes through one request: it goes
+ * to storage in pieces (`websiteVideoUpload.ts`).
+ */
+export const MAX_VIDEO_UPLOAD_BYTES = GB;
+export const MAX_VIDEO_UPLOAD_LABEL = "1 GB";
+
 export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
   EDITOR: {
     tier: "EDITOR",
@@ -598,6 +607,8 @@ export async function computeUserStorageAndUsage(req: WebsiteActor, siteId?: str
       maxUploadFormatted: plan.maxUploadLabel,
       maxSingleAssetBytes: plan.maxUploadBytes,
       maxSingleAssetFormatted: plan.maxUploadLabel,
+      maxVideoUploadBytes: MAX_VIDEO_UPLOAD_BYTES,
+      maxVideoUploadFormatted: MAX_VIDEO_UPLOAD_LABEL,
       assetCount: dbAssetCount,
     },
     usage: {
@@ -624,11 +635,14 @@ export async function computeUserStorageAndUsage(req: WebsiteActor, siteId?: str
 /**
  * Enforces Media Library storage quota and max upload file size for the user's tier plan.
  */
-export async function assertMediaStorageAllowance(req: WebsiteActor, incomingBytes: number, siteId?: string): Promise<void> {
+export async function assertMediaStorageAllowance(req: WebsiteActor, incomingBytes: number, siteId?: string, kind: "image" | "video" = "image"): Promise<void> {
   const status = await computeUserStorageAndUsage(req, siteId);
   const { plan, storage } = status;
 
-  if (incomingBytes > plan.maxUploadBytes) {
+  if (kind === "video" && incomingBytes > MAX_VIDEO_UPLOAD_BYTES) {
+    throw new WebsiteError(413, `This video (${formatBytes(incomingBytes)}) is larger than ${MAX_VIDEO_UPLOAD_LABEL}, the most one video can be. Make a smaller copy (1080p is plenty for a page) and upload that.`);
+  }
+  if (kind === "image" && incomingBytes > plan.maxUploadBytes) {
     throw new WebsiteError(
       413,
       `This file (${formatBytes(incomingBytes)}) exceeds the maximum single-file upload size of ${plan.maxUploadLabel} on ${yourPlan(status)}.${upgradeSentence(plan.tier, status.pricing.currency, (next) => `uploads up to ${next.maxUploadLabel}`) || " This is the largest plan."}`,
@@ -638,7 +652,7 @@ export async function assertMediaStorageAllowance(req: WebsiteActor, incomingByt
   if (storage.usedBytes + incomingBytes > storage.quotaBytes) {
     throw new WebsiteError(
       403,
-      `Media Library storage quota reached on ${yourPlan(status)} (${storage.usedFormatted} / ${storage.quotaFormatted} used). Delete unused images.${upgradeSentence(plan.tier, status.pricing.currency, (next) => `${next.storageQuotaLabel} of storage`)}`,
+      `Media Library storage quota reached on ${yourPlan(status)} (${storage.usedFormatted} / ${storage.quotaFormatted} used). Delete files you no longer use.${upgradeSentence(plan.tier, status.pricing.currency, (next) => `${next.storageQuotaLabel} of storage`)}`,
     );
   }
 }

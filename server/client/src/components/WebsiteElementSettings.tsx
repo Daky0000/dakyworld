@@ -226,7 +226,7 @@ export function MediaSettings({
   onSettings: (change: ElementSettingsChange) => void;
   onPickPoster?: (apply: (url: string) => void) => void;
   /** Stores a video file with the site's media and answers with its address. */
-  onUpload?: (file: File) => Promise<string>;
+  onUpload?: (file: File, onProgress?: (fraction: number) => void) => Promise<string>;
   resolveImage?: (url: string) => string;
   /** The player on the canvas, to say when its file cannot be loaded. */
   element?: Element | null;
@@ -282,14 +282,14 @@ export function MediaSettings({
     };
   }, [element, signature]);
   const fileInput = useRef<HTMLInputElement | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const [uploading, setUploading] = useState<number | false>(false);
   const [uploadProblem, setUploadProblem] = useState<string | null>(null);
   const upload = async (file: File) => {
     if (!onUpload) return;
-    setUploading(true);
+    setUploading(0);
     setUploadProblem(null);
     try {
-      set({ src: writeMediaTime(await onUpload(file), time.start, time.end) });
+      set({ src: writeMediaTime(await onUpload(file, (fraction) => setUploading(fraction)), time.start, time.end) });
     } catch (error) {
       setUploadProblem(error instanceof Error ? error.message : "That file could not be uploaded.");
     } finally {
@@ -314,8 +314,8 @@ export function MediaSettings({
           <MediaText label={media === "video" ? "Video file" : "Audio file"} value={time.base} placeholder="/media/intro.mp4 or https://…" disabled={disabled} onSave={(base) => set({ src: base ? writeMediaTime(base, time.start, time.end) : null })} tag={field.tag} />
           {canUpload && (
             <div className="dx-g2">
-              <button type="button" className="dx-btn dx-soft" disabled={disabled || uploading} onClick={() => fileInput.current?.click()}>
-                {uploading ? "Uploading…" : "Upload video"}
+              <button type="button" className="dx-btn dx-soft" disabled={disabled || uploading !== false} onClick={() => fileInput.current?.click()}>
+                {uploading === false ? "Upload video" : uploading > 0 ? `Uploading… ${Math.floor(uploading * 100)}%` : "Uploading…"}
               </button>
               <input ref={fileInput} type="file" aria-label="Choose a video to upload" accept="video/mp4,video/webm,.mp4,.webm" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); }} />
             </div>
@@ -369,7 +369,7 @@ export function MediaSettings({
         </button>
         <button type="button" className="dx-btn dx-ghost" disabled={disabled || waiting === 0} onClick={() => setPending({})}>Reset</button>
       </div>
-      <p className="dx-hint">{waiting ? "Nothing is changed until you press Apply." : canUpload ? "Upload an MP4 or WebM file, or paste the address of one." : `A ${media} is added by its address: put the file where the site keeps its media, then paste its path here.`}</p>
+      <p className="dx-hint">{waiting ? "Nothing is changed until you press Apply." : canUpload ? "Upload an MP4 or WebM file up to 1 GB, or paste the address of one." : `A ${media} is added by its address: put the file where the site keeps its media, then paste its path here.`}</p>
     </div>
   );
 }

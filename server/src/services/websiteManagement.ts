@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { refreshDeployProfileSoon } from "./websiteDeployDetect.js";
-import type { Request, Response, Router } from "express";
+import express, { type Request, type Response, type Router } from "express";
+import { AbortMultipartUploadCommand, CompleteMultipartUploadCommand, CreateMultipartUploadCommand, ListPartsCommand, UploadPartCommand } from "@aws-sdk/client-s3";
 import type { Site, SitePage } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -12,7 +13,8 @@ import { optimizeImageBuffer } from "../lib/imageOptimization.js";
 import { looksLikeSvg, SvgRejected, SVG_CONTENT_SECURITY_POLICY } from "../lib/svgSanitize.js";
 import { assetUrl, embedWebsiteAssets, pagesUsingAsset, storedObjectStillNeeded, unpublishedUsesOf } from "./websiteAssets.js";
 import { listPage } from "../lib/pagination.js";
-import { isR2Configured, uploadToR2, deleteFromR2, getR2PublicUrl } from "../lib/r2.js";
+import { isR2Configured, uploadToR2, deleteFromR2, getR2PublicUrl, getR2Client } from "../lib/r2.js";
+import { PART_BYTES, partCount, partLength, readTicket, signTicket, type VideoUploadTicket } from "./websiteVideoUpload.js";
 import { runPublishGuardChecks } from "./websitePublishGuard.js";
 import { runVisualRegression } from "./websiteVisualRegression.js";
 import { assertWebsiteConnectionChange, assertWebsiteClientChange, canManageWebsiteConnection, websiteSiteFilter } from "./websiteAccess.js";
@@ -161,6 +163,87 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     if (asset.contentType === "image/svg+xml") res.setHeader("Content-Security-Policy", SVG_CONTENT_SECURITY_POLICY);
     res.type(asset.contentType).send(asset.content);
   }));
+  /**
+   * A video up to 1 GB, in pieces (`websiteVideoUpload.ts` says why). Start
+   * answers with a signed ticket; each piece is sent raw with it and answered
+   * with the next; complete joins the pieces into one object and puts it in
+   * the library. The first piece decides what the file is, from its bytes,
+   * before anything is created in storage.
+   */
+  router.post("/sites/:siteId/video-uploads", handler(async (req, res) => {
+    const site = await access.loadSite(req, req.params.siteId);
+    const input = z.object({ filename: z.string().min(1).max(200), size: z.number().int().positive() }).parse(req.body);
+    if (!isR2Configured()) throw new WebsiteError(400, "Large videos need cloud storage, which is not set up on this server. Videos up to 10 MB can still be uploaded.");
+    await assertMediaStorageAllowance(req, input.size, site.id, "video");
+    const ticket: VideoUploadTicket = { s: site.id, n: input.size, f: input.filename, a: req.dbUser?.id ?? "", e: Date.now() + 12 * 60 * 60 * 1000 };
+    res.status(201).json({ token: signTicket(ticket), partBytes: PART_BYTES, parts: partCount(input.size) });
+  }));
+  router.post("/sites/:siteId/video-uploads/part", express.raw({ type: "application/octet-stream", limit: PART_BYTES + 1024 }), handler(async (req, res) => {
+    const site = await access.loadSite(req, req.params.siteId);
+    const ticket = readTicket(String(req.get("X-Upload-Token") ?? ""), site.id);
+    if (!ticket || ticket.a !== (req.dbUser?.id ?? "")) throw new WebsiteError(400, "This upload has expired or belongs to someone else. Choose the file again.");
+    const part = Number(req.query.part);
+    const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    const expected = partLength(ticket.n, part);
+    if (expected < 0 || bytes.length !== expected) throw new WebsiteError(400, `Piece ${req.query.part} of this video arrived with ${bytes.length} bytes, not ${expected}. Choose the file again.`);
+    const r2 = getR2Client();
+    if (!r2) throw new WebsiteError(400, "Large videos need cloud storage, which is not set up on this server.");
+    let next = ticket;
+    if (part === 1) {
+      if (ticket.u) throw new WebsiteError(400, "This upload has already started. Choose the file again.");
+      const type = sniffVideo(bytes);
+      if (type === "video/quicktime") throw new WebsiteError(400, "That is a QuickTime (.mov) video, which most browsers can't play. Export it as MP4 (H.264) and upload that.");
+      if (type === "video/x-matroska") throw new WebsiteError(400, "That is a Matroska (.mkv) video, which most browsers can't play. Export it as MP4 (H.264) or WebM and upload that.");
+      if (!type) throw new WebsiteError(400, "That file is not a video. Upload an MP4 or WebM file.");
+      const key = `assets/dw/${randomUUID()}.${type === "video/mp4" ? "mp4" : "webm"}`;
+      const created = await r2.s3.send(new CreateMultipartUploadCommand({ Bucket: r2.bucketName, Key: key, ContentType: type, CacheControl: "public, max-age=31536000, immutable" }));
+      if (!created.UploadId) throw new Error("R2 did not start a multipart upload.");
+      next = { ...ticket, k: key, u: created.UploadId, t: type };
+    } else if (!ticket.u || !ticket.k) {
+      throw new WebsiteError(400, "Send the first piece of the video first.");
+    }
+    await r2.s3.send(new UploadPartCommand({ Bucket: r2.bucketName, Key: next.k, UploadId: next.u, PartNumber: part, Body: bytes, ContentLength: bytes.length }));
+    res.json({ token: signTicket(next) });
+  }));
+  router.post("/sites/:siteId/video-uploads/complete", handler(async (req, res) => {
+    const site = await access.loadSite(req, req.params.siteId);
+    const ticket = readTicket(z.object({ token: z.string().min(1).max(4000) }).parse(req.body).token, site.id);
+    if (!ticket?.k || !ticket.u || !ticket.t || ticket.a !== (req.dbUser?.id ?? "")) throw new WebsiteError(400, "This upload has expired or belongs to someone else. Choose the file again.");
+    const r2 = getR2Client();
+    if (!r2) throw new WebsiteError(400, "Large videos need cloud storage, which is not set up on this server.");
+    const abort = () => r2.s3.send(new AbortMultipartUploadCommand({ Bucket: r2.bucketName, Key: ticket.k, UploadId: ticket.u })).catch(() => undefined);
+    // The pieces as storage holds them, not as the browser remembers them.
+    const listed = await r2.s3.send(new ListPartsCommand({ Bucket: r2.bucketName, Key: ticket.k, UploadId: ticket.u, MaxParts: 1000 }));
+    const parts = (listed.Parts ?? []).sort((a, b) => (a.PartNumber ?? 0) - (b.PartNumber ?? 0));
+    const count = partCount(ticket.n);
+    const whole = parts.length === count && parts.every((p, i) => p.PartNumber === i + 1 && p.Size === partLength(ticket.n, i + 1));
+    if (!whole) throw new WebsiteError(400, `Only ${parts.length} of the video's ${count} pieces arrived. Choose the file again.`);
+    try {
+      await assertMediaStorageAllowance(req, ticket.n, site.id, "video");
+    } catch (error) {
+      await abort();
+      throw error;
+    }
+    await r2.s3.send(new CompleteMultipartUploadCommand({ Bucket: r2.bucketName, Key: ticket.k, UploadId: ticket.u, MultipartUpload: { Parts: parts.map((p) => ({ PartNumber: p.PartNumber, ETag: p.ETag })) } }));
+    const uploaded = await prisma.$transaction(async (tx) => {
+      const created = await tx.siteAsset.create({
+        data: { siteId: site.id, filename: ticket.f, repoPath: ticket.k!, contentType: ticket.t!, content: null, size: ticket.n, alt: "" },
+      });
+      await tx.siteAuditEvent.create({
+        data: { siteId: site.id, kind: "ASSET_UPLOAD", summary: `Uploaded ${ticket.f}`, ...actor(req), detail: { assetId: created.id, contentType: ticket.t, bytes: ticket.n, storage: "cloudflare_r2", pieces: count } },
+      });
+      return created;
+    });
+    recordMediaStorageAdded(req, ticket.n);
+    res.status(201).json({ id: uploaded.id, url: getR2PublicUrl(ticket.k), alt: "", size: ticket.n, contentType: ticket.t });
+  }));
+  router.post("/sites/:siteId/video-uploads/abort", handler(async (req, res) => {
+    const site = await access.loadSite(req, req.params.siteId);
+    const ticket = readTicket(z.object({ token: z.string().min(1).max(4000) }).parse(req.body).token, site.id);
+    const r2 = getR2Client();
+    if (ticket?.k && ticket.u && r2) await r2.s3.send(new AbortMultipartUploadCommand({ Bucket: r2.bucketName, Key: ticket.k, UploadId: ticket.u })).catch(() => undefined);
+    res.json({ ok: true });
+  }));
   router.post("/sites/:siteId/assets", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
     const input = z.object({ filename: z.string().min(1).max(200), data: z.string().max(15_000_000), alt: z.string().max(500).default(""), kind: z.enum(["video"]).optional() }).parse(req.body);
@@ -172,7 +255,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     if (video === "video/quicktime") throw new WebsiteError(400, "That is a QuickTime (.mov) video, which most browsers can't play. Export it as MP4 (H.264) and upload that.");
     if (video === "video/x-matroska") throw new WebsiteError(400, "That is a Matroska (.mkv) video, which most browsers can't play. Export it as MP4 (H.264) or WebM and upload that.");
     if (video) {
-      await assertMediaStorageAllowance(req, content.length, site.id);
+      await assertMediaStorageAllowance(req, content.length, site.id, "video");
       const repoPath = `assets/dw/${randomUUID()}.${video === "video/mp4" ? "mp4" : "webm"}`;
       const r2Url = isR2Configured() ? (await uploadToR2(content, { mimeType: video, key: repoPath })).url : null;
       const uploaded = await prisma.$transaction(async (tx) => {

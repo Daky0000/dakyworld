@@ -13,6 +13,7 @@ import { localFilesNamed, prepareImportedDemoHtml } from "../src/services/demoBu
 import { readPage } from "../src/services/website/regions.js";
 import { changeStructure } from "../src/services/website/structure.js";
 import { editingSource } from "../src/services/website/document.js";
+import { PART_BYTES, partCount, partLength, readTicket, signTicket } from "../src/services/websiteVideoUpload.js";
 
 let checks = 0;
 const equal = (name: string, actual: unknown, expected: unknown) => { assert.deepEqual(actual, expected, name); checks++; };
@@ -61,5 +62,22 @@ assert.ok(editingSource(heavy, given.values).includes('<source src="https://medi
 const gone = changeStructure(heavy, {}, { kind: "remove", fieldId: heavyPlayer.id, force: true });
 assert.ok(!/<video/.test(editingSource(heavy, gone.values)), "and can lose the video"); checks++;
 assert.throws(() => changeStructure(heavy, {}, { kind: "duplicate", fieldId: readPage(heavy).fields.find((field) => field.tag === "p")!.id }), /too large to duplicate/, "a copy is still what the ceiling refuses"); checks++;
+
+// 20 Oct 2026: videos up to 1 GB, in pieces. The ticket is all the server
+// knows about an upload in flight, so it has to refuse being moved or forged.
+const ticket = { s: "site-a", n: 20 * 1024 * 1024 + 5, f: "tour.mp4", a: "user-1", e: Date.now() + 60_000 };
+const token = signTicket(ticket, "k");
+equal("a ticket reads back on its own site", readTicket(token, "site-a", Date.now(), "k"), ticket);
+equal("not on another site", readTicket(token, "site-b", Date.now(), "k"), null);
+equal("not once it has expired", readTicket(token, "site-a", ticket.e + 1, "k"), null);
+equal("not signed with another key", readTicket(token, "site-a", Date.now(), "other"), null);
+const [body, signature] = token.split(".");
+const bigger = Buffer.from(JSON.stringify({ ...ticket, n: 1 })).toString("base64url");
+equal("not with its size changed under the same signature", readTicket(`${bigger}.${signature}`, "site-a", Date.now(), "k"), null);
+equal("nor as rubbish", [readTicket("", "site-a"), readTicket("x", "site-a"), readTicket(`${body}.`, "site-a", Date.now(), "k")], [null, null, null]);
+equal("pieces are 8 MB, the last one the rest", [partCount(ticket.n), partLength(ticket.n, 1), partLength(ticket.n, 2), partLength(ticket.n, 3)], [3, PART_BYTES, PART_BYTES, 4 * 1024 * 1024 + 5]);
+equal("a piece outside the file has no length", [partLength(ticket.n, 0), partLength(ticket.n, 4), partLength(ticket.n, 1.5)], [-1, -1, -1]);
+equal("1 GB is 128 pieces, well under R2's 10,000", partCount(1024 * 1024 * 1024), 128);
+assert.ok(PART_BYTES >= 5 * 1024 * 1024, "every piece but the last is at least R2's 5 MB minimum"); checks++;
 
 console.log(`websiteVideoFiles: ${checks} checks passed`);

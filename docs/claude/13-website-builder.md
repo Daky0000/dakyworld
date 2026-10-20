@@ -922,6 +922,18 @@ is here is why it is built this way, and what cost time.
   move or a new video address counted as growth. It now applies to Duplicate
   only, which is what its message always said. The browser check uses the
   framed shape; `checks/websiteVideoFiles.ts` covers both.
+- **Videos up to 1 GB, on every plan (Dan, 20 Oct 2026).** Pictures keep each
+  plan's own single-file limit and storage totals are unchanged, so a big video
+  still has to fit the plan's storage. Up to 10 MB a video goes the old way
+  (base64 in JSON, works without R2). Past that the editor sends 8 MB pieces to
+  `POST /sites/:id/video-uploads/part`, and the server relays each into an R2
+  multipart upload (`websiteVideoUpload.ts`). Relayed, not presigned, because a
+  browser PUT to R2 needs CORS rules on the bucket — configuration outside the
+  repo that would break uploads silently the day it drifted. An upload in flight
+  is a signed ticket (site, size, name, who, expiry; key and upload id once the
+  first piece has been sniffed), so there is no table for it. Complete trusts
+  `ListParts`, not the browser, and re-checks storage. An abandoned upload
+  leaves unjoined parts in R2 until a lifecycle rule clears them; none is set.
 - **A structure refusal is a 409.** `StructureError` extends `WebsiteError(409)`,
   so a refused setting ("Use an https address…") reads in the HTTP log exactly
   like a revision race. Read the message on screen before chasing revisions.

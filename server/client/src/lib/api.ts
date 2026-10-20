@@ -121,7 +121,7 @@ async function request<T>(path: string, options: RequestInit = {}, includePage =
   const mutating = !["GET", "HEAD"].includes(options.method ?? "GET");
   if (mutating && !headers.has("Idempotency-Key")) headers.set("Idempotency-Key", crypto.randomUUID());
   if (!mutating && Date.now() < bypassUntil) headers.set("X-DW-Cache-Bypass", "1");
-  headers.set("Content-Type", "application/json");
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   try {
     const testUser = window.localStorage.getItem("dw:test-tier-user");
     if (testUser) headers.set("x-dw-test-user", testUser);
@@ -215,5 +215,7 @@ export const api = {
   put: <T>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body: body ? JSON.stringify(body) : undefined }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: "PATCH", body: body ? JSON.stringify(body) : undefined }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  /** Raw bytes rather than JSON: one piece of a large upload. */
+  postBytes: <T>(path: string, body: Blob, headers: Record<string, string> = {}) => request<T>(path, { method: "POST", body, headers: { ...headers, "Content-Type": "application/octet-stream" } }),
 };
 

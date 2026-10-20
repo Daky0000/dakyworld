@@ -1609,15 +1609,49 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   };
   /**
    * A video file into the site's media, answering with the address to play it
-   * from. Sent as base64 in JSON like a picture, so the request's own ceiling
-   * (16 MB, about 12 MB of file) is checked here first: past it the server's
-   * parser refuses before the plan's limit can say anything useful.
+   * from. Up to 10 MB it goes as base64 in JSON like a picture, which works
+   * wherever the server keeps files. Anything bigger, up to 1 GB, goes in
+   * pieces straight on to cloud storage (`websiteVideoUpload.ts` on the
+   * server), one request each, so no request comes near a body ceiling.
    */
-  const uploadVideo = async (file: File): Promise<string> => {
+  const uploadVideo = async (file: File, onProgress?: (fraction: number) => void): Promise<string> => {
     const siteId = page.data?.site.id;
     if (!siteId) throw new Error("The page is still loading. Try again in a moment.");
-    if (file.size > 11 * 1024 * 1024) {
-      throw new Error(`That video is ${(file.size / (1024 * 1024)).toFixed(1)} MB. Videos up to 10 MB can be uploaded here: make a smaller copy (720p is plenty for a page) or paste the address of one hosted elsewhere.`);
+    if (file.size > 1024 * 1024 * 1024) {
+      throw new Error(`That video is ${(file.size / (1024 * 1024 * 1024)).toFixed(2)} GB. Videos up to 1 GB can be uploaded: make a smaller copy (1080p is plenty for a page) or paste the address of one hosted elsewhere.`);
+    }
+    const settle = () => {
+      void qc.invalidateQueries({ queryKey: ["website", "assets", siteId] });
+      void qc.invalidateQueries({ queryKey: ["website", "assets", "all"] });
+      notifyTierStatusChanged();
+    };
+    if (file.size > 10 * 1024 * 1024) {
+      const started = await api.post<{ token: string; partBytes: number; parts: number }>(`/website/sites/${siteId}/video-uploads`, { filename: file.name, size: file.size });
+      let token = started.token;
+      onProgress?.(0);
+      try {
+        for (let part = 1; part <= started.parts; part += 1) {
+          const piece = file.slice((part - 1) * started.partBytes, Math.min(file.size, part * started.partBytes));
+          // A dropped connection or a busy server costs one piece, not the whole file.
+          for (let attempt = 1; ; attempt += 1) {
+            try {
+              ({ token } = await api.postBytes<{ token: string }>(`/website/sites/${siteId}/video-uploads/part?part=${part}`, piece, { "X-Upload-Token": token }));
+              break;
+            } catch (error) {
+              const status = error instanceof ApiError ? error.status : 0;
+              if (attempt >= 4 || (status !== 0 && status !== 429 && status < 500)) throw error;
+              await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+            }
+          }
+          onProgress?.(part / started.parts);
+        }
+        const uploaded = await api.post<{ id: string; url: string }>(`/website/sites/${siteId}/video-uploads/complete`, { token });
+        settle();
+        return uploaded.url;
+      } catch (error) {
+        void api.post(`/website/sites/${siteId}/video-uploads/abort`, { token }).catch(() => undefined);
+        throw error;
+      }
     }
     const data = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -1626,9 +1660,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       reader.readAsDataURL(file);
     });
     const uploaded = await api.post<{ id: string; url: string }>(`/website/sites/${siteId}/assets`, { filename: file.name, alt: "", data, kind: "video" });
-    void qc.invalidateQueries({ queryKey: ["website", "assets", siteId] });
-    void qc.invalidateQueries({ queryKey: ["website", "assets", "all"] });
-    notifyTierStatusChanged();
+    settle();
     return uploaded.url;
   };
 

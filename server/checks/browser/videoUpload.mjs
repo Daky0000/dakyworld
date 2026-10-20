@@ -25,6 +25,8 @@ const { editingSource, fieldValues } = await import(services + "document.ts");
 const { previewDocument } = await import(services + "site.ts");
 const { changeStructure, structureControls } = await import(services + "structure.ts");
 const { sniffVideo } = await import(new URL("../../src/lib/fileType.ts", import.meta.url).href);
+const { PART_BYTES, partCount, partLength, readTicket, signTicket } = await import(new URL("../../src/services/websiteVideoUpload.ts", import.meta.url).href);
+process.env.APP_SECRET ??= "browser-check";
 const { chromium } = await import(process.env.PLAYWRIGHT_URL ?? "playwright");
 
 const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Venue</title>
@@ -51,6 +53,7 @@ assert.equal(sniffVideo(clip), "video/webm", "the recorded clip reads as WebM fr
 let values = {};
 let revision = 0;
 const media = new Map();
+const pieces = new Map();
 const current = () => editingSource(html, values);
 const published = () => applyValues(current(), fieldValues(values)).html;
 const doc = () => {
@@ -96,6 +99,29 @@ await page.route("**/api/**", (route) => {
     return route.fulfill({ status: 201, json: { id: "asset-1", url: `https://media.test${key}`, alt: "", size: bytes.length, contentType: type } });
   }
   if (path.endsWith("/assets")) return route.fulfill({ json: [] });
+  // A video over 10 MB goes in pieces. The tickets and piece sizes are the
+  // server's own functions; storage is a Map standing in for R2.
+  if (path.endsWith("/video-uploads") && request.method() === "POST") {
+    const { filename, size } = request.postDataJSON();
+    return route.fulfill({ status: 201, json: { token: signTicket({ s: "venue", n: size, f: filename, a: "tester", e: Date.now() + 60_000 }), partBytes: PART_BYTES, parts: partCount(size) } });
+  }
+  if (path.endsWith("/video-uploads/part")) {
+    const ticket = readTicket(request.headers()["x-upload-token"] ?? "", "venue");
+    const part = Number(new URL(request.url()).searchParams.get("part"));
+    const bytes = request.postDataBuffer() ?? Buffer.alloc(0);
+    if (!ticket || bytes.length !== partLength(ticket.n, part) || request.headers()["content-type"] !== "application/octet-stream") return route.fulfill({ status: 400, json: { error: "bad piece" } });
+    if (part === 1 && !sniffVideo(bytes)) return route.fulfill({ status: 400, json: { error: "That file is not a video. Upload an MP4 or WebM file." } });
+    const next = part === 1 ? { ...ticket, k: `/assets/dw/${randomUUID()}.webm`, u: "upload-1", t: "video/webm" } : ticket;
+    pieces.set(part, bytes);
+    return route.fulfill({ json: { token: signTicket(next) } });
+  }
+  if (path.endsWith("/video-uploads/complete")) {
+    const ticket = readTicket(request.postDataJSON().token, "venue");
+    const whole = Buffer.concat([...pieces.entries()].sort(([a], [b]) => a - b).map(([, bytes]) => bytes));
+    if (!ticket?.k || whole.length !== ticket.n) return route.fulfill({ status: 400, json: { error: "pieces missing" } });
+    media.set(ticket.k, whole);
+    return route.fulfill({ status: 201, json: { id: "asset-2", url: `https://media.test${ticket.k}`, alt: "", size: whole.length, contentType: ticket.t } });
+  }
   if (path.endsWith("/structure") && request.method() === "POST") {
     const body = request.postDataJSON();
     const result = changeStructure(html, values, { kind: "settings", fieldId: body.fieldId, settings: body.settings });
@@ -176,8 +202,20 @@ try {
   }));
   await out.close();
   assert.ok(live.ready >= 2 && live.error === null && live.src.startsWith("https://media.test/"), `the published page plays it: ${JSON.stringify(live)}`);
+  // A 25 MB video: three requests of pieces rather than one body, and the
+  // file storage ends up with is the file that was chosen, byte for byte.
+  const big = Buffer.concat([clip, Buffer.alloc(25 * 1024 * 1024 - clip.length, 7)]);
+  await select();
+  await inspector.getByLabel("Choose a video to upload").setInputFiles({ name: "venue-tour-long.webm", mimeType: "video/webm", buffer: big });
+  await inspector.getByRole("button", { name: /^Apply \d+ change/ }).waitFor({ timeout: 15000 });
+  assert.equal(pieces.size, 4, "a 25 MB file goes as four 8 MB pieces");
+  const stored = [...media.entries()].find(([key, bytes]) => key !== "" && bytes.length === big.length);
+  assert.ok(stored && stored[1].equals(big), "and storage holds exactly the file that was chosen");
+  assert.equal(await inspector.getByLabel("Video file").inputValue(), `https://media.test${stored[0]}`, "whose address is now the video's file, waiting for Apply");
+  await inspector.getByRole("button", { name: "Reset" }).click();
+
   assert.deepEqual(errors, []);
-  console.log("videoUpload: a missing video file is named in the panel, an uploaded file replaces it and plays on the canvas and the published page, and a selected player's controls take clicks.");
+  console.log("videoUpload: a missing video file is named in the panel, an uploaded file replaces it and plays on the canvas and the published page, and a selected player's controls take clicks; a 25 MB video goes in 8 MB pieces and arrives whole.");
 } finally {
   await browser.close();
   rmSync(recordDir, { recursive: true, force: true });

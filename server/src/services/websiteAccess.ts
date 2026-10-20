@@ -180,6 +180,7 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
   if (/^\/shared\/[^/]+\/(?:draft|instances)(?:\/|$)/.test(path)) return "edit";
   if (/\/draft\/?$/.test(path) || /\/restore\/?$/.test(path) || /\/structure\/?$/.test(path) || /\/name-fields\/?$/.test(path)) return "edit";
   if (/\/assets(?:\/[^/]+)?\/?$/.test(path)) return "edit";
+  if (/^\/sites\/[^/]+\/video-uploads(?:\/(?:part|complete|abort))?\/?$/.test(path)) return "edit";
   if (/\/(?:scan|import)\/?$/.test(path)) return "manage";
   if (/^\/(?:sites|pages)\/[^/]+\/?$/.test(path)) return "manage";
   // AI suggestions, SEO actions, comments, and agent plans produce draft/site changes.
