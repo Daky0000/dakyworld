@@ -182,7 +182,9 @@ async function attemptRequest<T>(path: string, options: { method?: "GET" | "POST
     throw error;
   }
 
-  return { value: (await response.json()) as T };
+  // A rebuild request answers 201 or 204 with nothing in the body.
+  const text = await response.text();
+  return { value: (text ? JSON.parse(text) : undefined) as T };
 }
 
 /** `os` becomes `dakyworld/os` when a default owner is set. */
@@ -416,6 +418,107 @@ export interface RepoFile {
   path: string;
   content: string;
   encoding?: "utf8" | "base64";
+  /** Removes the path in this commit instead of writing it. `content` is ignored. */
+  delete?: boolean;
+}
+
+/**
+ * Any GitHub API read, under the ambient credential.
+ *
+ * For the deploy readers (services/websiteDeployDetect.ts and
+ * websiteDeployWatch.ts), which ask about deployments, check runs, Pages and
+ * workflow runs. Giving each a named function here would add a dozen wrappers
+ * that each do nothing but call `request`. Reads only, so it never needs the
+ * writable-repositories check.
+ */
+export async function githubRead<T>(path: string): Promise<T> {
+  return request<T>(path);
+}
+
+/**
+ * A write to one repository's settings, for the routes that change how a site
+ * deploys (switching GitHub Pages to a workflow, asking for a rebuild).
+ * Guarded by the same rule as a commit: see `assertWritable`.
+ */
+export async function githubRepoWrite<T>(repo: string, path: string, method: "POST" | "PUT" | "PATCH", body?: unknown): Promise<T> {
+  const full = await assertWritable(repo);
+  return request<T>(`/repos/${full}${path}`, { method, body });
+}
+
+/** A repository's full name, `owner/name`, for building API paths. */
+export async function repoFullName(repo: string): Promise<string> {
+  return fullName(repo);
+}
+
+/** One file's bytes, or null when it is not there. For images and other binary assets. */
+export async function readFileBytes(repo: string, path: string, ref?: string): Promise<Buffer | null> {
+  const full = await fullName(repo);
+  try {
+    const file = await request<{ content?: string; encoding?: string; sha?: string }>(
+      `/repos/${full}/contents/${path.split("/").map(encodeURIComponent).join("/")}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`,
+    );
+    if (typeof file.content === "string" && file.content.length) return Buffer.from(file.content, (file.encoding as BufferEncoding) ?? "base64");
+    // Files over 1 MB come back without content; the blob API has them.
+    if (file.sha) {
+      const blob = await request<{ content: string; encoding: string }>(`/repos/${full}/git/blobs/${file.sha}`);
+      return Buffer.from(blob.content, blob.encoding as BufferEncoding);
+    }
+    return null;
+  } catch (err) {
+    if (err instanceof GitHubError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+/**
+ * What a commit wrote, kept briefly in this process.
+ *
+ * A fast publish route (the edge bridge, a direct upload to the host) needs the
+ * exact bytes that were just committed, a second after the commit. Reading them
+ * back from GitHub would cost a request per file and might return a cached older
+ * copy. So `commitFiles` leaves them here, and `committedFiles` falls back to
+ * GitHub only when this process did not make the commit. Bounded by count and
+ * by bytes, and forgotten after ten minutes.
+ */
+const COMMIT_MEMORY_MS = 10 * 60_000;
+const COMMIT_MEMORY_BYTES = 64 * 1024 * 1024;
+const recentCommits = new Map<string, { at: number; bytes: number; files: Array<{ path: string; content: Buffer | null }> }>();
+
+function rememberCommit(sha: string, files: RepoFile[]): void {
+  const entries = files.map((file) => ({
+    path: file.path.replace(/^\/+/, ""),
+    content: file.delete ? null : Buffer.from(file.content, file.encoding === "base64" ? "base64" : "utf8"),
+  }));
+  const bytes = entries.reduce((total, entry) => total + (entry.content?.length ?? 0), 0);
+  if (bytes > COMMIT_MEMORY_BYTES) return;
+  recentCommits.set(sha, { at: Date.now(), bytes, files: entries });
+  let total = 0;
+  for (const [key, held] of [...recentCommits.entries()].reverse()) {
+    total += held.bytes;
+    if (total > COMMIT_MEMORY_BYTES || Date.now() - held.at > COMMIT_MEMORY_MS) recentCommits.delete(key);
+  }
+}
+
+/** For the checks: what this process remembers about a commit. */
+export function rememberedCommit(sha: string): Array<{ path: string; content: Buffer | null }> | null {
+  const held = recentCommits.get(sha);
+  return held && Date.now() - held.at <= COMMIT_MEMORY_MS ? held.files : null;
+}
+
+/**
+ * The files a commit changed, with their bytes (null for a removed file).
+ * From this process's memory when it made the commit, from GitHub otherwise.
+ */
+export async function committedFiles(repo: string, sha: string): Promise<Array<{ path: string; content: Buffer | null }>> {
+  const remembered = rememberedCommit(sha);
+  if (remembered) return remembered;
+  const full = await fullName(repo);
+  const commit = await request<{ files?: Array<{ filename: string; status: string }> }>(`/repos/${full}/commits/${sha}`);
+  const files: Array<{ path: string; content: Buffer | null }> = [];
+  for (const file of (commit.files ?? []).slice(0, 100)) {
+    files.push({ path: file.filename, content: file.status === "removed" ? null : await readFileBytes(repo, file.filename, sha) });
+  }
+  return files;
 }
 
 /** The default branch's name and the commit it points at. */
@@ -513,6 +616,8 @@ export async function commitFiles(input: { repo: string; branch: string; message
 
   const blobs = await Promise.all(
     input.files.map(async (file) => {
+      // A tree entry with no sha removes the path.
+      if (file.delete) return { path: file.path.replace(/^\/+/, ""), mode: "100644" as const, type: "blob" as const, sha: null };
       const blob = await request<{ sha: string }>(`/repos/${full}/git/blobs`, {
         method: "POST",
         body: { content: file.encoding === "base64" ? file.content : Buffer.from(file.content, "utf8").toString("base64"), encoding: "base64" },
@@ -535,6 +640,7 @@ export async function commitFiles(input: { repo: string; branch: string; message
   // never something to overwrite.
   await request(`/repos/${full}/git/refs/heads/${input.branch}`, { method: "PATCH", body: { sha: created.sha, force: false } });
 
+  rememberCommit(created.sha, input.files);
   return { sha: created.sha, url: created.html_url };
 }
 

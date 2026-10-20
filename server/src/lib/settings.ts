@@ -492,6 +492,51 @@ export const SETTING = {
   GITHUB_APP_CLIENT_SECRET: "github.app.clientSecret",
 
   /**
+   * The second, opt-in GitHub App: *DakyX Pages*. It alone holds Workflows,
+   * Pages and Actions write, so the main app's standing approval stays a
+   * read-mostly one and only a customer who turns on Route P (GitHub Pages
+   * fast deploy) is ever asked for more. GitHub asks every installation to
+   * approve a permission added to an app, so this could not be one app.
+   */
+  GITHUB_PAGES_APP_ID: "github.pagesApp.id",
+  GITHUB_PAGES_APP_SLUG: "github.pagesApp.slug",
+  GITHUB_PAGES_APP_PRIVATE_KEY: "github.pagesApp.privateKey",
+
+  /**
+   * Route A: publishing straight to the host, through the host's own sign-in.
+   * Netlify is an OAuth application; Vercel is an Integration, whose slug is
+   * the install link. Without these the Connect buttons say so.
+   */
+  NETLIFY_CLIENT_ID: "netlify.clientId",
+  NETLIFY_CLIENT_SECRET: "netlify.clientSecret",
+  VERCEL_CLIENT_ID: "vercel.clientId",
+  VERCEL_CLIENT_SECRET: "vercel.clientSecret",
+  VERCEL_INTEGRATION_SLUG: "vercel.integrationSlug",
+
+  /**
+   * Route B: the edge bridge. `BRIDGE_ADMIN_URL` is the Worker's admin address
+   * and `BRIDGE_ADMIN_TOKEN` the shared secret it checks; the Cloudflare token
+   * and zone are for Cloudflare for SaaS custom hostnames; the CNAME target is
+   * what a customer points their domain at. See edge/README.md.
+   */
+  BRIDGE_ADMIN_URL: "bridge.adminUrl",
+  BRIDGE_ADMIN_TOKEN: "bridge.adminToken",
+  /** The Worker's BYPASS_TOKEN: sent when the watcher needs to see the host's own copy. */
+  BRIDGE_BYPASS_TOKEN: "bridge.bypassToken",
+  BRIDGE_CNAME_TARGET: "bridge.cnameTarget",
+  CLOUDFLARE_API_TOKEN: "cloudflare.apiToken",
+  CLOUDFLARE_ZONE_ID: "cloudflare.zoneId",
+  /** Domain Connect, once the DakyX template is accepted by a DNS provider. */
+  DOMAIN_CONNECT_PROVIDER_ID: "domainConnect.providerId",
+  DOMAIN_CONNECT_SERVICE_ID: "domainConnect.serviceId",
+  /**
+   * The global off switch for the faster publish routes: a comma-separated list
+   * of `bridge`, `direct`, `pages`, `hook`. Following the host's own deploy is
+   * never switched off; it is what every route falls back to.
+   */
+  PUBLISH_ROUTES_DISABLED: "publishRoutes.disabled",
+
+  /**
    * Which calendar bookings land in. Blank means the connected account's own.
    * Calendar rides on the Google connection above rather than its own OAuth —
    * see lib/calendar.ts.
@@ -851,6 +896,23 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.GITHUB_APP_WEBHOOK_SECRET]: "GITHUB_APP_WEBHOOK_SECRET",
   [SETTING.GITHUB_APP_CLIENT_ID]: "GITHUB_APP_CLIENT_ID",
   [SETTING.GITHUB_APP_CLIENT_SECRET]: "GITHUB_APP_CLIENT_SECRET",
+  [SETTING.GITHUB_PAGES_APP_ID]: "GITHUB_PAGES_APP_ID",
+  [SETTING.GITHUB_PAGES_APP_SLUG]: "GITHUB_PAGES_APP_SLUG",
+  [SETTING.GITHUB_PAGES_APP_PRIVATE_KEY]: "GITHUB_PAGES_APP_PRIVATE_KEY",
+  [SETTING.NETLIFY_CLIENT_ID]: "NETLIFY_CLIENT_ID",
+  [SETTING.NETLIFY_CLIENT_SECRET]: "NETLIFY_CLIENT_SECRET",
+  [SETTING.VERCEL_CLIENT_ID]: "VERCEL_CLIENT_ID",
+  [SETTING.VERCEL_CLIENT_SECRET]: "VERCEL_CLIENT_SECRET",
+  [SETTING.VERCEL_INTEGRATION_SLUG]: "VERCEL_INTEGRATION_SLUG",
+  [SETTING.BRIDGE_ADMIN_URL]: "BRIDGE_ADMIN_URL",
+  [SETTING.BRIDGE_ADMIN_TOKEN]: "BRIDGE_ADMIN_TOKEN",
+  [SETTING.BRIDGE_BYPASS_TOKEN]: "BRIDGE_BYPASS_TOKEN",
+  [SETTING.BRIDGE_CNAME_TARGET]: "BRIDGE_CNAME_TARGET",
+  [SETTING.CLOUDFLARE_API_TOKEN]: "CLOUDFLARE_API_TOKEN",
+  [SETTING.CLOUDFLARE_ZONE_ID]: "CLOUDFLARE_ZONE_ID",
+  [SETTING.DOMAIN_CONNECT_PROVIDER_ID]: "DOMAIN_CONNECT_PROVIDER_ID",
+  [SETTING.DOMAIN_CONNECT_SERVICE_ID]: "DOMAIN_CONNECT_SERVICE_ID",
+  [SETTING.PUBLISH_ROUTES_DISABLED]: "PUBLISH_ROUTES_DISABLED",
   [SETTING.GOOGLE_CALENDAR_ID]: "GOOGLE_CALENDAR_ID",
   // Pinning this one from the deploy is the difference between rotating the
   // secret in the UI and having every sender break on the next restart.

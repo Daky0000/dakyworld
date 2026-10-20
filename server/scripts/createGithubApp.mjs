@@ -2,6 +2,7 @@
  * Creates the DakyXTech GitHub App, in one click.
  *
  *   node scripts/createGithubApp.mjs [--org dakyworld] [--port 8765]
+ *   node scripts/createGithubApp.mjs --pages [--org dakyworld]   (the opt-in DakyX Pages app)
  *
  * A GitHub App cannot be created from an access token — GitHub allows it only
  * through the web UI or through this, the App Manifest flow, which is the same
@@ -32,7 +33,9 @@ const flag = (name, fallback) => {
 const org = flag("org", "dakyworld");
 const port = Number(flag("port", "8765"));
 const webhookUrl = flag("webhook", "https://os.dakyx.com/api/github/webhook");
-const out = resolve(flag("out", "../.github-app.json"));
+// --pages creates the second, opt-in app, DakyX Pages (docs/publish-router.md).
+const pagesApp = args.includes("--pages");
+const out = resolve(flag("out", pagesApp ? "../.github-pages-app.json" : "../.github-app.json"));
 const state = randomBytes(16).toString("hex");
 
 /**
@@ -52,7 +55,7 @@ const state = randomBytes(16).toString("hex");
  * reads a file when it needs one, so a webhook for every commit anybody makes
  * would be noise this system has nothing to do with.
  */
-const manifest = {
+const editorManifest = {
   name: "DakyXTech Website Editor",
   url: "https://dakyx.com",
   hook_attributes: { url: webhookUrl, active: true },
@@ -61,13 +64,35 @@ const manifest = {
   // of this organisation. It does not make the source public — see the note in
   // docs/github-app.md.
   public: true,
-  default_permissions: { metadata: "read", contents: "write", pull_requests: "write" },
+  // The reads after pull_requests are for following a publish until it is live
+  // (docs/publish-router.md, Route D): what the host is doing with each commit,
+  // where GitHub Pages builds from, and which webhooks tell a host about pushes.
+  default_permissions: { metadata: "read", contents: "write", pull_requests: "write", deployments: "read", checks: "read", statuses: "read", actions: "read", repository_hooks: "read", pages: "read" },
   description:
-    "Lets DakyXTech edit and publish the pages of this website through the DakyXTech Website Builder. It reads and writes the repository files you choose, and nothing else.",
+    "Lets DakyXTech edit and publish the pages of this website through the DakyXTech Website Builder. It reads and writes the repository files you choose, and reads how each publish is deployed.",
 };
 
+/**
+ * DakyX Pages: the opt-in app for Route P. It alone holds Workflows, Pages and
+ * Actions write, so the editor app's standing approval stays read-mostly and only
+ * a customer who turns on fast GitHub Pages is asked for more. Its Setup URL is
+ * where GitHub sends the customer back with the installation.
+ */
+const pagesManifest = {
+  name: "DakyX Pages",
+  url: "https://dakyx.com",
+  hook_attributes: { url: webhookUrl, active: true },
+  redirect_url: `http://127.0.0.1:${port}/callback`,
+  setup_url: flag("setup", "https://editor.dakyx.com/api/website/github-pages/callback"),
+  setup_on_update: true,
+  public: true,
+  default_permissions: { metadata: "read", contents: "write", workflows: "write", pages: "write", actions: "write" },
+  description: "Publishes this GitHub Pages site straight from a DakyX workflow, without the Jekyll build. Installed only when you turn on fast GitHub Pages in DakyX.",
+};
+const manifest = pagesApp ? pagesManifest : editorManifest;
+
 const page = `<!doctype html>
-<html><head><meta charset="utf-8"><title>Create the DakyXTech GitHub App</title>
+<html><head><meta charset="utf-8"><title>Create the ${manifest.name} app</title>
 <style>
   body { font: 15px/1.6 system-ui, sans-serif; background: #F4F5F0; color: #08101F; display: grid; place-items: center; min-height: 100vh; margin: 0; }
   main { max-width: 34rem; background: #fff; padding: 2rem; border-radius: 1rem; border: 1px solid #DFE4EB; }
@@ -77,9 +102,9 @@ const page = `<!doctype html>
   code { font-size: .8rem; background: #F5F6F8; padding: .1rem .3rem; border-radius: .25rem; }
 </style></head>
 <body><main>
-  <h1>Create the DakyXTech Website Editor app</h1>
+  <h1>Create the ${manifest.name} app</h1>
   <p>This creates a GitHub App owned by the <strong>${org}</strong> organisation, with these permissions and nothing else:</p>
-  <p><code>Metadata: read</code> · <code>Contents: read &amp; write</code> · <code>Pull requests: read &amp; write</code></p>
+  <p>${Object.entries(manifest.default_permissions).map(([name, access]) => `<code>${name}: ${access}</code>`).join(" · ")}</p>
   <p>Webhook: <code>${webhookUrl}</code> — it receives installation changes, which GitHub sends to every app automatically.</p>
   <p>GitHub will show you the same list before it creates anything.</p>
   <form action="https://github.com/organizations/${org}/settings/apps/new?state=${state}" method="post">
@@ -152,6 +177,7 @@ const server = createServer(async (req, res) => {
     console.log(`\n  ✓ ${app.name} created — app id ${app.id}, slug ${app.slug}`);
     console.log(`  ✓ Key and webhook secret written to ${out} (not in the repository)`);
     console.log(`  → ${app.html_url}\n`);
+    if (pagesApp) console.log("  Set GITHUB_PAGES_APP_ID, GITHUB_PAGES_APP_SLUG and GITHUB_PAGES_APP_PRIVATE_KEY on Railway from that file.\n");
     setTimeout(() => server.close(() => process.exit(0)), 250);
   } catch (error) {
     res.writeHead(500, { "Content-Type": "text/plain" }).end(String(error));

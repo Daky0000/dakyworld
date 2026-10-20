@@ -1,4 +1,5 @@
 import type { Request, Response, Router } from "express";
+import { refreshDeployProfileSoon } from "./websiteDeployDetect.js";
 import type { Site } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
@@ -144,6 +145,7 @@ export function registerGithubAppRoutes(router: Router, access: Access) {
       },
     });
 
+    refreshDeployProfileSoon(site.id);
     res.json({ ok: true, installationId: body.installationId, repository: chosen });
   }));
 }
@@ -298,6 +300,11 @@ export function githubWebhookHandler() {
         if (added.length) {
           await prisma.site.updateMany({ where: { githubInstallationId: installationId, githubRepositoryId: { in: added } }, data: { githubAccessLostAt: null } });
         }
+      }
+      // New permissions approved, or repositories added: detection can see more now.
+      if (event === "installation" && body.action === "new_permissions_accepted" || event === "installation_repositories") {
+        const sites = await prisma.site.findMany({ where: { githubInstallationId: installationId }, select: { id: true } });
+        for (const entry of sites) refreshDeployProfileSoon(entry.id);
       }
       if (event === "installation" && body.action === "unsuspend") {
         await prisma.site.updateMany({ where: { githubInstallationId: installationId }, data: { githubAccessLostAt: null } });

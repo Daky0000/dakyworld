@@ -84,7 +84,12 @@ them, reports them, and never changes them:
   files edit as source, with a review before each commit, and never as a live
   preview of the running app.
 - WordPress, Shopify or any other CMS's own editing model.
-- Publishing anywhere but GitHub: no SFTP, no direct hosting APIs.
+- Publishing anywhere but GitHub: no SFTP, no FTP. **One narrow exception**
+  (Dan, 20 Oct 2026): DakyX may deploy to a customer's host through that host's
+  official deploy API, only when the customer has connected their host account
+  through the host's own sign-in (OAuth) or a scoped token, and only for sites
+  with no build step. The commit to GitHub still happens first and stays the
+  record. See `docs/publish-router.md`, Route A.
 - Arbitrary component creation, template marketplaces, AI site generation.
 - Self-hosted or white-label installations of the builder itself.
 

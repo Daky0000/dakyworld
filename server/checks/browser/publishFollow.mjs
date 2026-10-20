@@ -91,6 +91,16 @@ try {
   await toast().getByRole("button", { name: "Dismiss" }).click();
   check("and goes when dismissed", (await toast().count()) === 0);
 
+  /* ------------------------------------- what the host says it is doing */
+  job = status("VERIFYING", { stage: "building" });
+  await page.keyboard.press("Control+Enter");
+  await toast().getByText("Your host is building your site").waitFor({ timeout: 10_000 });
+  check("while the host builds, the toast says so", true);
+  job = status("DEPLOY_FAILED", { label: "The host did not rebuild", hostMessage: "Build script returned non-zero exit code: 2" });
+  await toast().getByText("Your host said: Build script returned non-zero exit code: 2").waitFor({ timeout: 15_000 });
+  check("and a failed build is reported in the host's own words", true);
+  await toast().getByRole("button", { name: "Dismiss" }).click();
+
   /* ------------------------------------------- the host is late */
   job = status("VERIFYING", { late: true, label: LATE, createdAt: new Date(Date.now() - 2 * 60 * 60_000 - 60_000).toISOString() });
   await page.keyboard.press("Control+Enter");

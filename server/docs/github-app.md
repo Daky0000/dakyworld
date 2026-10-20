@@ -66,7 +66,19 @@ Permissions — the minimum, and no more:
 | Metadata | Read | Basic repository information |
 | Contents | Read & write | Read the website's files and publish changes |
 | Pull requests | Read & write | Only if publish-by-pull-request is used |
-| Everything else | **None** | Administration, Issues and Actions are not needed |
+| Deployments, Checks, Commit statuses, Actions, Webhooks, Pages | **Read** | Following a publish until it is live: what the host is doing with each commit, and where GitHub Pages builds from (added 20 Oct 2026, `docs/publish-router.md`) |
+| Everything else | **None** | Administration and Issues are not needed; nothing here writes workflows or Pages settings |
+
+**Added permissions must be approved.** The six reads above were added to the
+existing app by hand on GitHub (Permissions & events). GitHub then asks each
+installation's owner to approve them. Until they do, that site runs without
+live progress, and nothing else changes.
+
+**The second app, DakyX Pages**, holds the writes this one must not have:
+Workflows, Pages and Actions. It is installed only by a customer who turns on
+fast GitHub Pages. Create it with `node scripts/createGithubApp.mjs --pages`.
+It is a separate app because GitHub has no way to request a permission from
+some installations of an app and not others.
 
 **Subscribe to no events.** The two this system listens for — `installation` and
 `installation_repositories` — are lifecycle events GitHub delivers to every app's

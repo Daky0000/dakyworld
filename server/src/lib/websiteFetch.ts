@@ -46,7 +46,7 @@ export function isTlsOrConnectionError(error: unknown): boolean {
 /** A page's text, and the response headers that say which host sent it. */
 export type WebsitePage = { text: string; headers: Record<string, string> };
 
-async function executeFetchWebsitePage(address: string): Promise<WebsitePage> {
+async function executeFetchWebsitePage(address: string, extraHeaders: Record<string, string> = {}): Promise<WebsitePage> {
   const allowLoopback = process.env.NODE_ENV === "development" && process.env.DEV_NO_AUTH === "true";
   const signal = AbortSignal.timeout(20_000);
   let url = new URL(address);
@@ -55,7 +55,7 @@ async function executeFetchWebsitePage(address: string): Promise<WebsitePage> {
     if (signal.aborted) throw new Error("The website took too long to respond.");
     const result = await new Promise<{ location?: string; text: string; headers?: Record<string, string> }>((resolve, reject) => {
       const request = (url.protocol === "https:" ? https : http).request(url, {
-        signal, method: "GET", headers: { "User-Agent": "DakyXTech-OS-Editor", "Accept-Encoding": "identity" },
+        signal, method: "GET", headers: { "User-Agent": "DakyXTech-OS-Editor", "Accept-Encoding": "identity", ...extraHeaders },
         // Keep the original hostname for Host/TLS, but connect only to the vetted IP.
         lookup: createPinnedLookup(pinned),
       }, response => {
@@ -91,13 +91,13 @@ export async function fetchWebsiteText(address: string): Promise<string> {
 }
 
 /** `fetchWebsiteText`, plus the headers of the response that answered, which say what host is serving the site. */
-export async function fetchWebsitePage(address: string): Promise<WebsitePage> {
+export async function fetchWebsitePage(address: string, options: { headers?: Record<string, string> } = {}): Promise<WebsitePage> {
   try {
-    return await executeFetchWebsitePage(address);
+    return await executeFetchWebsitePage(address, options.headers);
   } catch (error) {
     if (/^https:\/\//i.test(address) && isTlsOrConnectionError(error)) {
       try {
-        return await executeFetchWebsitePage(address.replace(/^https:\/\//i, "http://"));
+        return await executeFetchWebsitePage(address.replace(/^https:\/\//i, "http://"), options.headers);
       } catch {
         throw error;
       }
@@ -186,4 +186,29 @@ export async function fetchWebsiteBytes(address: string, maxBytes: number): Prom
     return result.bytes!;
   }
   throw new Error("The image redirected too many times.");
+}
+
+/**
+ * One POST to a deploy hook: no body, no redirects followed, DNS pinned the same
+ * way as every other outbound request here, so a hook URL cannot be pointed at
+ * this server's own network. Answers with the status; anything but 2xx throws.
+ */
+export async function postWebsiteHook(address: string): Promise<number> {
+  const url = new URL(address);
+  if (url.protocol !== "https:") throw new Error("A deploy hook must be an https address.");
+  const pinned = await resolveWebsiteAddress(url);
+  const signal = AbortSignal.timeout(15_000);
+  return new Promise<number>((resolve, reject) => {
+    const request = https.request(url, {
+      signal, method: "POST", headers: { "User-Agent": "DakyXTech-Publish", "Content-Length": "0" },
+      lookup: createPinnedLookup(pinned),
+    }, (response) => {
+      const status = response.statusCode ?? 0;
+      response.resume();
+      if (status >= 200 && status < 300) resolve(status);
+      else reject(Object.assign(new Error(`The deploy hook answered ${status}.`), { status }));
+    });
+    request.on("error", reject);
+    request.end();
+  });
 }

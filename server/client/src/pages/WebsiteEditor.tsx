@@ -25,6 +25,7 @@ import { tourSeen, useUiState } from "../lib/uiState";
 import { LinkDestinationField } from "../components/LinkDestinationField";
 import { PublishedToast } from "../components/PublishedToast";
 import { PublishFollow } from "../components/PublishFollow";
+import { DeployWarning } from "../components/DeployWarning";
 import { PUBLISH_DELAY_NOTICE, PublishDelayNotice } from "../components/PublishDelayNotice";
 
 
@@ -3064,6 +3065,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           </div>
         </div>
       )}
+      {!isDemo && page.data?.site.repo && <DeployWarning siteId={page.data.site.id} canManage={access.data?.capabilities.manage === true} />}
       {failure && (
         <div className="flex-none border-b border-line px-4 py-3">
           <div className="rounded-xl border border-warn-line bg-warn-surface px-3.5 py-2.5 text-sm text-warn-text">{failure}</div>
@@ -3074,7 +3076,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           to a site a host rebuilds keeps following the publish, and speaks
           again only if GitHub holds it up, the host is late, or it goes live. */}
       {published && !isDemo && !published.hosted && published.mode !== "pull_request" && published.job?.id && page.data?.site.id ? (
-        <PublishFollow key={published.job.id} siteId={page.data.site.id} jobId={published.job.id} liveUrl={published.url} />
+        <PublishFollow key={published.job.id} siteId={page.data.site.id} jobId={published.job.id} liveUrl={published.url} canManage={access.data?.capabilities.manage === true} />
       ) : published && (
         <PublishedToast
           message={

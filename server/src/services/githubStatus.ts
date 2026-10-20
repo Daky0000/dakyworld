@@ -74,8 +74,8 @@ export function componentsFor(servedBy: string | null | undefined): GithubCompon
   // behind it), any of the three could be the reason.
   if (servedBy === "github-pages") return ["Pages", "Actions"];
   if (servedBy === "vercel" || servedBy === "netlify") return ["Webhooks"];
-  if (servedBy === "other") return ["Webhooks", "Actions"];
-  return ["Pages", "Actions", "Webhooks"];
+  if (servedBy === "cloudflare" || !servedBy) return ["Pages", "Actions", "Webhooks"];
+  return ["Webhooks", "Actions"];
 }
 
 export const GITHUB_TROUBLE_NOTICE =
@@ -105,6 +105,9 @@ export function hostFromHeaders(headers: Record<string, string> | null | undefin
   if (headers["x-github-request-id"] || server === "github.com") return "github-pages";
   if (headers["x-vercel-id"] || server.startsWith("vercel")) return "vercel";
   if (headers["x-nf-request-id"] || server.startsWith("netlify")) return "netlify";
+  // Hostinger's shared hosting says so in its own headers; Render in its own.
+  if (/hostinger/i.test(headers.platform ?? "") || /hpanel/i.test(headers.panel ?? "") || server === "hcdn") return "hostinger";
+  if (headers["x-render-origin-server"] || headers["rndr-id"]) return "render";
   if (server === "cloudflare") return "cloudflare";
   return server ? "other" : null;
 }

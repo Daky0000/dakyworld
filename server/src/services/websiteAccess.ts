@@ -146,7 +146,13 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
   if (/^\/sites\/[^/]+\/members(?:\/[^/]+)?\/?$/.test(path)) return "members";
   if (/\/(?:source|source-project)(?:\/|$)/.test(path)) return "source";
   if (/^\/sites\/[^/]+\/config\/?$/.test(path)) return "manage";
+  // A customer's host account and their domain's DNS: managing, even to read
+  // (the candidates list names every site on their host account).
+  if (/^\/sites\/[^/]+\/(?:connect|bridge)(?:\/|$)/.test(path)) return "manage";
   if (method === "GET" || method === "HEAD" || /\/presence\/?$/.test(path)) return "view";
+  // How the site goes live: anybody on the site may read it (the editor warns
+  // about a branch mismatch from it); changing it is managing.
+  if (/^\/sites\/[^/]+\/deploy(?:\/|$)/.test(path)) return "manage";
   if (/\/publish\/?$/.test(path)) return "publish";
   // Making an element shared, or stopping it being one, changes how every page
   // that carries it is edited. Editing the shared element, detaching one page's
@@ -184,7 +190,7 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
 }
 
 /** Routes about the signed-in account rather than one website. Their handlers scope themselves. */
-const ACCOUNT_ROUTES = /^\/(?:subscription(?:\/(?:cancel|manage))?|setup-assistance|help|starter-templates|balance(?:\/.*)?|activity(?:\/.*)?|escalations(?:\/[^/]+)?|github\/(?:connect|callback))\/?$/;
+const ACCOUNT_ROUTES = /^\/(?:subscription(?:\/(?:cancel|manage))?|setup-assistance|help|starter-templates|balance(?:\/.*)?|activity(?:\/.*)?|escalations(?:\/[^/]+)?|github\/(?:connect|callback)|github-pages\/callback|connect\/(?:netlify|vercel)\/callback|bridge\/connected)\/?$/;
 
 /**
  * Whether the gate answers a path without classifying it — account routes, the

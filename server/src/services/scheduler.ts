@@ -35,6 +35,7 @@ import { purgeExpiredSessions } from "../lib/session.js";
 import { reconcileInterruptedPublishJobs, verifyDuePublishJobs } from "./websitePublishJobs.js";
 import { processPaystackEvents, reconcilePaystackPayments, updateDuePaystackPrices } from "./paystackEvents.js";
 import { tickScheduledPublishes } from "./websitePublishScheduler.js";
+import { publishRouterTick } from "./websiteDeployMaintenance.js";
 import { purgeDueDeletions } from "./websiteDeletion.js";
 
 /**
@@ -160,6 +161,8 @@ async function runTick(now = new Date()) {
     // woken agent's autonomy back when the tab was closed part-way.
     settleIdleRehearsals(),
     tickScheduledPublishes(),
+    // How sites go live: re-detection, bridges waiting on DNS, bridged files to renew.
+    publishRouterTick(now),
     housekeepingTick(now),
   ]);
   for (const result of results) {

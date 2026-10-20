@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { refreshDeployProfileSoon } from "./websiteDeployDetect.js";
 import type { Request, Response, Router } from "express";
 import type { Site, SitePage } from "@prisma/client";
 import { Prisma } from "@prisma/client";
@@ -499,6 +500,8 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       // design keys, so every save of this screen deleted the editing policy,
       // global content, acknowledged risks and anything else kept there.
       if (Object.keys(data).length) await prisma.site.update({ where: { id: site.id }, data });
+      // A new branch, folder or address changes how the site goes live.
+      if (["repoOwner", "repoName", "repoBranch", "repoPath", "publicUrl"].some((key) => key in data)) refreshDeployProfileSoon(site.id);
       await updateSiteSettings(site.id, current => ({ ...current, ...options }));
       await prisma.siteAuditEvent.create({ data: { siteId: site.id, kind: "SETTINGS_UPDATED", summary: `Updated website settings: ${changed.map(key => key.replace("options.", "")).join(", ")}`, ...actor(req), detail: { changed } } });
     }

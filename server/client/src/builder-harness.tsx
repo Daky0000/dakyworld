@@ -14,6 +14,7 @@ import type { BrandPreset } from "./lib/websiteBrandPresets";
 import "./index.css";
 import { InteractionHarness } from "./interaction-harness";
 import { WebsiteWelcomeFlow } from "./components/WebsiteWelcomeFlow";
+import { WebsiteDeployPanel } from "./components/WebsiteDeployPanel";
 
 function Harness() {
   const [style, setStyle] = useState("");
@@ -36,4 +37,4 @@ function Landed() {
   return <p data-testid="landed">{location.pathname + location.search}</p>;
 }
 
-createRoot(document.getElementById("root")!).render(<React.StrictMode><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{new URLSearchParams(location.search).has("analytics") ? <DemoAnalyticsModal demo={{ id: "geo-demo", title: "Geo fixture", businessName: "Fixture" } as Demo} open onClose={() => {}} /> : new URLSearchParams(location.search).has("welcome") ? <MemoryRouter initialEntries={["/website/welcome"]}><AuthProvider><Routes><Route path="/website/welcome" element={<WebsiteWelcomeFlow />} /><Route path="*" element={<Landed />} /></Routes></AuthProvider></MemoryRouter> : new URLSearchParams(location.search).has("editor") ? <MemoryRouter initialEntries={["/website/pages/one"]}><AuthProvider><Routes><Route path="/website/pages/:pageId" element={<div style={{ height: "100dvh" }}><WebsiteEditor /></div>} /></Routes></AuthProvider></MemoryRouter> : <BrowserRouter>{new URLSearchParams(location.search).has("interaction") ? <InteractionHarness /> : <Harness />}</BrowserRouter>}</QueryClientProvider></React.StrictMode>);
+createRoot(document.getElementById("root")!).render(<React.StrictMode><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{new URLSearchParams(location.search).has("analytics") ? <DemoAnalyticsModal demo={{ id: "geo-demo", title: "Geo fixture", businessName: "Fixture" } as Demo} open onClose={() => {}} /> : new URLSearchParams(location.search).has("welcome") ? <MemoryRouter initialEntries={["/website/welcome"]}><AuthProvider><Routes><Route path="/website/welcome" element={<WebsiteWelcomeFlow />} /><Route path="*" element={<Landed />} /></Routes></AuthProvider></MemoryRouter> : new URLSearchParams(location.search).has("deploy") ? <main className="mx-auto max-w-3xl p-6"><WebsiteDeployPanel siteId="demo" /></main> : new URLSearchParams(location.search).has("editor") ? <MemoryRouter initialEntries={["/website/pages/one"]}><AuthProvider><Routes><Route path="/website/pages/:pageId" element={<div style={{ height: "100dvh" }}><WebsiteEditor /></div>} /></Routes></AuthProvider></MemoryRouter> : <BrowserRouter>{new URLSearchParams(location.search).has("interaction") ? <InteractionHarness /> : <Harness />}</BrowserRouter>}</QueryClientProvider></React.StrictMode>);

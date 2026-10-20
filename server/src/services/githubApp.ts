@@ -52,10 +52,21 @@ const base64url = (value: Buffer | string) => Buffer.from(value).toString("base6
  * A JWT is not a repository credential — it can only ask which installations
  * exist and swap one for a token. Everything that touches code uses the token.
  */
-async function appJwt(): Promise<string> {
-  const id = await getSetting(SETTING.GITHUB_APP_ID);
-  const key = (await getSetting(SETTING.GITHUB_APP_PRIVATE_KEY))?.replace(/\\n/g, "\n");
-  if (!id || !key) throw new GitHubError(503, "The DakyXTech GitHub App is not set up. Add its ID and private key under Settings → Developer.");
+/**
+ * Two apps share this code. `main` is the DakyXTech Website Editor every site
+ * uses. `pages` is DakyX Pages, the opt-in app for Route P that alone holds
+ * Workflows, Pages and Actions write (see SETTING.GITHUB_PAGES_APP_ID).
+ */
+export type AppKind = "main" | "pages";
+const APP_SETTINGS: Record<AppKind, { id: string; key: string; name: string }> = {
+  main: { id: SETTING.GITHUB_APP_ID, key: SETTING.GITHUB_APP_PRIVATE_KEY, name: "The DakyXTech GitHub App" },
+  pages: { id: SETTING.GITHUB_PAGES_APP_ID, key: SETTING.GITHUB_PAGES_APP_PRIVATE_KEY, name: "The DakyX Pages app" },
+};
+
+async function appJwt(app: AppKind = "main"): Promise<string> {
+  const id = await getSetting(APP_SETTINGS[app].id);
+  const key = (await getSetting(APP_SETTINGS[app].key))?.replace(/\\n/g, "\n");
+  if (!id || !key) throw new GitHubError(503, `${APP_SETTINGS[app].name} is not set up. Add its ID and private key under Settings → Developer.`);
 
   const now = Math.floor(Date.now() / 1000);
   const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
@@ -80,11 +91,12 @@ const tokens = new Map<string, CachedToken>();
  * round trip; dropped five minutes early because a token that expires mid-commit
  * fails a publish rather than merely a request.
  */
-export async function installationToken(installationId: string): Promise<string> {
-  const held = tokens.get(installationId);
+export async function installationToken(installationId: string, app: AppKind = "main"): Promise<string> {
+  const cacheKey = app === "main" ? installationId : `${app}:${installationId}`;
+  const held = tokens.get(cacheKey);
   if (held && held.expiresAt - TOKEN_MARGIN_MS > Date.now()) return held.token;
 
-  const jwt = await appJwt();
+  const jwt = await appJwt(app);
   const response = await fetch(`${API_BASE}/app/installations/${encodeURIComponent(installationId)}/access_tokens`, {
     method: "POST",
     headers: {
@@ -98,7 +110,7 @@ export async function installationToken(installationId: string): Promise<string>
   });
 
   if (response.status === 404) {
-    tokens.delete(installationId);
+    tokens.delete(cacheKey);
     throw new GitHubError(404, "That GitHub installation no longer exists. The customer may have removed the DakyXTech app; ask them to install it again.");
   }
   if (!response.ok) {
@@ -109,18 +121,19 @@ export async function installationToken(installationId: string): Promise<string>
   const body = (await response.json()) as { token?: string; expires_at?: string };
   if (!body.token) throw new GitHubError(502, "GitHub returned no token for that installation.");
   const expiresAt = body.expires_at ? Date.parse(body.expires_at) : Date.now() + 60 * 60_000;
-  tokens.set(installationId, { token: body.token, expiresAt });
+  tokens.set(cacheKey, { token: body.token, expiresAt });
   return body.token;
 }
 
 /** Thrown away when an installation changes, so a withdrawn one stops working at once. */
 export function forgetInstallationToken(installationId: string): void {
   tokens.delete(installationId);
+  tokens.delete(`pages:${installationId}`);
 }
 
 /** What repositories an installation actually reaches, for the connect screen. */
-export async function installationRepositories(installationId: string): Promise<Array<{ id: string; fullName: string; defaultBranch: string; private: boolean }>> {
-  const token = await installationToken(installationId);
+export async function installationRepositories(installationId: string, app: AppKind = "main"): Promise<Array<{ id: string; fullName: string; defaultBranch: string; private: boolean }>> {
+  const token = await installationToken(installationId, app);
   const response = await fetch(`${API_BASE}/installation/repositories?per_page=100`, {
     headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "dakyworld-os" },
   });
@@ -134,6 +147,27 @@ export async function siteGithubCredential(site: { githubInstallationId: string 
   if (!site.githubInstallationId) return null;
   if (!(await githubAppConfigured())) return null;
   return { token: await installationToken(site.githubInstallationId), kind: "installation", label: `installation ${site.githubInstallationId}` };
+}
+
+/** Whether the opt-in DakyX Pages app exists yet. */
+export async function pagesAppConfigured(): Promise<boolean> {
+  return Boolean((await getSetting(SETTING.GITHUB_PAGES_APP_ID)) && (await getSetting(SETTING.GITHUB_PAGES_APP_PRIVATE_KEY)));
+}
+
+/** Where a customer installs DakyX Pages, carrying a state back with them. */
+export async function pagesAppInstallUrl(state?: string): Promise<string | null> {
+  const slug = await getSetting(SETTING.GITHUB_PAGES_APP_SLUG);
+  if (!slug) return null;
+  return `https://github.com/apps/${encodeURIComponent(slug)}/installations/new${state ? `?state=${encodeURIComponent(state)}` : ""}`;
+}
+
+/**
+ * The DakyX Pages credential for a site, when the customer installed it on
+ * that site's repository. Only ever used for that repository.
+ */
+export async function pagesAppCredential(site: { githubPagesInstallationId: string | null }): Promise<GithubCredential | null> {
+  if (!site.githubPagesInstallationId || !(await pagesAppConfigured())) return null;
+  return { token: await installationToken(site.githubPagesInstallationId, "pages"), kind: "installation", label: `DakyX Pages installation ${site.githubPagesInstallationId}` };
 }
 
 /**

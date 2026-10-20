@@ -10,6 +10,7 @@ import { WebsitePresetSettings, WebsitePresetRollout } from "./WebsiteBrandPrese
 import type { BrandPreset } from "../lib/websiteBrandPresets";
 import { ConnectWebsite } from "./ConnectWebsite";
 import { WebsiteHostingPanel } from "./WebsiteHostingPanel";
+import { WebsiteDeployPanel } from "./WebsiteDeployPanel";
 import { WebsiteSubscriptionPanel } from "./WebsiteSubscriptionPanel";
 import { ConnectGithubApp } from "./ConnectGithubApp";
 import { ColorCodeInput } from "./InspectorControls";
@@ -22,7 +23,8 @@ export function WebsiteSettings() {
   const { can, user } = useAuth();
   const sites = useSiteDirectory<ManagedSite>();
   const manageable = sites.data?.filter(site => site.capabilities?.manage !== false) ?? [];
-  const [selected, setSelected] = useState("");
+  // A host sends the browser back here with the site it was connecting.
+  const [selected, setSelected] = useState(() => new URLSearchParams(window.location.search).get("site") ?? "");
   const id = manageable.some(site => site.id === selected) ? selected : manageable[0]?.id;
   const config = useQuery({ queryKey: ["website", "config", id], enabled: !!id, queryFn: ({ signal }) => api.get<Config>(`/website/sites/${id}/config`, signal) });
   // Whose website this is. It is what decides whether a retainer covers the
@@ -166,6 +168,7 @@ export function WebsiteSettings() {
         questions people ask about their own site rather than about its design,
         so they sit above the design system rather than being filed under it. */}
     {id && <div className="mb-8 grid max-w-3xl gap-6">
+      {config.data?.repoName && <WebsiteDeployPanel key={id} siteId={id} />}
       <WebsiteHostingPanel siteId={id} />
       <WebsiteSubscriptionPanel />
     </div>}

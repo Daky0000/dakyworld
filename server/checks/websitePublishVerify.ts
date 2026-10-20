@@ -141,6 +141,7 @@ const jobAt = (state: "VERIFYING" | "VERIFY_FAILED", ageMs: number, detail: Reco
   id: "job", siteId: "site", kind: "PAGE", state, pageId: null, sharedElementId: null, startedById: null, detail, commitSha: "20a09f5", commitUrl: null,
   verifyUrl: "https://africon.example/", verifyText: "Words", expectedHash: null, attempts: 3, nextCheckAt: null, verifiedAt: null, lastError: null,
   createdAt: new Date(Date.now() - ageMs), updatedAt: new Date(), finishedAt: null,
+  route: null, fallbackFrom: null, routeLog: [], stage: null, stageTimes: {}, hostMessage: null,
 });
 equal("two hours on, the host is late, not failed", publishJobView(jobAt("VERIFYING", 2 * HOUR + MINUTE)).stateLabel, HOST_LATE_LABEL);
 check("and never says the live page has not changed", !/has not changed/.test(HOST_LATE_LABEL));

@@ -30,6 +30,11 @@ export type PublishJobStatus = {
   /** Still waiting two hours after the publish: the host is late, not failed. */
   late?: boolean;
   createdAt?: string;
+  /** What the host says it is doing: queued, building, deploying, live, failed. */
+  stage?: string | null;
+  hostMessage?: string | null;
+  /** Which route made it live: bridge, direct, pages, hook or follow. */
+  route?: string | null;
 };
 
 const WAITING = new Set(["QUEUED", "VALIDATING", "COMMITTING", "COMMITTED", "DEPLOYING", "VERIFYING"]);

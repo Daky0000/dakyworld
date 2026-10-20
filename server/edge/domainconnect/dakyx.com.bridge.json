@@ -1,0 +1,21 @@
+{
+  "providerId": "dakyx.com",
+  "providerName": "DakyX",
+  "serviceId": "bridge",
+  "serviceName": "DakyX instant updates",
+  "version": 1,
+  "logoUrl": "https://dakyx.com/brand/favicon-32.png",
+  "description": "Points one web hostname at the DakyX edge bridge, so website updates appear the moment they are published. Email and other records are not touched.",
+  "variableDescription": "target is the DakyX edge hostname; host is the web hostname being pointed.",
+  "hostRequired": true,
+  "syncBlock": false,
+  "syncRedirectDomain": "dakyx.com,editor.dakyx.com,os.dakyx.com",
+  "records": [
+    {
+      "type": "CNAME",
+      "host": "@",
+      "pointsTo": "%target%",
+      "ttl": 300
+    }
+  ]
+}

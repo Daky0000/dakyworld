@@ -8,6 +8,10 @@ import { fetchWebsitePage } from "../lib/websiteFetch.js";
 import { pageUrl, repoFilePath, siteRepo } from "./website/site.js";
 import { hostedUrlFor } from "./websiteHosting.js";
 import { githubHealth, githubTroubleFor, hostFromHeaders, type GithubHealth } from "./githubStatus.js";
+import { readHostProgress, retryPagesBuild, type HostProgress } from "./websiteDeployWatch.js";
+import { deployProfileOf } from "./websiteDeployDetect.js";
+import { bridgeBypassHeaders, clearBridgeFor } from "./websiteEdgeBridge.js";
+import { schedulePublishDispatch } from "./websitePublishRouter.js";
 import type { FieldChangeSummary } from "./website/index.js";
 
 /**
@@ -150,6 +154,9 @@ export async function publishJobCommitted(input: {
       attempts: isLocalHosted ? 1 : 0,
     },
   });
+  // The faster routes (bridge, direct upload, deploy hook) run from here, once
+  // the transaction this may be inside has committed. See websitePublishRouter.ts.
+  if (!isLocalHosted) schedulePublishDispatch(input.id);
 }
 
 /**
@@ -192,6 +199,7 @@ export async function sourcePublishCommitted(input: {
       attempts: 0,
     },
   });
+  schedulePublishDispatch(input.id);
 }
 
 export async function failPublishJob(id: string, state: PublishJobState, message: string): Promise<void> {
@@ -215,7 +223,10 @@ export async function failPublishJob(id: string, state: PublishJobState, message
 async function verifyOne(job: PublishJob): Promise<{ verified: boolean; error?: string; servedBy?: string | null }> {
   if (!job.verifyUrl) return { verified: true };
   try {
-    const page = await fetchWebsitePage(job.verifyUrl);
+    // Behind the edge bridge the public address answers with the bridge's own
+    // copy at once, which would say "live" before the host has rebuilt. The
+    // bypass header asks for what the host itself serves.
+    const page = await fetchWebsitePage(job.verifyUrl, { headers: await bridgeBypassHeaders(job.siteId) });
     return { verified: livePageShowsChange({ body: page.text, verifyText: job.verifyText, expectedHash: job.expectedHash }), servedBy: hostFromHeaders(page.headers) };
   } catch (error) {
     return { verified: false, error: error instanceof Error ? error.message : "The live page could not be read." };
@@ -293,6 +304,7 @@ export async function verifyDuePublishJobs(now = new Date()): Promise<number> {
     where: { state: { in: WAITING_STATES }, nextCheckAt: { lte: now } },
     orderBy: { nextCheckAt: "asc" },
     take: 25,
+    include: { site: true },
   });
 
   // A few at a time: each look can take up to twenty seconds, and the rest of
@@ -304,40 +316,100 @@ export async function verifyDuePublishJobs(now = new Date()): Promise<number> {
   return settledEach.reduce((total, count) => total + count, 0);
 }
 
-async function verifyDueJob(job: PublishJob, now: Date): Promise<number> {
+/**
+ * What to do when the host itself reports that its build failed (D1, D6).
+ *
+ * - GitHub having problems with the part this host builds on: keep waiting. A
+ *   build that failed during an outage is GitHub's problem, and it is never
+ *   retried while GitHub is still down.
+ * - A GitHub Pages build that can be asked for again, not asked for yet: ask,
+ *   once, and keep waiting.
+ * - Otherwise the host did not rebuild, and that is the answer, in the host's
+ *   own words.
+ */
+export function decideHostFailure(input: { githubTrouble: boolean; canRetry: boolean; retried: boolean }): "wait" | "retry" | "fail" {
+  if (input.githubTrouble) return "wait";
+  if (input.canRetry && !input.retried) return "retry";
+  return "fail";
+}
+
+async function verifyDueJob(job: PublishJob & { site: Site }, now: Date): Promise<number> {
   const attempts = job.attempts + 1;
+  const elapsedMs = now.getTime() - job.createdAt.getTime();
   const result = await verifyOne(job);
-  const step = decideVerification({
-    verified: result.verified,
-    attempts,
-    elapsedMs: now.getTime() - job.createdAt.getTime(),
-    error: result.error,
-    previousError: Boolean(job.lastError),
-  });
+  const step = decideVerification({ verified: result.verified, attempts, elapsedMs, error: result.error, previousError: Boolean(job.lastError) });
   const stillWaiting = { id: job.id, state: { in: WAITING_STATES } };
   // Which host answered, kept on the job so a reader in another process can tell
   // which parts of GitHub this site's deploy depends on.
   const detail = jobDetail(job);
-  const servedBy = result.servedBy && detail.servedBy !== result.servedBy ? { detail: { ...detail, servedBy: result.servedBy } as Prisma.InputJsonValue } : {};
+  const nextDetail: Record<string, unknown> = { ...detail };
+  if (result.servedBy) nextDetail.servedBy = result.servedBy;
+
+  // What the host says it is doing, while that can still change and is worth
+  // reading: not once it is live, and not once it is hours late (the page check
+  // alone carries on then). Without the app's read permissions this is null.
+  let progress: HostProgress | null = null;
+  if (step.state !== "COMPLETED" && job.commitSha && siteRepo(job.site) && job.stage !== "live" && elapsedMs < HOST_LATE_AFTER_MS) {
+    progress = await readHostProgress(job.site, job.commitSha, deployProfileOf(job.site)?.host ?? null).catch(() => null);
+  }
+  const stageTimes = { ...((job.stageTimes ?? {}) as Record<string, string>) };
+  const stage = step.state === "COMPLETED" ? "live" : progress?.stage ?? job.stage;
+  if (stage && !stageTimes[stage]) stageTimes[stage] = now.toISOString();
+  const progressData = { stage, stageTimes: stageTimes as Prisma.InputJsonValue, detail: nextDetail as Prisma.InputJsonValue };
 
   if (step.state === "COMPLETED") {
     const { count } = await prisma.publishJob.updateMany({
       where: stillWaiting,
-      data: { state: "COMPLETED", attempts, verifiedAt: now, finishedAt: now, nextCheckAt: null, lastError: null, ...servedBy },
+      data: { state: "COMPLETED", attempts, verifiedAt: now, finishedAt: now, nextCheckAt: null, lastError: null, ...progressData },
     });
     if (!count) return 0;
+    // The host has the change: the edge bridge can stop serving its copy.
+    await clearBridgeFor(job).catch((error) => console.error(`[publish-jobs] clearing the bridge for ${job.id} failed:`, error));
     return 1 + (await settleOvertakenJobs(job, now));
   }
+
+  if (progress?.stage === "failed") {
+    const servedBy = typeof nextDetail.servedBy === "string" ? nextDetail.servedBy : deployProfileOf(job.site)?.host ?? null;
+    const githubTrouble = Boolean(githubTroubleFor(await githubHealth(), servedBy));
+    const decision = decideHostFailure({ githubTrouble, canRetry: Boolean(progress.retry), retried: Boolean(detail.retriedAt) });
+    const message = progress.message ?? "The host reported that the build failed.";
+    if (decision === "retry") {
+      const retried = await retryPagesBuild(job.site, progress.retry!);
+      if (retried.ok) {
+        nextDetail.retriedAt = now.toISOString();
+        await prisma.publishJob.updateMany({
+          where: stillWaiting,
+          data: { ...progressData, stage: "queued", detail: nextDetail as Prisma.InputJsonValue, state: "VERIFYING", attempts, hostMessage: `${message} DakyX asked GitHub to build it again.`, nextCheckAt: new Date(now.getTime() + STEADY_EVERY_MS), lastError: null },
+        });
+        return 0;
+      }
+      nextDetail.retriedAt = now.toISOString();
+      nextDetail.retryRefused = retried.reason;
+    }
+    if (decision !== "wait") {
+      const { count } = await prisma.publishJob.updateMany({
+        where: stillWaiting,
+        data: { ...progressData, detail: nextDetail as Prisma.InputJsonValue, state: "DEPLOY_FAILED", attempts, nextCheckAt: null, finishedAt: now, hostMessage: message, lastError: `The host did not rebuild: ${message}` },
+      });
+      return count;
+    }
+    await prisma.publishJob.updateMany({
+      where: stillWaiting,
+      data: { ...progressData, state: "VERIFYING", attempts, hostMessage: message, nextCheckAt: new Date(now.getTime() + STEADY_EVERY_MS), lastError: result.error ?? null },
+    });
+    return 0;
+  }
+
   if (step.state === "VERIFY_FAILED") {
     const { count } = await prisma.publishJob.updateMany({
       where: stillWaiting,
-      data: { state: "VERIFY_FAILED", attempts, nextCheckAt: null, finishedAt: now, lastError: step.reason, ...servedBy },
+      data: { state: "VERIFY_FAILED", attempts, nextCheckAt: null, finishedAt: now, lastError: step.reason, ...progressData },
     });
     return count;
   }
   await prisma.publishJob.updateMany({
     where: stillWaiting,
-    data: { state: "VERIFYING", attempts, nextCheckAt: new Date(now.getTime() + step.nextCheckInMs), lastError: result.error ?? null, ...servedBy },
+    data: { state: "VERIFYING", attempts, nextCheckAt: new Date(now.getTime() + step.nextCheckInMs), lastError: result.error ?? null, ...progressData },
   });
   return 0;
 }
@@ -355,9 +427,17 @@ async function verifyDueJob(job: PublishJob, now: Date): Promise<number> {
  */
 async function settleOvertakenJobs(job: PublishJob, now: Date): Promise<number> {
   if (!job.verifyText && !job.expectedHash) return 0;
+  // A build that failed for an earlier commit is overtaken too: the later
+  // commit's build carried its change live. Only within a day, so an old
+  // failure is not rewritten long after anybody looked at it.
   const { count } = await prisma.publishJob.updateMany({
-    where: { siteId: job.siteId, id: { not: job.id }, state: { in: WAITING_STATES }, createdAt: { lt: job.createdAt } },
-    data: { state: "COMPLETED", verifiedAt: now, finishedAt: now, nextCheckAt: null, lastError: null },
+    where: {
+      siteId: job.siteId,
+      id: { not: job.id },
+      createdAt: { lt: job.createdAt, gt: new Date(now.getTime() - GIVE_UP_AFTER_MS) },
+      state: { in: [...WAITING_STATES, "DEPLOY_FAILED"] },
+    },
+    data: { state: "COMPLETED", verifiedAt: now, finishedAt: now, nextCheckAt: null, lastError: null, stage: "live" },
   });
   return count;
 }
@@ -448,6 +528,14 @@ export function publishJobView(job: PublishJob, context: { github?: GithubHealth
     notice,
     /** Still waiting two hours on: the host is late, not failed. */
     late,
+    /** Which route made it live, and the faster one that failed first. See websitePublishRouter.ts. */
+    route: job.route,
+    fallbackFrom: job.fallbackFrom,
+    routeLog: Array.isArray(job.routeLog) ? job.routeLog : [],
+    /** What the host says it is doing: queued, building, deploying, live, failed. */
+    stage: job.stage,
+    stageTimes: (job.stageTimes ?? {}) as Record<string, string>,
+    hostMessage: job.hostMessage,
     stateLabel: notice
       ? notice
       : late

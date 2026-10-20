@@ -4528,6 +4528,22 @@ model Site {
   /// under it, once this passes. See services/websiteDeletion.ts.
   deletionScheduledFor DateTime?
 
+  /// --- How a publish goes live (services/websitePublishRouter.ts) ----------
+  /// What detection found out about the host, and which faster routes this site
+  /// has connected or switched off. Null until it has been detected once. See
+  /// services/websiteDeployDetect.ts for the shape.
+  deployProfile Json?
+  /// The host's deploy hook URL, encrypted with lib/secrets. It is a secret: the
+  /// URL alone starts a build. Never returned whole.
+  deployHookSecret String?
+  /// The customer's installation of the second, opt-in GitHub App (DakyX
+  /// Pages), which alone holds Workflows and Pages write. See
+  /// services/publishRoutes/pagesActions.ts.
+  githubPagesInstallationId String?
+
+  hostConnections SiteHostConnection[]
+  edgeBridge      EdgeBridge?
+
   pages          SitePage[]
   sharedElements SharedElement[]
   publishJobs    PublishJob[]
@@ -4886,8 +4902,102 @@ model PublishJob {
   updatedAt  DateTime  @updatedAt
   finishedAt DateTime?
 
+  /// Which route made it live: `bridge`, `direct`, `pages`, `hook` or `follow`
+  /// (the host's own deploy). Set by services/websitePublishRouter.ts.
+  route        String?
+  /// The faster route that was tried and failed first, when one did.
+  fallbackFrom String?
+  /// Every route tried, with how it went and how long it took.
+  routeLog     Json      @default("[]")
+  /// What the host says it is doing with the commit: queued, building,
+  /// deploying, live or failed. Read from GitHub's records of the deploy.
+  stage        String?
+  /// When each stage was first seen, as ISO strings keyed by stage.
+  stageTimes   Json      @default("{}")
+  /// The host's own words when it reports a failure.
+  hostMessage  String?
+
   @@index([siteId, createdAt])
   @@index([state, nextCheckAt])
+}
+
+/// A customer's sign-in to their host (Netlify, Vercel), made once through the
+/// host's own OAuth screen, so a publish can upload straight to the host.
+/// Route A in services/websitePublishRouter.ts.
+model SiteHostConnection {
+  id     String @id @default(cuid())
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId String
+  /// `netlify` or `vercel`.
+  provider String
+  /// The host's own id for the site or project, once it has been matched.
+  externalSiteId String?
+  externalName   String?
+  /// Vercel: the team the integration was installed on, and its configuration.
+  teamId          String?
+  configurationId String?
+  /// Encrypted with lib/secrets. Never returned by a route.
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+  connectedById String?
+  /// Set when the token stopped working; the route is skipped until reconnected.
+  pausedAt     DateTime?
+  pausedReason String?
+  lastUsedAt   DateTime?
+  /// Vercel: each file's SHA-1 by path and Git blob id, from the last direct
+  /// deploy, so the next one only reads the files that changed.
+  manifest     Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([siteId, provider])
+}
+
+/// Route B: the edge bridge in front of a customer's own host. The Worker in
+/// `edge/` serves a just-published page from here until the host has rebuilt.
+model EdgeBridge {
+  id     String @id @default(cuid())
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId String @unique
+  /// The customer's hostname, e.g. `www.example.com`.
+  hostname String @unique
+  /// Where the host itself serves the site; the Worker passes requests here.
+  origin   String
+  /// `pending-dns`, `active` or `disabled`.
+  status   String @default("pending-dns")
+  /// Cloudflare for SaaS custom hostname id, and the certificate's state.
+  cloudflareHostnameId String?
+  sslStatus            String?
+  lastCheckedAt  DateTime?
+  activatedAt    DateTime?
+  disabledReason String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entries EdgeBridgeEntry[]
+}
+
+/// One file the bridge is serving ahead of the host.
+model EdgeBridgeEntry {
+  id           String     @id @default(cuid())
+  bridge       EdgeBridge @relation(fields: [bridgeId], references: [id], onDelete: Cascade)
+  bridgeId     String
+  publishJobId String?
+  /// The public path, e.g. `/about.html` or `/assets/site.css`.
+  path        String
+  commitSha   String
+  contentHash String
+  /// When the Worker forgets it unless it is renewed.
+  expiresAt   DateTime
+  /// Renewed while the host has not caught up, but never past this.
+  renewUntil  DateTime
+  alertedAt   DateTime?
+  clearedAt   DateTime?
+  createdAt   DateTime   @default(now())
+
+  @@index([bridgeId, path])
+  @@index([clearedAt, expiresAt])
 }
 
 enum PublishJobState {
