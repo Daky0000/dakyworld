@@ -35,6 +35,8 @@ export type PublishJobStatus = {
   hostMessage?: string | null;
   /** Which route made it live: bridge, direct, pages, hook or follow. */
   route?: string | null;
+  /** How long this site's host usually takes, in seconds. */
+  typicalSeconds?: number | null;
 };
 
 const WAITING = new Set(["QUEUED", "VALIDATING", "COMMITTING", "COMMITTED", "DEPLOYING", "VERIFYING"]);

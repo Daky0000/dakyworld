@@ -514,24 +514,8 @@ export const SETTING = {
   VERCEL_INTEGRATION_SLUG: "vercel.integrationSlug",
 
   /**
-   * Route B: the edge bridge. `BRIDGE_ADMIN_URL` is the Worker's admin address
-   * and `BRIDGE_ADMIN_TOKEN` the shared secret it checks; the Cloudflare token
-   * and zone are for Cloudflare for SaaS custom hostnames; the CNAME target is
-   * what a customer points their domain at. See edge/README.md.
-   */
-  BRIDGE_ADMIN_URL: "bridge.adminUrl",
-  BRIDGE_ADMIN_TOKEN: "bridge.adminToken",
-  /** The Worker's BYPASS_TOKEN: sent when the watcher needs to see the host's own copy. */
-  BRIDGE_BYPASS_TOKEN: "bridge.bypassToken",
-  BRIDGE_CNAME_TARGET: "bridge.cnameTarget",
-  CLOUDFLARE_API_TOKEN: "cloudflare.apiToken",
-  CLOUDFLARE_ZONE_ID: "cloudflare.zoneId",
-  /** Domain Connect, once the DakyX template is accepted by a DNS provider. */
-  DOMAIN_CONNECT_PROVIDER_ID: "domainConnect.providerId",
-  DOMAIN_CONNECT_SERVICE_ID: "domainConnect.serviceId",
-  /**
    * The global off switch for the faster publish routes: a comma-separated list
-   * of `bridge`, `direct`, `pages`, `hook`. Following the host's own deploy is
+   * of `direct`, `pages`, `hook`. Following the host's own deploy is
    * never switched off; it is what every route falls back to.
    */
   PUBLISH_ROUTES_DISABLED: "publishRoutes.disabled",
@@ -904,14 +888,6 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.VERCEL_CLIENT_ID]: "VERCEL_CLIENT_ID",
   [SETTING.VERCEL_CLIENT_SECRET]: "VERCEL_CLIENT_SECRET",
   [SETTING.VERCEL_INTEGRATION_SLUG]: "VERCEL_INTEGRATION_SLUG",
-  [SETTING.BRIDGE_ADMIN_URL]: "BRIDGE_ADMIN_URL",
-  [SETTING.BRIDGE_ADMIN_TOKEN]: "BRIDGE_ADMIN_TOKEN",
-  [SETTING.BRIDGE_BYPASS_TOKEN]: "BRIDGE_BYPASS_TOKEN",
-  [SETTING.BRIDGE_CNAME_TARGET]: "BRIDGE_CNAME_TARGET",
-  [SETTING.CLOUDFLARE_API_TOKEN]: "CLOUDFLARE_API_TOKEN",
-  [SETTING.CLOUDFLARE_ZONE_ID]: "CLOUDFLARE_ZONE_ID",
-  [SETTING.DOMAIN_CONNECT_PROVIDER_ID]: "DOMAIN_CONNECT_PROVIDER_ID",
-  [SETTING.DOMAIN_CONNECT_SERVICE_ID]: "DOMAIN_CONNECT_SERVICE_ID",
   [SETTING.PUBLISH_ROUTES_DISABLED]: "PUBLISH_ROUTES_DISABLED",
   [SETTING.GOOGLE_CALENDAR_ID]: "GOOGLE_CALENDAR_ID",
   // Pinning this one from the deploy is the difference between rotating the

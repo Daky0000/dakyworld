@@ -64,6 +64,9 @@ const ALLOWED = [
   /`-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----`/,
   /postgres(?:ql)?:\/\/postgres:postgres@/,
   /postgres(?:ql)?:\/\/user:password@/,
+  // The browser checks' stand-in database: port 1 on loopback, which nothing
+  // ever listens on, so it can never reach a real database.
+  /postgres(?:ql)?:\/\/checks:[^\s@"']+@127\.0\.0\.1:1\/checks/,
   /postgres(?:ql)?:\/\/[^\s:@"']+:(?:password|changeme|your[-_]?password|hunter2|xxx+|\.\.\.)@/i,
   /sk-ant-(?:api03-)?(?:xxx|your|example|placeholder|check|not-a-real|\.\.\.)/i,
   /sk-(?:xxx|your|example|placeholder|\.\.\.)/i,

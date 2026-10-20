@@ -148,7 +148,7 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
   if (/^\/sites\/[^/]+\/config\/?$/.test(path)) return "manage";
   // A customer's host account and their domain's DNS: managing, even to read
   // (the candidates list names every site on their host account).
-  if (/^\/sites\/[^/]+\/(?:connect|bridge)(?:\/|$)/.test(path)) return "manage";
+  if (/^\/sites\/[^/]+\/connect(?:\/|$)/.test(path)) return "manage";
   if (method === "GET" || method === "HEAD" || /\/presence\/?$/.test(path)) return "view";
   // How the site goes live: anybody on the site may read it (the editor warns
   // about a branch mismatch from it); changing it is managing.
@@ -190,7 +190,7 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
 }
 
 /** Routes about the signed-in account rather than one website. Their handlers scope themselves. */
-const ACCOUNT_ROUTES = /^\/(?:subscription(?:\/(?:cancel|manage))?|setup-assistance|help|starter-templates|balance(?:\/.*)?|activity(?:\/.*)?|escalations(?:\/[^/]+)?|github\/(?:connect|callback)|github-pages\/callback|connect\/(?:netlify|vercel)\/callback|bridge\/connected)\/?$/;
+const ACCOUNT_ROUTES = /^\/(?:subscription(?:\/(?:cancel|manage))?|setup-assistance|help|starter-templates|balance(?:\/.*)?|activity(?:\/.*)?|escalations(?:\/[^/]+)?|github\/(?:connect|callback)|github-pages\/callback|connect\/(?:netlify|vercel)\/callback)\/?$/;
 
 /**
  * Whether the gate answers a path without classifying it — account routes, the

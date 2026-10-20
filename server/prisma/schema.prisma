@@ -773,7 +773,6 @@ model DemoVisit {
   @@index([createdAt])
 }
 
-
 /// One run of the website audit team over one site.
 ///
 /// Four reviewers — UI/UX, speed and findability, content, security — look at
@@ -4542,7 +4541,6 @@ model Site {
   githubPagesInstallationId String?
 
   hostConnections SiteHostConnection[]
-  edgeBridge      EdgeBridge?
 
   pages          SitePage[]
   sharedElements SharedElement[]
@@ -4952,52 +4950,6 @@ model SiteHostConnection {
   updatedAt DateTime @updatedAt
 
   @@unique([siteId, provider])
-}
-
-/// Route B: the edge bridge in front of a customer's own host. The Worker in
-/// `edge/` serves a just-published page from here until the host has rebuilt.
-model EdgeBridge {
-  id     String @id @default(cuid())
-  site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  siteId String @unique
-  /// The customer's hostname, e.g. `www.example.com`.
-  hostname String @unique
-  /// Where the host itself serves the site; the Worker passes requests here.
-  origin   String
-  /// `pending-dns`, `active` or `disabled`.
-  status   String @default("pending-dns")
-  /// Cloudflare for SaaS custom hostname id, and the certificate's state.
-  cloudflareHostnameId String?
-  sslStatus            String?
-  lastCheckedAt  DateTime?
-  activatedAt    DateTime?
-  disabledReason String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  entries EdgeBridgeEntry[]
-}
-
-/// One file the bridge is serving ahead of the host.
-model EdgeBridgeEntry {
-  id           String     @id @default(cuid())
-  bridge       EdgeBridge @relation(fields: [bridgeId], references: [id], onDelete: Cascade)
-  bridgeId     String
-  publishJobId String?
-  /// The public path, e.g. `/about.html` or `/assets/site.css`.
-  path        String
-  commitSha   String
-  contentHash String
-  /// When the Worker forgets it unless it is renewed.
-  expiresAt   DateTime
-  /// Renewed while the host has not caught up, but never past this.
-  renewUntil  DateTime
-  alertedAt   DateTime?
-  clearedAt   DateTime?
-  createdAt   DateTime   @default(now())
-
-  @@index([bridgeId, path])
-  @@index([clearedAt, expiresAt])
 }
 
 enum PublishJobState {

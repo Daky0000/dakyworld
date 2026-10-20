@@ -5,8 +5,7 @@
  *
  * Detection, the host's progress, the failure and retry rule, which route gets
  * the credit, the deploy hook, both direct uploads against a recorded host, the
- * "Make updates instant" card, the signed connect state, and the edge Worker
- * itself, run against an in-memory Durable Object. Nothing here can leave the
+ * "Make updates instant" card and the signed connect state. Nothing here can leave the
  * machine: every outbound request is answered by a stub, and an unexpected one
  * fails the check.
  */
@@ -33,9 +32,7 @@ const { hostFetch } = await import("../src/services/publishRoutes/hostApi.js");
 const { matchCandidates } = await import("../src/services/publishRoutes/hostConnect.js");
 const { instantOffer } = await import("../src/services/websiteDeployRoutes.js");
 const { signState, readState } = await import("../src/lib/signedState.js");
-const bridge = await import("../src/services/websiteEdgeBridge.js");
 const { pagesWorkflow } = await import("../src/services/publishRoutes/pagesActions.js");
-const worker = await import("../edge/src/worker.js");
 const { websiteRequestAction, websiteGateHandlesDirectly } = await import("../src/services/websiteAccess.js");
 
 type Evidence = import("../src/services/websiteDeployDetect.js").Evidence;
@@ -83,7 +80,7 @@ equal("block-form branches are read too", detect.readWorkflow("on:\n  push:\n   
 equal("GitHub Pages' addresses are recognised", detect.hostFromDns([], ["185.199.110.153"]), "github-pages");
 equal("and Vercel's CNAME", detect.hostFromDns(["cname.vercel-dns.com."], []), "vercel");
 check("a preview deployment is not production", !detect.isProductionEnvironment("Preview") && detect.isProductionEnvironment("Production") && detect.isProductionEnvironment("github-pages"));
-equal("a stored profile with junk in it is read safely", detect.deployProfileOf({ deployProfile: { host: "vercel", disabledRoutes: ["bridge", "teleport"] } } as never)?.disabledRoutes, ["bridge"]);
+equal("a stored profile with junk in it is read safely", detect.deployProfileOf({ deployProfile: { host: "vercel", disabledRoutes: ["hook", "teleport", "bridge"] } } as never)?.disabledRoutes, ["hook"]);
 
 /* ---------------------------------------------------- what the host is doing */
 
@@ -104,13 +101,13 @@ equal("a host that cannot be asked again has failed", decideHostFailure({ github
 
 /* --------------------------------------------------------- the router */
 
-const ok = (route: "bridge" | "direct" | "pages" | "hook") => ({ route, ok: true, ms: 1, detail: "", at: "" });
-const bad = (route: "bridge" | "direct" | "pages" | "hook") => ({ route, ok: false, ms: 1, detail: "", at: "" });
+const ok = (route: "direct" | "pages" | "hook") => ({ route, ok: true, ms: 1, detail: "", at: "" });
+const bad = (route: "direct" | "pages" | "hook") => ({ route, ok: false, ms: 1, detail: "", at: "" });
 equal("nothing faster means the host's own deploy", settleRoutes([]), { route: "follow", fallbackFrom: null });
-equal("the bridge takes the credit when it worked", settleRoutes([ok("bridge"), ok("hook")]), { route: "bridge", fallbackFrom: null });
+equal("a direct upload takes the credit over the hook", settleRoutes([ok("direct"), ok("hook")]), { route: "direct", fallbackFrom: null });
 equal("a failed direct upload falls back, and says so", settleRoutes([bad("direct")]), { route: "follow", fallbackFrom: "direct" });
-equal("a failed bridge with a working hook names both", settleRoutes([bad("bridge"), ok("hook")]), { route: "hook", fallbackFrom: "bridge" });
-const slow = await tryRoute("bridge", () => new Promise<string>((resolve) => setTimeout(() => resolve("late"), 200)), 20);
+equal("a failed direct upload with a working hook names both", settleRoutes([bad("direct"), ok("hook")]), { route: "hook", fallbackFrom: "direct" });
+const slow = await tryRoute("direct", () => new Promise<string>((resolve) => setTimeout(() => resolve("late"), 200)), 20);
 check("a route that runs out of time is recorded as failed, not waited on", !slow.ok && /gave up/.test(slow.detail));
 const thrown = await tryRoute("direct", async () => { throw new Error("token revoked"); });
 equal("a route that throws never throws out of the router", [thrown.ok, thrown.detail], [false, "token revoked"]);
@@ -224,17 +221,16 @@ equal("an expired state is refused", readState(signState({ site: "s1", user: "u1
 /* ---------------------------------------------- the "Make updates instant" card */
 
 const profile = (over: Partial<import("../src/services/websiteDeployDetect.js").DeployProfile>) => ({ host: "unknown", answer: "auto", evidence: [], hasBuildStep: false, lastCheckedAt: "", missingAccess: [], routes: {}, disabledRoutes: [], ...over }) as import("../src/services/websiteDeployDetect.js").DeployProfile;
-const everything = { netlify: true, vercel: true, pages: true, bridge: true };
-const nothingOn = { direct: null, pages: false, bridge: false };
+const everything = { netlify: true, vercel: true, pages: true };
+const nothingOn = { direct: null, pages: false };
 equal("Netlify with no build is offered Connect Netlify", instantOffer({ profile: profile({ host: "netlify" }), available: everything, active: nothingOn }).button, "Connect Netlify");
 equal("Vercel with no build, Connect Vercel", instantOffer({ profile: profile({ host: "vercel" }), available: everything, active: nothingOn }).button, "Connect Vercel");
 const built = instantOffer({ profile: profile({ host: "vercel", hasBuildStep: true, typicalSeconds: 42 }), available: everything, active: nothingOn });
 equal("a site with a build step is told how long it takes, with no button", [built.kind, built.button, /about 42 seconds/.test(built.text ?? "")], ["build-step", null, true]);
-equal("GitHub Pages is offered the bridge", instantOffer({ profile: profile({ host: "github-pages" }), available: everything, active: nothingOn }).kind, "bridge");
-equal("or fast Pages when the bridge is not built", instantOffer({ profile: profile({ host: "github-pages" }), available: { ...everything, bridge: false }, active: nothingOn }).kind, "pages");
-equal("but never fast Pages for a Jekyll site", instantOffer({ profile: profile({ host: "github-pages", pages: { buildType: "legacy", noJekyll: false, jekyllContent: true } }), available: { ...everything, bridge: false }, active: nothingOn }).kind, null);
-equal("Hostinger is offered the bridge", instantOffer({ profile: profile({ host: "hostinger" }), available: everything, active: nothingOn }).button, "Make instant");
-equal("a route already on says so", instantOffer({ profile: profile({ host: "netlify" }), available: everything, active: { direct: "netlify", pages: false, bridge: false } }).active, true);
+equal("GitHub Pages is offered fast Pages", instantOffer({ profile: profile({ host: "github-pages" }), available: everything, active: nothingOn }).kind, "pages");
+equal("but never for a Jekyll site", instantOffer({ profile: profile({ host: "github-pages", pages: { buildType: "legacy", noJekyll: false, jekyllContent: true } }), available: everything, active: nothingOn }).kind, null);
+equal("Hostinger is offered nothing that would put DakyX in front of the site", instantOffer({ profile: profile({ host: "hostinger" }), available: everything, active: nothingOn }).kind, null);
+equal("a route already on says so", instantOffer({ profile: profile({ host: "netlify" }), available: everything, active: { direct: "netlify", pages: false } }).active, true);
 equal("nothing detected yet, nothing offered", instantOffer({ profile: null, available: everything, active: nothingOn }).kind, null);
 
 /* ------------------------------------------------------------ Route P */
@@ -245,96 +241,13 @@ check("on pushes to the publishing branch only", /branches: \["main"\]/.test(wor
 check("and the root when Pages serves the root", /path: "\."/.test(pagesWorkflow("main", "/")));
 equal("and detection recognises it as a Pages deploy", detect.readWorkflow(workflow).host, "github-pages");
 
-/* -------------------------------------------------------- the bridge, OS side */
-
-equal("bridged files are the served paths, folder stripped, hidden files and other folders left out",
-  bridge.bridgedPaths([{ path: "docs/index.html", content: page }, { path: "docs/.nojekyll", content: Buffer.from("") }, { path: "server/x.ts", content: page }, { path: "docs/gone.html", content: null }], "docs").map((file) => file.path), ["/index.html"]);
-equal("stylesheets keep their type", bridge.contentTypeFor("/assets/site.css"), "text/css; charset=utf-8");
-equal("the GitHub Pages origin for a project site", bridge.defaultOrigin({ repoOwner: "Fixture", repoName: "site", publicUrl: "" }, profile({ host: "github-pages" })), "https://fixture.github.io/site");
-equal("and for a user site", bridge.defaultOrigin({ repoOwner: "fixture", repoName: "fixture.github.io", publicUrl: "" }, profile({ host: "github-pages" })), "https://fixture.github.io");
-const dnsSteps = bridge.bridgeDnsInstructions("example.com", "abc", "edge.dakyxsites.com");
-check("a root domain is told about ALIAS records and forwarding", dnsSteps.apex && /ALIAS/.test(dnsSteps.guidance ?? ""));
-check("and promised that email is not touched", /MX/.test(dnsSteps.untouched));
-check("a CNAME with a trailing dot still counts as pointed", bridge.pointsAtEdge(["edge.dakyxsites.com."], "edge.dakyxsites.com"));
-
-/* ------------------------------------------------------- the Worker itself */
-
-class MemoryStorage {
-  map = new Map<string, unknown>();
-  alarm: number | null = null;
-  async get<T>(key: string) { return this.map.get(key) as T | undefined; }
-  async put(key: string, value: unknown) { this.map.set(key, structuredClone(value)); }
-  async delete(key: string | string[]) { for (const entry of Array.isArray(key) ? key : [key]) this.map.delete(entry); return true; }
-  async list<T>(options: { prefix?: string } = {}) { return new Map([...this.map].filter(([key]) => key.startsWith(options.prefix ?? "")) as Array<[string, T]>); }
-  async setAlarm(at: number) { this.alarm = at; }
-  async getAlarm() { return this.alarm; }
-}
-const objects = new Map<string, InstanceType<typeof worker.SiteBridge>>();
-let doBroken = false;
-const env = {
-  ADMIN_TOKEN: "admin-secret", ADMIN_HOST: "bridge-admin.test", BYPASS_TOKEN: "bypass-secret",
-  BRIDGE: {
-    idFromName: (name: string) => name,
-    get: (id: unknown) => ({
-      fetch: async (input: string | Request, init?: RequestInit) => {
-        if (doBroken) throw new Error("storage is down");
-        const key = String(id);
-        if (!objects.has(key)) objects.set(key, new worker.SiteBridge({ storage: new MemoryStorage() }));
-        return objects.get(key)!.fetch(input instanceof Request ? input : new Request(input, init));
-      },
-    }),
-  },
-};
-const originHits: string[] = [];
-const origin = (async (input: string | URL | Request) => {
-  const url = String(input instanceof Request ? input.url : input);
-  originHits.push(url);
-  if (url.endsWith("/moved")) return new Response(null, { status: 301, headers: { location: "https://fixture.github.io/site/elsewhere" } });
-  return new Response("<h1>The host's copy</h1>", { headers: { "content-type": "text/html", "cache-control": "max-age=600" } });
-}) as typeof fetch;
-const adminCall = (path: string, init: RequestInit = {}) => worker.handle(new Request(`https://bridge-admin.test${path}`, { ...init, headers: { authorization: "Bearer admin-secret", ...(init.headers ?? {}) } }), env as never, origin);
-const visit = (path: string, headers: Record<string, string> = {}) => worker.handle(new Request(`https://www.example.com${path}`, { headers }), env as never, origin);
-
-equal("the admin API refuses a request without the token", (await worker.handle(new Request("https://bridge-admin.test/v1/hosts/www.example.com/status"), env as never, origin)).status, 401);
-await adminCall("/v1/hosts/www.example.com/config", { method: "PUT", body: JSON.stringify({ hostname: "www.example.com", origin: "https://fixture.github.io/site", siteId: "s1" }), headers: { "content-type": "application/json" } });
-let response = await visit("/about.html");
-equal("with nothing bridged, a visit passes through to the host", await response.text(), "<h1>The host's copy</h1>");
-equal("at the host's own address, path intact", originHits.at(-1), "https://fixture.github.io/site/about.html");
-equal("and a page is always revalidated", response.headers.get("cache-control"), "no-cache");
-await adminCall("/v1/hosts/www.example.com/object?path=%2Fabout.html&ttl=60000", { method: "PUT", body: page, headers: { "content-type": "text/html; charset=utf-8", "x-dakyx-commit": "c0ffee" } });
-response = await visit("/about");
-equal("a bridged page is served the moment it is written, even without .html", await response.text(), "<h1>New words</h1>");
-equal("marked as the bridge's", response.headers.get("x-dakyx-bridge"), "hit");
-response = await visit("/about.html", { "x-dakyx-bridge-bypass": "bypass-secret" });
-equal("the watcher's bypass header sees the host's copy instead", await response.text(), "<h1>The host's copy</h1>");
-response = await visit("/about.html", { "x-dakyx-bridge-bypass": "a-guess" });
-equal("and a wrong bypass header does not", await response.text(), "<h1>New words</h1>");
-response = await visit("/moved");
-equal("a host redirect to its own address stays on the customer's domain", response.headers.get("location"), "https://www.example.com/elsewhere");
-const status = await (await adminCall("/v1/hosts/www.example.com/status")).json() as { objects: Array<{ path: string; expiresAt: number }> };
-equal("status lists what is bridged", status.objects.map((entry) => entry.path), ["/about.html"]);
-const renewed = await (await adminCall("/v1/hosts/www.example.com/renew", { method: "POST", body: JSON.stringify({ paths: ["/about.html"], ttl: 2 * 60 * 60_000 }) })).json() as { renewed: number };
-equal("a file can be renewed", renewed.renewed, 1);
-await adminCall("/v1/hosts/www.example.com/object?path=%2Fabout.html", { method: "DELETE" });
-equal("and once deleted, the host's copy is back", await (await visit("/about.html")).text(), "<h1>The host's copy</h1>");
-const tooBig = await adminCall("/v1/hosts/www.example.com/object?path=%2Fbig.jpg", { method: "PUT", body: Buffer.alloc(worker.MAX_OBJECT_BYTES + 1) });
-equal("a file too large for storage is refused, and left to the host", tooBig.status, 413);
-await adminCall("/v1/hosts/www.example.com/object?path=%2Fold.html&ttl=1", { method: "PUT", body: page, headers: { "content-type": "text/html" } });
-await new Promise((resolve) => setTimeout(resolve, 5));
-equal("an expired file is not served", await (await visit("/old.html")).text(), "<h1>The host's copy</h1>");
-doBroken = true;
-equal("with its storage down, the Worker still passes visitors to the host", await (await visit("/about.html")).text(), "<h1>The host's copy</h1>");
-doBroken = false;
-equal("a hostname with no config at all goes Cloudflare's own way", (await worker.handle(new Request("https://unknown.example.org/"), env as never, origin)).status, 200);
-equal("a directory path looks for its index", worker.candidatePaths("/blog/"), ["/blog/index.html", "/blog/"]);
-
 /* ----------------------------------------------------- who may do what */
 
 equal("reading how a site goes live is for anybody on it", websiteRequestAction("GET", "/sites/s1/deploy"), "view");
 equal("changing it is managing", websiteRequestAction("PUT", "/sites/s1/deploy/hook"), "manage");
 equal("even reading a host account's site list is managing", websiteRequestAction("GET", "/sites/s1/connect/netlify/candidates"), "manage");
-equal("as is the bridge", websiteRequestAction("POST", "/sites/s1/bridge/check"), "manage");
-check("the hosts' callbacks are account routes, checked in their handlers", websiteGateHandlesDirectly("GET", "/connect/netlify/callback") && websiteGateHandlesDirectly("GET", "/github-pages/callback") && websiteGateHandlesDirectly("GET", "/bridge/connected"));
+equal("the removed bridge routes are refused for everybody", websiteRequestAction("POST", "/sites/s1/bridge/check"), null);
+check("the hosts' callbacks are account routes, checked in their handlers", websiteGateHandlesDirectly("GET", "/connect/netlify/callback") && websiteGateHandlesDirectly("GET", "/github-pages/callback") && !websiteGateHandlesDirectly("GET", "/bridge/connected"));
 check("but not for a made-up host", !websiteGateHandlesDirectly("GET", "/connect/heroku/callback"));
 
-console.log(`publishRouter: ${checks} checks — detection, the host's progress, retry once and never during an outage, routes that fall back, the deploy hook, both direct uploads against a recorded host, the instant card, signed connect state, and the edge Worker failing open`);
+console.log(`publishRouter: ${checks} checks — detection, the host's progress, retry once and never during an outage, routes that fall back, the deploy hook, both direct uploads against a recorded host, the instant card and signed connect state`);

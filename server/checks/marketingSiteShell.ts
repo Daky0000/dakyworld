@@ -101,6 +101,9 @@ const expected = navOnly(scriptNav).join(" ");
 
 for (const page of pages) {
   const html = readFileSync(join(root, page), "utf8");
+  // A redirect stub (user-data-deletion.html sends people to /data-deletion)
+  // is never seen long enough to need a header, so it carries none.
+  if (/<meta http-equiv="refresh"/i.test(html)) continue;
 
   const markupNav = linksWithin(html, /<nav class="main-nav"/, "</nav>");
   if (markupNav === null) {

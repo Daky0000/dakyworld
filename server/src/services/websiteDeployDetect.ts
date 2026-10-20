@@ -39,8 +39,8 @@ import { siteRepo, underSiteCredential } from "./website/site.js";
 
 export type DeployHost = "github-pages" | "vercel" | "netlify" | "cloudflare-pages" | "hostinger" | "render" | "unknown";
 export type DeployAnswer = "auto" | "needs-hook" | "branch-mismatch" | "unsure";
-export type FastRoute = "bridge" | "direct" | "pages" | "hook";
-export const FAST_ROUTES: readonly FastRoute[] = ["bridge", "direct", "pages", "hook"];
+export type FastRoute = "direct" | "pages" | "hook";
+export const FAST_ROUTES: readonly FastRoute[] = ["direct", "pages", "hook"];
 
 export type EvidenceKind = "headers" | "dns" | "deployments" | "checks" | "statuses" | "pages" | "hooks" | "files" | "workflows" | "observed";
 
@@ -93,6 +93,10 @@ export type DeployProfile = {
   };
   /** Faster routes switched off for this site. Kept across detections. */
   disabledRoutes: FastRoute[];
+  /** The branch publishing writes to is not in the repository: every publish would fail. */
+  branchMissing?: boolean;
+  /** The credential the site publishes with cannot write to the repository. null: not known. */
+  canWrite?: boolean | null;
   /** Where GitHub Pages built from before Route P switched it, for undo. Kept across detections. */
   pagesPrevious?: { branch: string; folder: string };
 };
@@ -118,6 +122,8 @@ export function deployProfileOf(site: Pick<Site, "deployProfile">): DeployProfil
     routes: raw.routes ?? {},
     disabledRoutes: Array.isArray(raw.disabledRoutes) ? raw.disabledRoutes.filter((route): route is FastRoute => FAST_ROUTES.includes(route as FastRoute)) : [],
     pagesPrevious: raw.pagesPrevious,
+    branchMissing: raw.branchMissing,
+    canWrite: raw.canWrite,
   };
 }
 
@@ -368,6 +374,8 @@ async function servingEvidence(publicUrl: string, lookup: DnsLookup): Promise<Ev
 
 type GithubFacts = {
   evidence: Evidence[];
+  branchMissing: boolean;
+  canWrite: boolean | null;
   pages?: PagesFacts;
   files: string[] | null;
   read: (path: string) => Promise<string | null>;
@@ -379,6 +387,22 @@ async function githubEvidence(site: Site, repo: string, missing: Set<string>): P
   const evidence: Evidence[] = [];
   const full = await repoFullName(repo);
   const branch = site.repoBranch;
+
+  // The two setup problems that make every publish fail, found before anybody publishes.
+  let branchMissing = false;
+  try {
+    await githubRead(`/repos/${full}/branches/${encodeURIComponent(branch)}`);
+  } catch (error) {
+    if (error instanceof GitHubError && error.status === 404) {
+      branchMissing = true;
+      evidence.push({ kind: "files", detail: `Branch ${branch} is not in the repository, so a publish has nowhere to go.` });
+    }
+  }
+  const info = await attempt("contents", missing, () => githubRead<{ permissions?: { push?: boolean } }>(`/repos/${full}`));
+  // A personal token reports what it may do; an app installation does not, and
+  // holds Contents write by definition.
+  const canWrite = typeof info?.permissions?.push === "boolean" ? info.permissions.push : null;
+  if (canWrite === false) evidence.push({ kind: "files", detail: "The access DakyX publishes with can read this repository but not write to it." });
 
   const listing = await attempt("contents", missing, () => listRepoFiles(repo, branch));
   const files = listing ? listing.files : null;
@@ -468,7 +492,7 @@ async function githubEvidence(site: Site, repo: string, missing: Set<string>): P
   const named: Array<[string, DeployHost]> = [["netlify.toml", "netlify"], ["vercel.json", "vercel"], ["wrangler.toml", "cloudflare-pages"], ["wrangler.json", "cloudflare-pages"], ["render.yaml", "render"], ["CNAME", "github-pages"]];
   for (const [path, host] of named) if (has(path)) evidence.push({ kind: "files", host, detail: `The repository has ${path}.` });
 
-  return { evidence, pages, files, read, workflowInstalled: workflowInstalled && pages?.buildType === "workflow" };
+  return { evidence, branchMissing, canWrite, pages, files, read, workflowInstalled: workflowInstalled && pages?.buildType === "workflow" };
 }
 
 /** What the last publishes did. */
@@ -530,6 +554,8 @@ export async function detectDeployProfile(site: Site, options: { dnsLookup?: Dns
     routes: { pages: github ? { workflowInstalled: github.workflowInstalled } : previous?.routes.pages },
     disabledRoutes: previous?.disabledRoutes ?? [],
     pagesPrevious: previous?.pagesPrevious,
+    branchMissing: github?.branchMissing ?? false,
+    canWrite: github ? github.canWrite : null,
   };
 }
 

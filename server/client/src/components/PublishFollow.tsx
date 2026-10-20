@@ -10,6 +10,17 @@ const FAILED = new Set(["DEPLOY_FAILED", "VERIFY_FAILED"]);
 /** Offered once per person, after their first publish that took over a minute. */
 export const INSTANT_OFFER = "instant-offer";
 
+/** The live address with a throwaway query, so no cached copy answers. */
+export function freshUrl(address: string): string {
+  try {
+    const url = new URL(address);
+    url.searchParams.set("dakyx", Date.now().toString(36));
+    return url.href;
+  } catch {
+    return address;
+  }
+}
+
 /** "40 s", "3 min", "1 h 5 min". */
 export function tookFor(seconds: number): string {
   if (seconds < 90) return `${seconds} s`;
@@ -44,7 +55,8 @@ export function publishNote(status: PublishJobStatus | undefined): Note {
   if (status && FAILED.has(status.state)) {
     return { key: "failed", text: status.hostMessage ? `${status.label}. Your host said: ${status.hostMessage}` : status.label, tone: "wait", stay: true, link: true };
   }
-  return { key: "sent", text: "Changes sent. Your site rebuilds in a few minutes.", tone: "done", link: true };
+  const usual = status?.typicalSeconds ? `usually live in about ${tookFor(status.typicalSeconds)}` : "your site rebuilds in a few minutes";
+  return { key: "sent", text: `Changes sent. ${usual[0]!.toUpperCase()}${usual.slice(1)}.`, tone: "done", link: true };
 }
 
 /**
@@ -77,7 +89,7 @@ export function PublishFollow({ siteId, jobId, liveUrl, canManage = false }: { s
     retry: 1,
   });
 
-  const slow = job.data?.state === "COMPLETED" && (job.data.deployedInSeconds ?? 0) > 60 && job.data.route !== "bridge" && job.data.route !== "direct";
+  const slow = job.data?.state === "COMPLETED" && (job.data.deployedInSeconds ?? 0) > 60 && job.data.route !== "direct";
   const wantOffer = slow && canManage && !tourSeen(uiState, INSTANT_OFFER);
   const deploy = useQuery({
     queryKey: ["website", "deploy", siteId],
@@ -93,12 +105,15 @@ export function PublishFollow({ siteId, jobId, liveUrl, canManage = false }: { s
   const note: Note = offer && base.key === "live" ? { ...base, key: "live-offer", text: `${base.text}. ${offer.text}`, stay: true } : base;
   if (dismissed.has(note.key)) return null;
   const dismiss = () => setDismissed((current) => new Set(current).add(note.key));
+  // Once it is live, the link asks past any copy the browser or the host's CDN
+  // kept, so it shows what is really there.
+  const live = liveUrl && job.data?.state === "COMPLETED" ? freshUrl(liveUrl) : liveUrl;
   return (
     <PublishedToast
       message={note.text}
       tone={note.tone}
       stay={note.stay}
-      href={note.key === "live-offer" ? `/website/settings?site=${encodeURIComponent(siteId)}` : note.link ? liveUrl || undefined : undefined}
+      href={note.key === "live-offer" ? `/website/settings?site=${encodeURIComponent(siteId)}` : note.link ? live || undefined : undefined}
       linkLabel={note.key === "live-offer" ? offer!.button! : "Open the live page"}
       onClose={dismiss}
     />

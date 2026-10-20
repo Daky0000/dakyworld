@@ -5,7 +5,6 @@ import { siteRepo } from "./website/site.js";
 import { deployProfileOf, FAST_ROUTES, type DeployProfile, type FastRoute } from "./websiteDeployDetect.js";
 import { callDeployHook, storedHook } from "./websiteDeployHook.js";
 import { directDeploy, directEligible } from "./publishRoutes/direct.js";
-import { bridgePublish, bridgeEligible } from "./websiteEdgeBridge.js";
 
 /**
  * Which way a publish goes live, chosen per site, after the commit.
@@ -15,8 +14,6 @@ import { bridgePublish, bridgeEligible } from "./websiteEdgeBridge.js";
  * has on day one with nothing set up (Route D, "follow the host"). On top of it,
  * a site may have faster routes, each an upgrade the customer turned on once:
  *
- * - **bridge** (Route B): the edge bridge serves the new files in front of the
- *   host within a second, until the host catches up;
  * - **direct** (Route A): the files are uploaded straight to Netlify or Vercel,
  *   for a site with no build step, through the customer's own sign-in;
  * - **pages** (Route P): GitHub Pages builds from DakyX's own workflow, which
@@ -24,7 +21,7 @@ import { bridgePublish, bridgeEligible } from "./websiteEdgeBridge.js";
  *   starts it. It is recorded so the activity screen can say which route ran;
  * - **hook**: the host's deploy hook, for a host that does not deploy on push.
  *
- * Routes stack. A bridged site still has its host deploy, and the watcher
+ * Routes stack. A directly uploaded site still has its host deploy, and the watcher
  * (websitePublishJobs.ts) follows every publish until the change is seen live,
  * whichever route got it there. A fast route that fails or runs out of time is
  * recorded as `fallbackFrom` and the publish carries on: nobody is asked to do
@@ -34,13 +31,18 @@ import { bridgePublish, bridgeEligible } from "./websiteEdgeBridge.js";
  * Every fast route can be switched off globally (SETTING.PUBLISH_ROUTES_DISABLED)
  * and per site (`deployProfile.disabledRoutes`). Following the host cannot be
  * switched off, because it is what all of them fall back to.
+ *
+ * Nothing here puts DakyX in a visitor's path. An edge bridge in front of the
+ * customer's host (the plan's Route B) was built and then removed on 20 Oct
+ * 2026 (Dan): it meant DakyX running infrastructure that every visit to a
+ * customer's site passes through, which is hosting in all but name.
  */
 
 export type RouteOutcome = { route: FastRoute; ok: boolean; ms: number; detail: string; at: string };
 
-const TIMEOUT_MS: Record<FastRoute, number> = { bridge: 10_000, direct: 60_000, pages: 1_000, hook: 50_000 };
+const TIMEOUT_MS: Record<FastRoute, number> = { direct: 60_000, pages: 1_000, hook: 50_000 };
 /** Which route takes the credit when several succeed: the one the visitor sees first. */
-const PRIORITY: readonly FastRoute[] = ["bridge", "direct", "pages", "hook"];
+const PRIORITY: readonly FastRoute[] = ["direct", "pages", "hook"];
 
 /** Routes switched off everywhere, from the setting or the deploy. */
 export async function globallyDisabledRoutes(): Promise<Set<FastRoute>> {
@@ -105,11 +107,6 @@ export async function dispatchPublish(jobId: string): Promise<RouteOutcome[]> {
   const profile = deployProfileOf(site);
   const off = await disabledRoutesFor(profile);
   const log: RouteOutcome[] = [];
-
-  // The bridge first: it is the one a visitor sees within a second.
-  if (!off.has("bridge") && (await bridgeEligible(site))) {
-    log.push(await tryRoute("bridge", () => bridgePublish(site, job)));
-  }
 
   if (!off.has("direct")) {
     const eligible = await directEligible(site, profile);

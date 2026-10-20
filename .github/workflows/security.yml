@@ -49,6 +49,11 @@ jobs:
         working-directory: server
       - run: npx prisma migrate deploy
         working-directory: server
+      # Two checks drive a real browser (hybridScraper and the screenshot
+      # capture). Without this they fail on every run, which made the whole
+      # job red and hid any real failure among them.
+      - run: npx playwright install --with-deps chromium
+        working-directory: server
       - run: npm run checks:types
         working-directory: server
       - run: npm run checks

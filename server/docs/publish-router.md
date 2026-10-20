@@ -10,7 +10,7 @@ falls back to following the host, so no publish is ever lost.
 
 ## The rules it keeps
 
-1. DakyX never hosts a repository-backed customer site. The customer's host always serves it.
+1. DakyX never hosts a repository-backed customer site. The customer's host always serves it, and nothing DakyX runs sits between a visitor and that host.
 2. Nothing extra happens on each publish. Any permission is given once, and every faster route is optional.
 3. Every site works on day one with no setup (Route D).
 4. Every fast route falls back to Route D, and the customer is told plainly.
@@ -28,16 +28,21 @@ their host account through the host's own sign-in. SFTP and FTP stay unsupported
 | **D · Follow** | Commit, then watch the host deploy it until the live page shows it | `websitePublishJobs.ts`, `websiteDeployDetect.ts`, `websiteDeployWatch.ts`, `websiteDeployHook.ts` | The six read permissions on the GitHub App (below). It works without them, with less to say |
 | **A · Direct** | Upload the changed files straight to Netlify or Vercel | `publishRoutes/direct*.ts`, `publishRoutes/hostConnect.ts` | A Netlify OAuth app and a Vercel Integration |
 | **P · Pages** | GitHub Pages builds from DakyX's own workflow, skipping Jekyll | `publishRoutes/pagesActions.ts` | The DakyX Pages GitHub App, and the timing test passing |
-| **B · Bridge** | A Cloudflare Worker serves the new files in front of the host within a second | `edge/`, `websiteEdgeBridge.ts` | A hosting domain on Cloudflare with Cloudflare for SaaS, and the Worker deployed |
+
+**Route B, the edge bridge, was built and then removed (Dan, 20 Oct 2026).** It
+put a Cloudflare Worker that DakyX runs in front of the customer's host, so every
+visit to their site passed through DakyX. That is hosting in all but name, and
+against rule 1. Its code is in the history at `ec0297a` if the question ever
+comes back.
 
 `websitePublishRouter.ts` runs the faster routes after every commit, in the
-order bridge, direct, pages, hook. It records on the publish job which route
-made the change live (`route`), the faster route that failed first
-(`fallbackFrom`), and every attempt (`routeLog`). The watcher follows every
-publish whatever route it took.
+order direct, pages, hook. It records on the publish job which route made the
+change live (`route`), the faster route that failed first (`fallbackFrom`), and
+every attempt (`routeLog`). The watcher follows every publish whatever route it
+took.
 
 **Off switches.**
-- Globally: `PUBLISH_ROUTES_DISABLED=bridge,direct,pages,hook`, as a Railway variable or a setting.
+- Globally: `PUBLISH_ROUTES_DISABLED=direct,pages,hook`, as a Railway variable or a setting.
 - Per site: the "Faster routes on this site" list in Website settings.
 - Following the host cannot be switched off.
 
@@ -59,6 +64,11 @@ It gives one of four answers:
 - `branch-mismatch`: the host deploys a different branch or folder, and the editor warns about it before anyone publishes;
 - `unsure`: there is not enough evidence. It never guesses.
 
+It also checks the two setup problems that make every publish fail: the
+publishing branch missing from the repository (`branchMissing`), and a
+credential that can read but not write (`canWrite`). Both are warned about in
+the editor before anybody publishes, and in settings.
+
 **When detection runs:**
 - after a GitHub App connect;
 - after the repository fields change;
@@ -70,7 +80,15 @@ It gives one of four answers:
 stages: queued, building, deploying, live, failed.
 
 - When the host reports a failure, the job becomes `DEPLOY_FAILED` with the host's own words (D1).
-- A failed GitHub Pages build is retried once (D6). The retry never runs while githubstatus.com shows Pages or Actions degraded. It needs the DakyX Pages app, which alone holds Pages and Actions write.
+- A failed build is asked for again once (D6): GitHub Pages through GitHub (needs the DakyX Pages app, which alone holds Pages and Actions write), any other host through its deploy hook when the site has one. Never while githubstatus.com shows the part that host builds on as degraded.
+
+**When a publish fails** (`DEPLOY_FAILED`, or `VERIFY_FAILED` after a day),
+whoever pressed Publish gets one email saying so, with the host's own words
+(`websitePublishNotice.ts`). A slow host never triggers it.
+
+**What the customer sees.**
+- The publish toast follows the job. It says how long this site's host usually takes, shows the host's stages, and once live, its "Open the live page" link skips any cached copy.
+- Website settings, under "How this site goes live", lists the last ten publishes: how long each took, which route carried it, and what went wrong in the host's words.
 
 **Deploy hooks** (D4):
 - validated by shape;
@@ -78,7 +96,7 @@ stages: queued, building, deploying, live, failed.
 - called once on save to prove they work;
 - retried twice on a 5xx;
 - stored encrypted;
-- called only when detection has not seen the host deploy on its own.
+- called on each publish only when detection has not seen the host deploy on its own.
 
 **`.nojekyll`** (D5) is one click, offered for a plain HTML site on GitHub
 Pages' classic build. Measure it with the Phase 4 script below.
@@ -117,12 +135,12 @@ re-runs detection by itself.
 - **Still to be proven:** that the Integration's token can create a production deployment on an existing Git-connected project.
   1. Connect a test Vercel project.
   2. Publish once.
-  3. Confirm the activity log says "Deployed to Vercel production".
+  3. Confirm the publish history says it was uploaded straight to the host.
   4. Confirm the next Git build produces the same page.
   5. If it cannot, set `PUBLISH_ROUTES_DISABLED=direct` for Vercel sites; they stay on Route D.
 - **Cloudflare Pages:** no third-party OAuth was found, so it stays on Route D or a deploy hook.
 
-### 3. DakyX Pages app (Route P, and the D6 retry)
+### 3. DakyX Pages app (Route P, and the GitHub Pages retry)
 
 1. Run `node scripts/createGithubApp.mjs --pages --org dakyworld` from `server/` and press the button. It asks for:
    - Contents, Workflows, Pages and Actions write;
@@ -132,48 +150,14 @@ re-runs detection by itself.
    `GITHUB_TOKEN=… node scripts/pagesTiming.mjs --repo owner/africon-app-timing --runs 5`
 4. Keep Route P only if it beats `.nojekyll` by 10 seconds or more on the median. Otherwise set `PUBLISH_ROUTES_DISABLED=pages`.
 
-### 4. The edge bridge (Route B)
-
-Follow `edge/README.md`. In short:
-
-1. Buy a hosting domain (`dakyxsites.com` was suggested) and add it to Cloudflare.
-2. Turn on Cloudflare for SaaS, and deploy the Worker with its Durable Object.
-3. Set `BRIDGE_ADMIN_URL`, `BRIDGE_ADMIN_TOKEN`, `BRIDGE_BYPASS_TOKEN`, `BRIDGE_CNAME_TARGET`, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ZONE_ID`.
-4. Run the six checks in the next list before switching it on for any customer.
-
-**Before a customer gets it (plan §5.1)**, on a throwaway domain:
-
-1. The Worker runs on a custom hostname through Cloudflare for SaaS, on a non-Enterprise plan.
-2. GitHub Pages passes through without a redirect loop. That needs the custom domain cleared from Pages: DakyX does it with the DakyX Pages app, or the customer does it by hand. Then the Worker fetches from `owner.github.io/repo/`.
-3. A publish shows on the test domain in under a second.
-4. With the bridged copy deleted, the host's version is served, and images, styles and forms work.
-5. The bare domain reaches the site over https, through the registrar's forwarding or an ALIAS record.
-6. A domain already proxied through the customer's own Cloudflare account works, or is detected and refused with a clear message.
-
-**Domain Connect.** `edge/domainconnect/dakyx.com.bridge.json` is the template
-to submit to the Domain Connect templates repository and each DNS provider.
-Expect weeks per provider. Set `DOMAIN_CONNECT_PROVIDER_ID=dakyx.com` and
-`DOMAIN_CONNECT_SERVICE_ID=bridge` once one provider accepts it; until then
-every customer gets the guided records screen. **Hostinger is not a Domain
-Connect provider.** Entri was not evaluated.
-
-**Changed from the plan:** the Worker keeps bridged files in a Durable Object,
-not Workers KV. KV is eventually consistent and can keep returning an old
-answer for up to a minute in other locations, including "nothing here". That is
-exactly the window the bridge exists to close.
-
 ## Costs
 
-| Item | Cost |
-|---|---|
-| Routes D, A, P | $0. On a private repository, Route P runs use the customer's Actions minutes, under a minute each |
-| Cloudflare Workers paid plan | $5/month, including Durable Object requests and storage at this scale |
-| Cloudflare for SaaS | 100 hostnames free, then $0.10 per hostname per month |
-| Hosting domain | about $20/year |
+Routes D, A and P cost DakyX nothing. On a private repository, Route P runs use
+the customer's Actions minutes, under a minute each.
 
 ## Checked by
 
-- `checks/publishRouter.ts` (no database), 114 checks:
+- `checks/publishRouter.ts` (no database):
   - detection;
   - stages;
   - retry once, and never during an outage;
@@ -182,7 +166,6 @@ exactly the window the bridge exists to close.
   - Netlify and Vercel against recorded hosts;
   - the instant card;
   - signed connect state;
-  - the Worker against an in-memory Durable Object;
-  - who may call what.
+  - who may call what, including that the removed bridge routes answer nobody.
 - `checks/websitePublishVerify.ts` and `checks/websitePublishJobs.ts`: the watch.
-- `checks/browser/deployPanel.mjs` and `checks/browser/publishFollow.mjs`: the settings panel and the publish toast, in Chromium.
+- `checks/browser/deployPanel.mjs` and `checks/browser/publishFollow.mjs`: the settings panel, the publish history and the publish toast, in Chromium.

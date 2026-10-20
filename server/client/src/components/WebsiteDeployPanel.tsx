@@ -28,16 +28,17 @@ type Profile = {
   pages?: { buildType: "legacy" | "workflow" | null; noJekyll: boolean; jekyllContent: boolean };
   routes: { pages?: { workflowInstalled: boolean } };
   disabledRoutes: string[];
+  branchMissing?: boolean;
+  canWrite?: boolean | null;
 };
-type BridgeDns = { txt: { name: string; value: string }; cname: { name: string; value: string }; apex: boolean; guidance: string | null; untouched: string };
+type RecentPublish = { id: string; page: { title: string; path: string } | null; startedBy: string | null; label: string; state: string; route: string | null; fallbackFrom: string | null; deployedInSeconds: number | null; hostMessage: string | null; lastError: string | null; createdAt: string };
 type DeployView = {
   profile: Profile | null;
   hook: { configured: boolean; masked: string | null; provider: string | null; used: boolean };
   connections: Array<{ provider: string; name: string | null; matched: boolean; paused: boolean; pausedReason: string | null; lastUsedAt: string | null }>;
   providers: { netlify: boolean; vercel: boolean };
   pagesApp: { configured: boolean; installed: boolean };
-  bridge: { hostname: string; origin: string; status: string; sslStatus: string | null; disabledReason: string | null; dns: BridgeDns | null } | null;
-  bridgeConfigured: boolean;
+  recent: RecentPublish[];
   disabledGlobally: string[];
   offer: { kind: string | null; text: string | null; button: string | null; active: boolean };
 };
@@ -53,7 +54,14 @@ const HOST_NAME: Record<string, string> = {
   unknown: "a host we could not identify",
 };
 const PROVIDER: Record<string, string> = { netlify: "Netlify", vercel: "Vercel" };
-const ROUTE_NAME: Record<string, string> = { bridge: "Edge bridge", direct: "Direct upload", pages: "Fast GitHub Pages", hook: "Deploy hook" };
+const ROUTE_NAME: Record<string, string> = { direct: "Direct upload", pages: "Fast GitHub Pages", hook: "Deploy hook" };
+const VIA: Record<string, string> = { direct: "uploaded straight to your host", pages: "through the DakyX Pages workflow", hook: "through your deploy hook", follow: "your host rebuilt it" };
+
+function took(seconds: number): string {
+  if (seconds < 90) return `${seconds} s`;
+  const minutes = Math.round(seconds / 60);
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
@@ -91,8 +99,6 @@ export function WebsiteDeployPanel({ siteId }: { siteId: string }) {
   const [message, setMessage] = useState<{ tone: "info" | "warn" | "positive"; text: string } | null>(null);
   const [hookUrl, setHookUrl] = useState("");
   const [choose, setChoose] = useState<string | null>(null);
-  const [dnsHelp, setDnsHelp] = useState<{ dns: BridgeDns; oneClick: string | null } | null>(null);
-  const [steps, setSteps] = useState<Array<{ step: string; done: boolean; note?: string }> | null>(null);
 
   const deploy = useQuery({ queryKey: key, queryFn: ({ signal }) => api.get<DeployView>(`/website/sites/${siteId}/deploy`, signal) });
   const set = (view?: DeployView) => (view ? qc.setQueryData(key, view) : void qc.invalidateQueries({ queryKey: key }));
@@ -103,7 +109,7 @@ export function WebsiteDeployPanel({ siteId }: { siteId: string }) {
     const params = new URLSearchParams(window.location.search);
     const connected = params.get("connected");
     const error = params.get("deployError");
-    if (connected) setMessage({ tone: "positive", text: connected === "bridge" ? "Your DNS provider made the change. We are checking it now." : connected === "pages" ? "DakyX Pages is installed." : `${PROVIDER[connected] ?? connected} is connected.` });
+    if (connected) setMessage({ tone: "positive", text: connected === "pages" ? "DakyX Pages is installed." : `${PROVIDER[connected] ?? connected} is connected.` });
     if (error) setMessage({ tone: "warn", text: error });
     if (params.get("choose")) setChoose(params.get("choose"));
     if (connected || error || params.get("choose")) {
@@ -141,25 +147,11 @@ export function WebsiteDeployPanel({ siteId }: { siteId: string }) {
     onSuccess: (result) => (result.installUrl ? go(result.installUrl) : set(result.view)),
     onError: fail,
   });
-  const startBridge = useMutation({
-    mutationFn: () => api.post<{ dns: BridgeDns; oneClick: string | null; view: DeployView }>(`/website/sites/${siteId}/bridge`, {}),
-    onSuccess: (result) => { set(result.view); setDnsHelp({ dns: result.dns, oneClick: result.oneClick }); },
-    onError: fail,
-  });
-  const checkBridge = useMutation({
-    mutationFn: () => api.post<{ status: string; steps: Array<{ step: string; done: boolean; note?: string }>; view: DeployView }>(`/website/sites/${siteId}/bridge/check`, {}),
-    onSuccess: (result) => { set(result.view); setSteps(result.steps); },
-    onError: fail,
-  });
-  const pauseBridge = useMutation({ mutationFn: (paused: boolean) => api.put<{ view: DeployView }>(`/website/sites/${siteId}/bridge`, { paused }), onSuccess: (result) => set(result.view), onError: fail });
-  const removeBridge = useMutation({ mutationFn: () => api.delete<{ view: DeployView }>(`/website/sites/${siteId}/bridge`), onSuccess: (result) => { set(result.view); setDnsHelp(null); setSteps(null); }, onError: fail });
-
   if (deploy.isLoading) return <p className="text-sm text-muted">Loading how this site goes live…</p>;
   if (deploy.isError) return <Notice tone="warn">{(deploy.error as Error).message}</Notice>;
   const view = deploy.data!;
   const profile = view.profile;
   const offer = view.offer;
-  const bridgeDns = dnsHelp?.dns ?? view.bridge?.dns ?? null;
   const showHook = view.hook.configured || profile?.answer === "needs-hook" || profile?.answer === "unsure";
 
   return (
@@ -178,6 +170,8 @@ export function WebsiteDeployPanel({ siteId }: { siteId: string }) {
             ) : (
               <p className="mt-2 text-sm leading-relaxed text-muted">{answerLine(profile)}</p>
             )}
+            {profile.branchMissing && <Notice tone="warn" className="mt-3" title="Publishing has nowhere to go">The branch set above is not in the repository. Choose the branch your site lives on, or every publish will fail.</Notice>}
+            {profile.canWrite === false && <Notice tone="warn" className="mt-3" title="DakyX cannot write to this repository">The access DakyX publishes with can read the repository but not change it. Install the DakyX app on the repository, or give the access token write permission.</Notice>}
             {profile.missingAccess.length > 0 && (
               <p className="mt-2 text-xs text-muted">Approve the DakyX app's new read access on GitHub (GitHub asks the repository's owner) to see each publish's progress live: queued, building, live.</p>
             )}
@@ -226,12 +220,11 @@ export function WebsiteDeployPanel({ siteId }: { siteId: string }) {
           <Button
             size="sm"
             className="mt-3"
-            disabled={connect.isPending || pages.isPending || startBridge.isPending}
+            disabled={connect.isPending || pages.isPending}
             onClick={() => {
               if (offer.kind === "direct-netlify") connect.mutate("netlify");
               else if (offer.kind === "direct-vercel") connect.mutate("vercel");
               else if (offer.kind === "pages") pages.mutate(true);
-              else if (offer.kind === "bridge") startBridge.mutate();
             }}
           >
             {offer.button}
@@ -259,37 +252,31 @@ export function WebsiteDeployPanel({ siteId }: { siteId: string }) {
           </div>
         )}
 
-        {view.bridge && (
-          <div className="mt-4 space-y-2" data-section="deploy-bridge">
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="font-mono text-sm text-ink">{view.bridge.hostname}</span>
-              <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${view.bridge.status === "active" ? "bg-ok-surface text-ok-text" : "bg-warn-surface text-warn-text"}`}>
-                {view.bridge.status === "active" ? "Instant" : view.bridge.status === "disabled" ? "Paused" : "Waiting for DNS"}
-              </span>
-            </div>
-            {view.bridge.status === "pending-dns" && bridgeDns && (
-              <>
-                <p className="text-sm text-muted">Add these two records at whoever manages your domain, then press Check. The TXT record proves the domain is yours; the CNAME puts DakyX in front of your host.</p>
-                {dnsHelp?.oneClick && <Button size="sm" onClick={() => go(dnsHelp.oneClick!)}>Make the change for me</Button>}
-                <Row label="TXT" value={`${bridgeDns.txt.name} → ${bridgeDns.txt.value}`} />
-                <Row label="CNAME" value={`${bridgeDns.cname.name} → ${bridgeDns.cname.value}`} />
-                {bridgeDns.guidance && <Notice tone="info">{bridgeDns.guidance}</Notice>}
-                <p className="text-xs text-muted">{bridgeDns.untouched}</p>
-              </>
-            )}
-            {steps && <ul className="space-y-1 text-sm">{steps.map((entry) => <li key={entry.step} className={entry.done ? "text-ok-text" : "text-muted"}>{entry.done ? "✓" : "○"} {entry.step}{entry.note ? <span className="block pl-5 text-xs text-muted">{entry.note}</span> : null}</li>)}</ul>}
-            <div className="flex flex-wrap gap-3">
-              {view.bridge.status === "pending-dns" && <Button size="sm" disabled={checkBridge.isPending} onClick={() => checkBridge.mutate()}>{checkBridge.isPending ? "Checking…" : "Check"}</Button>}
-              {view.bridge.status !== "pending-dns" && <Button size="sm" variant="secondary" disabled={pauseBridge.isPending} onClick={() => pauseBridge.mutate(view.bridge!.status !== "disabled")}>{view.bridge.status === "disabled" ? "Resume" : "Pause"}</Button>}
-              <Button size="sm" variant="ghost" disabled={removeBridge.isPending} onClick={() => removeBridge.mutate()}>Remove</Button>
-            </div>
-          </div>
-        )}
-
         {profile?.routes.pages?.workflowInstalled && (
           <div className="mt-3"><Button size="sm" variant="ghost" disabled={pages.isPending} onClick={() => pages.mutate(false)}>Go back to GitHub Pages' own build</Button></div>
         )}
       </div>
+
+      {view.recent.length > 0 && (
+        <div className="border-t border-line pt-5" data-section="deploy-recent">
+          <h3 className="text-sm font-semibold text-ink">Recent publishes</h3>
+          <ul className="mt-2 divide-y divide-line text-sm">
+            {view.recent.map((entry) => (
+              <li key={entry.id} className="py-2">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-ink">{entry.page?.title ?? "Shared change"}{entry.startedBy ? <span className="text-muted"> · {entry.startedBy}</span> : null}</span>
+                  <span className="text-xs text-muted">{new Date(entry.createdAt).toLocaleString()}</span>
+                </div>
+                <p className={`text-xs ${entry.state === "COMPLETED" ? "text-muted" : ["DEPLOY_FAILED", "VERIFY_FAILED"].includes(entry.state) ? "text-warn-text" : "text-muted"}`}>
+                  {entry.state === "COMPLETED" ? `Live${entry.deployedInSeconds ? ` in ${took(entry.deployedInSeconds)}` : ""}${entry.route && VIA[entry.route] ? `, ${VIA[entry.route]}` : ""}` : entry.label}
+                  {entry.fallbackFrom ? ` (${ROUTE_NAME[entry.fallbackFrom] ?? entry.fallbackFrom} did not work this time, so it followed your host)` : ""}
+                </p>
+                {entry.hostMessage && entry.state !== "COMPLETED" && <p className="text-xs text-muted">Your host said: {entry.hostMessage}</p>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {profile && (
         <details className="border-t border-line pt-5 text-sm" data-section="deploy-switches">

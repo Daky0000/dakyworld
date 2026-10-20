@@ -10,8 +10,9 @@ import { hostedUrlFor } from "./websiteHosting.js";
 import { githubHealth, githubTroubleFor, hostFromHeaders, type GithubHealth } from "./githubStatus.js";
 import { readHostProgress, retryPagesBuild, type HostProgress } from "./websiteDeployWatch.js";
 import { deployProfileOf } from "./websiteDeployDetect.js";
-import { bridgeBypassHeaders, clearBridgeFor } from "./websiteEdgeBridge.js";
 import { schedulePublishDispatch } from "./websitePublishRouter.js";
+import { callDeployHook, storedHook } from "./websiteDeployHook.js";
+import { notifyPublishProblemSoon } from "./websitePublishNotice.js";
 import type { FieldChangeSummary } from "./website/index.js";
 
 /**
@@ -154,7 +155,7 @@ export async function publishJobCommitted(input: {
       attempts: isLocalHosted ? 1 : 0,
     },
   });
-  // The faster routes (bridge, direct upload, deploy hook) run from here, once
+  // The faster routes (direct upload, deploy hook) run from here, once
   // the transaction this may be inside has committed. See websitePublishRouter.ts.
   if (!isLocalHosted) schedulePublishDispatch(input.id);
 }
@@ -223,10 +224,7 @@ export async function failPublishJob(id: string, state: PublishJobState, message
 async function verifyOne(job: PublishJob): Promise<{ verified: boolean; error?: string; servedBy?: string | null }> {
   if (!job.verifyUrl) return { verified: true };
   try {
-    // Behind the edge bridge the public address answers with the bridge's own
-    // copy at once, which would say "live" before the host has rebuilt. The
-    // bypass header asks for what the host itself serves.
-    const page = await fetchWebsitePage(job.verifyUrl, { headers: await bridgeBypassHeaders(job.siteId) });
+    const page = await fetchWebsitePage(job.verifyUrl);
     return { verified: livePageShowsChange({ body: page.text, verifyText: job.verifyText, expectedHash: job.expectedHash }), servedBy: hostFromHeaders(page.headers) };
   } catch (error) {
     return { verified: false, error: error instanceof Error ? error.message : "The live page could not be read." };
@@ -363,23 +361,26 @@ async function verifyDueJob(job: PublishJob & { site: Site }, now: Date): Promis
       data: { state: "COMPLETED", attempts, verifiedAt: now, finishedAt: now, nextCheckAt: null, lastError: null, ...progressData },
     });
     if (!count) return 0;
-    // The host has the change: the edge bridge can stop serving its copy.
-    await clearBridgeFor(job).catch((error) => console.error(`[publish-jobs] clearing the bridge for ${job.id} failed:`, error));
     return 1 + (await settleOvertakenJobs(job, now));
   }
 
   if (progress?.stage === "failed") {
     const servedBy = typeof nextDetail.servedBy === "string" ? nextDetail.servedBy : deployProfileOf(job.site)?.host ?? null;
     const githubTrouble = Boolean(githubTroubleFor(await githubHealth(), servedBy));
-    const decision = decideHostFailure({ githubTrouble, canRetry: Boolean(progress.retry), retried: Boolean(detail.retriedAt) });
+    // Asked again: GitHub Pages through GitHub itself, any other host through
+    // its deploy hook when the site has one saved.
+    const hook = progress.retry ? null : storedHook(job.site);
+    const decision = decideHostFailure({ githubTrouble, canRetry: Boolean(progress.retry || hook), retried: Boolean(detail.retriedAt) });
     const message = progress.message ?? "The host reported that the build failed.";
     if (decision === "retry") {
-      const retried = await retryPagesBuild(job.site, progress.retry!);
+      const retried = progress.retry
+        ? await retryPagesBuild(job.site, progress.retry)
+        : await callDeployHook(hook!).then((called) => (called.ok ? { ok: true as const } : { ok: false as const, reason: called.reason }));
       if (retried.ok) {
         nextDetail.retriedAt = now.toISOString();
         await prisma.publishJob.updateMany({
           where: stillWaiting,
-          data: { ...progressData, stage: "queued", detail: nextDetail as Prisma.InputJsonValue, state: "VERIFYING", attempts, hostMessage: `${message} DakyX asked GitHub to build it again.`, nextCheckAt: new Date(now.getTime() + STEADY_EVERY_MS), lastError: null },
+          data: { ...progressData, stage: "queued", detail: nextDetail as Prisma.InputJsonValue, state: "VERIFYING", attempts, hostMessage: `${message} DakyX asked ${progress.retry ? "GitHub" : "your host"} to build it again.`, nextCheckAt: new Date(now.getTime() + STEADY_EVERY_MS), lastError: null },
         });
         return 0;
       }
@@ -391,6 +392,7 @@ async function verifyDueJob(job: PublishJob & { site: Site }, now: Date): Promis
         where: stillWaiting,
         data: { ...progressData, detail: nextDetail as Prisma.InputJsonValue, state: "DEPLOY_FAILED", attempts, nextCheckAt: null, finishedAt: now, hostMessage: message, lastError: `The host did not rebuild: ${message}` },
       });
+      if (count) notifyPublishProblemSoon(job.id);
       return count;
     }
     await prisma.publishJob.updateMany({
@@ -405,6 +407,7 @@ async function verifyDueJob(job: PublishJob & { site: Site }, now: Date): Promis
       where: stillWaiting,
       data: { state: "VERIFY_FAILED", attempts, nextCheckAt: null, finishedAt: now, lastError: step.reason, ...progressData },
     });
+    if (count) notifyPublishProblemSoon(job.id);
     return count;
   }
   await prisma.publishJob.updateMany({
@@ -618,6 +621,13 @@ export function registerWebsitePublishJobs(
     }
     const pending = capacity.edge ? await prisma.cacheInvalidation.count({ where: { siteId: site.id, resource: "pages", deliveredAt: null } }) : 0;
     const view = publishJobView(job, { github: WAITING_STATES.includes(job.state) ? await githubHealth() : null });
-    res.json({ ...view, label: view.stateLabel, cdnState: capacity.edge ? pending ? "PENDING" : "PROPAGATED" : "DISABLED" });
+    res.json({
+      ...view,
+      label: view.stateLabel,
+      cdnState: capacity.edge ? pending ? "PENDING" : "PROPAGATED" : "DISABLED",
+      // How long this site's host usually takes, so the editor can set the
+      // expectation ("usually live in about 40 s") instead of a generic one.
+      typicalSeconds: deployProfileOf(site)?.typicalSeconds ?? null,
+    });
   }));
 }

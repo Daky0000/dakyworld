@@ -7,8 +7,8 @@ const { chromium } = await import(process.env.PLAYWRIGHT_URL ?? "playwright");
  * The panel is the only place a customer meets the publish router, so what it
  * says has to be right for each kind of site: the branch warning that stops
  * publishes silently never appearing, the one "Make updates instant" option
- * that fits, the deploy hook field only where a hook is needed, and the DNS
- * records for the edge bridge with the promise that email is not touched.
+ * that fits, the deploy hook field only where a hook is needed, the setup
+ * problems that would make every publish fail, and the history of publishes.
  */
 const ORIGIN = "http://127.0.0.1:5199";
 const browser = await chromium.launch({ headless: true });
@@ -19,8 +19,8 @@ const check = (label, condition, detail = "") => { assert.ok(condition, `${label
 const profile = (over) => ({ host: "github-pages", answer: "auto", evidence: [{ kind: "headers", detail: "The live page was answered by github-pages." }], hasBuildStep: false, lastCheckedAt: new Date().toISOString(), missingAccess: [], routes: {}, disabledRoutes: [], ...over });
 const view = (over) => ({
   profile: profile({}), hook: { configured: false, masked: null, provider: null, used: false }, connections: [], providers: { netlify: true, vercel: true },
-  pagesApp: { configured: true, installed: false }, bridge: null, bridgeConfigured: true, disabledGlobally: [],
-  offer: { kind: "bridge", text: "Make updates instant with one change to your domain.", button: "Make instant", active: false }, ...over,
+  pagesApp: { configured: true, installed: false }, recent: [], disabledGlobally: [],
+  offer: { kind: "pages", text: "Publish to GitHub Pages without waiting for the Jekyll build.", button: "Make faster", active: false }, ...over,
 });
 
 async function open(state, onRequest = () => undefined) {
@@ -51,16 +51,29 @@ try {
     await context.close();
   }
   {
-    const { page, context } = await open(view({ profile: profile({ pages: { buildType: "legacy", noJekyll: false, jekyllContent: false } }) }), (method, path) =>
-      method === "POST" && path.endsWith("/bridge") ? { dns: { txt: { name: "_dakyworld.www.example.com", value: "dakyx-bridge=abc" }, cname: { name: "www.example.com", value: "edge.dakyxsites.com" }, apex: false, guidance: null, untouched: "Only this one record changes. Your email (MX) and every other record stay exactly as they are." }, oneClick: null, view: view({ bridge: { hostname: "www.example.com", origin: "https://fixture.github.io/site", status: "pending-dns", sslStatus: null, disabledReason: null, dns: null } }) } : undefined);
+    const { page, context } = await open(view({
+      profile: profile({ pages: { buildType: "legacy", noJekyll: false, jekyllContent: false } }),
+      recent: [
+        { id: "j2", page: { title: "Home", path: "/" }, startedBy: "Ama", label: "Live", state: "COMPLETED", route: "follow", fallbackFrom: null, deployedInSeconds: 41, hostMessage: null, lastError: null, createdAt: new Date().toISOString() },
+        { id: "j1", page: { title: "About", path: "/about" }, startedBy: "Ama", label: "The host did not rebuild", state: "DEPLOY_FAILED", route: "follow", fallbackFrom: "direct", deployedInSeconds: null, hostMessage: "Build script returned non-zero exit code: 2", lastError: null, createdAt: new Date().toISOString() },
+      ],
+    }), (method, path) => (method === "POST" && path.endsWith("/deploy/pages") ? { installUrl: `${ORIGIN}/builder-harness.html?after-pages` } : undefined));
     check("a plain HTML GitHub Pages site is offered Skip Jekyll", await page.locator('[data-section="deploy-nojekyll"]').isVisible());
     check("an automatic host gets no deploy hook field", (await page.locator('[data-section="deploy-hook"]').count()) === 0);
-    await page.getByRole("button", { name: "Make instant" }).click();
-    const bridge = page.locator('[data-section="deploy-bridge"]');
-    await bridge.getByText("edge.dakyxsites.com").waitFor();
-    check("starting the bridge shows the exact CNAME", (await bridge.textContent()).includes("www.example.com → edge.dakyxsites.com"));
-    check("and says email is not touched", (await bridge.textContent()).includes("Your email (MX)"));
-    check("with a Check button", await bridge.getByRole("button", { name: "Check" }).isVisible());
+    const recent = await page.locator('[data-section="deploy-recent"]').textContent();
+    check("recent publishes say how long each took and how it went live", recent.includes("Live in 41 s, your host rebuilt it"), recent);
+    check("and a failure in the host's own words", recent.includes("Your host said: Build script returned non-zero exit code: 2"), recent);
+    check("and a faster route that fell back", recent.includes("Direct upload did not work this time"), recent);
+    await page.getByRole("button", { name: "Make faster" }).click();
+    await page.waitForURL(/after-pages/);
+    check("Make faster sends the browser to install DakyX Pages", true);
+    await context.close();
+  }
+  {
+    const { page, context } = await open(view({ profile: profile({ branchMissing: true, canWrite: false }) }));
+    const how = await page.locator('[data-section="deploy-how"]').textContent();
+    check("a missing branch is caught before anybody publishes", how.includes("Publishing has nowhere to go"));
+    check("and so is access that cannot write", how.includes("DakyX cannot write to this repository"));
     await context.close();
   }
   {
@@ -81,7 +94,7 @@ try {
     await context.close();
   }
   check("no page errors", errors.length === 0, errors.join(" | "));
-  console.log(`deployPanel: ${passed} checks — the branch warning, the one instant option per site, the hook field only where needed, the bridge's DNS records, and the host's own approval screen, in Chromium.`);
+  console.log(`deployPanel: ${passed} checks — the branch warning, the one instant option per site, the hook field only where needed, setup problems, publish history, and the host's own approval screen, in Chromium.`);
 } finally {
   await browser.close();
 }

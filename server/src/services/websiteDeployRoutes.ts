@@ -2,7 +2,6 @@ import type { Request, Response, Router } from "express";
 import type { Prisma, Site } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
-import { SETTING, getSetting } from "../lib/settings.js";
 import { readState, signState } from "../lib/signedState.js";
 import { WebsiteError } from "./website/site.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
@@ -13,20 +12,20 @@ import { pagesAppConfigured, pagesAppInstallUrl } from "./githubApp.js";
 import { addNoJekyll, attachPagesInstallation, disablePagesRoute, enablePagesRoute } from "./publishRoutes/pagesActions.js";
 import { DIRECT_PROVIDERS, PROVIDER_NAME, type DirectProvider } from "./publishRoutes/direct.js";
 import { chooseHostSite, connectionCandidates, connectUrl, disconnectHost, exchangeCode, providerConfigured, saveConnection } from "./publishRoutes/hostConnect.js";
-import { bridgeConfigured, bridgeView, checkBridge, domainConnectUrl, pauseBridge, removeBridge, resumeBridge, startBridge } from "./websiteEdgeBridge.js";
+import { publishJobView } from "./websitePublishJobs.js";
 
 /**
  * The routes behind "How this site goes live" and "Make updates instant" in
  * Website settings. Everything here belongs to one site and needs Manage,
  * except reading the profile, which editors need for the branch warning in the
- * editor. The three places a host sends the browser back to are account
+ * editor. The two places a host sends the browser back to are account
  * routes: the signed state carries the site and proves who started it.
  */
 
 type Access = { loadSite: (req: Request, id: string) => Promise<Site> };
 
 export type InstantOffer = {
-  kind: "direct-netlify" | "direct-vercel" | "pages" | "bridge" | "build-step" | null;
+  kind: "direct-netlify" | "direct-vercel" | "pages" | "build-step" | null;
   text: string | null;
   button: string | null;
   /** Already on. */
@@ -39,12 +38,11 @@ export type InstantOffer = {
  */
 export function instantOffer(input: {
   profile: DeployProfile | null;
-  available: { netlify: boolean; vercel: boolean; pages: boolean; bridge: boolean };
-  active: { direct: DirectProvider | null; pages: boolean; bridge: boolean };
+  available: { netlify: boolean; vercel: boolean; pages: boolean };
+  active: { direct: DirectProvider | null; pages: boolean };
 }): InstantOffer {
   const { profile, available, active } = input;
   if (!profile) return { kind: null, text: null, button: null, active: false };
-  if (active.bridge) return { kind: "bridge", text: "Updates are instant: the edge serves each publish while your host rebuilds.", button: null, active: true };
   if (active.direct) return { kind: active.direct === "netlify" ? "direct-netlify" : "direct-vercel", text: `Updates go straight to ${PROVIDER_NAME[active.direct]} in seconds.`, button: null, active: true };
   if (active.pages) return { kind: "pages", text: "GitHub Pages publishes straight from DakyX's workflow, without the Jekyll build.", button: null, active: true };
   if ((profile.host === "netlify" || profile.host === "vercel") && profile.hasBuildStep === false && available[profile.host]) {
@@ -55,7 +53,6 @@ export function instantOffer(input: {
     const seconds = profile.typicalSeconds;
     return { kind: "build-step", text: `Your site rebuilds on every publish${seconds ? `, usually in about ${seconds} seconds` : ""}.`, button: null, active: false };
   }
-  if (available.bridge && profile.host !== "unknown") return { kind: "bridge", text: "Make updates instant with one change to your domain.", button: "Make instant", active: false };
   if (profile.host === "github-pages" && available.pages && !profile.pages?.jekyllContent) {
     return { kind: "pages", text: "Publish to GitHub Pages without waiting for the Jekyll build.", button: "Make faster", active: false };
   }
@@ -90,15 +87,18 @@ const providerParam = (value: string): DirectProvider => {
 
 async function deployView(site: Site) {
   const profile = deployProfileOf(site);
-  const [connections, bridge, globallyOff, netlify, vercel, pagesApp, bridgeReady, target] = await Promise.all([
+  const [connections, globallyOff, netlify, vercel, pagesApp, recent] = await Promise.all([
     prisma.siteHostConnection.findMany({ where: { siteId: site.id } }),
-    prisma.edgeBridge.findUnique({ where: { siteId: site.id } }),
     globallyDisabledRoutes(),
     providerConfigured("netlify"),
     providerConfigured("vercel"),
     pagesAppConfigured(),
-    bridgeConfigured(),
-    getSetting(SETTING.BRIDGE_CNAME_TARGET),
+    prisma.publishJob.findMany({
+      where: { siteId: site.id, commitSha: { not: null } },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      include: { page: { select: { title: true, path: true } }, startedBy: { select: { name: true } } },
+    }),
   ]);
   const hook = storedHook(site);
   const liveDirect = connections.find((connection) => !connection.pausedAt && connection.externalSiteId);
@@ -116,13 +116,16 @@ async function deployView(site: Site) {
     })),
     providers: { netlify, vercel },
     pagesApp: { configured: pagesApp, installed: Boolean(site.githubPagesInstallationId) },
-    bridge: bridgeView(bridge, target),
-    bridgeConfigured: bridgeReady,
+    /** The last publishes: how long each took, which route carried it, and what went wrong. */
+    recent: recent.map((job) => {
+      const view = publishJobView(job);
+      return { id: job.id, page: job.page, startedBy: job.startedBy?.name ?? null, label: view.stateLabel, state: job.state, route: job.route, fallbackFrom: job.fallbackFrom, deployedInSeconds: view.deployedInSeconds, hostMessage: job.hostMessage, lastError: job.lastError, createdAt: job.createdAt };
+    }),
     disabledGlobally: [...globallyOff],
     offer: instantOffer({
       profile,
-      available: { netlify, vercel, pages: pagesApp, bridge: bridgeReady },
-      active: { direct: liveDirect && profile?.hasBuildStep === false ? (liveDirect.provider as DirectProvider) : null, pages: Boolean(profile?.routes.pages?.workflowInstalled), bridge: bridge?.status === "active" },
+      available: { netlify, vercel, pages: pagesApp },
+      active: { direct: liveDirect && profile?.hasBuildStep === false ? (liveDirect.provider as DirectProvider) : null, pages: Boolean(profile?.routes.pages?.workflowInstalled) },
     }),
   };
 }
@@ -256,43 +259,5 @@ export function registerWebsiteDeployRoutes(router: Router, access: Access) {
     const site = await access.loadSite(req, req.params.siteId!);
     const result = await disconnectHost(site.id, providerParam(req.params.provider!), req.dbUser?.id ?? null);
     res.json({ ...result, view: await deployView(site) });
-  }));
-
-  /* ------------------------------------------------- Route B: the bridge */
-
-  router.post("/sites/:siteId/bridge", handler(async (req, res) => {
-    const site = await access.loadSite(req, req.params.siteId!);
-    const body = z.object({ hostname: z.string().max(253).optional(), origin: z.string().url().max(500).optional() }).parse(req.body ?? {});
-    const started = await startBridge(site, body);
-    const oneClick = await domainConnectUrl(started.bridge.hostname, callbackUrl(req, "/bridge/connected"), signState({ site: site.id, user: req.dbUser!.id })).catch(() => null);
-    await prisma.siteAuditEvent.create({ data: { siteId: site.id, kind: "BRIDGE_STARTED", summary: `Started instant updates for ${started.bridge.hostname}`, actorId: req.dbUser?.id, actorName: req.dbUser?.name ?? "Website settings", detail: { origin: started.bridge.origin } } }).catch(() => undefined);
-    res.json({ dns: started.dns, oneClick, view: await deployView(site) });
-  }));
-
-  router.post("/sites/:siteId/bridge/check", handler(async (req, res) => {
-    const site = await access.loadSite(req, req.params.siteId!);
-    const result = await checkBridge(site.id);
-    res.json({ ...result, view: await deployView(site) });
-  }));
-
-  router.put("/sites/:siteId/bridge", handler(async (req, res) => {
-    const site = await access.loadSite(req, req.params.siteId!);
-    const body = z.object({ paused: z.boolean() }).parse(req.body ?? {});
-    if (body.paused) await pauseBridge(site.id, "Paused in Website settings");
-    else await resumeBridge(site.id);
-    res.json({ view: await deployView(site) });
-  }));
-
-  router.delete("/sites/:siteId/bridge", handler(async (req, res) => {
-    const site = await access.loadSite(req, req.params.siteId!);
-    await removeBridge(site.id);
-    res.json({ view: await deployView(site) });
-  }));
-
-  /** Where a Domain Connect provider sends the browser back after the one-click change. */
-  router.get("/bridge/connected", handler(async (req, res) => {
-    const state = readState((req.query as Record<string, string | undefined>).state, req.dbUser!.id);
-    if (state?.site) await managedSite(req, state.site).then(() => checkBridge(state.site!)).catch(() => undefined);
-    res.redirect(`/website/settings?${new URLSearchParams(state?.site ? { site: state.site, connected: "bridge" } : { deployError: "The link expired. Press Check in Website settings." })}`);
   }));
 }

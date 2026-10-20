@@ -85,11 +85,19 @@ try {
   await toast().getByText("Your changes are live · took 41 min").waitFor({ timeout: 15_000 });
   check("then says it went live, and how long the host took", true);
   check("with the way to look at it", await toast().getByRole("link", { name: "Open the live page" }).isVisible());
+  check("past any cached copy", /[?&]dakyx=/.test(await toast().getByRole("link", { name: "Open the live page" }).getAttribute("href")));
   const asked = jobAsked.length;
   await page.waitForTimeout(6_000);
   check("and stops asking once it is live", jobAsked.length === asked, `${asked} then ${jobAsked.length}`);
   await toast().getByRole("button", { name: "Dismiss" }).click();
   check("and goes when dismissed", (await toast().count()) === 0);
+
+  /* ------------------------------------------- how long it usually takes */
+  job = status("VERIFYING", { typicalSeconds: 40 });
+  await page.keyboard.press("Control+Enter");
+  await toast().getByText("Changes sent. Usually live in about 40 s.").waitFor({ timeout: 10_000 });
+  check("a publish says how long this site's host usually takes", true);
+  await toast().getByRole("button", { name: "Dismiss" }).click();
 
   /* ------------------------------------- what the host says it is doing */
   job = status("VERIFYING", { stage: "building" });
