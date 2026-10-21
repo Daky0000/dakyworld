@@ -356,7 +356,8 @@ async function reset() {
 }
 
 async function makeSite(name: string, pages: Array<{ title: string; path: string; html: string; status?: "LIVE" | "HIDDEN" }>): Promise<Created> {
-  const site = await prisma.site.create({ data: { name, slug: `${MARK}-${Math.random().toString(36).slice(2, 8)}`, publicUrl: "https://acme.example.com" } });
+  // AI switched on: these sites have no plan behind them, and the planner asks the switch.
+  const site = await prisma.site.create({ data: { name, slug: `${MARK}-${Math.random().toString(36).slice(2, 8)}`, publicUrl: "https://acme.example.com", settings: { aiEnabled: true } } });
   const created: SitePage[] = [];
   for (const [index, entry] of pages.entries()) {
     created.push(await prisma.sitePage.create({ data: {

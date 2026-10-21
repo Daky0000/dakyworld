@@ -1827,7 +1827,12 @@ export async function planAgentInstruction(
       if (/\b(?:delete|remove|erase|clear|wipe)\b/i.test(lower)) {
         const wantsClearAllText = /\b(?:all text|entire text|every text|whole text)\b/i.test(lower);
         if (wantsClearAllText) {
-          const textFields = fields.filter(f => (f.kind === "text" || f.kind === "richtext") && f.value.trim().length > 0).slice(0, 20);
+          // Only what may be left empty: an empty heading or button is refused
+          // at publish and locks the page's layout until it is fixed (M6).
+          const textFields = fields
+            .filter(f => (f.kind === "text" || f.kind === "richtext") && f.value.trim().length > 0)
+            .filter(f => validateFieldChange(fields, { [f.id]: sanitizeValue(f, { ...existingDraft[f.id], value: "" }) }).length === 0)
+            .slice(0, 20);
           if (textFields.length > 0) {
             const edits: Record<string, AgentFieldEdit> = {};
             const changes: SiteAgentPagePlan["changes"] = [];
@@ -1856,7 +1861,10 @@ export async function planAgentInstruction(
 
         if (targetField) {
           const ctrl = controls[targetField.id];
-          if (ctrl?.remove && !/\b(?:text|words)\b/i.test(lower)) {
+          // "Delete the heading text" removes the heading when it can be
+          // removed. Emptying it instead left a heading a publish refuses —
+          // and a draft with a refused field locks every layout change (M6).
+          if (ctrl?.remove) {
             return enrichPlanWithApprovalMetadata({
               explanation: `Delete block "${targetField.label}" from ${currentPage.title}.`,
               actionKind: "structure",
@@ -1877,6 +1885,18 @@ export async function planAgentInstruction(
           // Otherwise clear text or hide element
           const wantsTextClear = /\b(?:text|words|heading|title|paragraph)\b/i.test(lower) && targetField.kind !== "image" && targetField.kind !== "container";
           if (wantsTextClear) {
+            const refusal = validateFieldChange(fields, { [targetField.id]: sanitizeValue(targetField, { ...existingDraft[targetField.id], value: "" }) })[0];
+            if (refusal) {
+              return {
+                explanation: `"${targetField.label}" cannot be left empty: ${refusal.reason} Tell me what it should say instead, or delete it on the page.`,
+                actionKind: "clarify",
+                summary: { totalPages: livePages.length, affectedPages: 0, totalChanges: 0 },
+                pages: [],
+                requiresApproval: false,
+                approvalReasons: [],
+                riskLevel: "low",
+              };
+            }
             const nextEdit: AgentFieldEdit = {
               ...(existingDraft[targetField.id] ? editableValues(existingDraft[targetField.id]) : {}),
               value: "",
@@ -2509,6 +2529,8 @@ export async function applyAgentSitePlan(
   // Parts that could not be applied, as "<page>: <why>". Any one of them
   // refuses the plan before a page is written.
   const failed: string[] = [];
+  // Field values a publish would refuse, as "<page> — <field>: <why>".
+  const invalid: string[] = [];
 
   // 0. Whole-page rewrites are signed by the server for this person, and every
   // page the plan touches must be the page the plan was made from.
@@ -2631,6 +2653,7 @@ export async function applyAgentSitePlan(
       const byId = new Map(fields.map(f => [f.id, f]));
 
       const nextDraftValues: Record<string, FieldValue> = { ...existingDraft };
+      const planned: Record<string, FieldValue> = {};
       let pageChangeCount = 0;
 
       for (const [fieldId, edit] of Object.entries(pagePlan.edits)) {
@@ -2640,9 +2663,14 @@ export async function applyAgentSitePlan(
         const sanitized = sanitizeValue(field, { ...existingDraft[fieldId], ...edit });
         if (Object.keys(sanitized).length > 0) {
           nextDraftValues[fieldId] = sanitized;
+          planned[fieldId] = sanitized;
           pageChangeCount += 1;
         }
       }
+      // What a publish would refuse is refused here, before anything is
+      // written. An emptied heading used to be saved, refused at publish, and
+      // meanwhile locked every layout change on the page (audit M6).
+      for (const problem of validateFieldChange(fields, planned)) invalid.push(`${page.title} — ${problem.label}: ${problem.reason}`);
 
       if (pageChangeCount === 0) {
         if (!results.some(r => r.pageId === page.id)) {
@@ -2665,6 +2693,9 @@ export async function applyAgentSitePlan(
     }
   }
 
+  if (invalid.length) {
+    throw new WebsiteError(422, `Nothing was changed, because the plan would leave something a publish refuses. ${invalid.slice(0, 5).join(" ")}${invalid.length > 5 ? ` And ${invalid.length - 5} more.` : ""}`);
+  }
   if (failed.length) {
     throw new WebsiteError(409, `Part of this plan could not be applied, so none of it was. ${failed.join(" ")} Nothing was changed — reload the pages and ask the assistant again.`);
   }

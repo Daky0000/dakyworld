@@ -1625,3 +1625,11 @@ for, so nobody undoes it.
   colour to red on the footer copyright" turned the heading red. History
   turns carry `targetPageId` (one page's targets each), and a target from
   another page, or from a turn that does not say its page, is never reused.
+- **The agent never leaves a draft a publish refuses (M6).**
+  `applyAgentSitePlan` runs `validateFieldChange` on every field the plan
+  changes and refuses with 422, naming each problem, before any page is
+  written — an emptied heading used to be saved, refused at publish, and
+  meanwhile lock every layout change on the page ("Resolve the draft's
+  validation problems…"). "Delete the heading text" removes the heading when
+  it can be removed; when it cannot, and it may not be empty, the agent asks
+  for the new words instead. "Clear all text" skips what may not be empty.

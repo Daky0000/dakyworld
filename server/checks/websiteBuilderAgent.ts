@@ -408,5 +408,28 @@ assert.equal(deletePlan.actionKind, "structure");
 assert.equal(deletePlan.requiresApproval, true, "Deleting an element must require approval");
 assert.equal(deletePlan.riskLevel, "high");
 
+
+// A plan that leaves something a publish refuses is refused before anything is
+// written (audit M6): an emptied heading used to be saved and then lock the
+// page's layout.
+await assert.rejects(
+  applyAgentSitePlan(mockSite, mockPages, {
+    pageRevisions: { "page-home": 1 },
+    plan: {
+      explanation: "Empty the heading",
+      actionKind: "content",
+      summary: { totalPages: 3, affectedPages: 1, totalChanges: 1 },
+      pages: [{ pageId: "page-home", pageTitle: "Home", pagePath: "/", draftRevision: 1, changes: [], edits: { "hero.title": { value: "" } } }],
+    },
+  } as never),
+  (error: Error & { status?: number }) => error.status === 422 && /cannot be left empty|no words/i.test(error.message) && /Home/.test(error.message),
+);
+
+// "Delete the heading text" removes a removable heading instead of emptying it.
+const deleteTextPlan = await planAgentInstruction(mockSite, mockPages, "Delete the text in the hero heading", { pageId: "page-home", selectedFieldId: "hero.title" });
+assert.equal(deleteTextPlan.actionKind, "structure");
+assert.equal(deleteTextPlan.structuralActions?.[0]?.kind, "remove");
+assert.equal(deleteTextPlan.requiresApproval, true);
+
 console.log("All Website Builder Agent checks passed cleanly (zero regressions, pure assertions).");
 
