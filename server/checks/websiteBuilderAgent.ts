@@ -15,6 +15,7 @@ import {
   applyAgentSitePlan,
   siteAgentCommandSchema,
   readableAgentRequest,
+  seoTextRequest,
   siteAgentApplyInputSchema,
 } from "../src/services/websiteBuilderAgent.js";
 import { discoverFields, replaceTextOnly, type FieldValue } from "../src/services/website/index.js";
@@ -151,6 +152,24 @@ const contactHeadingChange = contactColorPlan.changes.find(c => c.fieldId === "c
 assert.ok(contactHeadingChange);
 assert.equal(contactHeadingChange.after, "#1E293B");
 assert.ok(contactColorPlan.edits["contact.heading"].style?.includes("color: #1E293B"));
+
+
+// A colour or font the pages do not use inline is answered, not painted onto
+// every button and heading instead (audit M3).
+const strayColour = await planGlobalColorChange(mockSite, mockPages, { fromColor: "#ff0000", toColor: "#15803d" });
+assert.equal(strayColour.summary.totalChanges, 0);
+assert.match(strayColour.explanation, /No element uses #ff0000 in its own style/);
+const strayFont = await planGlobalFontChange(mockSite, mockPages, { fromFont: "Comic Sans MS", toFont: "Inter" });
+assert.equal(strayFont.summary.totalChanges, 0);
+assert.match(strayFont.explanation, /comes from the site's stylesheet/);
+
+
+// The page title takes only the title (audit M5).
+const titleWords = /seo\s+title|page\s+title|browser\s+title/;
+assert.equal(seoTextRequest("Change the page title to Home Cooking Accra and make the hero heading bigger", titleWords), null, "two requests go to the model");
+assert.equal(seoTextRequest("Change the page title to Home Cooking Accra", titleWords)?.[1], "Home Cooking Accra");
+assert.equal(seoTextRequest("Set the page title to 'Fish and Chips, Osu'.", titleWords)?.[1], "Fish and Chips, Osu", "quoted text is taken as written");
+assert.equal(seoTextRequest("Make the title bigger", titleWords), null);
 
 // ---------------------------------------------------------------------------
 // 5. Test: Cross-Page Content & Contact Replacement (Phone number)
