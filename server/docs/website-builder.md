@@ -586,8 +586,8 @@ The order the founder set, after the inspector and shared elements landed:
 | 10 | GitHub App instead of one shared token | **Built, app not created** — `services/githubApp.ts`, `docs/github-app.md` |
 
 Deliberately **not** being built yet, and the list is as much a part of the plan
-as the one above: a React visual canvas, a Next.js builder, WordPress or Shopify
-integration, SFTP publishing, template or plugin marketplaces, AI site
+as the one above: a React visual canvas, a Next.js builder, Shopify integration,
+SFTP publishing, template or plugin marketplaces, AI site
 generation, an animation builder, white-labelling and self-hosted installs.
 
 ---
@@ -602,7 +602,12 @@ generation, an animation builder, white-labelling and self-hosted installs.
 5. **Members, entitlement, audit log (§8, §9, §10)** — the commercial layer,
    and the client portal is the riskiest change in the whole programme.
 6. **Publish jobs, PR mode, scheduled publish (§7B, §11)**.
-7. **Expansion** — GitLab, Netlify, SFTP, WordPress, React/Next, white-label.
+7. **Expansion** — GitLab, Netlify, SFTP, React/Next, white-label. WordPress
+   started on 21 Oct 2026 at the owner's request: connecting with an
+   Application Password, editing the words, links and pictures in page
+   content (block editor, classic, Divi, WPBakery, Avada) and publishing back
+   into WordPress. Meta-storing builders such as Elementor are read-only until
+   their own route exists. See docs/claude/13-website-builder.md, "WordPress sites".
    Behind a provider interface the GitHub path is already shaped like.
 
 

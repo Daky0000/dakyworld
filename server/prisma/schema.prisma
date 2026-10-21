@@ -85,17 +85,17 @@ model AccessRole {
 model User {
   siteMemberships     SiteMember[]
   githubRepoClaims    GithubRepoClaim[]
-  id                  String       @id @default(cuid())
-  email               String       @unique
+  id                  String            @id @default(cuid())
+  email               String            @unique
   // scrypt hash, see server/src/lib/password.ts. Null for members an Owner
   // pre-provisioned who haven't been given a password yet — they can't log in.
   passwordHash        String?
   name                String
-  role                Role         @default(DEVELOPER)
-  skills              String[]     @default([])
-  hourlyRate          Decimal?     @db.Decimal(10, 2)
-  weeklyCapacityHours Decimal      @default(0) @db.Decimal(5, 2)
-  active              Boolean      @default(true)
+  role                Role              @default(DEVELOPER)
+  skills              String[]          @default([])
+  hourlyRate          Decimal?          @db.Decimal(10, 2)
+  weeklyCapacityHours Decimal           @default(0) @db.Decimal(5, 2)
+  active              Boolean           @default(true)
 
   // --- Access (see lib/permissions.ts and middleware/auth.ts) ----------------
   // Effective permissions are (role's permissions + extra) - denied, with the
@@ -132,22 +132,22 @@ model User {
   /// invited and is not allowed for somebody who signed themselves up.
   emailVerifiedAt DateTime?
 
-  authTokens           AuthToken[]
-  websiteSubscriptions WebsitePurchase[] @relation("WebsiteSubscriber")
-  websiteUsage         WebsiteUsage[]
-  reviewLinksCreated   ReviewLink[]      @relation("ReviewLinksCreated")
+  authTokens                AuthToken[]
+  websiteSubscriptions      WebsitePurchase[]  @relation("WebsiteSubscriber")
+  websiteUsage              WebsiteUsage[]
+  reviewLinksCreated        ReviewLink[]       @relation("ReviewLinksCreated")
   scheduledPublishesCreated ScheduledPublish[] @relation("ScheduledPublishesCreated")
   /// What this person has already been shown: guided tours finished or
   /// dismissed, the welcome done. Kept on the account rather than in one
   /// browser, so a tour does not start again on a phone after it was finished
   /// on a laptop. Shape: { tours: { [id]: { status, step, at } }, welcome? }.
-  uiState              Json              @default("{}")
+  uiState                   Json               @default("{}")
   /// A customer who deleted their account: signed out and switched off at
   /// once, and their personal details erased when this passes. Writing to
   /// DakyXTech before then undoes it. See services/websiteDeletion.ts.
-  deletionScheduledFor DateTime?
-  createdAt            DateTime          @default(now())
-  updatedAt            DateTime          @updatedAt
+  deletionScheduledFor      DateTime?
+  createdAt                 DateTime           @default(now())
+  updatedAt                 DateTime           @updatedAt
 
   assignedProjects    ProjectAssignment[]
   assignedTasks       Task[]
@@ -175,13 +175,13 @@ model User {
 /// stored, so a leaked database dump can't be used to impersonate anyone —
 /// the raw token exists solely in the user's cookie.
 model Session {
-  id        String   @id @default(cuid())
-  tokenHash String   @unique
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expiresAt DateTime
+  id              String   @id @default(cuid())
+  tokenHash       String   @unique
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt       DateTime
   lastRefreshedAt DateTime @default(now())
-  createdAt DateTime @default(now())
+  createdAt       DateTime @default(now())
 
   @@index([userId])
   @@index([expiresAt])
@@ -189,55 +189,57 @@ model Session {
 
 /// Transactional invalidation events. Delivery may be repeated safely.
 model CacheInvalidation {
-  id Int @id @default(autoincrement())
-  scope String
-  resource String
-  siteId String?
-  urls String[] @default([])
-  hostedSlugs String[] @default([])
-  createdAt DateTime @default(now())
-  deliveredAt DateTime?
-  attempts Int @default(0)
-  nextAttemptAt DateTime @default(now())
-  lastError String?
-  observedBy String[] @default([])
+  id            Int       @id @default(autoincrement())
+  scope         String
+  resource      String
+  siteId        String?
+  urls          String[]  @default([])
+  hostedSlugs   String[]  @default([])
+  createdAt     DateTime  @default(now())
+  deliveredAt   DateTime?
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lastError     String?
+  observedBy    String[]  @default([])
+
   @@index([deliveredAt, nextAttemptAt])
   @@index([siteId, createdAt])
 }
 
 /// PostgreSQL ownership prevents overlapping worker deployments from running schedules twice.
 model ServiceLease {
-  key String @id
-  owner String
+  key       String   @id
+  owner     String
   expiresAt DateTime
 }
 
 /// Customer work uses the same durable database/lease pattern as internal agent tasks.
 model WebsiteWorkJob {
-  id String @id @default(cuid())
-  userId String
-  siteId String
-  kind String
-  idempotencyKey String
-  inputHash String
-  usagePeriod String?
-  usageState String @default("NONE")
+  id                String    @id @default(cuid())
+  userId            String
+  siteId            String
+  kind              String
+  idempotencyKey    String
+  inputHash         String
+  usagePeriod       String?
+  usageState        String    @default("NONE")
   /// Whose plan the run is counted against — the website's paying owner, not always `userId`.
-  chargedUserId String?
+  chargedUserId     String?
   externalStartedAt DateTime?
-  actualCostUsd Decimal @default(0) @db.Decimal(12, 6)
-  input Json
-  result Json?
-  state String @default("QUEUED")
-  attempts Int @default(0)
-  leaseOwner String?
-  leaseUntil DateTime?
-  cancelRequested Boolean @default(false)
-  error String?
-  createdAt DateTime @default(now())
-  startedAt DateTime?
-  completedAt DateTime?
-  nextAttemptAt DateTime @default(now())
+  actualCostUsd     Decimal   @default(0) @db.Decimal(12, 6)
+  input             Json
+  result            Json?
+  state             String    @default("QUEUED")
+  attempts          Int       @default(0)
+  leaseOwner        String?
+  leaseUntil        DateTime?
+  cancelRequested   Boolean   @default(false)
+  error             String?
+  createdAt         DateTime  @default(now())
+  startedAt         DateTime?
+  completedAt       DateTime?
+  nextAttemptAt     DateTime  @default(now())
+
   @@unique([userId, idempotencyKey])
   @@index([state, nextAttemptAt, createdAt])
   @@index([userId, createdAt])
@@ -714,7 +716,7 @@ model Demo {
   /// Whether they actually opened it. The one signal worth having before a
   /// follow-up call — and unlike a tracking pixel in an email, this is a
   /// hit on a page we host, which is an ordinary web server counting requests.
-  views        Int       @default(0)
+  views        Int         @default(0)
   lastViewedAt DateTime?
   visits       DemoVisit[]
 
@@ -728,16 +730,16 @@ model Demo {
 
 /// Visitor analytics for a demo page: IP, country, device, dwell time, and click/heatmap data.
 model DemoVisit {
-  id             String    @id @default(cuid())
-  demo           Demo      @relation(fields: [demoId], references: [id], onDelete: Cascade)
-  demoId         String
-  sessionId      String
+  id        String @id @default(cuid())
+  demo      Demo   @relation(fields: [demoId], references: [id], onDelete: Cascade)
+  demoId    String
+  sessionId String
 
   /// Network & Location
-  ip             String?
-  country        String?
-  countryName    String?
-  city           String?
+  ip          String?
+  country     String?
+  countryName String?
+  city        String?
 
   region                  String?
   countrySource           String?
@@ -759,14 +761,14 @@ model DemoVisit {
   screenHeight   Int?
 
   /// Engagement
-  durationSeconds Int      @default(0)
-  scrollDepth     Int      @default(0)
+  durationSeconds Int @default(0)
+  scrollDepth     Int @default(0)
 
   /// Clicks & Heatmap data: array of { x, y, xPercent, yPercent, targetTag, targetText, targetSelector, timeOffset }
-  clicks         Json?
+  clicks Json?
 
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([demoId])
   @@index([sessionId])
@@ -4531,26 +4533,29 @@ model Site {
   /// What detection found out about the host, and which faster routes this site
   /// has connected or switched off. Null until it has been detected once. See
   /// services/websiteDeployDetect.ts for the shape.
-  deployProfile Json?
+  deployProfile             Json?
   /// The host's deploy hook URL, encrypted with lib/secrets. It is a secret: the
   /// URL alone starts a build. Never returned whole.
-  deployHookSecret String?
+  deployHookSecret          String?
   /// The customer's installation of the second, opt-in GitHub App (DakyX
   /// Pages), which alone holds Workflows and Pages write. See
   /// services/publishRoutes/pagesActions.ts.
   githubPagesInstallationId String?
 
   hostConnections SiteHostConnection[]
+  /// Set when this website is a WordPress site edited through its REST API
+  /// rather than files. See services/websiteWordPress.ts.
+  wordpress       WordPressConnection?
 
-  pages          SitePage[]
-  sharedElements SharedElement[]
-  publishJobs    PublishJob[]
-  escalations    WebsiteEscalation[]
-  reviewLinks    ReviewLink[]
+  pages              SitePage[]
+  sharedElements     SharedElement[]
+  publishJobs        PublishJob[]
+  escalations        WebsiteEscalation[]
+  reviewLinks        ReviewLink[]
   scheduledPublishes ScheduledPublish[]
-  formSubmissions FormSubmission[]
-  visitDays      SiteVisitDay[]
-  referrerDays   SiteReferrerDay[]
+  formSubmissions    FormSubmission[]
+  visitDays          SiteVisitDay[]
+  referrerDays       SiteReferrerDay[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4563,21 +4568,21 @@ model Site {
 /// (services/websiteForms.ts). What they typed and the page they were on —
 /// no IP address. Deleted with the site.
 model FormSubmission {
-  id       String  @id @default(cuid())
-  site     Site    @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  siteId   String
+  id        String    @id @default(cuid())
+  site      Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId    String
   /// The page it was sent from, as the visitor saw its address.
-  pagePath String
+  pagePath  String
   /// The form's name or id, so two forms on one site can be told apart.
-  formName String?
+  formName  String?
   /// Field name to value, as typed. Bounded on the way in.
-  fields   Json
+  fields    Json
   /// The address to reply to, when the form had one.
-  email    String?
+  email     String?
   /// A robot filled the hidden field, or the message is mostly links. Not emailed.
-  spam     Boolean @default(false)
-  readAt   DateTime?
-  createdAt DateTime @default(now())
+  spam      Boolean   @default(false)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
 
   @@index([siteId, spam, createdAt])
 }
@@ -4665,8 +4670,8 @@ model ReviewComment {
   link   ReviewLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
   linkId String
 
-  authorName String
-  body       String
+  authorName  String
+  body        String
   /// Where on the page, as a share of the document's width and height, and the
   /// words of the element that was clicked, so a pin still means something when
   /// the layout moves.
@@ -4704,9 +4709,9 @@ model ScheduledPublish {
   page   SitePage @relation(fields: [pageId], references: [id], onDelete: Cascade)
   pageId String
 
-  status      ScheduledPublishStatus @default(PENDING)
-  scheduledAt DateTime
-  revertAt    DateTime?
+  status             ScheduledPublishStatus @default(PENDING)
+  scheduledAt        DateTime
+  revertAt           DateTime?
   /// The draft revision that was scheduled. A draft that has moved on by the
   /// time it is due is not published: nobody scheduled those words.
   draftRevision      Int
@@ -4777,10 +4782,10 @@ model SitePage {
   /// until 13 Oct 2026, and every one of those writes moved it.
   editCountedOn  DateTime? @db.Date
 
-  versions        SitePageVersion[]
-  sharedInstances SharedElementInstance[]
-  publishJobs     PublishJob[]
-  reviewLinks     ReviewLink[]
+  versions           SitePageVersion[]
+  sharedInstances    SharedElementInstance[]
+  publishJobs        PublishJob[]
+  reviewLinks        ReviewLink[]
   scheduledPublishes ScheduledPublish[]
 
   /// The published HTML, for a hosted site. The repository is the record for a
@@ -4906,12 +4911,12 @@ model PublishJob {
   /// The faster route that was tried and failed first, when one did.
   fallbackFrom String?
   /// Every route tried, with how it went and how long it took.
-  routeLog     Json      @default("[]")
+  routeLog     Json    @default("[]")
   /// What the host says it is doing with the commit: queued, building,
   /// deploying, live or failed. Read from GitHub's records of the deploy.
   stage        String?
   /// When each stage was first seen, as ISO strings keyed by stage.
-  stageTimes   Json      @default("{}")
+  stageTimes   Json    @default("{}")
   /// The host's own words when it reports a failure.
   hostMessage  String?
 
@@ -4922,32 +4927,65 @@ model PublishJob {
 /// A customer's sign-in to their host (Netlify, Vercel), made once through the
 /// host's own OAuth screen, so a publish can upload straight to the host.
 /// Route A in services/websitePublishRouter.ts.
+/// A WordPress site the Website Builder edits through WordPress's own REST API,
+/// signed in with an Application Password the site's owner created for us.
+///
+/// There is no repository and nothing is hosted here: the editor shows the
+/// live page, and a publish writes the changed words back into the WordPress
+/// page they came from. See services/websiteWordPress.ts and
+/// docs/claude/13-website-builder.md, "WordPress sites".
+model WordPressConnection {
+  id                  String    @id @default(cuid())
+  site                Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId              String    @unique
+  /// The site's own address as WordPress reports it (`home`), no trailing slash.
+  siteUrl             String
+  /// Where its REST API answers, no trailing slash. Usually `<siteUrl>/wp-json`,
+  /// but read from the site's own discovery link, because not every site has
+  /// pretty permalinks.
+  apiRoot             String
+  /// The WordPress user the Application Password belongs to.
+  username            String
+  /// The Application Password, encrypted with lib/secrets. Never returned by a route.
+  applicationPassword String
+  /// What the last check found: WordPress version, who we are signed in as,
+  /// whether they can edit pages, which page builders the site uses.
+  details             Json?
+  verifiedAt          DateTime?
+  /// Set when WordPress stopped accepting the password; cleared by reconnecting.
+  pausedAt            DateTime?
+  pausedReason        String?
+  connectedById       String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
+
 model SiteHostConnection {
-  id     String @id @default(cuid())
-  site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  siteId String
+  id              String    @id @default(cuid())
+  site            Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  siteId          String
   /// `netlify` or `vercel`.
-  provider String
+  provider        String
   /// The host's own id for the site or project, once it has been matched.
-  externalSiteId String?
-  externalName   String?
+  externalSiteId  String?
+  externalName    String?
   /// Vercel: the team the integration was installed on, and its configuration.
   teamId          String?
   configurationId String?
   /// Encrypted with lib/secrets. Never returned by a route.
-  accessToken  String
-  refreshToken String?
-  expiresAt    DateTime?
-  connectedById String?
+  accessToken     String
+  refreshToken    String?
+  expiresAt       DateTime?
+  connectedById   String?
   /// Set when the token stopped working; the route is skipped until reconnected.
-  pausedAt     DateTime?
-  pausedReason String?
-  lastUsedAt   DateTime?
+  pausedAt        DateTime?
+  pausedReason    String?
+  lastUsedAt      DateTime?
   /// Vercel: each file's SHA-1 by path and Git blob id, from the last direct
   /// deploy, so the next one only reads the files that changed.
-  manifest     Json?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  manifest        Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   @@unique([siteId, provider])
 }
@@ -5364,15 +5402,15 @@ enum AuthTokenKind {
 /// that has an unexpired link. `usedAt` makes it single-use even inside its
 /// lifetime, and expiry is checked rather than relied on to delete the row.
 model AuthToken {
-  id        String        @id @default(cuid())
-  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId    String
-  kind      AuthTokenKind
+  id         String        @id @default(cuid())
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String
+  kind       AuthTokenKind
   /// SHA-256 of the token in the link.
-  tokenHash String        @unique
-  expiresAt DateTime
-  usedAt    DateTime?
-  createdAt DateTime      @default(now())
+  tokenHash  String        @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime      @default(now())
   /// Shown to a browser (the payment-return page) rather than emailed. Such a
   /// token proves somebody paid, not that they own the address, so redeeming
   /// it never marks the email verified.
@@ -5419,8 +5457,8 @@ model WebsiteEscalation {
   pageId       String?
   pageTitle    String?
   userPrompt   String
-  reason       String    // "OUT_OF_SCOPE" | "UNSUPPORTED_CAPABILITY" | "EXECUTION_FAILURE" | "OWNER_REQUESTED"
-  category     String    // "custom_backend" | "third_party_integration" | "crm_or_leads" | "billing_or_account" | "complex_engineering" | "other"
+  reason       String // "OUT_OF_SCOPE" | "UNSUPPORTED_CAPABILITY" | "EXECUTION_FAILURE" | "OWNER_REQUESTED"
+  category     String // "custom_backend" | "third_party_integration" | "crm_or_leads" | "billing_or_account" | "complex_engineering" | "other"
   agentNotes   String
   /// Who asked. Requests filed before 21 Oct 2026 have only the email.
   userId       String?

@@ -21,6 +21,8 @@ export type PublishJobStatus = {
   label: string;
   /** True when a source file was committed and the host has to build it first. */
   fromSource?: boolean;
+  /** True when the change was written into a WordPress page: saved at once, nothing to rebuild. */
+  wordpress?: boolean;
   verifyUrl: string | null;
   deployedInSeconds: number | null;
   attempts: number;

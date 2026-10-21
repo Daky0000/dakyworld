@@ -1,3 +1,4 @@
+import { isWordPressSite } from "./websiteWordPress.js";
 import { randomUUID } from "node:crypto";
 import tls from "node:tls";
 import type { Request, Response, Router } from "express";
@@ -562,6 +563,9 @@ export function registerWebsiteSeoRoutes(
   router.post("/sites/:siteId/seo/page", async (req: Request, res: Response, next) => {
     try {
       const site = await access.loadSite(req, req.params.siteId);
+      // WordPress, or the site's SEO plugin, writes a WordPress page's <head>;
+      // a draft of it here could never be published.
+      if (isWordPressSite(site)) throw new WebsiteError(409, "This is a WordPress site, so its page titles, descriptions and social tags are set in WordPress — usually by an SEO plugin such as Yoast or Rank Math.");
       const body = pageSeoPatchSchema.parse(req.body ?? {});
       const page = await prisma.sitePage.findFirst({ where: { id: body.pageId, siteId: site.id } });
       if (!page) throw new WebsiteError(404, "Page not found.");

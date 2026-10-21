@@ -3345,7 +3345,7 @@ export type SiteSummary = {
    * It decides which editor the Edit button opens: a framework route is source,
    * not rendered HTML, and the visual editor cannot read it.
    */
-  sourceKind?: "next" | "astro" | "sveltekit" | "nuxt" | "vue" | "vite-react" | null;
+  sourceKind?: "next" | "astro" | "sveltekit" | "nuxt" | "vue" | "vite-react" | "wordpress" | null;
   client: { id: string; name: string } | null;
   pageCount: number;
   draftCount: number;
@@ -3503,7 +3503,8 @@ export type SharedReview = {
 
 export type SitePageDetail = {
   structure?: { changed: boolean; canUndo: boolean; canRedo: boolean; changes: string[]; stale: boolean };
-  site: { id: string; name: string; publicUrl: string; repo: string | null; deletionScheduledFor?: string | null };
+  /** `wordpress`: a publish writes into the WordPress page; there is no repository and nothing is hosted here. */
+  site: { id: string; name: string; publicUrl: string; repo: string | null; wordpress?: boolean; deletionScheduledFor?: string | null };
   /** Where this page's published copy can be seen — a demo path or the hosted address. Null when it is served nowhere. */
   liveUrl?: string | null;
   /** Where a link on this page can go without leaving the site. */

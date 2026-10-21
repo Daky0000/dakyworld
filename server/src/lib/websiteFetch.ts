@@ -212,3 +212,66 @@ export async function postWebsiteHook(address: string): Promise<number> {
     request.end();
   });
 }
+
+/** One response from `requestWebsite`: status, headers and body, whatever the status. */
+export type WebsiteResponse = { status: number; headers: Record<string, string>; text: string };
+
+/**
+ * One authenticated request to somebody else's website — a WordPress REST call.
+ *
+ * Pinned the same way as everything above, and different in the two ways a
+ * request carrying a password has to be:
+ *
+ * - **A redirect is never followed.** It is returned, status and `location`, for
+ *   the caller to refuse. Following one would hand the `Authorization` header to
+ *   whatever host the redirect names, which is exactly how a password leaves
+ *   the site it was made for.
+ * - **There is no fallback from HTTPS to HTTP**, for the same reason: a
+ *   certificate problem is reported, never worked around with the password
+ *   travelling in the clear.
+ *
+ * Every status is answered rather than thrown, because a WordPress error is a
+ * JSON body with a code in it, and the code is what says what to fix.
+ */
+export async function requestWebsite(address: string, options: {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string | Buffer;
+  maxBytes?: number;
+  timeoutMs?: number;
+} = {}): Promise<WebsiteResponse> {
+  const url = new URL(address);
+  const allowLoopback = process.env.NODE_ENV === "development" && process.env.DEV_NO_AUTH === "true";
+  const pinned = await resolveWebsiteAddress(url, allowLoopback);
+  const signal = AbortSignal.timeout(options.timeoutMs ?? 30_000);
+  const maxBytes = options.maxBytes ?? 8 * 1024 * 1024;
+  const body = options.body === undefined ? undefined : Buffer.isBuffer(options.body) ? options.body : Buffer.from(options.body, "utf8");
+  return new Promise<WebsiteResponse>((resolve, reject) => {
+    const request = (url.protocol === "https:" ? https : http).request(url, {
+      signal,
+      method: options.method ?? "GET",
+      headers: {
+        "User-Agent": "DakyXTech-OS-Editor",
+        "Accept-Encoding": "identity",
+        ...(body ? { "Content-Length": String(body.length) } : {}),
+        ...options.headers,
+      },
+      lookup: createPinnedLookup(pinned),
+    }, (response) => {
+      const headers: Record<string, string> = {};
+      for (const [name, value] of Object.entries(response.headers)) if (value !== undefined) headers[name] = Array.isArray(value) ? value.join(", ") : value;
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      response.on("data", (chunk: Buffer) => {
+        bytes += chunk.length;
+        if (bytes > maxBytes) { response.destroy(new Error("The website's answer was larger than this request allows.")); return; }
+        chunks.push(chunk);
+      });
+      response.on("end", () => resolve({ status: response.statusCode ?? 0, headers, text: Buffer.concat(chunks).toString("utf8") }));
+      response.on("error", reject);
+    });
+    request.on("error", reject);
+    if (body) request.write(body);
+    request.end();
+  });
+}

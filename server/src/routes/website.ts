@@ -23,6 +23,7 @@ import { embedWebsiteAssets } from "../services/websiteAssets.js";
 import { registerWebsiteManagement, siteInput } from "../services/websiteManagement.js";
 import { registerWebsiteShared, saveSharedEdits, sharedOnPage } from "../services/websiteShared.js";
 import { registerWebsiteReadiness } from "../services/websiteReadiness.js";
+import { discoverWordPressPages, isWordPressSite, registerWebsiteWordPress } from "../services/websiteWordPress.js";
 import { registerWebsiteSurvey } from "../services/websiteSiteSurvey.js";
 import { registerWebsiteOnboarding } from "../services/websiteOnboarding.js";
 import { registerGithubAppRoutes, registerGithubConnectRoutes } from "../services/githubAppRoutes.js";
@@ -137,6 +138,7 @@ registerWebsiteSurvey(websiteRouter, { loadSite });
 registerWebsitePublishJobs(websiteRouter, { loadSite });
 registerWebsiteDeployRoutes(websiteRouter, { loadSite });
 registerWebsiteOnboarding(websiteRouter, { loadSite });
+registerWebsiteWordPress(websiteRouter, { loadSite });
 registerGithubAppRoutes(websiteRouter, { loadSite });
 registerGithubConnectRoutes(websiteRouter);
 
@@ -296,7 +298,9 @@ websiteRouter.post("/sites/:siteId/scan", async (req, res, next) => {
   try {
     const site = await loadSite(req, req.params.siteId);
 
-    const discovery = await discoverPages(site);
+    // A WordPress site's pages are its published WordPress pages, listed by its
+    // REST API; there is no repository or sitemap to read. See websiteWordPress.ts.
+    const discovery = isWordPressSite(site) ? await discoverWordPressPages(site) : await discoverPages(site);
     const found = discovery.pages;
 
     // The scan may have found the pages somewhere other than where the site
@@ -455,7 +459,9 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
     const liveUrl = linkedDemo ? `/demos/${encodeURIComponent(linkedDemo.slug)}` : hosted ? `${hosted}${page.path === "/" ? "/" : page.path}` : null;
 
     res.json({
-      site: { id: site.id, name: site.name, publicUrl: site.publicUrl, repo: siteRepo(site), deletionScheduledFor: site.deletionScheduledFor },
+      // A WordPress site has no repository and is not hosted here, and is
+      // still somewhere a publish goes: into WordPress.
+      site: { id: site.id, name: site.name, publicUrl: site.publicUrl, repo: siteRepo(site), wordpress: isWordPressSite(site), deletionScheduledFor: site.deletionScheduledFor },
       liveUrl,
       links: siblings,
       page: {

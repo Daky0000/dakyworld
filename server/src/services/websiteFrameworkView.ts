@@ -28,6 +28,7 @@
  *  - **a page that has never been deployed has no HTML at all.** Then there is
  *    no frame, and the fields are still editable on their own.
  */
+import { isWordPressSite, wordpressManagedFields } from "./websiteWordPress.js";
 import type { Request, Response, Router } from "express";
 import type { Site, SitePage } from "@prisma/client";
 import { discoverFields, mapJsxFieldsToHtml, pageFile, buildPreview, type SiteField } from "./website/index.js";
@@ -134,6 +135,9 @@ export function matchSourceToLive(input: { source: string; filePath: string; liv
  * told now and being told at the publish, when they have already done the work.
  */
 export async function sourceManagedFields(site: Site, page: SitePage, html: string): Promise<{ writable: Set<string>; notes: Map<string, string>; nameable?: Set<string>; failure?: string } | null> {
+  // A WordPress page traces its fields to the page's stored content instead of
+  // to repository files, and answers the same three things. See websiteWordPress.ts.
+  if (isWordPressSite(site)) return wordpressManagedFields(site, page, html);
   // The editor and the publish have to agree about what is writable, and they
   // agree by asking the same question of the same files. When this read one file
   // and the publish read the whole manifest, every heading in a component was

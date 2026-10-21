@@ -82,6 +82,9 @@ export type PageSource = {
   detail?: string;
 };
 
+/** A page row that is a WordPress post rather than a file: `wordpress/pages/42`. */
+const WORDPRESS_PAGE = /^wordpress\/(pages|posts)\/\d{1,12}$/;
+
 async function fetchLive(url: string): Promise<string> {
   try {
     return await fetchWebsiteText(url);
@@ -153,6 +156,23 @@ async function readPageSource(site: Site, page: SitePage, options: { fresh?: boo
   }
   const key = sourceKey({ siteId: site.id, repo, branch: site.repoBranch, filePath: page.filePath });
   const generation = sourceGeneration();
+  // A WordPress page is built by WordPress on every request, so what the
+  // editor opens is the live page, exactly like the fallback below. The one
+  // difference is `sourceFile`: it is what tells the publish to write the edits
+  // back into WordPress rather than serve this HTML (services/websiteWordPress.ts).
+  if (WORDPRESS_PAGE.test(page.filePath)) {
+    const wordpress = { sourceFile: page.filePath, detail: "the live page — your changes are written into this page in WordPress" };
+    if (!options.fresh) {
+      const cached = readCache(key);
+      if (cached) return { ...cached, ...wordpress };
+    }
+    // A fresh read is the one a publish decides on, so it asks past any page
+    // cache in front of the site: a caching plugin or CDN keys on the whole URL.
+    const address = options.fresh ? `${pageUrl(site, page)}${pageUrl(site, page).includes("?") ? "&" : "?"}dakyx-fresh=${Date.now().toString(36)}` : pageUrl(site, page);
+    const html = await fetchLive(address);
+    writeCache(key, { html, from: "live site" }, generation);
+    return { html, from: "live site", ...wordpress };
+  }
   if (!options.fresh) {
     const cached = readCache(key);
     if (cached) return cached;
@@ -351,7 +371,7 @@ export type Discovery = {
    * one, and a page list that cannot tell them apart sends people to an editor
    * that cannot read the file it was given.
    */
-  sourceKind: SourceKind | null;
+  sourceKind: SourceKind | "wordpress" | null;
 };
 
 /**

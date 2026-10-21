@@ -1,3 +1,4 @@
+import { isWordPressSite } from "./websiteWordPress.js";
 import { beforeWebsiteExternalAction } from "../lib/websiteWorkContext.js";
 import { capacity } from "../lib/capacity.js";
 import { enqueueWebsiteWork } from "./websiteWorkQueue.js";
@@ -908,6 +909,9 @@ export async function executeSharedPublish(req: Request) {
     // Recorded before GitHub is touched, exactly as a page publish is. A shared
     // publish writes several files, so an interruption here leaves more than one
     // page ahead of this system and is worth more, not less, than a page's.
+    // A part shared across a WordPress site's pages is a reusable block, a
+    // template part or a widget — WordPress's to change, once, for every page.
+    if (isWordPressSite(site)) throw new WebsiteError(409, `${element.name} appears on several pages of a WordPress site, so change it in WordPress — as a synced pattern, a template part or a widget — and every page gets it at once.`);
     const job = await startPublishJob({
       site,
       kind: "SHARED",

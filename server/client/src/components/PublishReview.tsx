@@ -134,12 +134,15 @@ export function PublishReview({
   onClose,
   onConfirm,
   hasRepository = true,
+  wordpress = false,
 }: {
   pageId: string;
   siteId?: string;
   pending: boolean;
   /** False for a site DakyX hosts itself: there is no branch to commit to and no pull request to open. */
   hasRepository?: boolean;
+  /** Publishing writes into a WordPress page rather than a repository or the hosted copy. */
+  wordpress?: boolean;
   onClose: () => void;
   onConfirm: (review: WebsiteReview) => void;
 }) {
@@ -707,6 +710,8 @@ export function PublishReview({
                     </Button>
                   </div>
                 </div>
+              ) : wordpress ? (
+                <p className="text-xs text-muted">Publishing writes these changes into this page in WordPress, which keeps a revision of it as well.</p>
               ) : !hasRepository ? (
                 <p className="text-xs text-muted">DakyX serves this website, so publishing makes the change live straight away.</p>
               ) : (

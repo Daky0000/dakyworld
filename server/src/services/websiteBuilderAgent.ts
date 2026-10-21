@@ -1,3 +1,4 @@
+import { isWordPressSite } from "./websiteWordPress.js";
 import { startPublishJob, advancePublishJob, failPublishJob, publishJobCommitted } from "./websitePublishJobs.js";
 import { publishPreflight, recordGuardOverride } from "./websitePagePublication.js";
 import { syncDemoFromSitePage } from "./websitePageContext.js";
@@ -3092,7 +3093,9 @@ export async function executeBatchPublish(req: Request, site: Site) {
           const values = (page.draft ?? {}) as Record<string, FieldValue>;
           if (!Object.keys(values).length) throw new WebsiteError(409, `${page.title} changed while publishing. Review its draft again.`);
           const source = await pageSource(site, page, { fresh: true });
-          if (source.sourceFile) throw new WebsiteError(409, `${page.title} uses framework source. Publish it through the page review, which preserves its components.`);
+          if (source.sourceFile) throw new WebsiteError(409, isWordPressSite(site)
+            ? `${page.title} is a WordPress page. Publish it from its own page review, which writes the changes into WordPress.`
+            : `${page.title} uses framework source. Publish it through the page review, which preserves its components.`);
           const plan = buildPublishPlan({ source: source.html, values });
           if (!plan.publishable || !plan.html) throw Object.assign(new WebsiteError(409, `${page.title} cannot be published. Review its draft again.`), { problems: plan.problems, conflicts: plan.conflicts, missing: plan.missing });
           const { guard, overriding } = await publishPreflight({ actor: req, site, page, candidateHtml: plan.html, sourceHtml: source.html, values, forceOverride: body.forceOverride === true });

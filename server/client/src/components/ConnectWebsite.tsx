@@ -3,9 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api, fileToBase64 } from "../lib/api";
 import { Button } from "./ui";
+import { ConnectWordPress, WORDPRESS_GUIDE } from "./ConnectWordPress";
 
 /**
- * Bringing a website in, by whichever of the two routes fits.
+ * Bringing a website in, by whichever of the three routes fits.
  *
  * The dialog used to ask for a repository and a branch and leave anybody
  * without a GitHub account to work out whether the product was for them. There
@@ -22,14 +23,16 @@ type Assistance = {
   currency: string;
   amount: number;
   display: string;
-  guides: { hosted: string; github: string };
+  guides: { hosted: string; github: string; wordpress?: string };
 };
 
-type Route = "hosted" | "github";
+/** A WordPress site is its own route: no repository and no hosting, its pages stay in WordPress. */
+type Route = "hosted" | "github" | "wordpress";
 
 const GUIDE = {
   hosted: "https://dakyx.com/website-builder-setup#hosted",
   github: "https://dakyx.com/website-builder-setup#github",
+  wordpress: WORDPRESS_GUIDE,
 };
 
 export function ConnectWebsite() {
@@ -131,7 +134,7 @@ export function ConnectWebsite() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 id="connect-title" className="font-display text-xl">
-                  {route === null ? "Bring your website" : route === "hosted" ? "We host it for you" : "Publish to your repository"}
+                  {route === null ? "Bring your website" : route === "hosted" ? "We host it for you" : route === "wordpress" ? "Connect your WordPress website" : "Publish to your repository"}
                 </h2>
                 {route !== null && (
                   <button type="button" className="mt-1 text-xs text-muted underline" onClick={() => setRoute(null)}>
@@ -148,7 +151,7 @@ export function ConnectWebsite() {
             {route === null && (
               <div className="space-y-3">
                 <p className="text-sm text-muted">
-                  There are two ways in. Pick whichever describes you — you can change it later.
+                  There are three ways in. Pick whichever describes you — you can change it later.
                 </p>
 
                 <button
@@ -175,6 +178,18 @@ export function ConnectWebsite() {
                   </span>
                 </button>
 
+                <button
+                  type="button"
+                  className="block w-full rounded-xl border border-line p-4 text-left hover:border-line-strong"
+                  onClick={() => setRoute("wordpress")}
+                >
+                  <span className="block text-sm font-semibold text-ink">I have a WordPress website</span>
+                  <span className="mt-1 block text-xs leading-relaxed text-muted">
+                    Edit your WordPress pages here and publish straight back into WordPress. Nothing to install — you make
+                    an Application Password in your WordPress profile and paste it in. Your theme and hosting stay as they are.
+                  </span>
+                </button>
+
                 <div className="rounded-xl bg-sunken p-4">
                   <p className="text-sm font-semibold text-ink">Would rather not do it yourself?</p>
                   <p className="mt-1 text-xs leading-relaxed text-muted">
@@ -188,8 +203,43 @@ export function ConnectWebsite() {
               </div>
             )}
 
+            {/* ------------------------------------------------ WordPress */}
+            {route === "wordpress" && (
+              <>
+                <ConnectWordPress guide={assistance.data?.guides.wordpress} onConnected={close} />
+                <div className="rounded-xl bg-sunken p-4">
+                  {helpAsked ? (
+                    <p className="text-sm text-ink">{helpAsked}</p>
+                  ) : (
+                    <>
+                      <p className="text-sm font-semibold text-ink">Stuck? We will do it for you — {price}</p>
+                      <p className="mt-1 text-xs leading-relaxed text-muted">
+                        We make the Application Password with you, sort out anything a security plugin or your host is
+                        blocking, and make the first publish together.
+                      </p>
+                      <textarea
+                        rows={2}
+                        value={helpNotes}
+                        onChange={(event) => setHelpNotes(event.target.value)}
+                        placeholder="Your website address, and what happened when you tried…"
+                        className="mt-3 w-full rounded-xl border border-line bg-white px-3 py-2 text-xs"
+                      />
+                      <Button size="sm" variant="secondary" className="mt-3" disabled={askForHelp.isPending} onClick={() => askForHelp.mutate()}>
+                        {askForHelp.isPending ? "Requesting…" : `Set it up for me · ${price}`}
+                      </Button>
+                      {askForHelp.error && (
+                        <p role="alert" className="mt-2 text-xs text-danger-text">
+                          {(askForHelp.error as Error).message}
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
+              </>
+            )}
+
             {/* ------------------------------------------------ either form */}
-            {route !== null && (
+            {(route === "hosted" || route === "github") && (
               <form
                 className="space-y-4"
                 onSubmit={(event) => {

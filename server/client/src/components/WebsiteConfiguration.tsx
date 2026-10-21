@@ -14,6 +14,7 @@ import { WebsiteDeployPanel } from "./WebsiteDeployPanel";
 import { WebsiteSubscriptionPanel } from "./WebsiteSubscriptionPanel";
 import { ConnectGithubApp } from "./ConnectGithubApp";
 import { ColorCodeInput } from "./InspectorControls";
+import { WebsiteWordPressPanel } from "./ConnectWordPress";
 
 type Config = { id?: string; clientId?: string | null; github?: { installationId: string | null; repositoryId: string | null; accessLostAt: string | null }; connectionEditable?: boolean; name: string; publicUrl: string; repoOwner: string | null; repoName: string | null; repoBranch: string; repoPath: string; options: { presets: BrandPreset[]; colours: string[]; fonts: string[]; brandVoice: string; aiEnabled: boolean } };
 type ManagedSite = SiteSummary & { capabilities?: { manage: boolean } };
@@ -26,6 +27,9 @@ export function WebsiteSettings() {
   // A host sends the browser back here with the site it was connecting.
   const [selected, setSelected] = useState(() => new URLSearchParams(window.location.search).get("site") ?? "");
   const id = manageable.some(site => site.id === selected) ? selected : manageable[0]?.id;
+  // A WordPress site has no repository and is not hosted here: its pages stay
+  // in WordPress, so those settings are replaced by the WordPress connection.
+  const wordpress = manageable.find(site => site.id === id)?.sourceKind === "wordpress";
   const config = useQuery({ queryKey: ["website", "config", id], enabled: !!id, queryFn: ({ signal }) => api.get<Config>(`/website/sites/${id}/config`, signal) });
   // Whose website this is. It is what decides whether a retainer covers the
   // Website Builder for them, so a site with no client can only be told that
@@ -95,8 +99,8 @@ export function WebsiteSettings() {
         <section className="rounded-2xl border border-line bg-white p-5">
           <h2 className="mb-4 font-display text-lg">Source & publishing</h2>
           {pickClient && <label className="mb-4 block text-xs text-muted">Client<select className={INPUT} value={draft.clientId ?? ""} onChange={event => change("clientId" as keyof Config, (event.target.value || null) as never)}><option value="">DakyXTech&#39;s own website</option>{(Array.isArray(clients.data) ? clients.data : []).map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select><span className="mt-1 block text-[11px] text-faint">Whose website this is. A client on an active retainer gets the Website Builder at no charge; without a client here, nothing can work that out.</span></label>}
-          <div className="grid gap-4 sm:grid-cols-2">{([["name", "Name"], ["publicUrl", "Public address"], ["repoOwner", "Repository owner"], ["repoName", "Repository name"], ["repoBranch", "Branch"], ["repoPath", "HTML folder"]] as const).map(([key, label]) => <label key={key} className="text-xs text-muted">{label}<input className={INPUT} value={draft[key] ?? ""} disabled={key.startsWith("repo") && draft.connectionEditable === false} required={key === "name" || key === "publicUrl" || key === "repoBranch"} maxLength={key === "publicUrl" ? 2000 : key === "repoPath" ? 200 : key === "name" ? 120 : 100} type={key === "publicUrl" ? "url" : "text"} onChange={event => change(key, (key === "repoOwner" || key === "repoName") && !event.target.value ? null : event.target.value)} /></label>)}</div>
-          <p className="mt-3 text-xs text-muted">Publishing writes to this branch. Your administrator connects the repository credentials. An imported page can also be downloaded as HTML.</p>
+          <div className="grid gap-4 sm:grid-cols-2">{(wordpress ? ([["name", "Name"], ["publicUrl", "Public address"]] as const) : ([["name", "Name"], ["publicUrl", "Public address"], ["repoOwner", "Repository owner"], ["repoName", "Repository name"], ["repoBranch", "Branch"], ["repoPath", "HTML folder"]] as const)).map(([key, label]) => <label key={key} className="text-xs text-muted">{label}<input className={INPUT} value={draft[key] ?? ""} disabled={key.startsWith("repo") && draft.connectionEditable === false} required={key === "name" || key === "publicUrl" || key === "repoBranch"} maxLength={key === "publicUrl" ? 2000 : key === "repoPath" ? 200 : key === "name" ? 120 : 100} type={key === "publicUrl" ? "url" : "text"} onChange={event => change(key, (key === "repoOwner" || key === "repoName") && !event.target.value ? null : event.target.value)} /></label>)}</div>
+          <p className="mt-3 text-xs text-muted">{wordpress ? "This is a WordPress website: publishing writes into its pages in WordPress, through the connection below." : "Publishing writes to this branch. Your administrator connects the repository credentials. An imported page can also be downloaded as HTML."}</p>
         </section>
         <section className="rounded-2xl border border-line bg-white p-5">
           <h2 className="mb-4 font-display text-lg">Design system</h2>
@@ -168,14 +172,15 @@ export function WebsiteSettings() {
         questions people ask about their own site rather than about its design,
         so they sit above the design system rather than being filed under it. */}
     {id && <div className="mb-8 grid max-w-3xl gap-6">
+      {wordpress && <WebsiteWordPressPanel key={id} siteId={id} />}
       {config.data?.repoName && <WebsiteDeployPanel key={id} siteId={id} />}
-      <WebsiteHostingPanel siteId={id} />
+      {!wordpress && <WebsiteHostingPanel siteId={id} />}
       <WebsiteSubscriptionPanel />
     </div>}
     {id && config.data && <WebsitePresetRollout key={`${id}:${config.data.options.presets?.map(p => JSON.stringify(p)).join("")}`} siteId={id} presets={config.data.options.presets ?? []} disabled={dirty || save.isPending} />}
     {/* Beside the repository fields rather than inside the form: this is not a
         value somebody types and saves, it is a connection the customer makes. */}
-    {config.data && id && <ConnectGithubApp
+    {config.data && id && !wordpress && <ConnectGithubApp
       siteId={id}
       installationId={config.data.github?.installationId ?? null}
       repoFullName={config.data.repoOwner && config.data.repoName ? `${config.data.repoOwner}/${config.data.repoName}` : null}

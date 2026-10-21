@@ -26,7 +26,7 @@ import { companyProfile } from "./systemProfile.js";
 const requestInput = z.object({
   siteId: z.string().min(1).nullable().optional(),
   /** Which of the two paths they were on when they asked. */
-  route: z.enum(["hosted", "github"]),
+  route: z.enum(["hosted", "github", "wordpress"]),
   websiteUrl: z.string().trim().max(500).optional(),
   /** What they have already tried, in their words. */
   notes: z.string().trim().max(2000).optional(),
@@ -34,9 +34,10 @@ const requestInput = z.object({
   country: z.string().trim().max(60).optional(),
 });
 
-const ROUTE_LABEL: Record<"hosted" | "github", string> = {
+const ROUTE_LABEL: Record<"hosted" | "github" | "wordpress", string> = {
   hosted: "Hosted by DakyXTech — domain and DNS setup",
   github: "GitHub repository connection and first publish",
+  wordpress: "WordPress connection, Application Password and first publish",
 };
 
 const handler =
@@ -81,6 +82,7 @@ export function registerWebsiteSetupAssistance(router: Router) {
         guides: {
           hosted: "https://dakyx.com/website-builder-setup#hosted",
           github: "https://dakyx.com/website-builder-setup#github",
+          wordpress: "https://dakyx.com/website-builder-setup#wordpress",
         },
         appUrl: base,
       });

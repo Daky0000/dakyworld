@@ -37,6 +37,7 @@ import { generatePagePrepublishReport, generateSitePrepublishReport } from "./we
 import { updateSiteSettings } from "./websiteSiteSettings.js";
 import { HOST_DOMAIN, PLACEHOLDER_HOST_DOMAIN, PLACEHOLDER_HOSTS, expectedHostedUrl, hostedPublicUrl, isSlugAddress } from "./websiteHosting.js";
 import { siteAiEnabled } from "./websiteAiSwitch.js";
+import { addWordPressPages, prepareWordPressSite, WORDPRESS_SOURCE_KIND, wordpressConnectInput } from "./websiteWordPress.js";
 
 const publicUrl = z.string().url().max(2000).refine(value => {
   const url = new URL(value);
@@ -427,11 +428,21 @@ export function registerWebsiteManagement(router: Router, access: Access) {
        * outside the company can start a website from their own repository.
        */
       githubRepositoryId: z.string().regex(/^\d{1,20}$/).optional(),
+      /**
+       * A WordPress site, edited through its REST API with an Application
+       * Password. Checked against the site before anything is saved, so a
+       * password that does not work is never stored. See websiteWordPress.ts.
+       */
+      wordpress: wordpressConnectInput.optional(),
     }).parse(req.body);
     if (!!input.repoOwner !== !!input.repoName) throw new WebsiteError(400, "Enter both the repository owner and name.");
     if (!input.publicUrl && input.repoOwner) throw new WebsiteError(400, "Enter the address the repository's website is published at.");
     const slug = `${input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0,60) || "site"}-${randomUUID().slice(0,8)}`;
-    let { html, templateKey, packageData, packageFilename, publicUrl: givenPublicUrl, githubRepositoryId, ...rest } = input;
+    let { html, templateKey, packageData, packageFilename, publicUrl: givenPublicUrl, githubRepositoryId, wordpress: wordpressInput, ...rest } = input;
+    if (wordpressInput && (html || templateKey || packageData || rest.repoOwner || rest.repoName || githubRepositoryId)) {
+      throw new WebsiteError(400, "A WordPress website takes its pages from WordPress, so it cannot also start from a template, an upload or a repository.");
+    }
+    const wordpressSite = wordpressInput ? await prepareWordPressSite(wordpressInput, req.dbUser?.id ?? null) : null;
     if (githubRepositoryId && (html || templateKey || packageData || rest.repoOwner || rest.repoName)) {
       throw new WebsiteError(400, "A website from a GitHub repository takes its pages from the repository, so it cannot also start from a template or an upload.");
     }
@@ -442,7 +453,8 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       // A repository's site with no address given is most often its GitHub
       // Pages one; better than a hosted address that will never serve it.
       // Otherwise the hosted address its first publish will give it.
-      publicUrl: givenPublicUrl ?? (github ? githubPagesUrl(github.owner, github.name) : await expectedHostedUrl(slug)),
+      publicUrl: wordpressSite?.publicUrl ?? givenPublicUrl ?? (github ? githubPagesUrl(github.owner, github.name) : await expectedHostedUrl(slug)),
+      ...(wordpressSite ? { sourceKind: WORDPRESS_SOURCE_KIND } : {}),
     };
     if (html) {
       html = prepareImportedHtml(html);
@@ -469,7 +481,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     }
 
     let finalHtml = html;
-    if (!finalHtml && !packageAnalysis && (templateKey || !data.repoOwner)) {
+    if (!finalHtml && !packageAnalysis && !wordpressSite && (templateKey || !data.repoOwner)) {
       finalHtml = generateStarterSiteHtml({
         siteName: data.name,
         publicUrl: data.publicUrl,
@@ -490,9 +502,16 @@ export function registerWebsiteManagement(router: Router, access: Access) {
         ...(extractedColours.length ? { settings: { colours: extractedColours } } : {}),
         slug,
         ...(finalHtml ? { pages: { create: { title: data.name, path: "/", filePath: "index.html", sourceHtml: finalHtml } } } : {}),
-        auditEvents: { create: { kind: "SITE_CONNECTED", summary: `Connected ${data.name}${github ? ` to ${github.owner}/${github.name} through the owner's own GitHub installation` : packageAnalysis ? " with an imported package" : html ? " with an imported page" : finalHtml ? " with a starter template" : ""}`, ...actor(req), detail: { importedPage: Boolean(html), importedPackage: Boolean(packageAnalysis), starterTemplate: templateKey || (!html && !packageAnalysis && !data.repoOwner ? "business" : null) } } },
+        ...(wordpressSite ? { wordpress: { create: wordpressSite.connection } } : {}),
+        auditEvents: { create: { kind: "SITE_CONNECTED", summary: `Connected ${data.name}${wordpressSite ? ` to WordPress at ${wordpressSite.publicUrl} as ${wordpressSite.connection.username}` : github ? ` to ${github.owner}/${github.name} through the owner's own GitHub installation` : packageAnalysis ? " with an imported package" : html ? " with an imported page" : finalHtml ? " with a starter template" : ""}`, ...actor(req), detail: { importedPage: Boolean(html), importedPackage: Boolean(packageAnalysis), starterTemplate: templateKey || (!html && !packageAnalysis && !data.repoOwner ? "business" : null) } } },
       }, include: { pages: { select: { id: true } } } });
     });
+
+    if (wordpressSite) {
+      const listed = await addWordPressPages(site);
+      res.status(201).json({ id: site.id, pageId: listed.firstPageId, wordpress: { details: wordpressSite.details, pagesError: listed.error } });
+      return;
+    }
 
     if (packageAnalysis) {
       const packageResult = await commitPackageToSite({ req, siteId: site.id, analysis: packageAnalysis });

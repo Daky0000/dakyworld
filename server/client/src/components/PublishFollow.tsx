@@ -49,6 +49,11 @@ export function publishNote(status: PublishJobStatus | undefined): Note {
     // the next note replaces it.
     if (status.stage && STAGE_TEXT[status.stage]) return { key: `stage:${status.stage}`, text: STAGE_TEXT[status.stage]!, tone: "progress", stay: true };
   }
+  // WordPress saved it the moment it answered; what is left is the live page
+  // (and any page cache in front of it) catching up, not a rebuild.
+  if (status?.wordpress && WAITING.has(status.state)) {
+    return { key: "wordpress", text: "Saved in WordPress. Checking the live page shows it…", tone: "progress", stay: true };
+  }
   if (status?.state === "COMPLETED") {
     return { key: "live", text: status.deployedInSeconds ? `Your changes are live · took ${tookFor(status.deployedInSeconds)}` : "Your changes are live.", tone: "done", link: true };
   }

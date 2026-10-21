@@ -24,7 +24,7 @@ import { notifyTierStatusChanged, useWebsiteTierStatus } from "./WebsiteTierStat
  * homepage in the editor.
  */
 
-type Method = "template" | "upload" | "github" | "team";
+type Method = "template" | "upload" | "github" | "wordpress" | "team";
 type Purpose = WebsitePurpose;
 type View = "details" | "method" | "github" | "heard" | "build";
 type GithubRepository = { id: string; fullName: string; defaultBranch: string; private: boolean };
@@ -87,6 +87,12 @@ export function WebsiteWelcomeFlow() {
   const [help, setHelp] = useState<{ message: string; paymentUrl: string | null } | null>(null);
   const [repoInput, setRepoInput] = useState("");
   const [waitingForGithub, setWaitingForGithub] = useState(false);
+  // A WordPress site: its address, account and Application Password, checked
+  // before the step can be left so a password that does not work is never sent
+  // on to be saved. See services/websiteWordPress.ts.
+  const [wpUser, setWpUser] = useState("");
+  const [wpPassword, setWpPassword] = useState("");
+  const [wpAddress, setWpAddress] = useState("");
 
   const views: View[] = ["details", "method", ...(method === "github" ? (["github"] as const) : []), "heard", "build"];
   const view = views[Math.min(step, views.length - 1)];
@@ -116,10 +122,15 @@ export function WebsiteWelcomeFlow() {
   });
 
   const trimmedAddress = address.trim();
+  const wordpressAddress = (wpAddress || trimmedAddress).trim();
+  const wordpressCheck = useMutation({
+    mutationFn: () => api.post<{ siteName: string; user: { name: string }; pageCount: number | null; warnings: string[] }>("/website/wordpress/check", { address: wordpressAddress, username: wpUser.trim(), password: wpPassword }),
+  });
+  const wpEdit = (set: (value: string) => void) => (event: React.ChangeEvent<HTMLInputElement>) => { set(event.target.value); wordpressCheck.reset(); };
   const addressOk = hasSite === "no" || (hasSite === "yes" && /^(https?:\/\/)?[a-z0-9.-]+\.[a-z]{2,}(\/.*)?$/i.test(trimmedAddress));
   const step0Ok = Boolean(name.trim() && purpose && follow && hasSite && addressOk);
   const step1Ok =
-    method === "template" || method === "github" || (method === "upload" && Boolean(upload)) || (method === "team" && phone.replace(/\D/g, "").length >= 9);
+    method === "template" || method === "github" || (method === "upload" && Boolean(upload)) || (method === "wordpress" && wordpressCheck.isSuccess) || (method === "team" && phone.replace(/\D/g, "").length >= 9);
 
   const createSite = useMutation({
     mutationFn: () =>
@@ -129,7 +140,8 @@ export function WebsiteWelcomeFlow() {
         ...(method === "upload" && upload?.html ? { html: upload.html } : {}),
         ...(method === "upload" && upload?.zip ? { packageData: upload.zip, packageFilename: upload.name } : {}),
         ...(method === "github" && connectedRepo ? { githubRepositoryId: connectedRepo.id } : {}),
-        ...(method !== "upload" && method !== "github" ? { templateKey } : {}),
+        ...(method === "wordpress" ? { wordpress: { address: wordpressAddress, username: wpUser.trim(), password: wpPassword } } : {}),
+        ...(method !== "upload" && method !== "github" && method !== "wordpress" ? { templateKey } : {}),
       }),
     onSuccess: async (result) => {
       setCreated(result);
@@ -180,7 +192,7 @@ export function WebsiteWelcomeFlow() {
           state: readRepository.isSuccess ? (homepageId ? "done" : "failed") : readRepository.isError || createSite.isError ? "failed" : created ? "working" : "waiting",
         }
       : {
-          label: method === "upload" ? `Importing ${upload?.name ?? "your file"}` : `Building your first page from the ${templateLabel(templateKey)} starter`,
+          label: method === "upload" ? `Importing ${upload?.name ?? "your file"}` : method === "wordpress" ? "Reading your WordPress pages" : `Building your first page from the ${templateLabel(templateKey)} starter`,
           state: created ? (created.pageId ? "done" : "failed") : createSite.isError ? "failed" : "waiting",
         };
   const tasks: Task[] = [
@@ -312,6 +324,7 @@ export function WebsiteWelcomeFlow() {
                     ["template", "Start from a ready-made page", `A ${templateLabel(templateKey)} page with “${shownName}” on it, ready to change`, "Recommended"],
                     ["upload", "Upload the page you already have", "An .html file, or a .zip with its pictures", ""],
                     ["github", "Connect a GitHub repository", "For a site whose code lives on GitHub", ""],
+                    ["wordpress", "Connect a WordPress website", "Edit your pages here, publish straight back into WordPress", ""],
                     ["team", "Have our team set it up", "Leave your number and we do the rest", ""],
                   ] as const).map(([key, title, sub, tag]) => (
                     <button key={key} type="button" role="radio" aria-checked={method === key} className={`ob-card${method === key ? " on" : ""}`} onClick={() => setMethod(key)}>
@@ -333,6 +346,32 @@ export function WebsiteWelcomeFlow() {
               )}
               {method === "github" && (
                 <p className="ob-note">Next you'll name the repository and install the DakyX app on it. Your edits are committed to that repository and nowhere else.</p>
+              )}
+              {method === "wordpress" && (
+                <div className="ob-fld">
+                  <p className="ob-note">
+                    In WordPress, open <b>Users → Profile</b>, scroll to <b>Application Passwords</b>, type <b>DakyXTech</b> as the name and press <b>Add New Application Password</b>. Copy the password it shows — it is shown once — and paste it here. Nothing is installed on your website, and you can revoke it from the same screen at any time.{" "}
+                    <a href="https://dakyx.com/website-builder-setup#wordpress" target="_blank" rel="noreferrer">Can't find it?</a>
+                  </p>
+                  <label htmlFor="ob-wp-address" style={{ marginTop: 12 }}>Website address</label>
+                  <input id="ob-wp-address" className="ob-inp" placeholder="yourbusiness.com" value={wpAddress || trimmedAddress} onChange={wpEdit(setWpAddress)} />
+                  <label htmlFor="ob-wp-user" style={{ marginTop: 12 }}>WordPress username</label>
+                  <input id="ob-wp-user" className="ob-inp" autoComplete="off" value={wpUser} onChange={wpEdit(setWpUser)} />
+                  <label htmlFor="ob-wp-password" style={{ marginTop: 12 }}>Application Password</label>
+                  <input id="ob-wp-password" className="ob-inp" type="password" autoComplete="new-password" placeholder="abcd EFGH 1234 ijkl MNOP 5678" value={wpPassword} onChange={wpEdit(setWpPassword)} />
+                  {wordpressCheck.isSuccess ? (
+                    <p className="ob-hint" role="status">
+                      Connected to <b>{wordpressCheck.data.siteName}</b> as {wordpressCheck.data.user.name}
+                      {wordpressCheck.data.pageCount !== null ? ` · ${wordpressCheck.data.pageCount} published page${wordpressCheck.data.pageCount === 1 ? "" : "s"}` : ""}.
+                      {wordpressCheck.data.warnings.map((warning) => <span key={warning}><br />{warning}</span>)}
+                    </p>
+                  ) : (
+                    <button type="button" className="ob-cta" style={{ marginTop: 12 }} disabled={!wordpressAddress || !wpUser.trim() || !wpPassword.trim() || wordpressCheck.isPending} onClick={() => wordpressCheck.mutate()}>
+                      {wordpressCheck.isPending ? "Checking…" : "Check connection"}
+                    </button>
+                  )}
+                  {wordpressCheck.isError && <p className="ob-err" role="alert">{wordpressCheck.error instanceof ApiError ? wordpressCheck.error.message : (wordpressCheck.error as Error).message}</p>}
+                </div>
               )}
               {method === "team" && (
                 <div className="ob-fld">
@@ -565,5 +604,6 @@ const METHOD_ICON: Record<Method, ReactNode> = {
   template: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M8 13h8M8 16h5" /></svg>,
   upload: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 15V3M7 8l5-5 5 5M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" /></svg>,
   github: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="6" cy="6" r="2.2" /><circle cx="6" cy="18" r="2.2" /><circle cx="18" cy="9" r="2.2" /><path d="M6 8.2v7.6M18 11.2c0 3-3 4-9.8 5" /></svg>,
+  wordpress: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="9" /><path d="M4.5 8.5 9 20M9.5 7.5l4.5 12.5M14.5 7.5 18 17M7 7.5h5M13 7.5h5" /></svg>,
   team: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 14v-2a8 8 0 0 1 16 0v2" /><rect x="2.5" y="14" width="4.5" height="6" rx="1.5" /><rect x="17" y="14" width="4.5" height="6" rx="1.5" /></svg>,
 };

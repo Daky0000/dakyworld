@@ -405,7 +405,15 @@ async function verifyDueJob(job: PublishJob & { site: Site }, now: Date): Promis
   if (step.state === "VERIFY_FAILED") {
     const { count } = await prisma.publishJob.updateMany({
       where: stillWaiting,
-      data: { state: "VERIFY_FAILED", attempts, nextCheckAt: null, finishedAt: now, lastError: step.reason, ...progressData },
+      data: {
+        state: "VERIFY_FAILED", attempts, nextCheckAt: null, finishedAt: now,
+        // There is no commit and no host build for a WordPress page; what is
+        // in the way is almost always a page cache.
+        lastError: detail.wordpress && !result.error
+          ? "WordPress saved the change, but a day later the live page still shows the old version. A caching plugin or CDN in front of the site is the usual cause: clear its cache."
+          : step.reason,
+        ...progressData,
+      },
     });
     if (count) notifyPublishProblemSoon(job.id);
     return count;
@@ -515,6 +523,9 @@ export function publishJobView(job: PublishJob, context: { github?: GithubHealth
   // because the thing being waited on is a build that can fail on its own terms.
   const detail = jobDetail(job);
   const built = Boolean(detail.source);
+  // A WordPress publish is saved the moment WordPress answers; what is left is
+  // whether the live page — and any page cache in front of it — shows it.
+  const wordpress = Boolean((detail as { wordpress?: unknown }).wordpress);
   const waiting = WAITING_STATES.includes(job.state);
   const servedBy = typeof detail.servedBy === "string" ? detail.servedBy : null;
   const notice = waiting ? githubTroubleFor(context.github ?? null, servedBy) : null;
@@ -525,6 +536,8 @@ export function publishJobView(job: PublishJob, context: { github?: GithubHealth
     state: job.state,
     /** True when what was committed is source that has to be built first. */
     fromSource: built,
+    /** True when the change was written into a WordPress page: saved at once, no build. */
+    wordpress,
     /** Which host answered the last look at the live page, when it could tell. */
     servedBy,
     /** A reason for the wait that is nobody's fault here: GitHub having problems. */
@@ -543,6 +556,10 @@ export function publishJobView(job: PublishJob, context: { github?: GithubHealth
       ? notice
       : late
         ? HOST_LATE_LABEL
+        : wordpress && waiting
+          ? "Saved in WordPress — waiting for the live page to show it"
+          : wordpress && job.state === "VERIFY_FAILED"
+            ? "Saved in WordPress, but the live page still shows the old version — clear the site's caching plugin or CDN cache"
         : built && waiting
           ? "Committed — waiting for the build and deploy"
           : built && job.state === "VERIFY_FAILED"

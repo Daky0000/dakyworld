@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { createBranch, openPullRequest } from "../lib/github.js";
 import { withWebsitePublishLock, commitPublication } from "./websitePublishing.js";
 import { publishFrameworkPage } from "./websiteFrameworkPublish.js";
+import { isWordPressSite, publishWordPressPage, rollbackWordPressPage } from "./websiteWordPress.js";
 import { hasSourceManifest } from "./websitePageManifest.js";
 import { assertEditingNotPaused, assertTierFeatureAccess } from "./websiteTierPlans.js";
 import { advancePublishJob, failPublishJob, publishJobCommitted, publishJobView, startPublishJob } from "./websitePublishJobs.js";
@@ -122,6 +123,18 @@ export async function publishPageCommand(actor: WebsiteActor, input: {
                 throw Object.assign(new WebsiteError(409, `The unpublished changes on this page belong to ${pending.map((instance) => instance.element.name).join(" and ")}, which ${pending.length === 1 ? "is" : "are"} shared with other pages. Publish ${pending.length === 1 ? "it" : "them"} from the shared change so every page gets it at the same time.`), { sharedElements: pending.map((instance) => ({ id: instance.element.id, name: instance.element.name })) });
             }
             throw new WebsiteError(400, "There is nothing to publish — this page has no unsaved changes.");
+        }
+        // A WordPress page is written into WordPress, not committed or hosted:
+        // the same preflight, its own write. See services/websiteWordPress.ts.
+        if (isWordPressSite(site)) {
+            return publishWordPressPage({
+                actor, site, page, values, sourceHash: body?.sourceHash,
+                preflight: async (candidateHtml, sourceHtml) => {
+                    const { guard, overriding } = await publishPreflight({ actor, site, page, candidateHtml, sourceHtml, values, forceOverride: body?.forceOverride === true });
+                    if (!guard.canPublish && !overriding) throw Object.assign(new WebsiteError(400, guard.summary), { blockers: guard.blockers, warnings: guard.warnings });
+                    if (overriding) await recordGuardOverride(actor, site, page, guard);
+                },
+            });
         }
         // `fresh` is not an optimisation switch here. The whole purpose of the next
         // few lines is to decide whether the page has moved under this draft, and a
@@ -332,6 +345,9 @@ export async function publishVersionCommand(actor: WebsiteActor, input: {
         const restored = versionDraft(source.html, {}, version.html, Boolean(source.sourceFile), `Restored version ${version.number}`);
         if (source.sourceFile && restored.dropped.length)
             throw new WebsiteError(409, "This version contains elements that no longer match the page. Restore it as a draft and review the differences first.");
+        if (isWordPressSite(site)) {
+            return rollbackWordPressPage({ actor, site, page, html: source.html, values: restored.values, versionNumber: version.number, versionHtml: version.html, versionValues: version.values, expectedRevision });
+        }
         const job = await startPublishJob({ site, pageId: page.id, kind: "ROLLBACK", startedById: actor.dbUser?.id,
             detail: { expectedHtmlHash: createHash("sha256").update(version.html).digest("hex"), restoredFrom: version.number } });
         await advancePublishJob(job.id, "COMMITTING");

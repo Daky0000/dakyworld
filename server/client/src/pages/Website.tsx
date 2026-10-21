@@ -150,7 +150,7 @@ export function Website() {
             </a>
           ) : "No public address yet"}
         </span>
-        <span>{current.repo ? `${current.repo} · ${current.branch}` : "No repository connected"}</span>
+        <span>{current.sourceKind === "wordpress" ? "WordPress — publishing writes into your WordPress pages" : current.repo ? `${current.repo} · ${current.branch}` : "No repository connected"}</span>
         {draftCount > 0 && <span className="text-ink">{draftCount} page{draftCount === 1 ? "" : "s"} with unpublished changes</span>}
       </div>
 
@@ -163,7 +163,9 @@ export function Website() {
         <div className="text-sm text-muted">Loading pages…</div>
       ) : all.length === 0 ? (
         <EmptyState
-          message="No pages here yet. Looking for pages reads the site's repository — or its sitemap — and lists what it finds."
+          message={current.sourceKind === "wordpress"
+            ? "No pages here yet. Looking for pages asks WordPress for this site's published pages and lists them."
+            : "No pages here yet. Looking for pages reads the site's repository — or its sitemap — and lists what it finds."}
           action={
             canManage ? (
               <Button onClick={() => scan.mutate()} disabled={scan.isPending}>
@@ -192,7 +194,7 @@ export function Website() {
                     <Link to={`/website/pages/${page.id}`} className="font-semibold text-ink hover:underline">
                       {page.title}
                     </Link>
-                    <div className="text-xs text-muted">{page.filePath}</div>
+                    <div className="text-xs text-muted">{/^wordpress\/pages\//.test(page.filePath) ? "WordPress page" : page.filePath}</div>
                   </td>
                   <td className="px-5 py-4 font-mono text-xs text-muted">{page.path}</td>
                   <td className="px-5 py-4">

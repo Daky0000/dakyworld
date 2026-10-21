@@ -146,6 +146,9 @@ export function websiteRequestAction(method: string, path: string): WebsiteActio
   if (/^\/sites\/[^/]+\/members(?:\/[^/]+)?\/?$/.test(path)) return "members";
   if (/\/(?:source|source-project)(?:\/|$)/.test(path)) return "source";
   if (/^\/sites\/[^/]+\/config\/?$/.test(path)) return "manage";
+  // A WordPress connection names the account the site is edited as, and
+  // replacing its password changes who every publish signs in as.
+  if (/^\/sites\/[^/]+\/wordpress\/?$/.test(path)) return "manage";
   // A customer's host account and their domain's DNS: managing, even to read
   // (the candidates list names every site on their host account).
   if (/^\/sites\/[^/]+\/connect(?:\/|$)/.test(path)) return "manage";
@@ -204,7 +207,7 @@ export function websiteGateHandlesDirectly(method: string, path: string): boolea
     || /^\/tier-status(?:\/|$)/.test(path)
     || (/^\/(?:sites|overview|assets)\/?$/.test(path) && ["GET", "HEAD"].includes(method))
     || /^\/github-app(?:\/|$)/.test(path)
-    || (/^\/sites\/?$/.test(path) && method === "POST");
+    || ((/^\/sites\/?$/.test(path) || /^\/wordpress\/check\/?$/.test(path)) && method === "POST");
 }
 
 /**
@@ -248,7 +251,9 @@ export function createWebsiteAccessGate(reader = accessReader) {
         }
         return;
       }
-      if (/^\/sites\/?$/.test(req.path) && req.method === "POST") {
+      // Checking a WordPress site's password creates nothing, but it is the
+      // first half of connecting one, so it is open to whoever may do that.
+      if ((/^\/sites\/?$/.test(req.path) || /^\/wordpress\/check\/?$/.test(req.path)) && req.method === "POST") {
         // The route checks a customer's paid entitlement and site quota before
         // creating a site; global staff permissions do not apply to customers.
         if (!principal.external && !websiteCapabilities(principal, null).manage) throw new WebsiteError(403, "Only staff with Manage sites access can connect a new website.");

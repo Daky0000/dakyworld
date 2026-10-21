@@ -1425,7 +1425,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       // Only where a host rebuilds the site from the commit: a hosted site is
       // live at once, a demo says so itself, and a pull request is not live yet
       // at all.
-      if (!isDemo && !result.hosted && result.mode !== "pull_request" && !tourSeen(uiState, PUBLISH_DELAY_NOTICE)) setDelayNotice(result);
+      // Nor a WordPress site, which nothing rebuilds: WordPress saved it.
+      if (!isDemo && !result.hosted && !page.data?.site.wordpress && result.mode !== "pull_request" && !tourSeen(uiState, PUBLISH_DELAY_NOTICE)) setDelayNotice(result);
       setReviewOpen(false);
       setEdits({});
       dirty.current = false;
@@ -2122,7 +2123,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   // shared element differ from the others without anybody deciding that.
   const sharedMarkupLock = pickedShared?.state === "LINKED"
     ? `This is part of “${pickedShared.name}”, shared across ${pickedShared.linkedPages} pages. Its tag and attributes are changed in the page's code so every copy stays the same; its words, link and style still change here for all of them.`
-    : undefined;
+    // A WordPress page's markup is WordPress's: blocks, the theme and the
+    // builder write it, and only the words, links and pictures come back here.
+    : page.data?.builtFrom?.filePath.startsWith("wordpress/")
+      ? "This is a WordPress page, so its layout and markup are changed in WordPress. Its words, links and pictures change here."
+      : undefined;
   /** What a wider screen hands down to the one being edited: desktop to tablet, both to phone. */
   const inheritedStyle = !picked || device === "desktop"
     ? ""
@@ -2372,7 +2377,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       disabled={
         publish.isPending ||
         save.isPending ||
-        (!isDemo && (changedCount === 0 || !(site.repo || hostedHere)))
+        (!isDemo && (changedCount === 0 || !(site.repo || hostedHere || site.wordpress)))
       }
     >
       <span className="inline-flex items-center gap-1.5">
@@ -2641,7 +2646,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   return (
     <div className={`website-editor dx-editor editor-${editorTheme} flex h-full min-h-0 flex-col`}>
       <EditorTips frame={frame} />
-      {reviewOpen && <PublishReview pageId={pageId} siteId={site.id} hasRepository={Boolean(site.repo)} pending={publish.isPending} onClose={() => setReviewOpen(false)} onConfirm={review => publish.mutate(review)} />}
+      {reviewOpen && <PublishReview pageId={pageId} siteId={site.id} hasRepository={Boolean(site.repo)} wordpress={Boolean(site.wordpress)} pending={publish.isPending} onClose={() => setReviewOpen(false)} onConfirm={review => publish.mutate(review)} />}
       {showAI && canEdit && <WebsiteAssistant pageId={pageId} selectedFieldId={pickedId} fieldLabel={picked?.label} values={edits} onClose={() => setShowAI(false)} onApply={async (values, structuralActions) => {
         if (structuralActions && structuralActions.length > 0) {
           for (const action of structuralActions) {
@@ -3531,6 +3536,13 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                       <div className="dx-states" data-tour="style-states">
                         <Seg label="Pick a state to style" value={styleState} options={[{ value: "normal", label: "Normal" }, { value: "hover", label: "Hover" }]} onChange={setStyleState} />
                       </div>
+                    )}
+                    {/* Said before the first control, not at the publish: a
+                        WordPress page's styling is its blocks' and its theme's. */}
+                    {page.data?.builtFrom?.filePath.startsWith("wordpress/") && (
+                      <p className="dx-note warn">
+                        This is a WordPress page, so styling changes made here can't be published to it yet. Change colours, sizes and spacing in WordPress; words, links and pictures publish from here.
+                      </p>
                     )}
                     {device !== "desktop" && /!\s*important/i.test(edits[picked.id]?.style ?? picked.style ?? "") && (
                       <p className="dx-note warn">

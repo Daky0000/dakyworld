@@ -237,9 +237,9 @@
     <div class="section-head">
       <div>
         <div class="eyebrow">Before anything else</div>
-        <h2 class="display">Two ways in. <span class="muted">Pick one.</span></h2>
+        <h2 class="display">Three ways in. <span class="muted">Pick one.</span></h2>
       </div>
-      <p>Most websites take one route or the other. You can change your mind later; nothing here is permanent.</p>
+      <p>Most websites take one of these routes. You can change your mind later; nothing here is permanent.</p>
     </div>
 
     <div class="spec-list">
@@ -276,6 +276,27 @@
             <li><strong>Publish once</strong> and watch the commit appear in your repository, on its default branch.</li>
           </ol>
           <p>The rest of this page &mdash; the six steps, the first edit, and what to check before going live &mdash; is written for this route. If we are hosting for you, skip step 3 and step 4; everything else is the same.</p>
+        </div>
+      </article>
+
+      <article class="spec-row spec-row--step" id="wordpress">
+        <div class="step-head"><span class="step-n">C</span><h3>You have a WordPress website</h3></div>
+        <div class="spec-body">
+          <p class="spec-lead">For: a website built in WordPress &mdash; with the block editor, the classic editor, Divi, WPBakery or Avada. Needs a WordPress account that can edit pages (Administrator or Editor). About five minutes.</p>
+          <p>Nothing is installed on your website and nothing moves. The Builder opens your live pages, and when you publish, the changed words go straight into the same page in WordPress, exactly as if you had typed them there. Your theme, plugins and hosting stay as they are, and WordPress keeps a revision of every change.</p>
+          <p>WordPress lets other apps in with an <strong>Application Password</strong>: a separate password for one app, which you can switch off at any time without changing your own.</p>
+          <ol>
+            <li><strong>Sign in to WordPress.</strong> Go to <code>yourdomain.com/wp-admin</code> and sign in with an account that can edit pages.</li>
+            <li><strong>Open your profile.</strong> In the menu on the left, choose <em>Users &rarr; Profile</em>. (On some sites it is <em>Users &rarr; All Users</em>, then your own name.)</li>
+            <li><strong>Find <em>Application Passwords</em>.</strong> Scroll almost to the bottom of the page.</li>
+            <li><strong>Make one for DakyXTech.</strong> Type <code>DakyXTech</code> in <em>New Application Password Name</em> and press <em>Add New Application Password</em>.</li>
+            <li><strong>Copy it.</strong> WordPress shows the password once: 24 letters and numbers in groups of four, like <code>abcd EFGH 1234 ijkl MNOP 5678</code>. Copy all of it. The spaces do not matter.</li>
+            <li><strong>Connect.</strong> In the Builder, press <em>Connect a website</em>, choose <em>I have a WordPress website</em>, and enter your website&rsquo;s address, your WordPress <em>username</em> (shown at the top of your profile &mdash; not your email, unless that is how you sign in) and the password you copied. Press <em>Check connection</em>, then <em>Connect</em>.</li>
+          </ol>
+          <p><strong>No <em>Application Passwords</em> section on your profile?</strong> One of three things is true. Your website is not on HTTPS yet (WordPress only offers them on a secure address &mdash; most hosts switch HTTPS on for free); WordPress is older than 5.6 (update it); or a security plugin has turned them off &mdash; in Wordfence it is <em>Login Security &rarr; Settings &rarr; Disable WordPress application passwords</em>, and Solid Security and All-In-One Security have similar switches.</p>
+          <p><strong>&ldquo;WordPress did not receive the password&rdquo;?</strong> Some Apache hosts remove sign-in details before WordPress sees them. Ask your host to pass the <code>Authorization</code> header through to PHP, or add this line to your site&rsquo;s <code>.htaccess</code> file: <code>SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1</code></p>
+          <p><strong>What you can change from here:</strong> words, links and pictures that belong to a page&rsquo;s content. Your menu, footer and widgets belong to the theme, so change those in WordPress; the editor marks them and says where. Pages built with Elementor, Beaver Builder, Bricks, Oxygen and a few other builders keep their words in the builder&rsquo;s own data, which WordPress does not let other apps edit yet, so they open read-only for now.</p>
+          <p class="spec-deliverable"><strong>Taking access back:</strong> on the same profile screen, press <em>Revoke</em> next to <em>DakyXTech</em>. The Builder stops being able to publish immediately, and your WordPress login is never involved.</p>
         </div>
       </article>
 

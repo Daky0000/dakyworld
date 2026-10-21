@@ -1641,3 +1641,107 @@ for, so nobody undoes it.
   "Validation failed". A pause or an exhausted edit allowance stops the run;
   a page somebody saved meanwhile is named and left alone.
   `checks/websiteToolDrafts.ts`.
+
+## WordPress sites (21 Oct 2026)
+
+A WordPress site is connected with an **Application Password** (Users →
+Profile in WordPress) and edited through WordPress's own REST API. Nothing is
+installed on the customer's site and nothing is hosted here. The editor opens
+the live page — the same way a framework page is shown as its build — and a
+publish writes each change back into the page's stored content (`content.raw`)
+and title. `services/websiteWordPress.ts` is the connection, the page list and
+the publish; `services/website/wordpress.ts` is the pure mapper (exported
+through `website/index.ts` like every other adapter). `Site.sourceKind` is
+`"wordpress"`, the connection is `WordPressConnection`, and a page's
+`filePath` is `wordpress/pages/<id>`, which is what makes `pageSource` return a
+`sourceFile` and sends every publish, rollback and field lock down this path.
+The customer guide is `website-builder-setup.html#wordpress`.
+
+- **A field is writable only when its words are the whole of one element in the
+  content AND appear once on the whole live page.** The first version counted
+  repeats among the editor's *fields*, and the inline "Contact" link inside a
+  sentence is not a field — so the menu's "Contact" was offered as writable,
+  traced to the sentence's link, and would have rewritten the wrong one.
+  `checks/websiteWordPress.ts` caught it on its first run. Repeats are now
+  counted over the normalised live page itself, menu and footer included, for
+  words and for pictures, in the map *and* again at publish.
+- **Matching runs over a normalised copy with a map back to raw offsets.**
+  WordPress rewrites text on the way out: `wptexturize` turns `It's` into
+  `It’s` and `--` into `–`, `wpautop` turns a blank line into a paragraph and a
+  newline into `<br>`, and it adds `loading`, `rel` and classes to tags. Both
+  sides fold those back; what is replaced is the original bytes, never a
+  re-serialisation. Block comments are barriers (nothing matches across or
+  inside one); a blank line is a boundary; a shortcode's quoted attribute values
+  are text (that is where Divi and WPBakery keep a title or a button label), and
+  a value written into one is refused if it holds markup, quotes or brackets.
+  Divi wraps a stored title in `<span>` on the way out, so inline wrappers are
+  peeled one at a time when the shown words are not found — never a link.
+- **Builders that keep their words in post meta are refused, recognised by
+  this page's own id.** Elementor, Beaver Builder, Bricks, Oxygen, Brizy, Thrive
+  and SiteOrigin write a fallback copy into `post_content` that nobody renders,
+  so "editing" it would publish a change no visitor ever sees. They open
+  read-only with one sentence saying so. An Elementor *header* on a
+  block-editor page does not make the page Elementor's — the marker must carry
+  the page's own id. Blocks, the classic editor, Divi, WPBakery and Avada keep
+  their words in the content and are editable.
+- **The password goes to one origin, once.** `requestWebsite` (lib/websiteFetch)
+  is the authenticated door: DNS-pinned like every other outbound request, **no
+  redirect followed** (one is refused, naming the address to reconnect with —
+  following it would hand the `Authorization` header to whatever host it
+  names), and **no HTTPS→HTTP fallback**, unlike `fetchWebsitePage`. Only the
+  unauthenticated discovery of the API root follows redirects. The API root is
+  read from the site's own `rel="https://api.w.org/"` link, which is also how a
+  site without pretty permalinks says `?rest_route=`.
+- **A WordPress refusal is never a 401 to our own client.** The app reads a 401
+  from its API as "your session ended" and signs the person out, so a mistyped
+  WordPress password signed the Owner out of DakyX. `WordPressRefusal` maps 401
+  to 422. Each refusal says its own fix: wrong password, unknown user,
+  Application Passwords switched off by a security plugin, an Apache host
+  stripping the `Authorization` header (`rest_not_logged_in` with a header sent
+  — the `.htaccess` line is in the message), a firewall answering HTML, a role
+  that cannot edit pages, a site that is not on HTTPS (the TLS error was raw
+  OpenSSL text until it was translated).
+- **Nothing is hosted for a WordPress site.** Its publish never writes
+  `publishedHtml` and never calls `ensureHostedAddress`, or the hosting route
+  would start serving a stale copy at a DakyX address. The publish job is a
+  `sourcePublishCommitted` one — no expected hash, the new words looked for on
+  the live page — with `detail.wordpress` so the job says "Saved in WordPress"
+  rather than "waiting for the host to rebuild", and a day-late failure names
+  the page cache rather than a build.
+- **Anything that gates publishing on "repository or hosted" must learn the
+  third answer.** The editor disabled Publish on `!(site.repo || hostedHere)`,
+  so a WordPress site could save drafts and never publish from the screen — the
+  route-level check passed because it called the route directly. The page
+  response now carries `site.wordpress`. The post-publish rebuild notice and the
+  "your site rebuilds" toast are skipped or reworded on it too.
+- **WordPress has no compare-and-swap for a post.** The guard is the editor's
+  own: every edit carries the words it replaced, the content is re-read fresh at
+  publish, and an edit whose words are no longer there refuses the whole set
+  (409, nothing written, draft kept). The window between that read and the
+  write is the length of one request; a companion plugin could close it.
+- **Pictures go into the media library.** An uploaded picture is sent to
+  `/wp/v2/media` at publish and the page points at WordPress's copy. The
+  `wp-image-<id>` class and the image block's `"id"` follow it, and `srcset` /
+  `sizes` are dropped, because WordPress rebuilds `srcset` from that id and a
+  stale one serves the old picture to every phone. A rollback can restore the
+  old address but not the old attachment id, so the id is dropped rather than
+  left pointing at the wrong file.
+- **What goes to WordPress instead, with a sentence:** styling (the Style tab
+  says so before the first control), layout and structure, the SEO editor (an
+  SEO plugin owns the `<head>`), shared elements (a synced pattern or template
+  part is WordPress's), the agent's Publish All, and theme parts — menus,
+  footers, widgets.
+- **Not built yet:** posts (the plumbing takes `wordpress/posts/<id>`; the scan
+  lists pages only), drafts and private pages (they have no public page to
+  open), and the meta-storing builders. Elementor 4.3 ships an official MCP
+  that edits Atomic (V4) pages only, with classic widgets promised for Q4 2026;
+  that, or a small companion plugin exposing `_elementor_data`, is the next
+  step for Elementor.
+
+`checks/websiteWordPress.ts` (23) runs the mapper on strings — half of it
+negatives, each asserting the content came back byte-identical — and then the
+real routes against a stub WordPress on a local port: connect, each refusal,
+the refused redirect, the page list, the editor's locks, publish, a stale
+refusal, a media upload, a rollback, an Elementor page and the scan. It needs
+`DEV_NO_AUTH` false at import (real sessions) and true afterwards, because the
+outbound guard allows the stub's `127.0.0.1` over HTTP only in development.
