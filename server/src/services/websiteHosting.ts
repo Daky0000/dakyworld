@@ -17,6 +17,7 @@ import { assertWebsiteSiteAccess } from "./websiteAccess.js";
 import { SVG_CONTENT_SECURITY_POLICY } from "../lib/svgSanitize.js";
 import { FORM_ENDPOINT, receiveFormPost, routeFormsToInbox } from "./websiteForms.js";
 import { recordVisit } from "./websiteVisits.js";
+import { sendBytes } from "../lib/byteRange.js";
 
 /**
  * Serving a customer's published website.
@@ -239,12 +240,14 @@ async function serveAsset(site: { id: string; publicUrl: string }, assetPath: st
     return res.set("Cache-Control", MOVED_ASSET_CACHE).redirect(302, moved);
   }
   if (asset.contentType === "image/svg+xml") res.set("Content-Security-Policy", SVG_CONTENT_SECURITY_POLICY);
-  return res.status(200)
+  res
     .set("Content-Type", asset.contentType)
     .set("X-Content-Type-Options", "nosniff")
     .set("Cache-Control", cacheControl)
-    .set("ETag", etag)
-    .send(bytes);
+    .set("ETag", etag);
+  // A player asks in pieces, and Safari plays nothing from a server that
+  // cannot answer one (`lib/byteRange.ts`).
+  return sendBytes(req, res, bytes, etag);
 }
 
 const xmlEscape = (text: string) => text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[c]!);

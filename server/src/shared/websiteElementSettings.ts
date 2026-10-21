@@ -73,6 +73,8 @@ export function tagOptions(kind: string, tag: string): string[] {
   return [];
 }
 
+import { MAX_EMBED_ADDRESS, embedProblem } from "./websiteEmbed.js";
+
 export type MediaKind = "video" | "audio";
 
 export function mediaKind(tag: string): MediaKind | null {
@@ -86,8 +88,22 @@ export const MEDIA_ATTRIBUTES: Record<MediaKind, string[]> = {
   audio: ["src", "autoplay", "muted", "loop", "controls", "preload", "controlslist"],
 };
 
+/**
+ * What an embedded frame's typed settings write: which video, map or player
+ * it shows (held to `shared/websiteEmbed.ts`), its description for screen
+ * readers, whether it loads only when scrolled near, and full screen.
+ */
+export const EMBED_ATTRIBUTES = ["src", "title", "loading", "allowfullscreen"] as const;
+
+/** The attributes an element's own typed controls own, which the free Attributes list leaves to them. */
+export function typedAttributes(tag: string): readonly string[] {
+  const media = mediaKind(tag);
+  if (media) return MEDIA_ATTRIBUTES[media];
+  return tag.toLowerCase() === "iframe" ? EMBED_ATTRIBUTES : [];
+}
+
 /** Written bare (`<video muted>`), present or absent, never with a value. */
-export const BOOLEAN_ATTRIBUTES = new Set(["autoplay", "muted", "loop", "controls", "playsinline", "hidden", "itemscope"]);
+export const BOOLEAN_ATTRIBUTES = new Set(["autoplay", "muted", "loop", "controls", "playsinline", "hidden", "itemscope", "allowfullscreen"]);
 
 const PLAIN_ATTRIBUTES = new Set(["id", "title", "lang", "dir", "role", "tabindex", "hidden", "translate", "itemprop", "itemscope", "itemtype", "itemid"]);
 
@@ -147,7 +163,8 @@ export function attributeNameProblem(rawName: string, tag: string): string | nul
   if (name === "class") return "Classes belong to the site's design system. Style this element in the Style tab instead.";
   if (name === "href" || name === "target" || name === "rel") return "Where it goes is set under Link.";
   if (media && MEDIA_ATTRIBUTES[media].includes(name)) return null;
-  if (ADDRESS_ATTRIBUTES.has(name)) return "Addresses are set by the image, video and link controls, never typed in as an attribute.";
+  if (tag.toLowerCase() === "iframe" && (EMBED_ATTRIBUTES as readonly string[]).includes(name)) return null;
+  if (ADDRESS_ATTRIBUTES.has(name)) return "Addresses are set by the image, video, embed and link controls, never typed in as an attribute.";
   if (name.startsWith("data-dw-")) return "Attributes starting data-dw- belong to the editor.";
   if (isScriptDataAttribute(name)) return "Some libraries run that attribute as code, so it can't be set here.";
   if (!ATTRIBUTE_NAME.test(name)) return "An attribute name uses lowercase letters, digits and dashes, and starts with a letter.";
@@ -169,6 +186,9 @@ export function attributeProblem(rawName: string, value: string | null, tag: str
   const nameProblem = attributeNameProblem(name, tag);
   if (nameProblem) return nameProblem;
   if (value === null) return null;
+  // A frame's address answers to its own rule, which also bounds its length:
+  // a map's embed address is routinely longer than any other attribute here.
+  if (name === "src" && tag.toLowerCase() === "iframe") return value.length > MAX_EMBED_ADDRESS || /[\u0000-\u001f\u007f<>`]/.test(value) ? "That address can't be an embed." : embedProblem(value);
   if (value.length > 400) return "Keep an attribute's value under 400 characters.";
   if (/[\u0000-\u001f\u007f<>`]/.test(value)) return "That value contains a character an attribute can't hold safely (< > ` or a control character).";
   if (/(?:java|vb)script\s*:|data\s*:/i.test(value.replace(/\s+/g, ""))) return "Script and data: addresses can't be written into a page.";
@@ -191,6 +211,8 @@ export function attributeProblem(rawName: string, value: string | null, tag: str
       return /^https:\/\/[^\s"'<>`]+$/.test(value) ? null : `${name} is an https address.`;
     case "preload":
       return ["auto", "metadata", "none"].includes(value) ? null : "preload is auto, metadata or none.";
+    case "loading":
+      return value === "lazy" || value === "eager" ? null : "loading is lazy or eager.";
     case "controlslist":
       return value.split(/\s+/).filter(Boolean).every((token) => ["nodownload", "nofullscreen", "noremoteplayback"].includes(token))
         ? null

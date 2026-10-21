@@ -635,12 +635,15 @@ export async function computeUserStorageAndUsage(req: WebsiteActor, siteId?: str
 /**
  * Enforces Media Library storage quota and max upload file size for the user's tier plan.
  */
-export async function assertMediaStorageAllowance(req: WebsiteActor, incomingBytes: number, siteId?: string, kind: "image" | "video" = "image"): Promise<void> {
+export async function assertMediaStorageAllowance(req: WebsiteActor, incomingBytes: number, siteId?: string, kind: "image" | "video" | "audio" = "image"): Promise<void> {
   const status = await computeUserStorageAndUsage(req, siteId);
   const { plan, storage } = status;
 
-  if (kind === "video" && incomingBytes > MAX_VIDEO_UPLOAD_BYTES) {
-    throw new WebsiteError(413, `This video (${formatBytes(incomingBytes)}) is larger than ${MAX_VIDEO_UPLOAD_LABEL}, the most one video can be. Make a smaller copy (1080p is plenty for a page) and upload that.`);
+  // Audio rides the video allowance: a podcast episode is the same order of
+  // size as a short clip, and both are refused by the plan's picture limit.
+  if (kind !== "image" && incomingBytes > MAX_VIDEO_UPLOAD_BYTES) {
+    const smaller = kind === "video" ? "Make a smaller copy (1080p is plenty for a page) and upload that." : "Export it at a lower bitrate (a 128 kbps MP3 is plenty for speech and most music) and upload that.";
+    throw new WebsiteError(413, `This ${kind === "video" ? "video" : "audio file"} (${formatBytes(incomingBytes)}) is larger than ${MAX_VIDEO_UPLOAD_LABEL}, the most one can be. ${smaller}`);
   }
   if (kind === "image" && incomingBytes > plan.maxUploadBytes) {
     throw new WebsiteError(

@@ -7,7 +7,7 @@ import { WebsiteTextFormatting } from "../components/WebsiteTextFormatting";
 import { WebsiteInteractionsPanel } from "../components/WebsiteInteractionsPanel";
 import { WebsiteHoverPanel } from "../components/WebsiteHoverPanel";
 import { WebsiteStyleTab } from "../components/WebsiteStyleTab";
-import { ElementSettings, MediaSettings, type Visibility } from "../components/WebsiteElementSettings";
+import { ElementSettings, EmbedSettings, MediaSettings, type Visibility } from "../components/WebsiteElementSettings";
 import { StyleSection } from "../components/StyleControls";
 import { mediaKind, type ElementSettingsChange } from "../../../src/shared/websiteElementSettings";
 import { Seg } from "../components/InspectorDesign";
@@ -822,6 +822,26 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       if (value) el.classList.add(value);
       return "written";
     }
+    // A form's words are an attribute on the control, and arrive as HTML text:
+    // a text area element decodes them without running anything.
+    if (field?.formText === "placeholder" || field?.formText === "value") {
+      const decoder = doc.createElement("textarea");
+      decoder.innerHTML = value ?? "";
+      el.setAttribute(field.formText, decoder.value);
+      return "written";
+    }
+    // Words round a control are its one run of text: replacing the element's
+    // HTML would take the drop-down or the checkbox off the canvas with it.
+    if (field?.formText === "label") {
+      const decoder = doc.createElement("textarea");
+      decoder.innerHTML = value ?? "";
+      const run = [...el.childNodes].find((node) => node.nodeType === 3 && (node.textContent ?? "").trim());
+      if (run) {
+        const text = run.textContent ?? "";
+        run.textContent = `${/^\s*/.exec(text)![0]}${decoder.value}${/\s*$/.exec(text)![0]}`;
+      }
+      return "written";
+    }
     // Never over the top of the caret: the page is editable in place.
     if (!el.hasAttribute("data-dw-editing")) el.innerHTML = value ?? "";
     return "written";
@@ -1608,17 +1628,21 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     setAssetModalOpen(true);
   };
   /**
-   * A video file into the site's media, answering with the address to play it
-   * from. Up to 10 MB it goes as base64 in JSON like a picture, which works
-   * wherever the server keeps files. Anything bigger, up to 1 GB, goes in
+   * A video or audio file into the site's media, answering with the address to
+   * play it from. Up to 10 MB it goes as base64 in JSON like a picture, which
+   * works wherever the server keeps files. Anything bigger, up to 1 GB, goes in
    * pieces straight on to cloud storage (`websiteVideoUpload.ts` on the
-   * server), one request each, so no request comes near a body ceiling.
+   * server), one request each, so no request comes near a body ceiling. `kind`
+   * is the player it is for, so the server refuses a file that would never
+   * play in it rather than storing it.
    */
-  const uploadVideo = async (file: File, onProgress?: (fraction: number) => void): Promise<string> => {
+  const uploadMedia = async (file: File, onProgress: ((fraction: number) => void) | undefined, kind: "video" | "audio"): Promise<string> => {
     const siteId = page.data?.site.id;
     if (!siteId) throw new Error("The page is still loading. Try again in a moment.");
     if (file.size > 1024 * 1024 * 1024) {
-      throw new Error(`That video is ${(file.size / (1024 * 1024 * 1024)).toFixed(2)} GB. Videos up to 1 GB can be uploaded: make a smaller copy (1080p is plenty for a page) or paste the address of one hosted elsewhere.`);
+      throw new Error(kind === "video"
+        ? `That video is ${(file.size / (1024 * 1024 * 1024)).toFixed(2)} GB. Videos up to 1 GB can be uploaded: make a smaller copy (1080p is plenty for a page) or paste the address of one hosted elsewhere.`
+        : `That audio file is ${(file.size / (1024 * 1024 * 1024)).toFixed(2)} GB. Files up to 1 GB can be uploaded: export it as a 128 kbps MP3 or paste the address of one hosted elsewhere.`);
     }
     const settle = () => {
       void qc.invalidateQueries({ queryKey: ["website", "assets", siteId] });
@@ -1626,7 +1650,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       notifyTierStatusChanged();
     };
     if (file.size > 10 * 1024 * 1024) {
-      const started = await api.post<{ token: string; partBytes: number; parts: number }>(`/website/sites/${siteId}/video-uploads`, { filename: file.name, size: file.size });
+      const started = await api.post<{ token: string; partBytes: number; parts: number }>(`/website/sites/${siteId}/video-uploads`, { filename: file.name, size: file.size, kind });
       let token = started.token;
       onProgress?.(0);
       try {
@@ -1659,7 +1683,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       reader.onerror = () => reject(new Error("That file could not be read."));
       reader.readAsDataURL(file);
     });
-    const uploaded = await api.post<{ id: string; url: string }>(`/website/sites/${siteId}/assets`, { filename: file.name, alt: "", data, kind: "video" });
+    const uploaded = await api.post<{ id: string; url: string }>(`/website/sites/${siteId}/assets`, { filename: file.name, alt: "", data, kind });
     settle();
     return uploaded.url;
   };
@@ -3532,7 +3556,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                       <StyleSection name="content" title="Content" open>
                         {!canEdit && <p className="dx-note">You can look at this site's settings but not change them.</p>}
                         {mediaKind(picked.tag) && (
-                          <MediaSettings field={picked} readOnly={readOnly} lockedReason={sharedMarkupLock} onSettings={(next) => void runStructure("settings", picked.id, undefined, false, next)} onPickPoster={pickImage} onUpload={uploadVideo} element={pickedElement} resolveImage={resolveImagePreview} />
+                          <MediaSettings field={picked} readOnly={readOnly} lockedReason={sharedMarkupLock} onSettings={(next) => void runStructure("settings", picked.id, undefined, false, next)} onPickPoster={pickImage} onUpload={uploadMedia} element={pickedElement} resolveImage={resolveImagePreview} />
+                        )}
+                        {picked.tag === "iframe" && (
+                          <EmbedSettings field={picked} readOnly={readOnly} lockedReason={sharedMarkupLock} onSettings={(next) => void runStructure("settings", picked.id, undefined, false, next)} />
                         )}
                         {picked.kind === "image" && (() => {
                           const rawImgVal = (edits[picked.id]?.value ?? picked.value ?? "").trim();
@@ -3635,9 +3662,13 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                             was labelled "read-only" until 12 Oct 2026, which
                             stopped being true when these became movable and
                             deletable: what is out of reach is what is inside. */}
-                        {picked.kind === "unsupported" && !mediaKind(picked.tag) && (
+                        {picked.kind === "unsupported" && !mediaKind(picked.tag) && picked.tag !== "iframe" && (
                           <p className="dx-hint">
-                            What is inside this {picked.tag === "form" ? "form" : picked.tag === "iframe" ? "embed" : "element"} can't be edited here; it stays exactly as your site's code has it. You can still move it, delete it and change its style.
+                            {picked.tag === "form"
+                              ? "The words in this form — its labels, placeholders and button — are fields of their own: click one on the page. Where it sends what people type stays with your site's code. You can still move it, delete it and change its style."
+                              : picked.tag === "select"
+                              ? "Each option in this menu is a field of its own: find them under Layers. You can still move it and change its style."
+                              : "What is inside this element can't be edited here; it stays exactly as your site's code has it. You can still move it, delete it and change its style."}
                           </p>
                         )}
                         {/* Carousel / Ticker Item-by-Item Editor */}
@@ -3814,7 +3845,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                               />
                             ) : picked.kind === "unsupported" || picked.kind === "background" ? undefined : picked.kind === "icon" ? (
                               <p className="dx-hint">To link an icon, select the block or button around it and give that a link.</p>
-                            ) : picked.tag === "body" ? undefined : (
+                            ) : picked.tag === "body" ? undefined : picked.formText ? (
+                              <p className="dx-hint">Part of a form, so it can't be made a link: a link round a form field is a field nobody can use.</p>
+                            ) : (
                               <p className="dx-hint">This sits inside a link or holds one, so it can't be made a link of its own.</p>
                             )
                           }

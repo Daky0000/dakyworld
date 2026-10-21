@@ -145,4 +145,63 @@ assert.ok(candidates.length <= 3); passed++;
 assert.ok(!candidates.some((file) => file.includes("node_modules") || file.startsWith("dist/"))); passed++;
 assert.ok(!candidates.includes("src/components/Hero.tsx")); passed++;
 
+// ── React Router with the table in a named const ────────────────────────────
+const named = discoverRouterRoutes(`import { createBrowserRouter } from "react-router-dom";
+import About from "./pages/About";
+const routes = [{ path: "/", lazy: () => import("./pages/Home") }, { path: "/about", element: <About /> }];
+export const router = createBrowserRouter(routes);`, "src/router.tsx", ["src/router.tsx", "src/pages/Home.tsx", "src/pages/About.tsx"]);
+assert.deepEqual(named.map((route) => [route.path, route.filePath]), [["/", "src/pages/Home.tsx"], ["/about", "src/pages/About.tsx"]]); passed++;
+
+// ── Vue Router: `createRouter({ routes })`, lazy views, a redirect ───────────
+const vueFiles = ["src/router/index.ts", "src/views/HomeView.vue", "src/views/AboutView.vue", "src/views/PricingView.vue", "src/App.vue"];
+const vueRouter = `
+import { createRouter, createWebHistory } from "vue-router";
+import HomeView from "../views/HomeView.vue";
+const routes = [
+  { path: "/", name: "home", component: HomeView },
+  { path: "/about", name: "about", component: () => import("../views/AboutView.vue") },
+  { path: "/plans", redirect: "/pricing" },
+  { path: "/pricing", component: () => import("@/views/PricingView.vue") },
+  { path: "/:pathMatch(.*)*", component: () => import("../views/NotFound.vue") },
+];
+export default createRouter({ history: createWebHistory(), routes });
+`;
+const vueRoutesRead = discoverRouterRoutes(vueRouter, "src/router/index.ts", vueFiles);
+assert.deepEqual(vueRoutesRead.map((route) => route.path), ["/", "/about", "/pricing"]); passed++;
+assert.equal(vueRoutesRead.find((route) => route.path === "/about")?.filePath, "src/views/AboutView.vue"); passed++;
+assert.equal(vueRoutesRead.find((route) => route.path === "/pricing")?.filePath, "src/views/PricingView.vue"); passed++;
+assert.equal(vueRoutesRead.find((route) => route.path === "/")?.title, "Home"); passed++;
+assert.ok(routerCandidates(["src/main.ts", "src/stores/index.ts", "src/router/index.ts", "src/App.vue"]).includes("src/router/index.ts")); passed++;
+
+// ── Angular: `Routes`, lazy `loadComponent`, a title, a redirect, `**` ────────
+const angularFiles = ["src/app/app.routes.ts", "src/app/home/home.component.ts", "src/app/home/home.component.html", "src/app/about/about.component.ts", "src/app/about/about.component.html", "src/app/contact/contact.ts"];
+const angularRoutesFile = `
+import { Routes } from "@angular/router";
+import { HomeComponent } from "./home/home.component";
+export const routes: Routes = [
+  { path: "", component: HomeComponent, title: "Fresh bread" },
+  { path: "about", loadComponent: () => import("./about/about.component").then((m) => m.AboutComponent) },
+  { path: "contact", loadComponent: () => import("./contact/contact").then((m) => m.Contact) },
+  { path: "home", redirectTo: "", pathMatch: "full" },
+  { path: "**", component: HomeComponent },
+];
+`;
+const angularRead = discoverRouterRoutes(angularRoutesFile, "src/app/app.routes.ts", angularFiles);
+assert.deepEqual(angularRead.map((route) => route.path), ["/", "/about", "/contact"]); passed++;
+// The words are in the template beside the component, so that is the page's file.
+assert.equal(angularRead.find((route) => route.path === "/")?.filePath, "src/app/home/home.component.html"); passed++;
+assert.equal(angularRead.find((route) => route.path === "/about")?.filePath, "src/app/about/about.component.html"); passed++;
+// A component with an inline template has no file beside it: its own file is where the words are.
+assert.equal(angularRead.find((route) => route.path === "/contact")?.filePath, "src/app/contact/contact.ts"); passed++;
+assert.equal(angularRead.find((route) => route.path === "/")?.title, "Fresh bread"); passed++;
+assert.equal(angularRead.find((route) => route.path === "/about")?.title, "About"); passed++;
+assert.equal(routerCandidates(["src/main.ts", "src/app/app.config.ts", "src/app/app.routes.ts", "src/app/app.component.ts"])[0], "src/app/app.routes.ts"); passed++;
+// The older module shape: `RouterModule.forRoot([...])`.
+const moduleRoutes = discoverRouterRoutes(`import { NgModule } from "@angular/core";
+import { RouterModule } from "@angular/router";
+import { AboutComponent } from "./about/about.component";
+@NgModule({ imports: [RouterModule.forRoot([{ path: "about", component: AboutComponent }])], exports: [RouterModule] })
+export class AppRoutingModule {}`, "src/app/app-routing.module.ts", angularFiles);
+assert.deepEqual(moduleRoutes.map((route) => [route.path, route.filePath]), [["/about", "src/app/about/about.component.html"]]); passed++;
+
 console.log(`websiteRouterTable: ${passed} code-declared route checks passed`);

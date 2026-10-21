@@ -149,8 +149,9 @@ export function sanitizeValue(
   // An icon's drawing is never typed. It is swapped whole, by `iconEdit`.
   // Unsupported elements are read-only to preserve code and widget integrity.
   if (raw.value !== undefined && field.kind !== "container" && field.kind !== "icon" && field.kind !== "unsupported") {
+    // A form's words are plain: an option and an attribute value cannot hold markup.
     const cleaned =
-      (field.kind === "richtext" || (field.content && field.tag !== "title" && field.tag !== "meta")) ? sanitizeRich(raw.value) : (field.kind === "image" || field.kind === "background") ? raw.value.trim() : sanitizePlain(raw.value);
+      (field.kind === "richtext" || (field.content && field.tag !== "title" && field.tag !== "meta" && !field.formText)) ? sanitizeRich(raw.value) : (field.kind === "image" || field.kind === "background") ? raw.value.trim() : sanitizePlain(raw.value);
     if (cleaned !== field.value) next.value = cleaned;
   }
   if (raw.href !== undefined && raw.href.trim() !== (field.href ?? "")) next.href = raw.href.trim();
@@ -233,7 +234,7 @@ export function sanitizeSharedValue(
   const next: FieldValue = {};
 
   if (raw.value !== undefined && field.kind !== "container" && field.kind !== "icon") {
-    next.value = (field.kind === "richtext" || (field.content && field.tag !== "title" && field.tag !== "meta")) ? sanitizeRich(raw.value) : field.kind === "image" ? raw.value.trim() : sanitizePlain(raw.value);
+    next.value = (field.kind === "richtext" || (field.content && field.tag !== "title" && field.tag !== "meta" && !field.formText)) ? sanitizeRich(raw.value) : field.kind === "image" ? raw.value.trim() : sanitizePlain(raw.value);
   }
   if (raw.href !== undefined) next.href = raw.href.trim();
   if (raw.alt !== undefined) next.alt = raw.alt;
@@ -272,7 +273,8 @@ export function validateFieldChange(fields: SiteField[], values: Record<string, 
       });
       continue;
     }
-    if (edit.value !== undefined && field.kind !== "image" && edit.value.replace(/<[^>]*>/g, "").trim() === "") {
+    // A placeholder may be emptied: the box is still there, just without a hint in it.
+    if (edit.value !== undefined && field.kind !== "image" && field.formText !== "placeholder" && edit.value.replace(/<[^>]*>/g, "").trim() === "") {
       problems.push({
         id,
         label: field.label,

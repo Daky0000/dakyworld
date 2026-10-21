@@ -51,7 +51,7 @@ import { recordPresence, removePresence } from "../services/websitePresence.js";
 // `site.js` is the other half and stays separate on purpose: it is the part that
 // talks to GitHub and the network, and nothing in the core does.
 import { DOCUMENT_KEY, draftDocument, editingSource, fieldValues, sourceHash, documentChanged, changeStructure, structureControls, applyValues, categoriseChanges, describeChanges, buildPreview, discoverFields, drawnByScript, isVariantOfStem, sanitizeValue, validateFieldChange, type FieldValue, type SiteField } from "../services/website/index.js";
-import { discoverPages, PAGE_LIST_FIELDS, pageSource, pageUrl, siteRepo, siteStyleClasses, WebsiteError } from "../services/website/site.js";
+import { discoverPages, PAGE_LIST_FIELDS, pageDocumentUrl, pageSource, pageUrl, siteRepo, siteStyleClasses, WebsiteError } from "../services/website/site.js";
 
 import { tailwindCdnCss } from "../services/website/cdnStyles.js";
 
@@ -195,6 +195,9 @@ function publicField(field: SiteField) {
     ...(field.attributes !== undefined ? { attributes: field.attributes } : {}),
     ...(field.tagOptions !== undefined ? { tagOptions: field.tagOptions } : {}),
     ...(field.mediaSources !== undefined ? { mediaSources: field.mediaSources } : {}),
+    // A form's words: the editor writes these into an attribute on the canvas
+    // and never offers a caret in them.
+    ...(field.formText !== undefined ? { formText: field.formText } : {}),
   };
 }
 
@@ -872,7 +875,7 @@ websiteRouter.get("/pages/:pageId/preview", async (req, res, next) => {
     const pickable = picking ? discoverFields(applied.html).fields : undefined;
     const writable = picking && source.sourceFile ? await sourceManagedFields(site, page, source.html) : null;
     const builtCss = await tailwindCdnCss(applied.html);
-    const document = buildPreview(applied.html, pageUrl(site, page), writable ? pickable!.map((field) => ({ ...field, previewReadOnly: !writable.writable.has(field.id) })) : pickable, capabilities.capabilities.edit, builtCss);
+    const document = buildPreview(applied.html, pageDocumentUrl(site, page), writable ? pickable!.map((field) => ({ ...field, previewReadOnly: !writable.writable.has(field.id) })) : pickable, capabilities.capabilities.edit, builtCss);
     res
       .type("html")
       .set("Cache-Control", "no-store")

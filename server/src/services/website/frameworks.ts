@@ -33,7 +33,9 @@ export type DiscoveredRoute = { filePath: string; path: string; title: string; l
 
 /** Stored on the site, so every later screen knows what it is looking at without
  * listing the repository again. `null` means the HTML editor, as before. */
-export type SourceKind = "next" | "astro" | "sveltekit" | "nuxt" | "vue" | "vite-react" | "remix" | "gatsby" | "docusaurus" | "eleventy" | "hugo" | "jekyll";
+export type SourceKind =
+  | "next" | "astro" | "sveltekit" | "nuxt" | "vue" | "vite-react" | "remix" | "gatsby" | "docusaurus" | "eleventy" | "hugo" | "jekyll"
+  | "angular" | "solidstart" | "tanstack" | "qwik" | "svelte" | "vitepress" | "mkdocs" | "hexo";
 
 export type FrameworkAdapter = {
   sourceKind: SourceKind;
@@ -196,6 +198,98 @@ export function viteReactRoutes(files: readonly string[], listed: Set<string> = 
   return shell ? routeList([{ filePath: shell, path: "/" }], listed) : [];
 }
 
+/**
+ * A Vue single-page app — Vite or the Vue CLI with Vue Router.
+ *
+ * File-routed Vue (`pages/**.vue`, unplugin-vue-router) is what `vueRoutes`
+ * reads. Without that folder the routes are a table in `src/router`, which
+ * `router.ts` reads, and the file tree honestly has one page: the app shell.
+ */
+export function vueSpaRoutes(files: readonly string[], listed: Set<string> = new Set()): DiscoveredRoute[] {
+  const pages = vueRoutes(files, listed);
+  if (pages.length) return pages;
+  const shell = files.find((file) => !IGNORED.test(file) && /(^|\/)src\/App\.vue$/i.test(file));
+  return shell ? routeList([{ filePath: shell, path: "/" }], listed) : [];
+}
+
+/** A Svelte app built with Vite and no SvelteKit: one shell, whose routes (if any) are a library's map. */
+export function svelteSpaRoutes(files: readonly string[], listed: Set<string> = new Set()): DiscoveredRoute[] {
+  const shell = files.find((file) => !IGNORED.test(file) && /(^|\/)src\/App\.svelte$/i.test(file));
+  return shell ? routeList([{ filePath: shell, path: "/" }], listed) : [];
+}
+
+/**
+ * Angular — every route is declared in code (`app.routes.ts`, or a routing
+ * module), never in folders, so the file tree offers only the root
+ * component's template and `router.ts` reads the table, mapping each
+ * component to the `.html` template beside it. Angular 20 names that template
+ * `app.html` where earlier versions said `app.component.html`; both are read.
+ */
+export function angularRoutes(files: readonly string[], listed: Set<string> = new Set()): DiscoveredRoute[] {
+  const root = files.find((file) => !IGNORED.test(file) && /(^|\/)src\/app\/app(?:\.component)?\.html$/i.test(file));
+  return root ? routeList([{ filePath: root, path: "/" }], listed) : [];
+}
+
+/**
+ * SolidStart — `src/routes`, where the file is the address: `index` is the
+ * folder's own, `(group)` folders are organisation, and a `[...404]` catch-all
+ * is not a page anybody is sent to.
+ */
+export function solidStartRoutes(files: readonly string[], listed: Set<string> = new Set()): DiscoveredRoute[] {
+  const entries: Array<{ filePath: string; path: string }> = [];
+  for (const file of files) {
+    if (IGNORED.test(file)) continue;
+    const match = /(^|\/)src\/routes\/(.*)\.(tsx|jsx|mdx|md)$/i.exec(file);
+    if (!match) continue;
+    const segments = match[2]!.split("/").filter((segment) => segment && !/^\(.*\)$/.test(segment));
+    if (segments.some((segment) => segment.includes("...") || segment.startsWith("_"))) continue;
+    if (segments.at(-1)!.toLowerCase() === "index") segments.pop();
+    entries.push({ filePath: file, path: tidy(segments.join("/")) });
+  }
+  return routeList(entries, listed);
+}
+
+/**
+ * TanStack Start and TanStack Router's file routes — `src/routes` (or
+ * `app/routes`) with a `__root` layout. A dot is a slash, as in Remix;
+ * `$param` stays in the address; `_pathless` and `(group)` segments are not
+ * part of it; a `-` prefixed file is excluded by the router itself; and
+ * `route.tsx` is the folder-route spelling of the folder's own file.
+ */
+export function tanstackRoutes(files: readonly string[], listed: Set<string> = new Set()): DiscoveredRoute[] {
+  const entries: Array<{ filePath: string; path: string }> = [];
+  for (const file of files) {
+    if (IGNORED.test(file)) continue;
+    const match = /(^|\/)(?:src|app)\/routes\/(.*)\.(tsx|jsx)$/i.exec(file);
+    if (!match) continue;
+    let inside = match[2]!.replace(/\/route$/i, "");
+    if (/(^|\/)(__root|-)/.test(inside)) continue;
+    // `_layout.tsx` itself is a layout around other routes, not a page.
+    if (/(^|[./])_[^./]*$/.test(inside)) continue;
+    inside = inside.replace(/(^|[./])index$/i, "");
+    const segments = inside.split(/[./]/).filter((segment) => segment && !segment.startsWith("_") && !/^\(.*\)$/.test(segment));
+    entries.push({ filePath: file, path: tidy(segments.join("/")) });
+  }
+  return routeList(entries, listed);
+}
+
+/**
+ * Qwik City — `src/routes`, where a folder is an address and its page is the
+ * `index` file inside it; `layout` and `plugin` files are not pages, and
+ * `(group)` folders are organisation.
+ */
+export function qwikRoutes(files: readonly string[], listed: Set<string> = new Set()): DiscoveredRoute[] {
+  const entries: Array<{ filePath: string; path: string }> = [];
+  for (const file of files) {
+    if (IGNORED.test(file)) continue;
+    const match = /(^|\/)src\/routes\/((?:.*\/)?)index\.(tsx|jsx|mdx|md)$/i.exec(file);
+    if (!match) continue;
+    const segments = match[2]!.split("/").filter((segment) => segment && !/^\(.*\)$/.test(segment));
+    entries.push({ filePath: file, path: tidy(segments.join("/")) });
+  }
+  return routeList(entries, listed);
+}
+
 /** Remix and React Router 7 — `app/routes`, where a route is the file and a dot
  * is a slash: `routes/blog.$slug.tsx` is `/blog/$slug`. `_index` is the folder's
  * own address and a leading `_` elsewhere is a pathless layout. */
@@ -254,6 +348,22 @@ function markdownRoutes(address: RegExp, files: readonly string[], listed: Set<s
   return routeList(entries, listed);
 }
 
+/** Regular-expression text for a literal folder path. */
+const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * VitePress — every Markdown file under the folder that holds `.vitepress/`
+ * is a page at its own path, which is usually `docs/` and sometimes the
+ * repository root. `public/` beside it is static files, not pages.
+ */
+export function vitepressRoutes(files: readonly string[], listed: Set<string> = new Set()): DiscoveredRoute[] {
+  const config = files.find((file) => !IGNORED.test(file) && /(^|\/)\.vitepress\/config\.(js|cjs|mjs|ts|mts|cts)$/i.test(file));
+  if (!config) return [];
+  const root = config.replace(/\.vitepress\/config\.[a-z]+$/i, "");
+  const inRoot = files.filter((file) => file.startsWith(root) && !/(^|\/)(\.vitepress|public)\//.test(file.slice(root.length)));
+  return markdownRoutes(new RegExp(`^${literal(root)}(.*\\.(?:md|markdown))$`, "i"), inRoot, listed);
+}
+
 // Each of these captures exactly one group: the part of the path that is the
 // address. Docusaurus keeps its folder — its docs really are served under
 // `/docs` — and the others do not.
@@ -261,6 +371,16 @@ export const docusaurusRoutes = (files: readonly string[], listed: Set<string> =
 export const eleventyRoutes = (files: readonly string[], listed: Set<string> = new Set()) => markdownRoutes(/(?:^|\/)(?:src|content|pages)\/(.*\.(?:md|markdown|html))$/i, files, listed);
 export const hugoRoutes = (files: readonly string[], listed: Set<string> = new Set()) => markdownRoutes(/(?:^|\/)content\/(.*\.(?:md|markdown|html))$/i, files, listed);
 export const jekyllRoutes = (files: readonly string[], listed: Set<string> = new Set()) => markdownRoutes(/^(?:_posts\/|_pages\/|pages\/)?(.*\.(?:md|markdown|html))$/i, files, listed);
+/** MkDocs — `docs/`, served with directory addresses (`docs/about.md` is `/about/`). */
+export const mkdocsRoutes = (files: readonly string[], listed: Set<string> = new Set()) => markdownRoutes(/(?:^|\/)docs\/(.*\.(?:md|markdown))$/i, files, listed);
+/**
+ * Hexo — the pages under `source/`. Its posts are left out on purpose: a
+ * post's address comes from its date and the site's permalink setting, which
+ * are in the file and the config rather than in its name, and a page list is a
+ * promise that each address is real. They open from the source file browser.
+ */
+export const hexoRoutes = (files: readonly string[], listed: Set<string> = new Set()) =>
+  markdownRoutes(/^source\/(?!_)(.*\.(?:md|markdown|html))$/i, files.filter((file) => !/^source\/_/i.test(file)), listed);
 
 export const frameworkAdapters: readonly FrameworkAdapter[] = [
   {
@@ -285,6 +405,35 @@ export const frameworkAdapters: readonly FrameworkAdapter[] = [
     routes: svelteRoutes,
   },
   {
+    sourceKind: "angular",
+    label: "an Angular project",
+    extensions: [".html"],
+    readsRouteTable: true,
+    isProject: (files) => files.some((file) => !IGNORED.test(file) && /(^|\/)angular\.json$/i.test(file)) && angularRoutes(files).length > 0,
+    routes: angularRoutes,
+  },
+  {
+    sourceKind: "qwik",
+    label: "a Qwik City project",
+    extensions: [".tsx", ".jsx", ".mdx"],
+    isProject: (files) => files.some((file) => /(^|\/)src\/entry\.ssr\.(tsx|jsx|ts|js)$/i.test(file)) && qwikRoutes(files).length > 0,
+    routes: qwikRoutes,
+  },
+  {
+    sourceKind: "tanstack",
+    label: "a TanStack Start project",
+    extensions: [".tsx", ".jsx"],
+    isProject: (files) => files.some((file) => !IGNORED.test(file) && /(^|\/)(?:src|app)\/routes\/__root\.(tsx|jsx)$/i.test(file)) && tanstackRoutes(files).length > 0,
+    routes: tanstackRoutes,
+  },
+  {
+    sourceKind: "solidstart",
+    label: "a SolidStart project",
+    extensions: [".tsx", ".jsx", ".mdx"],
+    isProject: (files) => files.some((file) => /(^|\/)src\/entry-server\.(tsx|jsx)$/i.test(file)) && solidStartRoutes(files).length > 0,
+    routes: solidStartRoutes,
+  },
+  {
     sourceKind: "nuxt",
     label: "a Nuxt project",
     extensions: [".vue"],
@@ -295,8 +444,17 @@ export const frameworkAdapters: readonly FrameworkAdapter[] = [
     sourceKind: "vue",
     label: "a Vue project",
     extensions: [".vue"],
-    isProject: (files) => vueRoutes(files).length > 0,
-    routes: vueRoutes,
+    // A Vue Router table in `src/router`, when there is no `pages/` folder.
+    readsRouteTable: true,
+    isProject: (files) => vueRoutes(files).length > 0 || ((config(files, "vite.config") || config(files, "vue.config")) && vueSpaRoutes(files).length > 0),
+    routes: vueSpaRoutes,
+  },
+  {
+    sourceKind: "svelte",
+    label: "a Svelte app",
+    extensions: [".svelte"],
+    isProject: (files) => config(files, "vite.config") && svelteSpaRoutes(files).length > 0,
+    routes: svelteSpaRoutes,
   },
   {
     sourceKind: "remix",
@@ -311,6 +469,20 @@ export const frameworkAdapters: readonly FrameworkAdapter[] = [
     extensions: [".tsx", ".jsx"],
     isProject: (files) => config(files, "gatsby-config") && gatsbyRoutes(files).length > 0,
     routes: gatsbyRoutes,
+  },
+  {
+    sourceKind: "vitepress",
+    label: "a VitePress site",
+    extensions: [".md"],
+    isProject: (files) => vitepressRoutes(files).length > 0,
+    routes: vitepressRoutes,
+  },
+  {
+    sourceKind: "mkdocs",
+    label: "an MkDocs site",
+    extensions: [".md"],
+    isProject: (files) => files.some((file) => /^mkdocs\.ya?ml$/i.test(file)) && mkdocsRoutes(files).length > 0,
+    routes: mkdocsRoutes,
   },
   {
     sourceKind: "docusaurus",
@@ -332,6 +504,15 @@ export const frameworkAdapters: readonly FrameworkAdapter[] = [
     extensions: [".md"],
     isProject: (files) => files.some((file) => /(^|\/)(hugo|config)\.(toml|yaml|yml)$/i.test(file)) && under(files, "content").length > 0,
     routes: hugoRoutes,
+  },
+  {
+    // Before Jekyll: a Hexo site has a `_config.yml` too, and read as Jekyll
+    // its pages were listed at `/source/...`, an address that does not exist.
+    sourceKind: "hexo",
+    label: "a Hexo site",
+    extensions: [".md"],
+    isProject: (files) => files.some((file) => /^_config\.ya?ml$/i.test(file)) && files.some((file) => /^(scaffolds|source\/_posts)\//i.test(file)),
+    routes: hexoRoutes,
   },
   {
     sourceKind: "jekyll",
@@ -362,7 +543,7 @@ export const frameworkAdapters: readonly FrameworkAdapter[] = [
  * image and a commit that looks perfectly fine, so this is one table rather
  * than a guess at each call site.
  */
-export function publicFolder(sourceKind: string | null | undefined): string {
+export function publicFolder(sourceKind: string | null | undefined, filePath?: string): string {
   switch (sourceKind) {
     case "sveltekit":
     case "hugo":
@@ -371,6 +552,20 @@ export function publicFolder(sourceKind: string | null | undefined): string {
     case "jekyll":
     case "eleventy":
       return "";
+    // MkDocs copies everything under `docs/` to the site, pictures included;
+    // Hexo copies `source/`. Neither has a separate static folder.
+    case "mkdocs":
+      return "docs";
+    case "hexo":
+      return "source";
+    // VitePress serves `<root>/public`, and the root — the folder holding
+    // `.vitepress/` — is `docs/` in nearly every project and the repository
+    // root in most of the rest. Which one is read off the page being published.
+    // A project rooted in any other folder would get its picture in `public/`,
+    // which it does not serve; that layout is rare enough to be named in the
+    // compatibility notes rather than guessed at here.
+    case "vitepress":
+      return /^docs\//i.test(filePath ?? "") ? "docs/public" : "public";
     case null:
     case undefined:
       return "";

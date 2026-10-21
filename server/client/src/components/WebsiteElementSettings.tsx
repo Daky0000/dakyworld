@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  MEDIA_ATTRIBUTES, TAG_LABEL, attributeProblem, mediaKind, readMediaTime, writeMediaTime, type ElementSettingsChange,
+  TAG_LABEL, attributeProblem, mediaKind, readMediaTime, typedAttributes, writeMediaTime, type ElementSettingsChange,
 } from "../../../src/shared/websiteElementSettings";
+import { EMBED_SERVICES, embedAddress, embedService, mapAddress, mapPlace } from "../../../src/shared/websiteEmbed";
 import { ICON } from "./StyleControls";
 import type { SiteFieldRow } from "../lib/types";
 
@@ -42,10 +43,11 @@ export function ElementSettings({
   lockedReason?: string;
 }) {
   const markup = field.structure !== undefined && !lockedReason;
-  const media = mediaKind(field.tag);
   const attributes = field.attributes ?? [];
   const id = attributes.find((attr) => attr.name === "id")?.value ?? "";
-  const free = attributes.filter((attr) => attr.name !== "id" && !(media && MEDIA_ATTRIBUTES[media].includes(attr.name)));
+  // A player's and a frame's own attributes have typed controls in Content.
+  const typed = typedAttributes(field.tag);
+  const free = attributes.filter((attr) => attr.name !== "id" && !typed.includes(attr.name));
   const locked = lockedReason ?? (field.structure === undefined ? "This page is built from its source files, so its markup is changed in the code." : null);
   return (
     <div className="dx-stack">
@@ -225,8 +227,8 @@ export function MediaSettings({
   lockedReason?: string;
   onSettings: (change: ElementSettingsChange) => void;
   onPickPoster?: (apply: (url: string) => void) => void;
-  /** Stores a video file with the site's media and answers with its address. */
-  onUpload?: (file: File, onProgress?: (fraction: number) => void) => Promise<string>;
+  /** Stores a video or audio file with the site's media and answers with its address. */
+  onUpload?: (file: File, onProgress: ((fraction: number) => void) | undefined, kind: "video" | "audio") => Promise<string>;
   resolveImage?: (url: string) => string;
   /** The player on the canvas, to say when its file cannot be loaded. */
   element?: Element | null;
@@ -289,7 +291,7 @@ export function MediaSettings({
     setUploading(0);
     setUploadProblem(null);
     try {
-      set({ src: writeMediaTime(await onUpload(file, (fraction) => setUploading(fraction)), time.start, time.end) });
+      set({ src: writeMediaTime(await onUpload(file, (fraction) => setUploading(fraction), media), time.start, time.end) });
     } catch (error) {
       setUploadProblem(error instanceof Error ? error.message : "That file could not be uploaded.");
     } finally {
@@ -297,7 +299,7 @@ export function MediaSettings({
       if (fileInput.current) fileInput.current.value = "";
     }
   };
-  const canUpload = Boolean(onUpload) && media === "video";
+  const canUpload = Boolean(onUpload);
   const toggle = (label: string, on: boolean, change: () => void, hint?: string) => (
     <label className="dx-toggle" title={hint}>
       <span>{label}</span>
@@ -311,19 +313,26 @@ export function MediaSettings({
         <p className="dx-hint">This {media} lists {sources} files for different browsers, so its file is changed in the page's code. Everything below still applies.</p>
       ) : (
         <>
-          <MediaText label={media === "video" ? "Video file" : "Audio file"} value={time.base} placeholder="/media/intro.mp4 or https://…" disabled={disabled} onSave={(base) => set({ src: base ? writeMediaTime(base, time.start, time.end) : null })} tag={field.tag} />
+          <MediaText label={media === "video" ? "Video file" : "Audio file"} value={time.base} placeholder={media === "video" ? "/media/intro.mp4 or https://…" : "/media/episode-1.mp3 or https://…"} disabled={disabled} onSave={(base) => set({ src: base ? writeMediaTime(base, time.start, time.end) : null })} tag={field.tag} />
           {canUpload && (
             <div className="dx-g2">
               <button type="button" className="dx-btn dx-soft" disabled={disabled || uploading !== false} onClick={() => fileInput.current?.click()}>
-                {uploading === false ? "Upload video" : uploading > 0 ? `Uploading… ${Math.floor(uploading * 100)}%` : "Uploading…"}
+                {uploading === false ? `Upload ${media}` : uploading > 0 ? `Uploading… ${Math.floor(uploading * 100)}%` : "Uploading…"}
               </button>
-              <input ref={fileInput} type="file" aria-label="Choose a video to upload" accept="video/mp4,video/webm,.mp4,.webm" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); }} />
+              <input
+                ref={fileInput}
+                type="file"
+                aria-label={`Choose ${media === "video" ? "a video" : "an audio file"} to upload`}
+                accept={media === "video" ? "video/mp4,video/webm,.mp4,.webm" : "audio/mpeg,audio/mp4,audio/aac,audio/wav,audio/x-wav,audio/flac,audio/webm,.mp3,.m4a,.aac,.wav,.flac,.webm"}
+                hidden
+                onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); }}
+              />
             </div>
           )}
           {uploadProblem && <p className="dx-err" role="alert">{uploadProblem}</p>}
           {missing && pending.src === undefined && (
             <p className="dx-note warn" role="status">
-              {missingSentence(media, time.base)} {canUpload ? "Upload the video here" : "Paste an https address where it is"}, then press Apply.
+              {missingSentence(media, time.base)} {canUpload ? `Upload the ${media === "video" ? "video" : "audio file"} here` : "Paste an https address where it is"}, then press Apply.
             </p>
           )}
           <div className="dx-g2">
@@ -369,7 +378,137 @@ export function MediaSettings({
         </button>
         <button type="button" className="dx-btn dx-ghost" disabled={disabled || waiting === 0} onClick={() => setPending({})}>Reset</button>
       </div>
-      <p className="dx-hint">{waiting ? "Nothing is changed until you press Apply." : canUpload ? "Upload an MP4 or WebM file up to 1 GB, or paste the address of one." : `A ${media} is added by its address: put the file where the site keeps its media, then paste its path here.`}</p>
+      <p className="dx-hint">{waiting ? "Nothing is changed until you press Apply." : canUpload ? (media === "video" ? "Upload an MP4 or WebM file up to 1 GB, or paste the address of one." : "Upload an MP3, M4A, WAV or FLAC file up to 1 GB, or paste the address of one. Ogg is refused: iPhones and Macs can't play it.") : `A ${media} is added by its address: put the file where the site keeps its media, then paste its path here.`}</p>
+    </div>
+  );
+}
+
+/**
+ * An embedded frame's Content: which video, map or player it shows, its
+ * description for screen readers, lazy loading and full screen.
+ *
+ * The address box takes whatever the service gives people — a share link, the
+ * page's own address, the whole `<iframe>` embed code — and turns it into the
+ * address the service embeds from (`shared/websiteEmbed.ts`), or says why it
+ * cannot. Only the services on that list can be put in a frame; one already
+ * pointing elsewhere keeps working and is said to. Gathered and sent with
+ * Apply, like a player's switches, because each send is one edit on the plan.
+ */
+export function EmbedSettings({
+  field,
+  readOnly,
+  onSettings,
+  lockedReason,
+}: {
+  field: SiteFieldRow;
+  readOnly: boolean;
+  lockedReason?: string;
+  onSettings: (change: ElementSettingsChange) => void;
+}) {
+  const saved = Object.fromEntries((field.attributes ?? []).map((attr) => [attr.name, attr.value])) as Record<string, string>;
+  const [pending, setPending] = useState<Record<string, string | null>>({});
+  const signature = JSON.stringify(field.attributes ?? []);
+  useEffect(() => setPending({}), [signature]);
+  const attrs: Record<string, string> = { ...saved };
+  for (const [name, value] of Object.entries(pending)) {
+    if (value === null) delete attrs[name];
+    else attrs[name] = value;
+  }
+  const set = (changes: Record<string, string | null>) =>
+    setPending((current) => {
+      const next = { ...current, ...changes };
+      for (const [name, value] of Object.entries(next)) if ((saved[name] ?? null) === value) delete next[name];
+      return next;
+    });
+  const disabled = readOnly || field.structure === undefined || Boolean(lockedReason);
+  const src = attrs.src ?? "";
+  const service = src ? embedService(src) : null;
+  const place = mapPlace(src);
+  const [link, setLink] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+  const [placeText, setPlaceText] = useState(place ?? "");
+  useEffect(() => setPlaceText(mapPlace(attrs.src ?? "") ?? ""), [attrs.src]);
+  const waiting = Object.keys(pending).length;
+  const useLink = () => {
+    const result = embedAddress(link);
+    if ("problem" in result) return setProblem(result.problem);
+    setProblem(null);
+    setLink("");
+    set({ src: result.address });
+  };
+  const host = (() => { try { return new URL(src).hostname; } catch { return src; } })();
+  const isMap = service?.noun === "map";
+  return (
+    <div className="dx-stack">
+      {lockedReason && <p className="dx-hint">{lockedReason}</p>}
+      <p className="dx-hint">
+        {!src ? "This frame shows nothing yet." : service ? `Shows a ${service.label} ${service.noun}.` : `Shows a page from ${host}, which isn't one of the services a frame can be pointed at here. It keeps working; to change it, paste a link from one of them.`}
+      </p>
+      <div className="dx-f">
+        <span className="dx-fl"><label className="dx-lt" htmlFor="dx-embed-link">Video, map or player</label></span>
+        <div className="dx-inp">
+          <input
+            id="dx-embed-link"
+            type="text"
+            aria-label="Link or embed code"
+            placeholder="Paste a link or embed code"
+            spellCheck={false}
+            disabled={disabled}
+            value={link}
+            onChange={(event) => { setLink(event.target.value); setProblem(null); }}
+            onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); useLink(); } }}
+          />
+        </div>
+        <div className="dx-g2">
+          <button type="button" className="dx-btn dx-soft" disabled={disabled || !link.trim()} onClick={useLink}>Use this link</button>
+        </div>
+        {problem && <span className="dx-err" role="alert">{problem}</span>}
+      </div>
+      {(isMap || place !== null || !src) && (
+        <div className="dx-f">
+          <span className="dx-fl"><label className="dx-lt" htmlFor="dx-embed-place">Place</label></span>
+          <div className="dx-inp">
+            <input
+              id="dx-embed-place"
+              type="text"
+              aria-label="Place or address on the map"
+              placeholder="Shop name, street, town"
+              disabled={disabled}
+              value={placeText}
+              onChange={(event) => setPlaceText(event.target.value)}
+              onBlur={() => { if (placeText.trim() && placeText.trim() !== place) set({ src: mapAddress(placeText) }); }}
+              onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); if (placeText.trim()) set({ src: mapAddress(placeText) }); } }}
+            />
+          </div>
+          <span className="dx-hint">{src ? "The map centres on what Google Maps finds for these words." : "Or, for a map, type the place: the frame shows Google Maps centred on it."}</span>
+        </div>
+      )}
+      <TextSetting
+        label="Description"
+        value={attrs.title ?? ""}
+        placeholder={service ? `${service.label} ${service.noun}` : "What this frame shows"}
+        disabled={disabled}
+        hint="Read out by screen readers in place of the frame. Every frame should have one."
+        check={(next) => (next ? attributeProblem("title", next, field.tag) : null)}
+        onSave={(next) => set({ title: next || null })}
+      />
+      <label className="dx-toggle" title="The frame loads only when somebody scrolls near it, so the page opens faster.">
+        <span>Load when scrolled near</span>
+        <input type="checkbox" checked={attrs.loading === "lazy"} disabled={disabled} onChange={() => set({ loading: attrs.loading === "lazy" ? null : "lazy" })} />
+      </label>
+      {service?.noun === "video" && (
+        <label className="dx-toggle">
+          <span>Allow full screen</span>
+          <input type="checkbox" checked={attrs.allowfullscreen !== undefined} disabled={disabled} onChange={() => set({ allowfullscreen: attrs.allowfullscreen !== undefined ? null : "" })} />
+        </label>
+      )}
+      <div className="dx-g2">
+        <button type="button" className="dx-btn dx-pri" disabled={disabled || waiting === 0} onClick={() => onSettings({ attributes: pending })}>
+          {waiting ? `Apply ${waiting} change${waiting === 1 ? "" : "s"}` : "Apply"}
+        </button>
+        <button type="button" className="dx-btn dx-ghost" disabled={disabled || waiting === 0} onClick={() => { setPending({}); setProblem(null); setLink(""); }}>Reset</button>
+      </div>
+      <p className="dx-hint">{waiting ? "Nothing is changed until you press Apply." : `A frame can show ${EMBED_SERVICES.map((each) => each.label).join(", ")}.`}</p>
     </div>
   );
 }
@@ -379,7 +518,7 @@ function missingSentence(media: string, address: string): string {
   if (!address) return `This ${media} has no file.`;
   const shown = address.length > 60 ? `…${address.slice(-57)}` : address;
   if (/^https?:\/\//i.test(address)) return `This ${media}'s file can't be loaded: nothing plays at “${shown}”.`;
-  return `This ${media}'s file can't be loaded: there is no “${shown}” on the server. An HTML file brings no other files with it, so a video saved beside it has to be uploaded too.`;
+  return `This ${media}'s file can't be loaded: there is no “${shown}” on the server. An HTML file brings no other files with it, so ${media === "video" ? "a video" : "an audio file"} saved beside it has to be uploaded too.`;
 }
 
 function MediaText({ label, value, placeholder, disabled, tag, onSave }: { label: string; value: string; placeholder: string; disabled: boolean; tag: string; onSave: (next: string) => void }) {

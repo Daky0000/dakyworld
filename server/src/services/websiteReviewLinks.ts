@@ -40,7 +40,7 @@ import { brandedNotice } from "./transactionalEmail.js";
 import { signInBaseFor } from "./accountAccess.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
 import { embedWebsiteAssets } from "./websiteAssets.js";
-import { pageSource, pageUrl, WebsiteError } from "./website/site.js";
+import { pageDocumentUrl, pageSource, pageUrl, WebsiteError } from "./website/site.js";
 import { applyValues, buildPreview, editingSource, fieldValues, type FieldValue } from "./website/index.js";
 
 const DEFAULT_DAYS = 14;
@@ -311,7 +311,7 @@ export function registerPublicReviewRoutes(router: Router) {
       : await draftHtmlFor(link.site, link.page, link.draftSnapshot as Record<string, FieldValue>);
     // No fields: the isolated policy — the page's own scripts run, in an
     // origin of its own, with no reach into anything of ours.
-    const document = buildPreview(html, pageUrl(link.site, link.page));
+    const document = buildPreview(html, pageDocumentUrl(link.site, link.page));
     const body = withFrameScript(view === "draft" ? await embedWebsiteAssets(link.site, document.html) : document.html);
     res.type("html").set({
       "Content-Security-Policy": document.csp,

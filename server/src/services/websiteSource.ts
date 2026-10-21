@@ -208,7 +208,8 @@ type Dependencies = {
    * source file needs the same, or somebody pastes an uploaded image into a
    * `src` field, publishes, and gets a broken picture with no clue why.
    */
-  assets(input: { site: Site; source: string }): Promise<Array<{ path: string; content: string; encoding: "base64" }>>;
+  /** `filePath` is the file being published, from the repository root: where its framework serves pictures can depend on it. */
+  assets(input: { site: Site; source: string; filePath?: string }): Promise<Array<{ path: string; content: string; encoding: "base64" }>>;
   track(input: { site: Site; filePath: string; startedById?: string }): Promise<{ id: string } | null>;
   tracked(input: { id: string; site: Site; filePath: string; commit: { sha: string; url: string }; changes: Array<{ before: string; after: string }> }): Promise<void>;
   trackFailed(input: { id: string; message: string }): Promise<void>;
@@ -227,7 +228,7 @@ const dependencies: Dependencies = {
   // The framework's own static folder, not the site's page folder: a build
   // copies `public/` to the root, and an image committed anywhere else is a
   // file in the repository that the built site cannot see.
-  assets: async ({ site, source }) => websiteAssetFilesIn(site, source, publicFolder(site.sourceKind)),
+  assets: async ({ site, source, filePath }) => websiteAssetFilesIn(site, source, publicFolder(site.sourceKind, filePath)),
   track: async ({ site, filePath, startedById }) => startPublishJob({ site, kind: "PAGE", startedById, detail: { filePath, source: true } }),
   tracked: async ({ id, site, filePath, commit, changes }) => {
     // The route file the scan listed, where it listed one: its address is what a
@@ -416,7 +417,7 @@ export function registerWebsiteSource(router: Router, access: Access, overrides:
     const job = await deps.track({ site: current.site, filePath: current.path.relative, startedById: req.dbUser?.id }).catch(() => null);
     let result: { sha: string; url: string };
     try {
-      const images = await deps.assets({ site: current.site, source: review.source }).catch(() => []);
+      const images = await deps.assets({ site: current.site, source: review.source, filePath: current.path.repository }).catch(() => []);
       result = await deps.commit({
         repo: current.repo,
         branch: current.site.repoBranch,

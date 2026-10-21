@@ -20,7 +20,10 @@
  * Pure string work: no network, no database, no GitHub.
  */
 import assert from "node:assert/strict";
-import { astroRoutes, detectFramework, docusaurusRoutes, gatsbyRoutes, hugoRoutes, jekyllRoutes, nextRoutes, remixRoutes, svelteRoutes, viteReactRoutes, vueRoutes } from "../src/services/website/frameworks.js";
+import {
+  angularRoutes, astroRoutes, detectFramework, docusaurusRoutes, gatsbyRoutes, hexoRoutes, hugoRoutes, jekyllRoutes, mkdocsRoutes, nextRoutes, publicFolder, qwikRoutes,
+  remixRoutes, solidStartRoutes, svelteRoutes, svelteSpaRoutes, tanstackRoutes, viteReactRoutes, vitepressRoutes, vueRoutes, vueSpaRoutes,
+} from "../src/services/website/frameworks.js";
 
 let passed = 0;
 const paths = (routes: { path: string }[]) => routes.map((route) => route.path);
@@ -137,6 +140,62 @@ assert.equal(detectFramework(["index.html", "about.html", "css/site.css"]), null
 assert.equal(detectFramework(["public/index.html", "README.md"]), null); passed++;
 // A build output is not a project: `.next/` and `dist/` are ignored everywhere.
 assert.equal(detectFramework([".next/server/app/page.tsx", "dist/assets/index.js"]), null); passed++;
+
+// ── Angular: the table is in code, so the files offer the shell ──────────────
+const angular = ["angular.json", "package.json", "src/main.ts", "src/app/app.component.ts", "src/app/app.component.html", "src/app/app.routes.ts", "src/app/about/about.component.html"];
+assert.deepEqual(paths(angularRoutes(angular)), ["/"]); passed++;
+assert.equal(fileFor(angularRoutes(angular), "/"), "src/app/app.component.html"); passed++;
+assert.equal(detectFramework(angular)?.sourceKind, "angular"); passed++;
+// Angular 20 names the root template `app.html`.
+assert.equal(fileFor(angularRoutes(["angular.json", "src/app/app.ts", "src/app/app.html"]), "/"), "src/app/app.html"); passed++;
+assert.equal(detectFramework(["angular.json", "src/main.ts"]), null); passed++;
+
+// ── SolidStart ───────────────────────────────────────────────────────────────
+const solid = ["app.config.ts", "src/entry-server.tsx", "src/app.tsx", "src/routes/index.tsx", "src/routes/about.tsx", "src/routes/(marketing)/pricing.tsx", "src/routes/blog/[slug].tsx", "src/routes/[...404].tsx"];
+assert.deepEqual(paths(solidStartRoutes(solid)), ["/", "/about", "/blog/[slug]", "/pricing"]); passed++;
+assert.equal(detectFramework(solid)?.sourceKind, "solidstart"); passed++;
+
+// ── TanStack Start: dots are slashes, `_pathless` and `-ignored` are not pages ─
+const tanstack = ["app.config.ts", "src/routes/__root.tsx", "src/routes/index.tsx", "src/routes/about.tsx", "src/routes/posts.$postId.tsx", "src/routes/_layout.tsx", "src/routes/_layout/dashboard.tsx", "src/routes/-components/Card.tsx", "src/routes/contact/route.tsx"];
+assert.deepEqual(paths(tanstackRoutes(tanstack)), ["/", "/about", "/contact", "/dashboard", "/posts/$postId"]); passed++;
+assert.equal(detectFramework(tanstack)?.sourceKind, "tanstack"); passed++;
+
+// ── Qwik City: a folder is the address, its `index` the page ─────────────────
+const qwik = ["vite.config.ts", "src/entry.ssr.tsx", "src/root.tsx", "src/routes/index.tsx", "src/routes/layout.tsx", "src/routes/about/index.tsx", "src/routes/(shop)/products/index.tsx", "src/routes/docs/index.mdx"];
+assert.deepEqual(paths(qwikRoutes(qwik)), ["/", "/about", "/docs", "/products"]); passed++;
+assert.equal(detectFramework(qwik)?.sourceKind, "qwik"); passed++;
+
+// ── A Vue or Svelte single-page app: one shell until its table is read ───────
+const vueSpa = ["vite.config.ts", "index.html", "src/main.ts", "src/App.vue", "src/router/index.ts", "src/views/HomeView.vue", "src/views/AboutView.vue"];
+assert.deepEqual(paths(vueSpaRoutes(vueSpa)), ["/"]); passed++;
+assert.equal(fileFor(vueSpaRoutes(vueSpa), "/"), "src/App.vue"); passed++;
+assert.equal(detectFramework(vueSpa)?.sourceKind, "vue"); passed++;
+// File-routed Vue still lists its pages, not the shell.
+assert.deepEqual(paths(vueSpaRoutes(["vite.config.ts", "src/App.vue", "src/pages/index.vue", "src/pages/about.vue"])), ["/", "/about"]); passed++;
+const svelteSpa = ["vite.config.js", "index.html", "src/main.js", "src/App.svelte", "src/lib/Counter.svelte"];
+assert.deepEqual(paths(svelteSpaRoutes(svelteSpa)), ["/"]); passed++;
+assert.equal(detectFramework(svelteSpa)?.sourceKind, "svelte"); passed++;
+// SvelteKit is SvelteKit, even with a Vite config and an App.svelte lying about.
+assert.equal(detectFramework([...svelte, "src/App.svelte"])?.sourceKind, "sveltekit"); passed++;
+
+// ── VitePress, MkDocs and Hexo ───────────────────────────────────────────────
+const vitepress = ["package.json", "docs/.vitepress/config.mts", "docs/index.md", "docs/guide/getting-started.md", "docs/public/logo.svg", "docs/.vitepress/theme/index.ts", "README.md"];
+assert.deepEqual(paths(vitepressRoutes(vitepress)), ["/", "/guide/getting-started"]); passed++;
+assert.equal(detectFramework(vitepress)?.sourceKind, "vitepress"); passed++;
+assert.deepEqual(paths(vitepressRoutes([".vitepress/config.ts", "index.md", "about.md"])), ["/", "/about"]); passed++;
+// Its pictures go where it serves them from: the `public/` beside its root.
+assert.equal(publicFolder("vitepress", "docs/guide/getting-started.md"), "docs/public"); passed++;
+assert.equal(publicFolder("vitepress", "guide/getting-started.md"), "public"); passed++;
+const mkdocs = ["mkdocs.yml", "docs/index.md", "docs/about.md", "docs/user-guide/install.md", "README.md"];
+assert.deepEqual(paths(mkdocsRoutes(mkdocs)), ["/", "/about", "/user-guide/install"]); passed++;
+assert.equal(detectFramework(mkdocs)?.sourceKind, "mkdocs"); passed++;
+// Hexo has a `_config.yml` like Jekyll, and read as Jekyll its pages were
+// listed at `/source/...`. Its posts are not listed: their addresses come
+// from their dates, which a file name does not hold.
+const hexo = ["_config.yml", "package.json", "scaffolds/post.md", "source/about/index.md", "source/contact.md", "source/_posts/hello-world.md", "themes/landscape/layout/index.ejs"];
+assert.equal(detectFramework(hexo)?.sourceKind, "hexo"); passed++;
+assert.deepEqual(paths(hexoRoutes(hexo)), ["/about", "/contact"]); passed++;
+assert.equal(detectFramework(jekyll)?.sourceKind, "jekyll"); passed++;
 
 // ── The listed flag comes from the site's own sitemap ────────────────────────
 const listed = nextRoutes(nextApp, new Set(["/", "/pricing"]));

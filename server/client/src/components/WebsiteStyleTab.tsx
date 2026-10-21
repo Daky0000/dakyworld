@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { ColorCodeInput, parseStyle, writeStyle } from "./InspectorControls";
 import { ImagePositionControl } from "./ImagePositionControl";
-import { SHADOW_PRESETS } from "./InspectorDesign";
+import { SHADOW_PRESETS, TILE_ICON, Tiles } from "./InspectorDesign";
 import {
-  Buttons, ColourProp, ICON, Linked, More, Num, NumberProp, Pick, Repeater, Select, SizeField, StyleSection,
+  Buttons, ColourProp, ICON, Linked, More, Num, NumberProp, Pick, PropLabel, Repeater, Select, SizeField, StyleSection,
   allowedAt, originOf, readable, useTyped, writeProperty, type Choice, type Device, type StyleCtx,
 } from "./StyleControls";
 import {
@@ -11,11 +11,12 @@ import {
   readTransitions, shadowSummary, transformSummary, writeBackground, writeFilters, writeGradient, writeShadows, writeTransforms,
   writeTransitions, type BackgroundLayer, type FilterItem, type Gradient, type Shadow, type TransformItem,
 } from "../lib/websiteStyleValues";
+import { FADE_DEFAULT, FADE_EDGES, FADE_MAX, FADE_MIN, MASK_SHAPES, maskShapeClip, readFade, readMaskShape, writeFade, type FadeEdge } from "../../../src/shared/websiteMask";
 
 /**
- * The Style tab: the same nine sections for every element, in the order the
+ * The Style tab: the same ten sections for every element, in the order the
  * page builder this follows uses — Layout, Spacing, Size, Position, Typography,
- * Background, Border, Effects and Custom CSS.
+ * Background, Border, Effects, Mask and Custom CSS.
  *
  * It used to be tailored per element, so a heading was never offered an image
  * fit. Dan asked on 11 Oct 2026 for one panel that is the same everywhere, the
@@ -100,6 +101,7 @@ export function WebsiteStyleTab(props: Props) {
       <BackgroundSection c={c} changed={changed} onPickImage={props.onPickImage} resolveImage={props.resolveImage} />
       <BorderSection c={c} effective={effective} changed={changed} />
       <EffectsSection c={c} changed={changed} />
+      <MaskSection c={c} changed={changed} />
       {designer && <CustomCssSection c={c} onChange={onChange} />}
     </fieldset>
   );
@@ -952,6 +954,78 @@ function FilterList({ c, label, property, items }: { c: StyleCtx; label: string;
   );
 }
 
+/* ------------------------------------------------------------------ mask */
+
+/**
+ * A shape cut out of the element (`clip-path`) and an edge that fades away
+ * (`mask-image` with a gradient). Both are presets drawn as tiles, written by
+ * `shared/websiteMask.ts`, and both change by screen size like anything else.
+ * A value this panel did not write is shown as it is with a Clear, never read
+ * as the nearest preset. Why a picture cannot be a mask is in that file.
+ */
+function MaskSection({ c, changed }: SectionProps) {
+  const clip = c.map["clip-path"];
+  const image = c.map["mask-image"];
+  const shape = readMaskShape(clip);
+  const fade = readFade(image);
+  const shapeLabel = shape ? MASK_SHAPES.find((each) => each.id === shape)?.label : shape === null ? "Custom shape" : "";
+  const fadeLabel = fade ? `${FADE_EDGES.find((each) => each.id === fade.edge)?.label} fade` : fade === null ? "Custom mask" : "";
+  const swatchFade = (edge: FadeEdge) => writeFade(edge, 60);
+  return (
+    <StyleSection name="mask" title="Mask" open={false} changed={changed(["clip-path", "mask-image"])} summary={[shapeLabel, fadeLabel].filter(Boolean).join(" · ") || "None"}>
+      <PropLabel c={c} label="Shape" props={["clip-path"]} />
+      {shape === null ? (
+        <div className="dx-raw">
+          <code>{clip}</code>
+          <button type="button" className="dx-rs" disabled={c.readOnly} onClick={() => c.set("clip-path", null, true)}>Clear</button>
+        </div>
+      ) : (
+        <Tiles
+          label="Mask shape"
+          value={shape}
+          disabled={c.readOnly}
+          options={[{ value: "", label: "None", icon: TILE_ICON.none }, ...MASK_SHAPES.map((each) => ({ value: each.id, label: each.label, swatch: { clipPath: each.clip } }))]}
+          onChange={(id) => c.set("clip-path", id ? maskShapeClip(id) : null, true)}
+        />
+      )}
+      <p className="dx-hint">Cuts the element to a shape that grows and shrinks with it. A shadow or border on the same element is cut too, so put those on the block around it.</p>
+
+      <PropLabel c={c} label="Fade" props={["mask-image"]} />
+      {fade === null ? (
+        <div className="dx-raw">
+          <code>{image}</code>
+          <button type="button" className="dx-rs" disabled={c.readOnly} onClick={() => c.set("mask-image", null, true)}>Clear</button>
+        </div>
+      ) : (
+        <Tiles
+          label="Fade edge"
+          value={fade ? fade.edge : ""}
+          disabled={c.readOnly}
+          options={[{ value: "", label: "None", icon: TILE_ICON.none }, ...FADE_EDGES.map((each) => ({ value: each.id, label: each.label, swatch: { maskImage: swatchFade(each.id), WebkitMaskImage: swatchFade(each.id) } }))]}
+          onChange={(edge) => c.set("mask-image", edge ? writeFade(edge as FadeEdge, fade ? fade.length : FADE_DEFAULT) : null, true)}
+        />
+      )}
+      {fade && (
+        <div className="dx-sl">
+          <div className="dx-fl"><label>Fade length</label><span>{fade.length}%</span></div>
+          <input
+            type="range"
+            aria-label="Fade length"
+            min={FADE_MIN}
+            max={FADE_MAX}
+            value={fade.length}
+            disabled={c.readOnly}
+            onChange={(event) => c.set("mask-image", writeFade(fade.edge, Number(event.target.value)))}
+            onPointerUp={c.commit}
+            onKeyUp={c.commit}
+          />
+        </div>
+      )}
+      <p className="dx-hint">Fades the element into whatever is behind it — a picture melting into the next section, a long list trailing off.</p>
+    </StyleSection>
+  );
+}
+
 /* ------------------------------------------------------------ custom CSS */
 
 /** Every property a control above writes. Custom CSS holds everything else. */
@@ -965,7 +1039,7 @@ const OWNED = new Set([
   "background", "background-image", "background-position", "background-size", "background-repeat", "background-attachment", "background-color",
   "background-clip", "-webkit-background-clip", "-webkit-text-fill-color", "border", "border-width", "border-color", "border-style", "border-radius",
   ...CORNERS.map((corner) => `border-${corner}-radius`), "mix-blend-mode", "opacity", "box-shadow", "transform", "transform-origin", "perspective",
-  "perspective-origin", "transition", "filter", "backdrop-filter",
+  "perspective-origin", "transition", "filter", "backdrop-filter", "clip-path", "mask-image",
 ]);
 const owned = (property: string) => OWNED.has(property) || property.startsWith("--dw-");
 

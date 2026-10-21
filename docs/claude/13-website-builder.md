@@ -1472,3 +1472,105 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   The DSNs are committed on purpose — they only permit sending — and
   `SENTRY_DSN=off` stops it. The CSP's `connect-src` names exactly the ingest
   host. `checks/monitoring.ts`.
+
+## Masks, audio, embeds, form words and nine more frameworks (21 Oct 2026)
+
+From the editor audit in [server/docs/website-editor-audit.md](../../server/docs/website-editor-audit.md),
+which is the list of what was found, what was fixed and what is still open.
+
+- **A mask is two properties and no picture.** Style → Mask writes
+  `clip-path` (a basic shape in percentages) and `mask-image` (a gradient from
+  black to transparent), both from `shared/websiteMask.ts`, both unprefixed so
+  they can change by screen size — a `-webkit-` property cannot be written at
+  tablet or phone width at all. `mask-image: url(…)` is **not offered and is
+  refused**: masks are fetched in CORS mode, and the library's files come from
+  cloud storage on another origin with no CORS headers, so the element would
+  vanish on every screen without a word. Reading follows the list-value rule:
+  only exactly what a preset writes is that preset; a developer's own
+  `polygon()` is shown as written. `clip-path` and `mask-image` joined
+  `LIST_VALUED` (400 characters), because a polygon is a list of points.
+  **Chromium serialises a computed fade differently from the declaration** —
+  `transparent` comes back as `rgba(0, 0, 0, 0)` and the default `to bottom`
+  disappears — so a browser assertion compares the computed form.
+- **Audio is sniffed before video.** An `.m4a` is an MP4 box whose brand says
+  audio, and `sniffVideo` calls every non-QuickTime MP4 a video. A bare MPEG
+  frame header is eleven set bits — which a JPEG also starts with — so the
+  version, layer, bitrate and sample-rate fields are checked too, and ADTS needs
+  its whole 12-bit sync word. `playableMedia` in `websiteManagement.ts` is the
+  one decision for both upload doors, and `want` (the player the file was
+  chosen under) settles the in-between cases: a phone's voice memo in an
+  ordinary MP4 box is audio under an audio player; an MP3 under a video player
+  is refused; Ogg is refused everywhere because Safari never plays it. Audio
+  rides the 1 GB video allowance (`assertMediaStorageAllowance(…, "audio")`),
+  and the chunked ticket gained `m: "audio"` — absent still means video, so a
+  ticket signed before this keeps working.
+- **A stored file is served in pieces** (`lib/byteRange.ts`), on the hosted
+  route and the editor's raw route. `res.send` ignores `Range`, and Safari plays
+  nothing from a server that answers its first `bytes=0-1` with the whole file:
+  every video under 10 MB stored without R2 was silent on iPhones before audio
+  existed. Several ranges, another unit or a backwards range get the whole
+  file (the rules allow it); only a start past the end is 416.
+- **A frame can be pointed at another video or place — from a list.**
+  `shared/websiteEmbed.ts` is the boundary: https, no credentials or port, a
+  listed host, and on it the path the service embeds from. A link can already
+  go anywhere, but a frame draws another site *inside* this one at the
+  designer's size, which is a sign-in form wearing the customer's header. The
+  server holds `src` on an `<iframe>` to that rule in `attributeProblem`, with
+  its own length (2,048 — a Maps `pb=` address is routinely past 400); `srcdoc`
+  is never reachable. The panel's converter takes what people actually paste —
+  a watch page, `youtu.be?t=1m30s`, an unlisted Vimeo, the whole `<iframe>`
+  code with its `&amp;`s — and a typed place becomes the keyless
+  `maps.google.com/maps?q=…&output=embed`. A frame already pointing off the
+  list keeps working and says so. The Add panel's media sections
+  (`MEDIA_SECTION_TEMPLATES` in `websiteSeo.ts`) arrive **empty** — a frame
+  with no address, a player with no file — rather than somebody else's video
+  or a town picked for the customer.
+- **Form words are fields, in a series of their own.** A `<select>` used to
+  read as rich text whose value was its `<option>` markup, so a word typed
+  into it deleted every option on the published page. Placeholders, a submit
+  input's `value` and options are `formText` fields now — but field ids are
+  positional, and giving them the next number would renumber every field after
+  a form and make every draft written against those ids refuse to publish. So
+  they are numbered `sN.form.M` and every positional id is `slot()`, the count
+  of the fields that are not form words: the same number it was before they
+  existed (`checks/websiteFormText.ts` proves it against the old ids). They
+  are plain text, written into the attribute escaped for its quote like a
+  meta description, pushed onto the attribute in the frame (a text area
+  decodes the HTML text without running it), and never typeable on the canvas.
+  **The same defect sat one level up**: a `<label>` wrapped round its control
+  (`<label>Party size <select>…</select></label>`) was rich text holding the
+  control, and the rich-text sanitiser keeps no form element. It keeps its slot
+  now, as a plain field over its one run of words (`wordsAroundControl`); with
+  words on both sides of the control it is left to the code and says why; and
+  the picker never puts a caret in anything that holds a control.
+- **Nine more frameworks, and two traps in them.** Angular (its `Routes` table,
+  each component mapped to the `.html` template beside it), SolidStart,
+  TanStack Start, Qwik City, Svelte with Vite, a Vue Router SPA, VitePress,
+  MkDocs and Hexo. **Angular reads a bare `@` in text as the start of a block**
+  from v17, so `encode` writes it as `&#64;` in Angular templates only — an
+  email address typed into a heading must not fail the build, and a Vue file
+  keeps the `@` as typed. **A `.ts` route file is parsed as TypeScript, not
+  TSX**: as TSX, `<Routes>[…]` is an element. Hexo sits before Jekyll because
+  both have a `_config.yml` and, read as Jekyll, a Hexo page was listed at
+  `/source/…`. TanStack's `_layout.tsx` is a layout, not a page at `/`.
+  VitePress pictures go to the `public/` beside its root — `docs/public` when
+  the page is under `docs/`, `public` otherwise; a root anywhere else is in the
+  compatibility notes rather than guessed.
+- **A sitemap index is followed, and pages in folders are found.** dakyx.com's
+  `sitemap.xml` is an index of `page-sitemap.xml` and `post-sitemap.xml`; it
+  was read as two pages with those names, so every newly scanned page arrived
+  hidden and a site with no repository got a page per sitemap file. And
+  `htmlIn` reads one folder, so the nine posts in `blog/` were never pages.
+  A nested `.html` is listed **only when the site's own sitemap names it**, and
+  never from a tooling, hidden, partial or archive folder; one extra repository
+  listing is made, and only when the sitemap names an address the folder's own
+  files do not. A folder's `index.html` is `/team`, as a package import names
+  it, but its preview resolves against `/team/` (`pageDocumentUrl`) — against
+  `/team`, `photo.jpg` was `/photo.jpg`.
+
+Checks: `websiteMasks`, `websiteAudio`, `websiteEmbeds`, `websiteFormText`,
+additions to `websiteFrameworks`, `websiteRouterTable`, `websiteTemplate` and
+`websiteDiscovery`, and `checks/browser/masksMediaForms.mjs` through the real
+editor — a computed clip and mask on the canvas and the published page, a WAV
+uploaded and playing, a frame refusing another site and showing YouTube, and a
+placeholder edited live.

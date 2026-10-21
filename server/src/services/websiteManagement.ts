@@ -8,7 +8,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { buildPublishPlan, discoverFields, describeChanges, parse, editingSource } from "./website/index.js";
 import { pageSource, WebsiteError } from "./website/site.js";
-import { sniff, sniffVideo } from "../lib/fileType.js";
+import { AUDIO_EXTENSION, sniff, sniffAudio, sniffVideo } from "../lib/fileType.js";
 import { optimizeImageBuffer } from "../lib/imageOptimization.js";
 import { looksLikeSvg, SvgRejected, SVG_CONTENT_SECURITY_POLICY } from "../lib/svgSanitize.js";
 import { assetUrl, embedWebsiteAssets, pagesUsingAsset, storedObjectStillNeeded, unpublishedUsesOf } from "./websiteAssets.js";
@@ -36,6 +36,7 @@ import { analyzeImportPackage, commitPackageToSite } from "./websitePackageImpor
 import { generatePagePrepublishReport, generateSitePrepublishReport } from "./websitePrepublishReport.js";
 import { updateSiteSettings } from "./websiteSiteSettings.js";
 import { HOST_DOMAIN, PLACEHOLDER_HOST_DOMAIN, PLACEHOLDER_HOSTS, expectedHostedUrl, hostedPublicUrl, isSlugAddress } from "./websiteHosting.js";
+import { sendBytes } from "../lib/byteRange.js";
 
 const publicUrl = z.string().url().max(2000).refine(value => {
   const url = new URL(value);
@@ -86,6 +87,42 @@ export function importedWebsiteFields(html: string): number {
 }
 
 const actor = (req: Request) => ({ actorName: req.dbUser?.name ?? "Website editor", actorId: req.dbUser?.id });
+
+export type PlayableMedia = { kind: "video" | "audio"; type: string; extension: string };
+
+/**
+ * What a file is when it is meant to be played, from its bytes: a video, an
+ * audio file, a refusal that says why, or null for something that is neither
+ * (a picture, which the caller judges next).
+ *
+ * `want` is the player the file was chosen under, when there was one. It
+ * decides the in-between cases. A phone's voice recorder often writes an
+ * ordinary MP4 brand rather than an audio one, so under an audio player any
+ * MP4 or WebM container is its sound; under a video player an audio file is
+ * refused, because a video box that only ever shows black is not what anybody
+ * picked. Every refusal names a format that does play, because each of them
+ * uploads fine and then never starts for a large share of visitors.
+ */
+export function playableMedia(bytes: Buffer, want?: "video" | "audio"): PlayableMedia | { refused: string } | null {
+  const audio = sniffAudio(bytes);
+  const video = audio ? null : sniffVideo(bytes);
+  if (audio === "audio/ogg") return { refused: "That is an Ogg audio file, which Safari on iPhones and Macs can't play. Export it as MP3 and upload that." };
+  if (video === "video/quicktime") return { refused: `That is a QuickTime (.mov) file, which most browsers can't play. Export it as ${want === "audio" ? "MP3" : "MP4 (H.264)"} and upload that.` };
+  if (video === "video/x-matroska") return { refused: `That is a Matroska (.mkv) file, which most browsers can't play. Export it as ${want === "audio" ? "MP3" : "MP4 (H.264) or WebM"} and upload that.` };
+  if (want === "audio") {
+    if (audio) return { kind: "audio", type: audio, extension: AUDIO_EXTENSION[audio] };
+    if (video === "video/mp4") return { kind: "audio", type: "audio/mp4", extension: "m4a" };
+    if (video === "video/webm") return { kind: "audio", type: "audio/webm", extension: "webm" };
+    return { refused: "That file is not audio. Upload an MP3, M4A, WAV or FLAC file." };
+  }
+  if (audio) {
+    if (want === "video") return { refused: "That is an audio file, not a video. Put it in an audio player instead: Add → Audio, or select one on the page." };
+    return { kind: "audio", type: audio, extension: AUDIO_EXTENSION[audio] };
+  }
+  if (video) return { kind: "video", type: video, extension: video === "video/mp4" ? "mp4" : "webm" };
+  if (want === "video") return { refused: "That file is not a video. Upload an MP4 or WebM file." };
+  return null;
+}
 
 type Access = {
   loadSite: (req: Request, id: string) => Promise<Site>;
@@ -161,7 +198,8 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "private, no-store");
     if (asset.contentType === "image/svg+xml") res.setHeader("Content-Security-Policy", SVG_CONTENT_SECURITY_POLICY);
-    res.type(asset.contentType).send(asset.content);
+    // The editor's own player asks in pieces too; see `lib/byteRange.ts`.
+    sendBytes(req, res.type(asset.contentType), Buffer.from(asset.content));
   }));
   /**
    * A video up to 1 GB, in pieces (`websiteVideoUpload.ts` says why). Start
@@ -172,10 +210,10 @@ export function registerWebsiteManagement(router: Router, access: Access) {
    */
   router.post("/sites/:siteId/video-uploads", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
-    const input = z.object({ filename: z.string().min(1).max(200), size: z.number().int().positive() }).parse(req.body);
-    if (!isR2Configured()) throw new WebsiteError(400, "Large videos need cloud storage, which is not set up on this server. Videos up to 10 MB can still be uploaded.");
-    await assertMediaStorageAllowance(req, input.size, site.id, "video");
-    const ticket: VideoUploadTicket = { s: site.id, n: input.size, f: input.filename, a: req.dbUser?.id ?? "", e: Date.now() + 12 * 60 * 60 * 1000 };
+    const input = z.object({ filename: z.string().min(1).max(200), size: z.number().int().positive(), kind: z.enum(["video", "audio"]).optional() }).parse(req.body);
+    if (!isR2Configured()) throw new WebsiteError(400, `Large ${input.kind === "audio" ? "audio files" : "videos"} need cloud storage, which is not set up on this server. Files up to 10 MB can still be uploaded.`);
+    await assertMediaStorageAllowance(req, input.size, site.id, input.kind ?? "video");
+    const ticket: VideoUploadTicket = { s: site.id, n: input.size, f: input.filename, a: req.dbUser?.id ?? "", e: Date.now() + 12 * 60 * 60 * 1000, ...(input.kind === "audio" && { m: "audio" as const }) };
     res.status(201).json({ token: signTicket(ticket), partBytes: PART_BYTES, parts: partCount(input.size) });
   }));
   router.post("/sites/:siteId/video-uploads/part", express.raw({ type: "application/octet-stream", limit: PART_BYTES + 1024 }), handler(async (req, res) => {
@@ -191,14 +229,12 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     let next = ticket;
     if (part === 1) {
       if (ticket.u) throw new WebsiteError(400, "This upload has already started. Choose the file again.");
-      const type = sniffVideo(bytes);
-      if (type === "video/quicktime") throw new WebsiteError(400, "That is a QuickTime (.mov) video, which most browsers can't play. Export it as MP4 (H.264) and upload that.");
-      if (type === "video/x-matroska") throw new WebsiteError(400, "That is a Matroska (.mkv) video, which most browsers can't play. Export it as MP4 (H.264) or WebM and upload that.");
-      if (!type) throw new WebsiteError(400, "That file is not a video. Upload an MP4 or WebM file.");
-      const key = `assets/dw/${randomUUID()}.${type === "video/mp4" ? "mp4" : "webm"}`;
-      const created = await r2.s3.send(new CreateMultipartUploadCommand({ Bucket: r2.bucketName, Key: key, ContentType: type, CacheControl: "public, max-age=31536000, immutable" }));
+      const media = playableMedia(bytes, ticket.m ?? "video");
+      if (!media || "refused" in media) throw new WebsiteError(400, media?.refused ?? "That file is not a video. Upload an MP4 or WebM file.");
+      const key = `assets/dw/${randomUUID()}.${media.extension}`;
+      const created = await r2.s3.send(new CreateMultipartUploadCommand({ Bucket: r2.bucketName, Key: key, ContentType: media.type, CacheControl: "public, max-age=31536000, immutable" }));
       if (!created.UploadId) throw new Error("R2 did not start a multipart upload.");
-      next = { ...ticket, k: key, u: created.UploadId, t: type };
+      next = { ...ticket, k: key, u: created.UploadId, t: media.type };
     } else if (!ticket.u || !ticket.k) {
       throw new WebsiteError(400, "Send the first piece of the video first.");
     }
@@ -219,7 +255,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     const whole = parts.length === count && parts.every((p, i) => p.PartNumber === i + 1 && p.Size === partLength(ticket.n, i + 1));
     if (!whole) throw new WebsiteError(400, `Only ${parts.length} of the video's ${count} pieces arrived. Choose the file again.`);
     try {
-      await assertMediaStorageAllowance(req, ticket.n, site.id, "video");
+      await assertMediaStorageAllowance(req, ticket.n, site.id, ticket.m ?? "video");
     } catch (error) {
       await abort();
       throw error;
@@ -246,38 +282,37 @@ export function registerWebsiteManagement(router: Router, access: Access) {
   }));
   router.post("/sites/:siteId/assets", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
-    const input = z.object({ filename: z.string().min(1).max(200), data: z.string().max(15_000_000), alt: z.string().max(500).default(""), kind: z.enum(["video"]).optional() }).parse(req.body);
+    const input = z.object({ filename: z.string().min(1).max(200), data: z.string().max(15_000_000), alt: z.string().max(500).default(""), kind: z.enum(["video", "audio"]).optional() }).parse(req.body);
     if (!/^[A-Za-z0-9+/]*={0,2}$/.test(input.data)) throw new WebsiteError(400, "The file data is not valid base64.");
     const content = Buffer.from(input.data, "base64");
-    // A video is stored as it came: there is nothing to optimise in the browser's
-    // own formats, and re-encoding one is a job for the person who made it.
-    const video = sniffVideo(content);
-    if (video === "video/quicktime") throw new WebsiteError(400, "That is a QuickTime (.mov) video, which most browsers can't play. Export it as MP4 (H.264) and upload that.");
-    if (video === "video/x-matroska") throw new WebsiteError(400, "That is a Matroska (.mkv) video, which most browsers can't play. Export it as MP4 (H.264) or WebM and upload that.");
-    if (video) {
-      await assertMediaStorageAllowance(req, content.length, site.id, "video");
-      const repoPath = `assets/dw/${randomUUID()}.${video === "video/mp4" ? "mp4" : "webm"}`;
-      const r2Url = isR2Configured() ? (await uploadToR2(content, { mimeType: video, key: repoPath })).url : null;
+    // A video or an audio file is stored as it came: there is nothing to
+    // optimise in the browser's own formats, and re-encoding one is a job for
+    // the person who made it. Asked for under a player (Upload video, Upload
+    // audio), anything that is not that kind of file is refused rather than
+    // stored and handed back as the player's file, which then never plays.
+    const media = playableMedia(content, input.kind);
+    if (media && "refused" in media) throw new WebsiteError(400, media.refused);
+    if (media) {
+      await assertMediaStorageAllowance(req, content.length, site.id, media.kind);
+      const repoPath = `assets/dw/${randomUUID()}.${media.extension}`;
+      const r2Url = isR2Configured() ? (await uploadToR2(content, { mimeType: media.type, key: repoPath })).url : null;
       const uploaded = await prisma.$transaction(async (tx) => {
         const created = await tx.siteAsset.create({
-          data: { siteId: site.id, filename: input.filename, repoPath, contentType: video, content: r2Url ? null : content, size: content.length, alt: input.alt },
+          data: { siteId: site.id, filename: input.filename, repoPath, contentType: media.type, content: r2Url ? null : content, size: content.length, alt: input.alt },
         });
         await tx.siteAuditEvent.create({
-          data: { siteId: site.id, kind: "ASSET_UPLOAD", summary: `Uploaded ${input.filename}`, ...actor(req), detail: { assetId: created.id, contentType: video, bytes: content.length, storage: r2Url ? "cloudflare_r2" : "postgres" } },
+          data: { siteId: site.id, kind: "ASSET_UPLOAD", summary: `Uploaded ${input.filename}`, ...actor(req), detail: { assetId: created.id, contentType: media.type, bytes: content.length, storage: r2Url ? "cloudflare_r2" : "postgres" } },
         });
         return created;
       });
       recordMediaStorageAdded(req, content.length);
-      res.status(201).json({ id: uploaded.id, url: r2Url || assetUrl(site, uploaded.repoPath), alt: uploaded.alt, size: content.length, contentType: video });
+      res.status(201).json({ id: uploaded.id, url: r2Url || assetUrl(site, uploaded.repoPath), alt: uploaded.alt, size: content.length, contentType: media.type });
       return;
     }
-    // Asked for as a video (Upload video under a player), a picture is refused
-    // rather than stored and handed back as the player's file, which then never plays.
-    if (input.kind === "video") throw new WebsiteError(400, "That file is not a video. Upload an MP4 or WebM file.");
     const mime = sniff(content);
     const formats: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" };
     const svg = !mime && looksLikeSvg(content);
-    if (!svg && (!mime || !formats[mime])) throw new WebsiteError(400, "Upload a PNG, JPEG, WebP, GIF or SVG image, or an MP4 or WebM video.");
+    if (!svg && (!mime || !formats[mime])) throw new WebsiteError(400, "Upload a PNG, JPEG, WebP, GIF or SVG image, an MP4 or WebM video, or an MP3, M4A, WAV or FLAC audio file.");
     if (!content.length) throw new WebsiteError(400, "Choose a non-empty image file.");
     await assertMediaStorageAllowance(req, content.length, site.id);
     let optimized: Awaited<ReturnType<typeof optimizeImageBuffer>>;

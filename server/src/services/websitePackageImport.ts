@@ -137,6 +137,20 @@ export function mimeTypeFromPath(filePath: string): string {
       return "video/webm";
     case ".mp3":
       return "audio/mpeg";
+    case ".m4a":
+      return "audio/mp4";
+    case ".aac":
+      return "audio/aac";
+    case ".wav":
+      return "audio/wav";
+    case ".flac":
+      return "audio/flac";
+    case ".ogg":
+    case ".oga":
+    case ".opus":
+      return "audio/ogg";
+    case ".vtt":
+      return "text/vtt";
     default:
       return "application/octet-stream";
   }

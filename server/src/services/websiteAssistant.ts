@@ -11,7 +11,7 @@ import { currentRun } from "../lib/runContext.js";
 import { check, scopesForAgent, BudgetExceeded, forgetBudgets } from "./budgets.js";
 import { writerSystem } from "./writers/brief.js";
 import { buildPreview, buildPublishPlan, discoverFields, sanitizeValue, safeStyle, validateFieldChange, editingSource, structureControls, type FieldValue, type SiteField } from "./website/index.js";
-import { pageSource, pageUrl, WebsiteError } from "./website/site.js";
+import { pageDocumentUrl, pageSource, pageUrl, WebsiteError } from "./website/site.js";
 
 // A model may choose a control and its value; it never chooses a selector,
 // file, command, stylesheet or script. The visual inspector owns the same kinds
@@ -224,7 +224,7 @@ export function registerWebsiteAssistant(router: Router, access: { loadPage: (re
       const values = Object.fromEntries(Object.entries(context.current).map(([id, value]) => [id, sanitizeValue(context.fields.find(field => field.id === id)!, value)]));
       const plan = buildPublishPlan({ source: base, values });
       if (!plan.html) throw new WebsiteError(422, "This proposal cannot be previewed. Request a new suggestion.");
-      const preview = buildPreview(plan.html, pageUrl(site, page));
+      const preview = buildPreview(plan.html, pageDocumentUrl(site, page));
       res.set("Cache-Control", "no-store").json({ html: preview.html });
     } catch (error) { next(error); }
   });

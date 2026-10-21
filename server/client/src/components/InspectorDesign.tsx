@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 /**
  * The small pieces the redesigned inspector is built from: a collapsible
@@ -20,7 +20,8 @@ export function Acc({ title, summary, open, children }: { title: string; summary
   );
 }
 
-export type TileOption = { value: string; label: string; icon?: ReactNode; demo?: string };
+/** `demo` is a shadow drawn on a swatch; `swatch` is any other style for it, such as a clip or a mask. */
+export type TileOption = { value: string; label: string; icon?: ReactNode; demo?: string; swatch?: CSSProperties };
 
 export function Tiles({ label, options, value, disabled, onChange }: { label: string; options: TileOption[]; value: string; disabled?: boolean; onChange: (value: string) => void }) {
   return (
@@ -36,7 +37,7 @@ export function Tiles({ label, options, value, disabled, onChange }: { label: st
           disabled={disabled}
           onClick={() => onChange(option.value)}
         >
-          {option.demo !== undefined ? <span className="dx-demo" style={{ boxShadow: option.demo }} /> : <span className="dx-ico">{option.icon}</span>}
+          {option.swatch !== undefined ? <span className="dx-demo dx-swatch" style={option.swatch} /> : option.demo !== undefined ? <span className="dx-demo" style={{ boxShadow: option.demo }} /> : <span className="dx-ico">{option.icon}</span>}
           {option.label}
         </button>
       ))}

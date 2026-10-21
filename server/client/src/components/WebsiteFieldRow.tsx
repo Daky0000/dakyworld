@@ -98,13 +98,14 @@ export function FieldRow({
   }
 
   if (bare && (field.kind === "richtext" || field.kind === "link" || field.kind === "button" || (field.kind === "text" && field.tag !== "title" && field.tag !== "meta"))) {
-    const words = field.kind === "link" ? "Words on the link" : field.kind === "button" ? "Button text" : "Text";
+    // A form's words have no inside on the page to type into: the box here is the way in.
+    const words = field.formText === "placeholder" ? "Placeholder" : field.formText === "value" ? "Button text" : field.formText === "option" ? "Option" : field.formText === "label" ? "Label" : field.kind === "link" ? "Words on the link" : field.kind === "button" ? "Button text" : "Text";
     return (
       <div className="dx-stack">
         <div className="dx-f">
           <div className="dx-fl">
             <label>{words}</label>
-            {onTypeOnPage && !readOnly ? (
+            {onTypeOnPage && !readOnly && !field.formText ? (
               <button type="button" className="dx-ctr" onClick={onTypeOnPage}>or type on the page</button>
             ) : (
               <span className="dx-ctr">{changed ? "Changed" : ""}</span>
@@ -161,12 +162,18 @@ export function FieldRow({
         <p className="text-xs leading-relaxed text-muted">
           {mediaKind(field.tag)
             ? "Select it on the page to change its address and how it plays, to move it or to delete it."
+            : field.tag === "iframe"
+            ? "Select it on the page to choose which video, map or player it shows, to move it or to delete it."
+            : field.tag === "form"
+            ? "Its labels, placeholders and button are fields of their own, listed beside it. Where it sends what people type stays with your site's code. Select it on the page to move it, delete it or change its style."
+            : field.tag === "select"
+            ? "Each of its options is a field of its own, listed beside it. Select it on the page to move it, delete it or change its style."
             : "What is inside it can't be edited here; it stays exactly as your site's code has it. Select it on the page to move it, delete it or change its style."}
         </p>
       )}
 
       {(field.kind === "richtext" || (field.kind === "text" && field.tag !== "title" && field.tag !== "meta")) && (
-        <WebsiteRichText label={field.label} html={value} readOnly={readOnly} onChange={(next) => onChange({ ...edit, value: next })} />
+        <WebsiteRichText plain={Boolean(field.formText)} label={field.label} html={value} readOnly={readOnly} onChange={(next) => onChange({ ...edit, value: next })} />
       )}
 
       {field.kind === "text" && (field.tag === "title" || field.tag === "meta") && (

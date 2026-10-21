@@ -62,7 +62,7 @@ const named = (label) => page.getByLabel(label, { exact: true });
 const groups = () => page.$$eval('[role="radiogroup"]', (nodes) => nodes.map((node) => node.getAttribute("aria-label")));
 const writes = () => page.evaluate(() => window.__harness.writes.length);
 const lastWrite = () => page.evaluate(() => window.__harness.writes.at(-1) ?? "");
-const EVERY = ["layout", "spacing", "size", "position", "typography", "background", "border", "effects", "custom"];
+const EVERY = ["layout", "spacing", "size", "position", "typography", "background", "border", "effects", "mask", "custom"];
 
 /* ------------------------------------------------- the same for everyone */
 

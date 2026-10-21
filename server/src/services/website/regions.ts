@@ -90,6 +90,15 @@ export type SiteField = {
   href?: string;
   /** Images only. Absent when the element carries no alt attribute at all. */
   alt?: string;
+  /**
+   * Words a form shows that are not text between tags — an input's
+   * `placeholder`, the `value` an `<input type="submit">` displays — or an
+   * `<option>` in a drop-down, or the words of a label wrapped round its own
+   * control. Plain text always, written into the attribute when it is one, and
+   * never typed into on the canvas: an input has no inside to put a caret in,
+   * and a caret in a label would reach the control. See `formFields`.
+   */
+  formText?: "placeholder" | "value" | "option" | "label";
   /** Something the person editing this needs to know before they change it. */
   note?: string;
   /** Whether the image is marked decorative — an alt attribute that is present and empty. */
@@ -296,6 +305,14 @@ const LABELS: Record<string, string> = {
   blockquote: "Quote",
   button: "Button label",
   figcaption: "Caption",
+  caption: "Table caption",
+  summary: "Question / summary",
+  dt: "Term",
+  dd: "Definition",
+  address: "Address",
+  time: "Date or time",
+  pre: "Preformatted text",
+  legend: "Form section title",
   label: "Field label",
   th: "Table heading",
   td: "Table cell",
@@ -766,17 +783,158 @@ function fontIconField(source: string, element: ElementNode, id: string): SiteFi
   };
 }
 
+/**
+ * Form words in a series of their own.
+ *
+ * A placeholder, a submit input's words and a drop-down's options were never
+ * fields, and field ids are positional: giving them the next number would
+ * renumber every field after a form, and a draft written against those ids
+ * would then refuse to publish. So they are counted apart (`s3.form.0`), and
+ * every positional id is the count of the fields that are not these — exactly
+ * what it was before they existed. Their place in the Layers list comes from
+ * `order`, which is worked out from their position in the document.
+ */
+const FORM_TEXT_COUNT = new WeakMap<SiteField[], number>();
+/** The next positional number in a section: its fields so far, not counting form words. */
+function slot(out: SiteField[]): number {
+  return out.length - (FORM_TEXT_COUNT.get(out) ?? 0);
+}
+function pushFormText(out: SiteField[], prefix: string, field: (id: string) => SiteField | null): void {
+  const count = FORM_TEXT_COUNT.get(out) ?? 0;
+  const made = field(`${prefix}.form.${count}`);
+  if (!made) return;
+  out.push(made);
+  FORM_TEXT_COUNT.set(out, count + 1);
+}
+
+/** Inputs whose placeholder a visitor reads. A date or a colour picker draws its own. */
+const PLACEHOLDER_TYPES = new Set(["text", "email", "tel", "search", "url", "number", "password"]);
+
+/**
+ * The words an input or an empty text area shows without any text inside it:
+ * its placeholder, or the label an `<input type="submit">` carries as its
+ * `value`. An attribute value, so it is written escaped for the attribute's
+ * quote, like a page's description. One that is absent is not offered — a
+ * submit button with no value shows the browser's own "Submit", and adding an
+ * attribute is a settings change, not a word.
+ */
+function formAttributeField(element: ElementNode, id: string): SiteField | null {
+  const type = (attrNode(element, "type")?.value ?? "text").trim().toLowerCase();
+  const isButton = element.tag === "input" && ["submit", "button", "reset"].includes(type);
+  if (element.tag === "input" && !isButton && !PLACEHOLDER_TYPES.has(type)) return null;
+  const name = isButton ? "value" : "placeholder";
+  const attribute = attrNode(element, name);
+  if (!attribute || !decodeEntities(attribute.value).trim()) return null;
+  return {
+    id,
+    kind: "text",
+    label: isButton ? "Button label" : "Placeholder",
+    tag: element.tag,
+    formText: name,
+    value: attribute.value,
+    preview: firstLine(decodeEntities(attribute.value)),
+    content: { start: attribute.valueStart, end: attribute.valueEnd },
+    ...styleOf(element),
+  };
+}
+
+/**
+ * One option in a drop-down. Plain words only: an option that holds elements
+ * is either a customised select whose markup is the developer's, or — far more
+ * often — the next option, nested inside it because HTML lets `</option>` be
+ * left off and the reader does not close it. Either way its span is not words.
+ */
+function optionField(source: string, option: ElementNode, id: string): SiteField | null {
+  if (option.children.length || option.attrs.some((attr) => attr.name === "hidden")) return null;
+  const span = contentSpan(source, option);
+  if (!span) return null;
+  const value = source.slice(span.start, span.end);
+  return { id, kind: "text", label: "Menu option", tag: "option", formText: "option", value, preview: firstLine(plain(value)), content: span, attrInsert: option.attrInsert };
+}
+
+/**
+ * A form's words that live outside text between tags, pushed into a section
+ * in their own series (`pushFormText`). True when the element was one of these
+ * and the walk is done with it.
+ *
+ * A `<select>` used to be read as rich text, its value the `<option>` markup,
+ * so typing a word into it deleted every option on the published page. It is
+ * a field of its own now, kept in its old positional slot, with each option
+ * beside it.
+ */
+function formFields(source: string, child: ElementNode, out: SiteField[], prefix: string, id: string): boolean {
+  if (child.tag === "select") {
+    out.push(unsupportedField(child, id));
+    for (const option of walk(child)) if (option.tag === "option") pushFormText(out, prefix, (formId) => optionField(source, option, formId));
+    return true;
+  }
+  if (child.tag === "input" || (child.tag === "textarea" && textOf(source, child) === "")) {
+    pushFormText(out, prefix, (formId) => formAttributeField(child, formId));
+    return true;
+  }
+  return false;
+}
+
+const FORM_CONTROLS = new Set(["input", "select", "textarea"]);
+
+/**
+ * Words wrapped round a form control — `<label>Service <select>…</select></label>`,
+ * `<label><input type="checkbox"> I agree</label>` — which `isField` reads as one
+ * field because a control is not a block. As rich text its value held the
+ * control's markup, so changing the words sent the control through the
+ * rich-text sanitiser, which keeps none of them: the drop-down or the checkbox
+ * was gone from the published page.
+ *
+ * It keeps the one positional slot it always had. Its words are its single run
+ * of bare text, a plain field (`formText: "label"`); with words on both sides of
+ * the control, or other elements beside it, it has no words of its own here and
+ * says why. The control's own words join the form series either way. True when
+ * the element was one of these.
+ */
+function wordsAroundControl(source: string, element: ElementNode, out: SiteField[], prefix: string, id: string): boolean {
+  if (!hasDescendant(element, (child) => FORM_CONTROLS.has(child.tag))) return false;
+  const runs: Span[] = [];
+  let cursor = element.innerStart;
+  for (const child of [...element.children, null]) {
+    const end = child ? child.start : element.innerEnd;
+    const raw = source.slice(cursor, end).replace(/<!--[\s\S]*?-->/g, (comment) => " ".repeat(comment.length));
+    const lead = raw.length - raw.trimStart().length;
+    const trail = raw.length - raw.trimEnd().length;
+    if (raw.trim()) runs.push({ start: cursor + lead, end: end - trail });
+    if (child) cursor = child.end;
+  }
+  const simple = element.children.every((child) => FORM_CONTROLS.has(child.tag) || child.tag === "br");
+  if (simple && runs.length === 1) {
+    const value = source.slice(runs[0]!.start, runs[0]!.end);
+    out.push({ id, kind: "text", label: LABELS[element.tag] ?? "Text", tag: element.tag, formText: "label", value, preview: firstLine(plain(value)), content: runs[0], ...styleOf(element) });
+  } else {
+    out.push(unsupportedField(element, id));
+  }
+  for (const control of walk(element)) {
+    if (control.tag === "option") pushFormText(out, prefix, (formId) => optionField(source, control, formId));
+    else if (control.tag === "input" || (control.tag === "textarea" && textOf(source, control) === "")) pushFormText(out, prefix, (formId) => formAttributeField(control, formId));
+  }
+  return true;
+}
+
 function unsupportedField(child: ElementNode, id: string): SiteField {
+  // What is out of reach is only the element's inside: a player's file and
+  // switches, a frame's address and a form's words all have controls of their
+  // own (General → Content, and the form's fields are fields).
   const reason =
     child.tag === "form"
-      ? "Interactive form: inputs and submission handling are configured in form settings"
+      ? "Form: its labels, placeholders and button words are edited as fields; where it sends messages stays with the site's code"
+      : child.tag === "select"
+      ? "Drop-down menu: each option's words are a field of their own"
       : child.tag === "iframe"
-      ? "Embedded frame: external source is managed directly"
+      ? "Embedded from another site: choose which video, map or player it shows under General"
       : child.tag === "canvas"
       ? "Canvas element: rendered dynamically by JavaScript"
       : child.tag.includes("-")
       ? "Custom web component: script-managed component"
-      : "Media element: playback controls and source are read-only";
+      : child.tag === "audio" || child.tag === "video"
+      ? `${child.tag === "audio" ? "Audio" : "Video"} player: its file, start and end, and playback switches are under General`
+      : "Words around a form field, on both sides of it or mixed with other elements: they are changed in the page's code, so the field inside cannot be lost. The field's own words are fields of their own";
   return {
     id,
     kind: "unsupported",
@@ -854,14 +1012,14 @@ function collect(source: string, element: ElementNode, out: SiteField[], section
       continue;
     }
 
-    const id = `${sectionId}.${out.length}`;
+    const id = `${sectionId}.${slot(out)}`;
     if (child.tag === "picture") {
       for (const srcNode of child.children.filter((c) => c.tag === "source")) {
         const srcset = attrNode(srcNode, "srcset");
         const media = attrNode(srcNode, "media")?.value;
         if (srcset) {
           out.push({
-            id: `${sectionId}.${out.length}`,
+            id: `${sectionId}.${slot(out)}`,
             kind: "image",
             label: `Responsive image source${media ? ` (${media})` : ""}`,
             tag: "source",
@@ -882,10 +1040,11 @@ function collect(source: string, element: ElementNode, out: SiteField[], section
       }
       continue;
     }
-    const bg = backgroundField(child, `${sectionId}.bg.${out.length}`);
+    const bg = backgroundField(child, `${sectionId}.bg.${slot(out)}`);
     if (bg && child.tag !== "img" && child.tag !== "button" && child.tag !== "a") {
       out.push(bg);
     }
+    if (formFields(source, child, out, sectionId, id)) continue;
     if (child.tag === "img") {
       const field = imageField(child, id);
       if (field) out.push(field);
@@ -932,6 +1091,7 @@ function collect(source: string, element: ElementNode, out: SiteField[], section
       continue;
     }
     if (isField(source, child)) {
+      if (wordsAroundControl(source, child, out, sectionId, id)) continue;
       const field = textField(source, child, id);
       if (field) out.push(field);
       continue;
@@ -1135,14 +1295,14 @@ export function readPage(source: string): PageContent {
         continue;
       }
       if (["header", "footer", "section", "article"].includes(child.tag)) continue;
-      const id = `loose.${loose.length}`;
+      const id = `loose.${slot(loose)}`;
       if (child.tag === "picture") {
         for (const srcNode of child.children.filter((c) => c.tag === "source")) {
           const srcset = attrNode(srcNode, "srcset");
           const media = attrNode(srcNode, "media")?.value;
           if (srcset) {
             loose.push({
-              id: `loose.${loose.length}`,
+              id: `loose.${slot(loose)}`,
               kind: "image",
               label: `Responsive image source${media ? ` (${media})` : ""}`,
               tag: "source",
@@ -1163,10 +1323,11 @@ export function readPage(source: string): PageContent {
         }
         continue;
       }
-      const bg = backgroundField(child, `loose.bg.${loose.length}`);
+      const bg = backgroundField(child, `loose.bg.${slot(loose)}`);
       if (bg && child.tag !== "img" && child.tag !== "button" && child.tag !== "a") {
         loose.push(bg);
       }
+      if (formFields(source, child, loose, "loose", id)) continue;
       if (child.tag === "img") {
         const field = imageField(child, id);
         if (field) loose.push(field);
@@ -1210,6 +1371,7 @@ export function readPage(source: string): PageContent {
         continue;
       }
       if (isField(source, child)) {
+        if (wordsAroundControl(source, child, loose, "loose", id)) continue;
         const field = textField(source, child, id);
         if (field) loose.push(field);
         continue;
@@ -1379,7 +1541,9 @@ export function readPage(source: string): PageContent {
       if (tags.length > 1) field.tagOptions = tags;
     }
     // Words, pictures and containers can be made into links from Settings → Link.
-    if (node && field.href === undefined && (field.kind === "text" || field.kind === "richtext" || field.kind === "container" || field.kind === "image") && node.tag !== "body" && node.tag !== "a" && node.tag !== "button") {
+    // A form's words cannot: a link round an input, an option or a label holding
+    // its control is a control inside a link, which no browser handles the same.
+    if (node && field.href === undefined && !field.formText && (field.kind === "text" || field.kind === "richtext" || field.kind === "container" || field.kind === "image") && node.tag !== "body" && node.tag !== "a" && node.tag !== "button") {
       const wrapper = isLinkWrapper(node.parent) && node.parent!.children.length === 1 ? node.parent! : undefined;
       if (wrapper) {
         const href = attrNode(wrapper, "href");
@@ -1552,8 +1716,10 @@ const STYLE_FORBIDDEN = /url\s*\(|expression\s*\(|javascript:|[<>"'`\\]/i;
  * filters, a transition per property, a track list — plus the editor's own
  * motion numbers, which hold a whole transform. Three shadows do not fit in 120
  * characters, and refusing the third one silently is worse than a longer cap.
+ * A mask is a list too: a `polygon()` is a list of points and a fade is a
+ * gradient's stops (`shared/websiteMask.ts`).
  */
-const LIST_VALUED = /^(?:box-shadow|text-shadow|transform|filter|backdrop-filter|transition|grid-template-(?:columns|rows|areas)|font-family|--dw-[a-z0-9-]+)$/;
+const LIST_VALUED = /^(?:box-shadow|text-shadow|transform|filter|backdrop-filter|transition|grid-template-(?:columns|rows|areas)|font-family|clip-path|mask-image|--dw-[a-z0-9-]+)$/;
 function isSafeBackground(value: string): boolean {
   if (/javascript:|expression\s*\(|<script/i.test(value)) return false;
   const withoutUrls = value.replace(/url\(\s*(?:"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|([^)]*))\s*\)/gi, (token, d, s, u) => {
@@ -1722,8 +1888,10 @@ export function applyValues(source: string, values: Record<string, FieldValue>, 
           }
         }
       } else if (field.content) {
-        // A meta field's words are an attribute value, not text between tags.
-        edits.push({ span: field.content, text: field.tag === "meta" ? inAttribute(source, field.content, edit.value, true) : edit.value });
+        // A meta field's words are an attribute value, not text between tags,
+        // and so are a placeholder and a submit input's words.
+        const inValue = field.tag === "meta" || field.formText === "placeholder" || field.formText === "value";
+        edits.push({ span: field.content, text: inValue ? inAttribute(source, field.content, edit.value, true) : edit.value });
         touched = true;
       }
     }

@@ -1,5 +1,6 @@
 /**
- * Source editing for HTML-shaped templates: `.astro`, `.vue` and `.svelte`.
+ * Source editing for HTML-shaped templates: `.astro`, `.vue`, `.svelte` and
+ * Angular's `.html` component templates.
  *
  * The JSX adapter next door can lean on the TypeScript compiler because a
  * `.tsx` file *is* TypeScript. None of these three are. A `.vue` file is three
@@ -36,7 +37,7 @@ const MAX_EDITS = 500;
 const OPAQUE_TAGS = new Set(["script", "style", "svg", "math", "iframe", "object", "embed", "textarea", "pre", "code"]);
 const ATTRIBUTES: Record<string, readonly string[]> = { href: ["a", "area"], src: ["img", "source", "video", "audio"], alt: ["img", "area"] };
 const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
-export const TEMPLATE_EXTENSIONS = [".astro", ".vue", ".svelte"] as const;
+export const TEMPLATE_EXTENSIONS = [".astro", ".vue", ".svelte", ".component.html"] as const;
 
 export type TemplateFieldKind = "text" | "href" | "src" | "alt";
 export type TemplateField = {
@@ -68,7 +69,24 @@ function hash(value: string): string { return createHash("sha256").update(value,
 
 export function isTemplatePath(filePath: string): boolean {
   const lower = filePath.replace(/\\/g, "/").toLowerCase();
-  return TEMPLATE_EXTENSIONS.some((extension) => lower.endsWith(extension));
+  return TEMPLATE_EXTENSIONS.some((extension) => lower.endsWith(extension)) || isAngularTemplatePath(lower);
+}
+
+/**
+ * An Angular component's template: `about.component.html`, or — since Angular
+ * 20 dropped the suffix — any `.html` under `src/app/`. Nothing else ending in
+ * `.html` is one, because an ordinary page is the visual editor's.
+ *
+ * Angular reads its templates as HTML with three kinds of code in them, and the
+ * scanner's rules already leave each to the developer: `{{ }}` and the
+ * `@if (…) { … }` blocks are braces, and `[href]`, `(click)`, `*ngFor` and
+ * `#ref` are not plain attribute names. One more thing differs on the way out:
+ * from Angular 17 a bare `@` in text starts a block, so `encode` writes it as
+ * `&#64;` — an email address typed into a heading must not fail the build.
+ */
+export function isAngularTemplatePath(filePath: string): boolean {
+  const lower = filePath.replace(/\\/g, "/").toLowerCase();
+  return lower.endsWith(".component.html") || /(^|\/)src\/app\/(?:.+\/)?[^/]+\.html$/.test(lower);
 }
 
 function checkedPath(filePath: string): string {
@@ -76,7 +94,7 @@ function checkedPath(filePath: string): string {
   if (!normalized || normalized.startsWith("/") || /[:\x00-\x1f\x7f]/.test(normalized) || normalized.split("/").some((part) => !part || part === "." || part === "..")) {
     throw new Error("Choose a file path relative to the connected repository.");
   }
-  if (!isTemplatePath(normalized)) throw new Error("This adapter accepts .astro, .vue and .svelte source files.");
+  if (!isTemplatePath(normalized)) throw new Error("This adapter accepts .astro, .vue, .svelte and Angular .html template files.");
   return normalized;
 }
 
@@ -441,7 +459,8 @@ function encode(field: TemplateField, value: string): string {
   // brace opens an expression, and somebody typing "{free}" into a text box
   // means the word, not a template hole.
   const escaped = value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\{/g, "&#123;").replace(/\}/g, "&#125;");
-  if (field.reference.encoding === "template-text") return escaped;
+  // In an Angular template a bare `@` in text opens a block (`@if`, `@for`).
+  if (field.reference.encoding === "template-text") return isAngularTemplatePath(field.reference.filePath) ? escaped.replace(/@/g, "&#64;") : escaped;
   const quote = field.reference.original[0] === "'" ? "'" : '"';
   return `${quote}${escaped.replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/\r/g, "&#13;").replace(/\n/g, "&#10;")}${quote}`;
 }

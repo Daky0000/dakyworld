@@ -182,7 +182,7 @@ check("an unclosed tag is refused before any layout is offered", () => {
   refuses(() => nodes("<template><main><section></main></template>", "src/pages/Index.vue"), /never closed/);
 });
 check("a file this adapter does not own is refused", () => {
-  assert.throws(() => templateStructureNodes(astro, "src/Page.tsx"), /\.astro, \.vue and \.svelte/);
+  assert.throws(() => templateStructureNodes(astro, "src/Page.tsx"), /\.astro, \.vue, \.svelte and Angular \.html/);
   assert.throws(() => templateStructureNodes(astro, "../secret.astro"), /relative to the connected repository/);
 });
 check("a void element is a sibling, not a container", () => {

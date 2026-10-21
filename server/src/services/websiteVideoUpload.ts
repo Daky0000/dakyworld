@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 /**
- * A video too big for one request, sent to storage in pieces.
+ * A video or an audio file too big for one request, sent to storage in pieces.
  *
  * The picture route takes a file as base64 inside JSON, which caps it at the
  * router's 16 MB body. A video may be 1 GB (`MAX_VIDEO_UPLOAD_BYTES`), so the
@@ -35,8 +35,10 @@ export type VideoUploadTicket = {
   /** Object key and multipart upload id, once the first piece has said what the file is. */
   k?: string;
   u?: string;
-  /** "video/mp4" or "video/webm", decided from the first piece's bytes. */
+  /** The stored type ("video/mp4", "audio/mpeg"…), decided from the first piece's bytes. */
   t?: string;
+  /** "audio" when the file is for an audio player. Absent is a video, which every ticket signed before audio was. */
+  m?: "audio";
 };
 
 /** The same material an MFA challenge is signed with, under a label of its own. */

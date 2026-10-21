@@ -33,7 +33,11 @@ export type SectionTemplateId =
   | "pricing"
   | "testimonials"
   | "faq"
-  | "cta-banner";
+  | "cta-banner"
+  | "video"
+  | "video-file"
+  | "audio"
+  | "map";
 
 export const SECTION_CATALOG: Array<{
   id: SectionTemplateId;
@@ -83,6 +87,34 @@ export const SECTION_CATALOG: Array<{
     category: "Lead Capture",
     description: "Dark contrast banner designed to drive consultations, calls, and WhatsApp inquiries.",
     badge: "Lead Gen",
+  },
+  {
+    id: "video",
+    title: "Video from YouTube or Vimeo",
+    category: "Media",
+    description: "A heading, a line of copy and a 16:9 frame. Select the frame and paste a YouTube, Vimeo or Loom link.",
+    badge: "Video",
+  },
+  {
+    id: "video-file",
+    title: "Video Player",
+    category: "Media",
+    description: "Your own MP4 or WebM file in a player. Select it and upload the video, up to 1 GB.",
+    badge: "Upload",
+  },
+  {
+    id: "audio",
+    title: "Audio or Podcast Player",
+    category: "Media",
+    description: "A player for an episode, a voice note or a song. Select it and upload an MP3, M4A or WAV file.",
+    badge: "Audio",
+  },
+  {
+    id: "map",
+    title: "Map and Directions",
+    category: "Media",
+    description: "A Google Maps frame. Select it and type the shop's name or address, or paste a Maps embed code.",
+    badge: "Local",
   },
 ];
 

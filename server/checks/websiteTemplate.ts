@@ -197,4 +197,50 @@ const moved = discoverTemplateFields(`<main><div><h1 data-dw-field="hero.title">
 assert.equal(single.fields[0]!.id, moved.fields[0]!.id); passed++;
 assert.equal(single.fields[0]!.marker, "hero.title"); passed++;
 
+// ── Angular ─────────────────────────────────────────────────────────────────
+// A component template is HTML with Angular's code in it. Interpolation and
+// the `@if` / `@for` blocks are braces, and bound attributes are not plain
+// names, so the rules above already leave each with the developer.
+const angular = `<section class="hero">
+  <h1>Fresh bread every morning</h1>
+  <p>Hello {{ user.name }}</p>
+  <a href="/order" [class.active]="isActive">Order now</a>
+  <img [src]="heroUrl" alt="Our bakery">
+  @if (open) {
+    <p>We are open today</p>
+  } @else {
+    <p>Closed for the holiday</p>
+  }
+  @for (item of items; track item.id) { <li>{{ item.name }}</li> }
+  <button (click)="call()">Call us</button>
+</section>
+`;
+const angularFound = discoverTemplateFields(angular, "src/app/home/home.component.html");
+assert.deepEqual(values(angularFound.fields), ["/order", "Call us", "Closed for the holiday", "Fresh bread every morning", "Order now", "Our bakery", "We are open today"]); passed++;
+// `{{ user.name }}` is code, said rather than dropped.
+assert.ok(angularFound.issues.some((issue) => issue.code === "dynamic" && /<p>/.test(issue.message))); passed++;
+// A bound `[src]` is not a picture's address this editor may change.
+assert.ok(!angularFound.fields.some((entry) => entry.kind === "src")); passed++;
+// Angular 20 drops the `.component` suffix; a template under src/app is still one.
+assert.equal(discoverTemplateFields(angular, "src/app/home/home.html").fields.length, angularFound.fields.length); passed++;
+// An ordinary page is never a template: it is the visual editor's.
+assert.throws(() => discoverTemplateFields(angular, "about.html")); passed++;
+assert.throws(() => discoverTemplateFields(angular, "public/app/about.html")); passed++;
+
+// From Angular 17 a bare `@` in text opens a block, so an email address typed
+// into a paragraph is written as an entity and still reads back as typed.
+const bakeryHeading = angularFound.fields.find((entry) => entry.value === "Fresh bread every morning")!;
+const emailed = applyTemplateValues(angular, { filePath: "src/app/home/home.component.html", sourceHash: angularFound.sourceHash, changes: [{ fieldId: bakeryHeading.id, value: "Order: hello@bakery.example {today}" }] });
+assert.deepEqual(emailed.problems, []); passed++;
+assert.ok(emailed.source.includes("<h1>Order: hello&#64;bakery.example &#123;today&#125;</h1>")); passed++;
+assert.equal(discoverTemplateFields(emailed.source, "src/app/home/home.component.html").fields.find((entry) => entry.id === bakeryHeading.id)?.value, "Order: hello@bakery.example {today}"); passed++;
+// Nowhere else does an `@` need it: a Vue file keeps the address as typed.
+const vueMail = `<template><p>Write to us</p></template>`;
+const vueMailFound = discoverTemplateFields(vueMail, "src/pages/contact.vue");
+const vueMailed = applyTemplateValues(vueMail, { filePath: "src/pages/contact.vue", sourceHash: vueMailFound.sourceHash, changes: [{ fieldId: vueMailFound.fields[0]!.id, value: "hello@bakery.example" }] });
+assert.ok(vueMailed.source.includes("<p>hello@bakery.example</p>")); passed++;
+// An `@` in an attribute is not a block start; a mail link keeps its address.
+const linked = applyTemplateValues(angular, { filePath: "src/app/home/home.component.html", sourceHash: angularFound.sourceHash, changes: [{ fieldId: angularFound.fields.find((entry) => entry.kind === "href")!.id, value: "mailto:hello@bakery.example" }] });
+assert.ok(linked.source.includes('href="mailto:hello@bakery.example"')); passed++;
+
 console.log(`websiteTemplate: ${passed} template discovery, editing and refusal checks passed`);

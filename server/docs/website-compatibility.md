@@ -28,9 +28,15 @@ promises are made from, and that page is where a client reads them.
   strongest identity an edit can have — it survives the page being rearranged.
 
 On these: text, rich text, links, buttons and their styles, images and their
-descriptions, per-element design at three widths, block reordering and
-duplication, shared elements across pages, drafts, review, publish, versions and
-rollback.
+descriptions, video and audio players and their files, masks (a shape or a
+fade), a form's labels, placeholders, button words and drop-down options, the
+video, map or player an embedded frame shows (YouTube, Vimeo, Loom, Wistia,
+Google Maps, OpenStreetMap, Spotify, SoundCloud, Apple Music and Podcasts,
+Google Calendar, Calendly), per-element design at three widths, block
+reordering and duplication, shared elements across pages, drafts, review,
+publish, versions and rollback. Pages in sub-folders (`blog/post.html`,
+`team/index.html`) are listed when the site's sitemap names them, and a split
+sitemap (a sitemap index) is followed.
 
 ## Editable, with limits
 
@@ -52,11 +58,19 @@ rollback.
   `description`, `author`), and the body as one field. Tags, dates, layouts and
   block values stay with the code.
 - **Framework source files** — literal text and existing `href`/`src`/`alt`
-  strings in `.jsx`, `.tsx`, `.astro`, `.vue` and `.svelte` files, through the
-  source editor. Next.js, Astro, SvelteKit, Nuxt, Vue and Vite projects list
-  their route files as pages and open them here. Not a visual canvas, and
-  nothing is built or run: what is committed is the file with the edited
-  strings in it, for your own host to build as usual.
+  strings in `.jsx`, `.tsx`, `.astro`, `.vue`, `.svelte` and Angular `.html`
+  template files, through the source editor. Next.js, Remix and React Router,
+  Gatsby, Astro, SvelteKit, Nuxt, Vue (file-routed, or a Vue Router table),
+  Svelte with Vite, Angular (its `Routes` table), SolidStart, TanStack Start,
+  Qwik City and Vite React projects list their route files as pages and open
+  them here; so do the Markdown generators — Docusaurus, VitePress, MkDocs,
+  Eleventy, Hugo, Jekyll and Hexo (Hexo's pages; its posts open from the file
+  browser, because a post's address comes from its date). Not a visual
+  canvas, and nothing is built or run: what is committed is the file with the
+  edited strings in it, for your own host to build as usual.
+- **VitePress rooted outside `docs/` or the repository root** — pictures
+  uploaded for a page go to `docs/public/` or `public/`; a project whose
+  `.vitepress/` sits in another folder needs them moved by hand.
 - **Expressions inside those files stay with the code.** A Svelte `{#if}`, a Vue
   `{{ mustache }}`, an Astro expression, a bound attribute (`:href`, `bind:`,
   `@click`, `client:load`), Astro frontmatter and `<script setup>` are reported
@@ -72,8 +86,12 @@ them, reports them, and never changes them:
 
 - application logic, and anything rendered by it;
 - custom components and custom elements;
-- what a form does when it is submitted (the words around it are editable);
-- embedded frames — maps, videos, third-party widgets;
+- what a form does when it is submitted (its labels, placeholders, button
+  words and options are editable);
+- embedded frames from services not on the list above — booking widgets,
+  forms, chat, anything else drawn from another site. These can be moved,
+  styled and deleted; pointing one at a different address is the developer's,
+  because a frame shows another site *inside* this one;
 - behaviour written into markup attributes (`onclick` and friends);
 - `<picture>` source groups and other advanced responsive image systems;
 - templates filled in at run time.

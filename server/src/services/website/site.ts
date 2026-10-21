@@ -292,18 +292,90 @@ async function readStylesheet(site: Site, page: SitePage, href: string): Promise
   return css;
 }
 
-/** `about.html` → `/about`, `index.html` → `/`. The site serves extensionless paths. */
+/**
+ * `about.html` → `/about`, `index.html` → `/`, and in a folder `blog/post.html`
+ * → `/blog/post` and `team/index.html` → `/team` — the same rule a package
+ * import uses (`routePathForFile`). The site serves extensionless paths.
+ */
 export function pathFromFile(filePath: string): string {
-  const name = filePath.replace(/\.html$/i, "");
-  if (name === "index") return "/";
-  return `/${name}`;
+  const name = filePath.replace(/\.html$/i, "").replace(/(^|\/)index$/i, "");
+  return name ? `/${name}` : "/";
 }
 
-/** `how-we-work.html` → `How we work`. A starting name, not a permanent one. */
+/** `how-we-work.html` → `How we work`, `blog/a-faster-site.html` → `A faster site`. A starting name, not a permanent one. */
 export function titleFromFile(filePath: string): string {
-  const name = filePath.replace(/\.html$/i, "").replace(/[-_]+/g, " ").trim();
+  const segments = filePath.replace(/\.html$/i, "").split("/").filter(Boolean);
+  const last = segments.at(-1)?.toLowerCase() === "index" ? segments.at(-2) : segments.at(-1);
+  const name = (last ?? "").replace(/[-_]+/g, " ").trim();
   if (!name || name === "index") return "Home";
   return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+/**
+ * The address a page's own HTML is resolved against, for its preview.
+ *
+ * A folder's `index.html` is served at `/team/`, and its relative links —
+ * `photo.jpg`, `../css/site.css` — are written for that. The page's address
+ * is `/team` like any other page's, and resolved against that, `photo.jpg`
+ * became `/photo.jpg`: a preview with every picture in the folder missing.
+ */
+export function pageDocumentUrl(site: Pick<Site, "publicUrl">, page: Pick<SitePage, "path" | "filePath">): string {
+  const url = pageUrl(site, page);
+  return /(^|\/)index\.html?$/i.test(page.filePath) && page.path !== "/" && !url.endsWith("/") ? `${url}/` : url;
+}
+
+/** A sitemap's address as a page's: no trailing slash, no `.html`, `/index` is the folder. */
+function sitemapPath(pathname: string): string {
+  return pathname.replace(/\.html?$/i, "").replace(/\/index$/i, "/").replace(/\/+$/, "") || "/";
+}
+
+/**
+ * The paths a sitemap lists, following a sitemap index to its sitemaps.
+ *
+ * A site that splits its sitemap — `<sitemapindex>` naming `page-sitemap.xml`
+ * and `post-sitemap.xml`, which is what dakyx.com and every WordPress-shaped
+ * generator publish — used to be read as listing two pages called
+ * `/page-sitemap.xml` and `/post-sitemap.xml`. Every real page then arrived
+ * hidden, and a site with no repository was given a page per sitemap file.
+ *
+ * Only sitemaps on the site's own host are followed, at most twenty, one level
+ * deep: an index pointing at another index or at another site is the site's
+ * problem, not a list of pages.
+ */
+export async function readSitemap(publicUrl: string, fetchText: (url: string) => Promise<string>): Promise<Set<string>> {
+  const paths = new Set<string>();
+  const home = new URL(publicUrl);
+  const locs = (xml: string) => [...xml.matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/g)].map((match) => match[1]!.replace(/&amp;/g, "&"));
+  const sameHost = (url: URL) => url.hostname.replace(/^www\./, "") === home.hostname.replace(/^www\./, "");
+  let xml: string;
+  try {
+    xml = await fetchText(`${publicUrl.replace(/\/+$/, "")}/sitemap.xml`);
+  } catch {
+    // No sitemap is normal for a small site. Every page is simply unlisted.
+    return paths;
+  }
+  const add = (loc: string) => {
+    try {
+      const url = new URL(loc);
+      if (sameHost(url)) paths.add(sitemapPath(url.pathname));
+    } catch {
+      // A malformed <loc> is the sitemap's problem, not this scan's.
+    }
+  };
+  if (!/<sitemapindex[\s>]/i.test(xml)) {
+    locs(xml).forEach(add);
+    return paths;
+  }
+  const children = locs(xml)
+    .map((loc) => { try { return new URL(loc); } catch { return null; } })
+    .filter((url): url is URL => url !== null && sameHost(url) && /^https?:$/.test(url.protocol))
+    .slice(0, 20);
+  for (const child of children) {
+    const text = await fetchText(child.href).catch(() => "");
+    if (/<sitemapindex[\s>]/i.test(text)) continue;
+    locs(text).forEach(add);
+  }
+  return paths;
 }
 
 export type DiscoveredPage = {
@@ -316,21 +388,7 @@ export type DiscoveredPage = {
 
 /** The paths a site publishes, read from its sitemap. Empty when it has none. */
 async function sitemapPaths(site: Site): Promise<Set<string>> {
-  const paths = new Set<string>();
-  try {
-    const xml = await fetchLive(`${site.publicUrl.replace(/\/+$/, "")}/sitemap.xml`);
-    for (const match of xml.matchAll(/<loc>([^<]+)<\/loc>/g)) {
-      try {
-        const url = new URL(match[1]!.trim());
-        paths.add(url.pathname.replace(/\/$/, "") || "/");
-      } catch {
-        // A malformed <loc> is the sitemap's problem, not this scan's.
-      }
-    }
-  } catch {
-    // No sitemap is normal for a small site. Every page is simply unlisted.
-  }
-  return paths;
+  return readSitemap(site.publicUrl, fetchLive);
 }
 
 export type Discovery = {
@@ -430,7 +488,17 @@ async function findPages(site: Site): Promise<Discovery> {
   if (repo && (await underSiteCredential(site, githubConfigured))) {
     const configured = site.repoPath.replace(/^\/+|\/+$/g, "");
     const fromConfigured = await htmlIn(repo, configured, site.repoBranch);
-    if (fromConfigured.length > 0) return { pages: buildPages(fromConfigured, listed), repoPath: configured, sourceKind: null };
+    if (fromConfigured.length > 0) {
+      const pages = buildPages(fromConfigured, listed);
+      // One more listing, and only when the sitemap names a page the folder's
+      // own files do not — the blog posts in `blog/`, a `team/index.html`.
+      const taken = new Set(pages.map((page) => page.path));
+      if ([...listed].some((path) => !taken.has(path))) {
+        const { files } = await listRepoFiles(repo, site.repoBranch).catch(() => ({ files: [] as string[] }));
+        pages.push(...nestedPages(files, configured, listed, taken));
+      }
+      return { pages: pages.sort((a, b) => a.path.localeCompare(b.path)), repoPath: configured, sourceKind: null };
+    }
 
     // Nothing where the site says its pages are. Before reporting an empty
     // site, look for them: see `chooseSiteFolder`.
@@ -461,7 +529,9 @@ async function findPages(site: Site): Promise<Discovery> {
       );
     }
     const names = await htmlIn(repo, found, site.repoBranch);
-    return { pages: buildPages(names, listed), repoPath: found, sourceKind: null };
+    const pages = buildPages(names, listed);
+    pages.push(...nestedPages(files, found, listed, new Set(pages.map((page) => page.path))));
+    return { pages: pages.sort((a, b) => a.path.localeCompare(b.path)), repoPath: found, sourceKind: null };
   }
 
   if (listed.size === 0) {
@@ -524,6 +594,27 @@ async function htmlIn(repo: string, folder: string, branch: string): Promise<str
     // Top level only. A file in a subfolder is an asset or an archive of old
     // work — `website-drafts/` on this site is exactly that.
     .filter((relative) => /\.html$/i.test(relative) && !relative.includes("/"));
+}
+
+/**
+ * Pages in a sub-folder of the site's folder, which the site itself says are
+ * pages.
+ *
+ * `htmlIn` reads one folder, because a sub-folder is far more often an archive,
+ * a tool's output or a build than a set of pages — `website-drafts/` here is
+ * exactly that. But some sites keep real pages in folders: dakyx.com's nine
+ * blog posts in `blog/` could not be opened in the editor at all. A nested file
+ * is listed only when the site's own sitemap names its address, and never from
+ * a folder that is tooling, an archive or a partial.
+ */
+export function nestedPages(files: readonly string[], folder: string, listed: Set<string>, taken: Set<string>): DiscoveredPage[] {
+  const prefix = folder ? `${folder}/` : "";
+  return files
+    .filter((file) => file.startsWith(prefix) && /\.html$/i.test(file))
+    .map((file) => file.slice(prefix.length))
+    .filter((relative) => relative.includes("/") && relative.split("/").length <= 4 && !IGNORED_FOLDERS.test(relative) && !ARCHIVE_FOLDERS.test(relative) && !relative.split("/").some((segment) => /^[._]/.test(segment)))
+    .map((relative) => ({ filePath: relative, path: pathFromFile(relative), title: titleFromFile(relative), listed: true }))
+    .filter((page) => listed.has(page.path) && !taken.has(page.path));
 }
 
 function buildPages(names: string[], listed: Set<string>): DiscoveredPage[] {
@@ -1082,6 +1173,11 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
   // its destination are the parts that live in the panel.
   function typeable(el) {
     if (el.hasAttribute("data-dw-readonly")) return false;
+    // A form control has no inside to put a caret in: its placeholder, its
+    // button words and its options are changed in the panel.
+    if (/^(?:INPUT|TEXTAREA|SELECT|OPTION)$/.test(el.tagName)) return false;
+    // Nor anything holding one: a caret in a label could delete its checkbox.
+    if (el.querySelector("input, select, textarea")) return false;
     var kind = el.getAttribute("data-dw-kind");
     return kind === "text" || kind === "richtext" || kind === "link" || kind === "button";
   }
@@ -1395,7 +1491,24 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
       var written = find(data.id);
       if (!written) { post({ type: "absent", id: data.id, want: "text" }); return; }
       // Never while it is being typed into: that would move the caret.
-      if (written !== editing) written.innerHTML = String(data.html == null ? "" : data.html);
+      if (/^(?:INPUT|TEXTAREA)$/.test(written.tagName)) {
+        // A placeholder or a submit button's words are an attribute, and the
+        // value arrives as HTML text; a text area decodes it without running it.
+        var decoder = document.createElement("textarea");
+        decoder.innerHTML = String(data.html == null ? "" : data.html);
+        var asButton = written.tagName === "INPUT" && /^(?:submit|button|reset)$/i.test(written.getAttribute("type") || "");
+        written.setAttribute(asButton ? "value" : "placeholder", decoder.value);
+      } else if (written.querySelector("input, select, textarea")) {
+        // Words round a control are its one run of text; the control stays.
+        var wording = document.createElement("textarea");
+        wording.innerHTML = String(data.html == null ? "" : data.html);
+        for (var n = 0; n < written.childNodes.length; n++) {
+          var node = written.childNodes[n];
+          if (node.nodeType !== 3 || !node.data.trim()) continue;
+          node.data = node.data.match(/^\s*/)[0] + wording.value + node.data.match(/\s*$/)[0];
+          break;
+        }
+      } else if (written !== editing) written.innerHTML = String(data.html == null ? "" : data.html);
       post({ type: "applied", id: data.id, want: "text" });
     } else if (data.type === "variant") {
       // A button's style, swapped here as well as in the draft. Without this a

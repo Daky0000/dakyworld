@@ -330,7 +330,8 @@ try {
   await page.getByRole("treeitem", { name: /form/i }).click();
   const general = await inspector.getByRole("tabpanel").innerText();
   await page.screenshot({ path: "checks/artifacts/form-inspector.png" });
-  check("the inspector says a form's insides can't be edited here", /inside this form can't be edited here/.test(general), general);
+  // Its words are fields since 21 Oct 2026; what it does when sent is the code's.
+  check("the inspector says a form's words are fields and its sending is the code's", /words in this form .* are fields of their own/.test(general) && /stays with your site's code/.test(general), general);
   check("and that it can still be moved and deleted", /still move it, delete it/.test(general), general);
   check("nothing on screen calls it read-only", !/read-only|Preserved Element/i.test(await page.locator(".website-editor").innerText()));
   await page.getByRole("button", { name: /^Editor mode/ }).click();
@@ -338,7 +339,7 @@ try {
   const card = page.locator(".dx-listcard", { hasText: "FORM element" });
   await card.waitFor();
   const listed = await card.innerText();
-  check("List mode says the same", /can't be edited here/.test(listed) && /move it, delete it/.test(listed) && !/read-only/i.test(listed), listed);
+  check("List mode says the same", /fields of their own/.test(listed) && /stays with your site's code/.test(listed) && /move it, delete it/.test(listed) && !/read-only/i.test(listed), listed);
 
   check("no page errors", errors.length === 0, errors.join(" | "));
   console.log(`layersAndDelete: ${passed} checks — the floating Layers panel is solid in both themes and docks when carried home, docked it fills its drawer until resized, the inspector's tabs are tabs, the Style tab opens on its controls, a block holding a form is deleted after one question, the Delete key takes the same path from the editor and from the page but never while anything is being typed, and a form says what is true of it, in Chromium.`);

@@ -23,7 +23,7 @@ Every element has the same three tabs.
 | Tab | Shared across all elements? | Notes |
 |---|---|---|
 | **General** | **Partly.** A **Content** section that depends on the element, then a **Settings** section that is the same short list for everything. | This is the only place elements differ. |
-| **Style** | **Yes, identical.** | Nine sections, same controls. A control that does not apply simply has no effect. What does depend on the element is only what has to: flex controls once it is a flex container, a *Flex child* group once its parent is one, offsets once it is positioned. |
+| **Style** | **Yes, identical.** | Ten sections, same controls. A control that does not apply simply has no effect. What does depend on the element is only what has to: flex controls once it is a flex container, a *Flex child* group once its parent is one, offsets once it is positioned. |
 | **Interactions** | **Yes, identical.** | The same trigger, effect and timing editor. |
 
 So: **one universal Style and Interactions system, and a small per-element
@@ -47,7 +47,9 @@ names what it finds. These are the things it can select.
 | Image | `image` | `img` |
 | Icon | `icon` | inline `svg`, an icon `img`, an icon-font glyph |
 | Video / Audio | `unsupported` + player | `video`, `audio` |
-| Preserved element | `unsupported` | `form`, `iframe`, `canvas`, custom elements (`<my-widget>`) |
+| Embed | `unsupported` + embed | `iframe` |
+| Form words | `text` with `formText` | an input's `placeholder`, an `<input type="submit">`'s `value`, each `<option>` of a `<select>` |
+| Preserved element | `unsupported` | `form`, `select`, `canvas`, custom elements (`<my-widget>`) |
 | Page title / description | `text` | `<title>`, `<meta name="description">` — no element on the page |
 
 ---
@@ -66,8 +68,10 @@ names what it finds. These are the things it can select.
 | **Image** | Picture preview (click to set the **focal point**) · **Replace / Upload / Media library** · **Image URL** · **Alt text** · **Crop & focal point** | Replacing keeps the picture's box. Fit, size and opacity are in Style. |
 | **Icon** | Icon picker: a library icon or an image | Swapped whole; its drawing is never edited. |
 | **Video** | **Video file** · **Upload video** · **Start time** · **End time** · **Autoplay** · **Play on mobile** (only with Autoplay) · **Mute** · **Loop** · **Player controls** · **Allow download** · **Preload** (Auto / Metadata / None) · **Poster image** · **Apply** | Each maps to an HTML5 attribute: `autoplay`, `playsinline`, `muted`, `loop`, `controls`, `controlslist="nodownload"`, `preload`, `poster`. Start and end become a media fragment on the address (`#t=5,20`). Turning Autoplay on mutes it too, because browsers only start a muted video on their own. **Upload video** stores an MP4 or WebM file with the site's media (judged by its bytes; a `.mov` or `.mkv` is refused with the reason, because most browsers cannot play it) and puts its address in Video file, up to 1 GB on every plan (pictures keep the plan's own limit; both count against its storage), sent in 8 MB pieces past 10 MB. When the canvas cannot load the file the panel names it and says why. The switches are gathered and sent together with **Apply**: one reload of the page, one edit off the plan's allowance. On the canvas, the first click selects a player and the next ones reach its own controls. |
-| **Audio** | The same without Play on mobile and Poster | |
-| **Preserved element** (form, embed, canvas, custom element) | A note saying it is kept byte for byte | Its inside belongs to its code. Style, Interactions, ID and attributes still apply to the element itself. |
+| **Audio** | The same without Play on mobile and Poster · **Upload audio** | MP3, M4A (AAC), WAV and FLAC, judged by their bytes, up to 1 GB, through the same two doors as a video. A phone's voice memo in an ordinary MP4 box is accepted as its sound. Ogg is refused with the reason: Safari on iPhones and Macs does not play it. In the library an audio file is a note and a player, and never fills a picture's place. |
+| **Embed** (frame) | **Video, map or player** (paste a link or the service's embed code) · **Place** (a map's location, typed) · **Description** · **Load when scrolled near** · **Allow full screen** (videos) · **Apply** | A pasted link becomes the address the service embeds from — a watch page, a short, `youtu.be?t=1m30s`, an unlisted Vimeo, a Spotify or Loom share, a Maps place page, the whole `<iframe>` code. Only these services can be put in a frame: YouTube, Vimeo, Loom, Wistia, Google Maps, OpenStreetMap, Spotify, SoundCloud, Apple Music and Podcasts, Google Calendar and Calendly (`shared/websiteEmbed.ts`). A frame already showing something else keeps working and is said to. Gathered and sent with Apply, as a player's switches are. |
+| **Form words** (placeholder, submit button, option) | **Placeholder** / **Button text** / **Option** | Plain words in the panel; never typed on the canvas, because a form control has no inside to put a caret in. Written into the attribute, escaped for its quote. A placeholder may be emptied; an option may not. |
+| **Preserved element** (form, drop-down, canvas, custom element) | A note saying what is inside it and where its words are | A form's and a drop-down's words are fields of their own; what the form does when sent belongs to the code. Style, Interactions, ID and attributes still apply to the element itself. |
 | **Page title / description** | **Text** | Stored in the document's head; shown after a reload or a publish. No Settings: there is no element. |
 
 ### 2b. Settings (the same list for everything)
@@ -139,6 +143,7 @@ Tablet ≤ 1024px, Phone ≤ 640px) and, for the look under the pointer, in the
 | **Background** | **Overlay** layers, stacked (Image: picture, position, repeat, size, attachment · Gradient: stops on a bar, flip, linear angle or radial position · Color) · **Color** (the base colour) · **Clipping** (Full element / Padding edges / Content edges / Text). |
 | **Border** | Border width (one value, or *Adjust borders* per side) · Border color · Border type (None, Solid, Dashed, Dotted, Double, Groove, Ridge, Inset, Outset) · Border radius (one value, or *Adjust corners*). |
 | **Effects** | Blend mode · Opacity · **Box shadow** (stackable: colour, Outset / Inset, horizontal, vertical, blur, spread; presets) · **Transform** (stackable: Move / Scale / Rotate / Skew, X Y Z; settings: origin, children perspective) · **Transitions** (property + duration) · **Filters** · **Backdrop filters** (blur, brightness, contrast, grayscale, invert, saturate, sepia, hue rotate, drop shadow). |
+| **Mask** | **Shape** (`clip-path`): Circle, Oval, Triangle, Diamond, Pentagon, Hexagon, Octagon, Star, Arrow, Chevron, Slanted, Angled bottom, Angled top, Speech bubble — percentages, so each scales with its element · **Fade** (`mask-image`): Bottom, Top, Left, Right, Top and bottom, Both sides, Vignette, with a **Fade length**. A value the panel did not write is shown as written with Clear. A picture is never a mask (see below). |
 | **Custom CSS** ¹ | `element.style { … }`: declarations for this element that no control above owns. |
 
 Conventions:
@@ -154,7 +159,16 @@ Conventions:
 | **Show more / less** | The properties fewer people need. |
 
 What is **Desktop only**, because a tablet or phone rule can carry less: picture
-layers in Background, Text stroke, and Clipping → Text.
+layers in Background, Text stroke, and Clipping → Text. Masks are not: both are
+written unprefixed and fetch nothing, so a photograph can be a circle on
+desktop and a square on a phone.
+
+**Why a picture cannot be a mask.** `mask-image: url(…)` is fetched in CORS
+mode, and the media library's files are served from cloud storage on another
+origin that sends no CORS headers (a hosted site answers an R2-backed picture
+with a redirect there). The mask would load on nobody's screen and the element
+would simply vanish. Shapes and gradients fetch nothing, so they cannot fail
+that way.
 
 On Tablet and Phone, an element with changes for that size only shows one line
 above the sections — "2 changes for phones only" — with **Reset**, which drops
@@ -220,7 +234,7 @@ How they play, and the limits that follow from adding **no script** to a page:
 | Display conditions: role, date, device… | Screen sizes only | Pages are static files. |
 | Any attribute | An allowlist | An editor's guest must not be able to run script on the site's visitors. |
 | Image **Resolution** (WordPress sizes) | — | There is one file. |
-| Video **Select / Upload** | By address | The media library holds pictures. |
+| Video **Select / Upload** | Upload (video and audio, up to 1 GB) or by address | The media library holds pictures, videos and audio; a player is never offered a picture. |
 | Fonts: Google library | The site's fonts and system stacks | A new typeface is a site-wide decision (Theme). |
 | Global variables | Brand presets (Saved style) | |
 | Interactions run by a script | CSS only | No script is ever added to a customer's page. Hence the click and scroll limits above. |
@@ -240,6 +254,9 @@ How they play, and the limits that follow from adding **no script** to a page:
 | Settings: tag, ID, attributes, video | A structure change (`kind: "settings"`) folded into the draft document | The tag renamed, attributes written; field identities pinned with `data-dw-node` |
 | Display conditions | `display: none` in the base style or a screen-size override | As style |
 | Interactions | `--dw-enter*`, `--dw-loop*`, `--dw-scroll*`, `--dw-onhover*`, `--dw-onclick*` in the inline style | Fixed keyframes and one layered `animation` rule in the page's interaction stylesheet |
+| Mask | `clip-path` and `mask-image` in the style, per screen size | The element's inline style, or the generated media rules |
+| Embed | A structure change (`kind: "settings"`) on the frame's `src`, `title`, `loading`, `allowfullscreen` | The frame's attributes; the address held to the service list |
+| Form words | `draft.values[id].value` on a `formText` field (ids in their own `sN.form.M` series, so no existing id moves) | A splice into the attribute value, or the option's text |
 
 Where the code is:
 
@@ -253,6 +270,9 @@ Where the code is:
 | What may be written as markup | `src/shared/websiteElementSettings.ts` |
 | Writing markup | `src/services/website/structure.ts` (`applyElementSettings`) |
 | The animation rules | `src/shared/websiteInteraction.ts` |
+| Mask presets, reading and writing | `src/shared/websiteMask.ts` |
+| What a frame may show, and turning a pasted link into its embed | `src/shared/websiteEmbed.ts` |
+| Form words as fields | `formFields` in `src/services/website/regions.ts` |
 | Every control, as a table | `src/services/website/propertyInventory.ts` |
 
 What holds it:
@@ -267,6 +287,11 @@ What holds it:
 | `checks/browser/inspectorTabs.mjs` | The three tabs through the real editor, asserting the computed page |
 | `checks/browser/motionRules.mjs` | What a browser computes from the published animation rules |
 | `checks/browser/stylePanel.mjs` | Style controls changing the page, saving, resetting, undoing |
+| `checks/websiteMasks.ts` | Every shape and fade survives both sanitisers, reading never guesses, a picture is never a mask |
+| `checks/websiteAudio.ts` | Audio from its bytes, refusals, the real upload route, byte ranges |
+| `checks/websiteEmbeds.ts` | Pasted links to embed addresses, the service list on both sides, a frame's settings, the Add panel's media sections |
+| `checks/websiteFormText.ts` | Form words as fields without moving any id, the old drop-down defect, attribute escaping |
+| `checks/browser/masksMediaForms.mjs` | All four through the real editor: computed mask, audio playing, a frame showing YouTube, a placeholder edited live |
 
 ---
 

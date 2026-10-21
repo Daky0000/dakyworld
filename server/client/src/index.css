@@ -819,6 +819,8 @@ button:disabled { cursor:not-allowed; }
 .dx-tile[aria-checked="true"] { border-color:var(--editor-accent); color:var(--editor-accent); background:var(--editor-accent-soft); }
 .dx-ico { width:34px; height:24px; display:grid; place-items:center; }
 .dx-demo { width:34px; height:24px; border-radius:6px; background:var(--editor-panel); border:1px solid var(--editor-line); }
+/* A mask or clip preview: the shape is the swatch itself, so it is solid and borderless. */
+.dx-swatch { border:0; border-radius:0; background:currentColor; opacity:.75; }
 .dx-sl { display:flex; flex-direction:column; gap:4px; }
 .dx-sl input[type=range] { width:100%; accent-color:var(--editor-accent); background:transparent!important; border:0!important; min-height:0!important; padding:0; }
 .dx-segc { display:flex; background:var(--editor-input); border-radius:8px; padding:2px; gap:2px; }

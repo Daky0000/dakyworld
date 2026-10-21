@@ -325,7 +325,8 @@ async function runChecks() {
   assert.ok(formField, "Discovered <form> field as unsupported");
   assert.equal(formField.kind, "unsupported");
   assert.ok(formField.previewReadOnly, "Unsupported form marked previewReadOnly");
-  assert.ok(formField.unsupportedReason?.includes("Interactive form"), "Form contains reason");
+  // The reason says what is editable inside it and what stays with the code.
+  assert.ok(/^Form: .*placeholders.*site's code/.test(formField.unsupportedReason ?? ""), "Form contains reason");
   // It moves and deletes like anything else; its name must not say otherwise.
   assert.equal(formField.label, "FORM element", "an unsupported element is not named read-only");
 

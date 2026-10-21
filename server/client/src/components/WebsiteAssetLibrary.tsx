@@ -19,6 +19,20 @@ export type WebsiteAssetSelection = { url: string; alt: string; preview?: string
 type Asset = { id: string; filename: string; alt: string; url: string; preview: string; byteSize?: number; contentType?: string };
 /** Videos share the library with pictures (uploaded from a video's own settings) but never fill a picture's place. */
 const isVideo = (asset: { contentType?: string }) => Boolean(asset.contentType?.startsWith("video/"));
+/** Audio the same way, from an audio player's settings. */
+const isAudio = (asset: { contentType?: string }) => Boolean(asset.contentType?.startsWith("audio/"));
+/** Anything that plays rather than shows: never a picture's replacement. */
+const isPlayable = (asset: { contentType?: string }) => isVideo(asset) || isAudio(asset);
+
+/** An audio file has nothing to look at, so its tile is a note and a player to listen with. */
+function AudioTile({ asset, controls }: { asset: Asset; controls: boolean }) {
+  return (
+    <span className="flex h-full w-full flex-col items-center justify-center gap-1.5 px-2">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-muted"><path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" /></svg>
+      {controls && <audio src={asset.preview} controls preload="none" aria-label={asset.filename} className="h-8 w-full" />}
+    </span>
+  );
+}
 
 export function WebsiteAssetLibrary({
   siteId,
@@ -355,17 +369,19 @@ export function WebsiteAssetLibrary({
               >
                 <button
                   type="button"
-                  disabled={!onSelect || isVideo(asset)}
+                  disabled={!onSelect || isPlayable(asset)}
                   onClick={() => {
-                    if (onSelect && !isVideo(asset)) {
+                    if (onSelect && !isPlayable(asset)) {
                       onSelect({ url: asset.url, alt: asset.alt, preview: asset.preview });
                     }
                   }}
                   className="relative h-28 w-full overflow-hidden bg-sunken text-left"
-                  title={isVideo(asset) ? `${asset.filename} is a video: it plays from a video's own settings` : `Use ${asset.filename}`}
+                  title={isVideo(asset) ? `${asset.filename} is a video: it plays from a video's own settings` : isAudio(asset) ? `${asset.filename} is audio: it plays from an audio player's own settings` : `Use ${asset.filename}`}
                 >
                   {isVideo(asset) ? (
                     <video src={asset.preview} muted playsInline preload="metadata" aria-label={asset.filename} className="h-full w-full object-contain" />
+                  ) : isAudio(asset) ? (
+                    <AudioTile asset={asset} controls={false} />
                   ) : (
                     <img
                       src={asset.preview}
@@ -373,7 +389,7 @@ export function WebsiteAssetLibrary({
                       className="h-full w-full object-contain transition duration-200 group-hover:scale-105"
                     />
                   )}
-                  {onSelect && !isVideo(asset) && (
+                  {onSelect && !isPlayable(asset) && (
                     <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/80 via-ink/40 to-transparent px-2 py-1.5 text-center text-[11px] font-semibold text-white opacity-0 transition group-hover:opacity-100">
                       Use Image
                     </span>
@@ -438,7 +454,9 @@ export function WebsiteAssets() {
         {shown?.map((asset) => <article key={asset.id} className="overflow-hidden rounded-xl border border-line bg-white">
           {isVideo(asset)
             ? <video src={asset.preview} muted playsInline controls preload="metadata" aria-label={asset.filename} className="h-36 w-full bg-sunken object-contain" />
-            : <img src={asset.preview} alt={asset.alt || asset.filename} loading="lazy" className="h-36 w-full bg-sunken object-contain" />}
+            : isAudio(asset)
+              ? <div className="h-36 w-full bg-sunken"><AudioTile asset={asset} controls /></div>
+              : <img src={asset.preview} alt={asset.alt || asset.filename} loading="lazy" className="h-36 w-full bg-sunken object-contain" />}
           <div className="space-y-1 p-3 text-xs">
             <p className="truncate font-semibold text-ink" title={asset.filename}>{asset.filename}</p>
             <p className="truncate text-muted">{asset.siteName}</p>

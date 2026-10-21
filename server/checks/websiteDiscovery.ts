@@ -21,7 +21,8 @@
  */
 import assert from "node:assert/strict";
 import type { Site } from "@prisma/client";
-import { discoverPages, WebsiteError } from "../src/services/website/site.js";
+import { execFileSync } from "node:child_process";
+import { discoverPages, nestedPages, pageDocumentUrl, pathFromFile, readSitemap, titleFromFile, WebsiteError } from "../src/services/website/site.js";
 
 process.env.GITHUB_TOKEN = "discovery-check-stub";
 process.env.GITHUB_ALLOWED_REPOS = "fixture/site";
@@ -120,5 +121,55 @@ await assert.rejects(
   discoverPages(site()),
   (error: unknown) => error instanceof WebsiteError && error.status === 422 && /no HTML pages/.test(error.message),
 );
+
+// 8. A sitemap index is followed to its sitemaps. dakyx.com publishes one —
+//    `page-sitemap.xml` and `post-sitemap.xml` — and it was read as listing two
+//    pages with those names, so every real page arrived hidden.
+const xml = {
+  index: (...locs: string[]) => `<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${locs.map((loc) => `<sitemap><loc>${loc}</loc></sitemap>`).join("")}</sitemapindex>`,
+  urls: (...locs: string[]) => `<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${locs.map((loc) => `<url><loc>${loc}</loc></url>`).join("")}</urlset>`,
+};
+const served: Record<string, string> = {
+  "https://fixture.example/sitemap.xml": xml.index("https://fixture.example/page-sitemap.xml", "https://www.fixture.example/post-sitemap.xml", "https://elsewhere.example/sitemap.xml", "https://fixture.example/nested-index.xml"),
+  "https://fixture.example/page-sitemap.xml": xml.urls("https://fixture.example/", "https://fixture.example/about", "https://fixture.example/team/", "https://fixture.example/old.html"),
+  "https://www.fixture.example/post-sitemap.xml": xml.urls("https://fixture.example/blog/a-faster-website", "https://fixture.example/blog/index.html", "not a url"),
+  "https://fixture.example/nested-index.xml": xml.index("https://fixture.example/deeper.xml"),
+  "https://elsewhere.example/sitemap.xml": xml.urls("https://elsewhere.example/secret"),
+};
+const fetched: string[] = [];
+const fetchText = async (url: string) => { fetched.push(url); if (!(url in served)) throw new Error("404"); return served[url]!; };
+const listed = await readSitemap("https://fixture.example", fetchText);
+assert.deepEqual([...listed].sort(), ["/", "/about", "/blog", "/blog/a-faster-website", "/old", "/team"]);
+assert.equal(fetched.includes("https://elsewhere.example/sitemap.xml"), false, "a sitemap on another host is not followed");
+assert.equal(fetched.includes("https://fixture.example/deeper.xml"), false, "an index inside an index is not followed");
+assert.deepEqual([...(await readSitemap("https://fixture.example", async () => xml.urls("https://fixture.example/pricing/")))], ["/pricing"]);
+assert.equal((await readSitemap("https://fixture.example", async () => { throw new Error("no sitemap"); })).size, 0);
+
+// 9. Pages in folders, when the site's own sitemap names them — against this
+//    repository's real files, where the nine blog posts were invisible to the
+//    editor and `website-drafts/`, `server/` and `scripts/` must stay out.
+const repoFiles = execFileSync("git", ["ls-files"], { cwd: "..", encoding: "utf8" }).split("\n").filter(Boolean);
+const posts = repoFiles.filter((file) => /^blog\/[^/]+\.html$/.test(file));
+assert.ok(posts.length >= 5, "the repository's blog posts are where this check expects them");
+// The sitemap is what decides: dakyx.com's lists its posts and never `server/`
+// or `scripts/`, which `_config.yml` keeps off the site. An archive folder is
+// refused even if a careless sitemap names it, as is tooling.
+const dakyxListed = new Set(["/", "/about", ...posts.map((file) => pathFromFile(file)), "/website-drafts/index-v2"]);
+const nested = nestedPages(repoFiles, "", dakyxListed, new Set(["/", "/about"]));
+assert.deepEqual(nested.map((page) => page.filePath).sort(), [...posts].sort());
+assert.deepEqual(nestedPages(["node_modules/pkg/index.html", ".github/x.html", "_includes/nav.html", "drafts/old.html"], "", new Set(["/node_modules/pkg", "/.github/x", "/_includes/nav", "/drafts/old"]), new Set()), [], "tooling, hidden, partial and archive folders are never pages");
+assert.equal(nested.every((page) => page.listed), true);
+assert.deepEqual(nestedPages(repoFiles, "", new Set(["/"]), new Set(["/"])), [], "nothing in a folder is listed without the sitemap naming it");
+// A folder's index is the folder's address, as a package import names it.
+assert.equal(pathFromFile("team/index.html"), "/team");
+assert.equal(pathFromFile("blog/a-faster-website.html"), "/blog/a-faster-website");
+assert.equal(pathFromFile("index.html"), "/");
+assert.equal(titleFromFile("blog/a-faster-website.html"), "A faster website");
+assert.equal(titleFromFile("team/index.html"), "Team");
+assert.deepEqual(nestedPages(["team/index.html", "team/photo.jpg"], "", new Set(["/team"]), new Set()).map((page) => page.path), ["/team"]);
+// …and its relative pictures are resolved from the folder, not the root.
+assert.equal(pageDocumentUrl({ publicUrl: "https://fixture.example" }, { path: "/team", filePath: "team/index.html" }), "https://fixture.example/team/");
+assert.equal(pageDocumentUrl({ publicUrl: "https://fixture.example" }, { path: "/blog/a-faster-website", filePath: "blog/a-faster-website.html" }), "https://fixture.example/blog/a-faster-website");
+assert.equal(pageDocumentUrl({ publicUrl: "https://fixture.example" }, { path: "/", filePath: "index.html" }), "https://fixture.example/");
 
 console.log("websiteDiscovery: ok");

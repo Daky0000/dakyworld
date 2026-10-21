@@ -7,7 +7,7 @@
  * The inspector has the same three tabs for every element since 11 Oct 2026:
  * General (the element's own content, then its Settings — tag, link, ID,
  * attributes, display conditions), Style (Layout, Spacing, Size, Position,
- * Typography, Background, Border, Effects, Custom CSS) and Interactions. The
+ * Typography, Background, Border, Effects, Mask, Custom CSS) and Interactions. The
  * categories follow those tabs, then the page-level tools: Theme, SEO, Media,
  * Sections.
  */
@@ -974,6 +974,31 @@ export const PROPERTY_INVENTORY: PropertyInventoryItem[] = [
     savedValueFormat: "backdrop-filter: <functions>",
     publishedResult: "Blurs or tints what is behind the element",
     resetBehavior: "The dot beside the label puts back what the page had",
+  },
+  {
+    id: "style_mask_shape",
+    name: "Mask shape",
+    category: "style",
+    fieldType: "preset_tiles",
+    tier: "all",
+    viewportScope: "responsive_override",
+    previewAction: "live_style",
+    savedValueFormat: "clip-path: circle() | ellipse() | polygon() in percentages (shared/websiteMask.ts)",
+    publishedResult: "The element cut to a shape that scales with it",
+    resetBehavior: "None removes it; the dot beside the label puts back what the page had; a shape the panel did not write is shown as written with Clear",
+  },
+  {
+    id: "style_mask_fade",
+    name: "Mask fade",
+    category: "style",
+    fieldType: "preset_tiles",
+    tier: "all",
+    viewportScope: "responsive_override",
+    previewAction: "live_style",
+    savedValueFormat: "mask-image: linear-gradient() | radial-gradient() from black to transparent",
+    publishedResult: "One edge, both edges of an axis, or the rim of the element fades into what is behind it",
+    resetBehavior: "None removes it; the dot beside the label puts back what the page had",
+    disabledReason: "A picture is never a mask: url() masks are fetched with CORS, which the media library's storage does not send",
   },
   {
     id: "style_custom_css",

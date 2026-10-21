@@ -7,7 +7,7 @@ import { applyValues, isLinkWrapper, readPage, type FieldValue } from "./regions
 import { regenerateResponsiveStyles } from "./responsive.js";
 import { WebsiteError } from "./site.js";
 import { DOCUMENT_KEY, boundedHistory, draftDocument, editingSource, fieldValues, sourceHash, type DraftDocument, type DocumentSnapshot } from "./document.js";
-import { BOOLEAN_ATTRIBUTES, MAX_ATTRIBUTE_CHANGES, TAG_LABEL, attributeProblem, mediaKind, tagOptions, type ElementSettingsChange } from "../../shared/websiteElementSettings.js";
+import { BOOLEAN_ATTRIBUTES, MAX_ATTRIBUTE_CHANGES, TAG_LABEL, attributeProblem, mediaKind, tagOptions, typedAttributes, type ElementSettingsChange } from "../../shared/websiteElementSettings.js";
 
 export type StructureAction =
   | { kind: "remove" | "duplicate" | "before" | "after"; fieldId: string; targetId?: string; force?: boolean }
@@ -299,7 +299,9 @@ export function applyElementSettings(
     said.push(id === null ? "ID removed" : `ID set to “${id}”`);
   }
   const others = touched.filter((name) => name !== "id");
-  if (others.length) said.push(`${media && others.every((name) => [...BOOLEAN_ATTRIBUTES, "src", "poster", "preload", "controlslist"].includes(name)) ? `${media} settings` : "attributes"} changed (${others.join(", ")})`);
+  const typed = typedAttributes(node.tag);
+  const own = media ?? (node.tag === "iframe" ? "embed" : null);
+  if (others.length) said.push(`${own && others.every((name) => typed.includes(name)) ? `${own} settings` : "attributes"} changed (${others.join(", ")})`);
   if (!edits.length) throw new StructureError("Nothing about this element would change.");
   return { html: splice(html, edits), line: `Changed ${label}: ${said.join("; ")}` };
 }

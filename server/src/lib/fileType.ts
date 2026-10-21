@@ -84,6 +84,54 @@ export function sniffVideo(buffer: Buffer): "video/mp4" | "video/webm" | "video/
   return null;
 }
 
+/** The MP4 brands an audio-only file carries: iTunes audio, audiobooks, protected audio, Flash audio. */
+const AUDIO_MP4_BRANDS = new Set(["M4A ", "M4B ", "M4P ", "F4A ", "F4B "]);
+
+export type AudioType = "audio/mpeg" | "audio/aac" | "audio/mp4" | "audio/wav" | "audio/flac" | "audio/ogg";
+
+/** The extension a stored audio file is given, by what its bytes are. */
+export const AUDIO_EXTENSION: Record<Exclude<AudioType, "audio/ogg">, string> = {
+  "audio/mpeg": "mp3",
+  "audio/aac": "aac",
+  "audio/mp4": "m4a",
+  "audio/wav": "wav",
+  "audio/flac": "flac",
+};
+
+/**
+ * Which audio a file is, from its bytes, or null when it is not one.
+ *
+ * MP3 either opens with an ID3 tag or with a frame header, and a frame header
+ * is eleven set bits followed by fields that each have a value no real frame
+ * uses — so those are checked too, because "starts with 0xFF" alone is also
+ * true of a JPEG. AAC in its raw ADTS form shares the sync word and is told
+ * apart by its layer bits. An `.m4a` is an MP4 container whose brand says
+ * audio, which is why `sniffVideo` must be asked after this, not before.
+ *
+ * Ogg is recognised so that it can be refused with the reason: Safari on
+ * iPhones and Macs does not play it, so it would upload fine and then sit on
+ * half of the site's visitors' pages as a player that never starts — the same
+ * trap a `.mov` video is refused for.
+ */
+export function sniffAudio(buffer: Buffer): AudioType | null {
+  if (startsWith(buffer, [0x49, 0x44, 0x33])) return "audio/mpeg"; // "ID3"
+  if (startsWith(buffer, [0x66, 0x74, 0x79, 0x70], 4) && AUDIO_MP4_BRANDS.has(buffer.subarray(8, 12).toString("latin1"))) return "audio/mp4";
+  if (startsWith(buffer, [0x52, 0x49, 0x46, 0x46]) && startsWith(buffer, [0x57, 0x41, 0x56, 0x45], 8)) return "audio/wav"; // RIFF … WAVE
+  if (startsWith(buffer, [0x66, 0x4c, 0x61, 0x43])) return "audio/flac"; // "fLaC"
+  if (startsWith(buffer, [0x4f, 0x67, 0x67, 0x53])) return "audio/ogg"; // "OggS"
+  if (buffer.length >= 4 && buffer[0] === 0xff && (buffer[1]! & 0xe0) === 0xe0) {
+    const version = (buffer[1]! >> 3) & 0x03;
+    const layer = (buffer[1]! >> 1) & 0x03;
+    // ADTS: MPEG-4 or MPEG-2 AAC, layer always 0, a profile and a sample rate
+    // index that is not one of the reserved ones.
+    if (layer === 0) return (buffer[1]! & 0xf0) === 0xf0 && ((buffer[2]! >> 2) & 0x0f) < 13 ? "audio/aac" : null;
+    const bitrate = buffer[2]! >> 4;
+    const sampleRate = (buffer[2]! >> 2) & 0x03;
+    if (version !== 1 && bitrate !== 0 && bitrate !== 0x0f && sampleRate !== 3) return "audio/mpeg";
+  }
+  return null;
+}
+
 /** Text with no NUL bytes in the first kilobyte — good enough to separate a CSV from a binary blob wearing its name. */
 export function looksLikeText(buffer: Buffer): boolean {
   const head = buffer.subarray(0, 1024);

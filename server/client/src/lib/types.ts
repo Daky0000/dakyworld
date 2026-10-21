@@ -3315,7 +3315,8 @@ export type SiteSummary = {
    * It decides which editor the Edit button opens: a framework route is source,
    * not rendered HTML, and the visual editor cannot read it.
    */
-  sourceKind?: "next" | "astro" | "sveltekit" | "nuxt" | "vue" | "vite-react" | null;
+  /** Which framework the scan found (`SourceKind` in `services/website/frameworks.ts`), or null for plain HTML. */
+  sourceKind?: "next" | "astro" | "sveltekit" | "nuxt" | "vue" | "vite-react" | "remix" | "gatsby" | "docusaurus" | "eleventy" | "hugo" | "jekyll" | "angular" | "solidstart" | "tanstack" | "qwik" | "svelte" | "vitepress" | "mkdocs" | "hexo" | null;
   client: { id: string; name: string } | null;
   pageCount: number;
   draftCount: number;
@@ -3353,6 +3354,8 @@ export type FieldKind = "text" | "richtext" | "link" | "button" | "image" | "ico
 
 /** One thing on a page somebody can change. Offsets stay on the server. */
 export type SiteFieldRow = {
+  /** A placeholder, a submit input's words, a drop-down option or the words round a control: plain, and never typed into on the canvas. */
+  formText?: "placeholder" | "value" | "option" | "label";
   /**
    * What may be done to this element's place on the page. `remove` is "without
    * asking"; `forceRemove` is "once the person has said yes to `removeWarning`".

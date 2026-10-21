@@ -365,6 +365,52 @@ async function writeToolEdit(
   if (!written.count) throw new WebsiteError(409, `${page.title} was saved by somebody else while this was being made. Nothing was changed — reopen the page and try again.`);
 }
 
+/**
+ * The Add panel's media sections. They arrive empty — a frame with no address,
+ * a player with no file — rather than showing somebody else's video or a town
+ * picked for them. Selecting one opens the panel that asks for it: a link or a
+ * place for a frame, an upload for a player. `checks/websiteEmbeds.ts` holds
+ * each to the one element it promises.
+ */
+export const MEDIA_SECTION_TEMPLATES: Record<string, { label: string; html: string }> = {
+  video: {
+    label: "Video from YouTube or Vimeo",
+    html: `<section style="padding:64px 24px;max-width:960px;margin:0 auto;">
+  <h2 style="font-size:2rem;font-weight:700;margin:0 0 12px;text-align:center;">See how it works</h2>
+  <p style="font-size:1rem;line-height:1.6;color:#526077;max-width:620px;margin:0 auto 28px;text-align:center;">A short video walk-through of what we do and how we work with you.</p>
+  <div style="aspect-ratio:16/9;border-radius:16px;overflow:hidden;background:#08101F;">
+    <iframe title="Video" loading="lazy" allowfullscreen style="width:100%;height:100%;border:0;display:block;"></iframe>
+  </div>
+</section>`,
+  },
+  "video-file": {
+    label: "Video player",
+    html: `<section style="padding:64px 24px;max-width:960px;margin:0 auto;">
+  <h2 style="font-size:2rem;font-weight:700;margin:0 0 12px;text-align:center;">Take a look</h2>
+  <p style="font-size:1rem;line-height:1.6;color:#526077;max-width:620px;margin:0 auto 28px;text-align:center;">A closer look at our work, in under a minute.</p>
+  <video controls playsinline preload="metadata" style="width:100%;border-radius:16px;background:#08101F;display:block;"></video>
+</section>`,
+  },
+  audio: {
+    label: "Audio or podcast player",
+    html: `<section style="padding:56px 24px;max-width:760px;margin:0 auto;">
+  <h2 style="font-size:1.75rem;font-weight:700;margin:0 0 10px;">Listen to the latest episode</h2>
+  <p style="font-size:1rem;line-height:1.6;color:#526077;margin:0 0 20px;">Conversations about running a business and getting found online.</p>
+  <audio controls preload="metadata" style="width:100%;display:block;"></audio>
+</section>`,
+  },
+  map: {
+    label: "Map and directions",
+    html: `<section style="padding:64px 24px;max-width:1120px;margin:0 auto;">
+  <h2 style="font-size:2rem;font-weight:700;margin:0 0 12px;">Find us</h2>
+  <p style="font-size:1rem;line-height:1.6;color:#526077;margin:0 0 24px;">Visit us, or call ahead and we will have everything ready.</p>
+  <div style="aspect-ratio:16/9;border-radius:16px;overflow:hidden;border:1px solid #E2E8F0;background:#F1F5F9;">
+    <iframe title="Map" loading="lazy" style="width:100%;height:100%;border:0;display:block;"></iframe>
+  </div>
+</section>`,
+  },
+};
+
 export function registerWebsiteSeoRoutes(
   router: Router,
   access: {
@@ -790,7 +836,7 @@ export function registerWebsiteSeoRoutes(
 
       const body = z
         .object({
-          templateId: z.enum(["hero", "features", "pricing", "testimonials", "faq", "cta-banner"]),
+          templateId: z.enum(["hero", "features", "pricing", "testimonials", "faq", "cta-banner", "video", "video-file", "audio", "map"]),
         })
         .parse(req.body ?? {});
       // A new section is an edit of the page like any other.
@@ -899,7 +945,7 @@ export function registerWebsiteSeoRoutes(
         },
       };
 
-      const chosen = SECTION_TEMPLATES[body.templateId];
+      const chosen = SECTION_TEMPLATES[body.templateId] ?? MEDIA_SECTION_TEMPLATES[body.templateId];
       if (!chosen) throw new WebsiteError(400, "Unknown section template.");
 
       const source = await pageSource(site, page);

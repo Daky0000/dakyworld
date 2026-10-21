@@ -45,10 +45,10 @@ try {
   await page.getByRole("tab", { name: "Style", exact: true }).click();
   const panel = page.locator(".dx-style");
   await panel.waitFor();
-  // The same nine sections as every other element, in the page builder's order.
+  // The same ten sections as every other element, in the page builder's order.
   assert.deepEqual(
     await panel.locator("[data-section]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-section"))),
-    ["layout", "spacing", "size", "position", "typography", "background", "border", "effects"],
+    ["layout", "spacing", "size", "position", "typography", "background", "border", "effects", "mask"],
     "every section is there, Custom CSS only with Designer controls",
   );
   const open = async (name) => {
