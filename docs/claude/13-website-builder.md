@@ -1492,3 +1492,17 @@ for, so nobody undoes it.
   published HTML where the draft was made against it and lists the rest for a
   person. `checks/websiteToolDrafts.ts` runs each tool on a hosted page and
   then publishes it.
+- **The agent's change to the open page has one writer (C1).** The chat used to
+  put the edits into the editor — which autosaves 1.2 s later at the revision
+  it holds — *and* send them to `/agent/apply` at that same revision, so one
+  of the two was always refused: a quick apply left the autosave to meet a
+  conflict dialog about the person's own change, a slow one let the autosave
+  land first and the chat then said "Nothing was changed" about a change that
+  had been saved. The editor now passes `persistEdits`
+  (`persistAgentEdits` in `WebsiteEditor.tsx`), which waits for a save in
+  flight, merges the edits and saves them through the editor's own save — the
+  path that also routes shared-element fields — and only *other* pages go to
+  `/agent/apply`. A plan request first saves whatever typing is waiting, so
+  plans are made against the page as saved. The autosave timer asks again
+  whether anything is unsaved when it fires. `checks/browser/agentChat.mjs`
+  (fast and slow apply, and a two-page plan); it fails on the old code.

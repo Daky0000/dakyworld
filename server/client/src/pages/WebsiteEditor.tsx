@@ -1159,11 +1159,56 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     },
   });
 
+  // The save in flight, kept so a write that must come after it — the agent's
+  // change — can wait for it instead of racing it with the same revision.
+  const saving = useRef<Promise<unknown> | null>(null);
   const saveNow = useCallback(
     (values: Record<string, FieldEdit>) => {
-      if (!save.isPending) save.mutate(values);
+      if (save.isPending) return;
+      // Failures are handled by the mutation's own onError (the conflict
+      // dialog, the red bar); the promise is only kept to be waited on.
+      const run = save.mutateAsync(values).catch(() => undefined);
+      saving.current = run;
+      void run.finally(() => { if (saving.current === run) saving.current = null; });
     },
     [save],
+  );
+
+  /**
+   * The agent's change to the page that is open, saved the way a person's is.
+   *
+   * The chat used to put these edits into the editor *and* send them to the
+   * agent's apply route at the same revision, so one of the two writes was
+   * always refused: the autosave a second later met the apply's new revision
+   * (a conflict dialog about the person's own change), or the apply met the
+   * autosave's ("Nothing was changed", when it had been). One writer now —
+   * this editor's save, which also sends shared-element fields to their
+   * element. With no values it only saves what is waiting, so the agent plans
+   * against the page as saved.
+   */
+  const persistAgentEdits = useCallback(
+    async (values: Record<string, FieldEdit>) => {
+      if (!canEdit || reviewOpen || showVersions || publishPending.current || structurePending.current) {
+        throw new Error("The editor is busy publishing, reviewing or changing the layout. Try again in a moment.");
+      }
+      while (saving.current) await saving.current;
+      if (conflict) throw new Error("Choose which version of this page to keep first, then ask again.");
+      const ids = Object.keys(values);
+      if (!ids.length && !dirty.current) return;
+      for (const id of ids) change(id, { ...latestEdits.current[id], ...values[id] });
+      const merged = latestEdits.current;
+      if (ids.length) commitHistory(merged);
+      try {
+        await save.mutateAsync(merged);
+      } catch (error) {
+        throw new Error(
+          error instanceof ApiError && error.status === 409
+            ? "This page was saved somewhere else meanwhile. Choose which version to keep, then ask again."
+            : error instanceof Error ? error.message : "The change could not be saved.",
+        );
+      }
+    },
+    [canEdit, reviewOpen, showVersions, conflict, change, commitHistory, save],
   );
 
   /**
@@ -1211,7 +1256,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     // When the frame cannot be pushed to, the save is the only thing that will
     // ever show somebody their own change, so it stops being a background
     // convenience and becomes the thing they are waiting for.
-    const timer = setTimeout(() => saveNow(edits), liveBlind || needsReload.current ? 500 : 1200);
+    // Asked again when it fires: something else (the agent's change, a layout
+    // action) may have saved these edits meanwhile, and a second save of the
+    // same words is a wasted write at best.
+    const timer = setTimeout(() => { if (dirty.current) saveNow(edits); }, liveBlind || needsReload.current ? 500 : 1200);
     return () => clearTimeout(timer);
   }, [edits, saveNow, liveBlind, conflict, canEdit, reviewOpen, showVersions]);
 
@@ -3925,6 +3973,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           onRedo={() => void restore(1)}
           onStructureAction={(kind, fieldId, targetId) => runStructure(kind, fieldId, targetId)}
           draftRevision={() => revision.current}
+          persistEdits={persistAgentEdits}
           onDiscardDraft={() => discard.mutate()}
           onReloadPreview={() => {
             dirty.current = false;

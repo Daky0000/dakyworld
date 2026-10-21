@@ -185,6 +185,7 @@ export function WebsiteAgentChat({
   onRedo,
   onStructureAction,
   draftRevision,
+  persistEdits,
   onDiscardDraft,
   onReloadPreview,
   open,
@@ -218,6 +219,13 @@ export function WebsiteAgentChat({
    * refuses a whole plan whose page has moved on.
    */
   draftRevision?: () => number;
+  /**
+   * Saves edits to the open page through the editor's own save, and settles
+   * once they are saved. When the host gives it, the open page never goes to
+   * the agent's apply route: two writers at one revision meant one of them was
+   * always refused. With no edits it saves whatever is waiting.
+   */
+  persistEdits?: (edits: Record<string, FieldEdit>) => Promise<void>;
   onDiscardDraft?: () => void;
   onReloadPreview?: () => void;
   /**
@@ -540,42 +548,47 @@ export function WebsiteAgentChat({
       let result: SiteAgentApplyResult | null = null;
       if (filteredPages.length > 0 || hasDocumentUpdates) {
         const currentPagePlan = filteredPages.find((p) => p.pageId === pageId);
-        if (currentPagePlan) {
-          onApplyLocalEdits(currentPagePlan.edits);
-        }
+        // The open page is saved by the editor itself, unless the server has to
+        // write it whole (an inserted section). Sending it to the apply route as
+        // well put two writers on one revision, and one was always refused.
+        const savedHere = Boolean(persistEdits && currentPagePlan && !documentHtmlUpdates?.[pageId]);
+        if (savedHere) await persistEdits!(currentPagePlan!.edits);
+        const serverPages = savedHere ? filteredPages.filter((p) => p.pageId !== pageId) : filteredPages;
 
-        // Field edits merge into whatever the page holds now, so this page's
-        // own autosave since the plan, or a layout change just made above, is
-        // not a conflict: those go against the editor's revision. A whole-page
-        // rewrite replaces the page, so it is always sent at the plan's.
-        const pageRevisions = Object.fromEntries(
-          plan.pages
-            .filter((p) => filteredPages.some((kept) => kept.pageId === p.pageId) || Boolean(documentHtmlUpdates?.[p.pageId]))
-            .map((p) => [
-              p.pageId,
-              documentHtmlUpdates?.[p.pageId]
-                ? p.draftRevision
-                : p.pageId === pageId && draftRevision
-                  ? draftRevision()
-                  : revisedHere.get(p.pageId) ?? p.draftRevision,
-            ]),
-        );
-        result = await api.post<SiteAgentApplyResult>(
-          `/website/sites/${siteId}/agent/apply`,
-          {
-            pageRevisions,
-            plan: {
-              explanation: plan.explanation,
-              pages: filteredPages,
-              ...(hasDocumentUpdates ? { documentHtmlUpdates } : {}),
+        if (serverPages.length > 0 || hasDocumentUpdates) {
+          // A whole-page rewrite replaces the page, so it is always sent at the
+          // plan's revision; other pages go at theirs, or at the one a layout
+          // change just above moved them to.
+          const pageRevisions = Object.fromEntries(
+            plan.pages
+              .filter((p) => serverPages.some((kept) => kept.pageId === p.pageId) || Boolean(documentHtmlUpdates?.[p.pageId]))
+              .map((p) => [
+                p.pageId,
+                documentHtmlUpdates?.[p.pageId]
+                  ? p.draftRevision
+                  : p.pageId === pageId && draftRevision
+                    ? draftRevision()
+                    : revisedHere.get(p.pageId) ?? p.draftRevision,
+              ]),
+          );
+          result = await api.post<SiteAgentApplyResult>(
+            `/website/sites/${siteId}/agent/apply`,
+            {
+              pageRevisions,
+              plan: {
+                explanation: plan.explanation,
+                pages: serverPages,
+                ...(hasDocumentUpdates ? { documentHtmlUpdates } : {}),
+              },
             },
-          },
-        );
+          );
 
-        // The server rewrote this page's draft, so what the editor holds is a
-        // revision behind; reload it rather than save over it.
-        if (documentHtmlUpdates?.[pageId]) {
-          onReloadPreview?.();
+          // The server wrote the open page (a host with no editor of its own,
+          // or a whole-page rewrite), so reload it rather than save over it.
+          if (documentHtmlUpdates?.[pageId] || serverPages.some((p) => p.pageId === pageId)) {
+            if (currentPagePlan && !documentHtmlUpdates?.[pageId]) onApplyLocalEdits(currentPagePlan.edits);
+            onReloadPreview?.();
+          }
         }
 
         // If any edit references an uploaded site asset (/assets/dw/...), reload preview so embedded assets render immediately
@@ -662,6 +675,9 @@ export function WebsiteAgentChat({
     setIsPending(true);
 
     try {
+      // Plans are made against the page as saved, so typing still waiting for
+      // the autosave is saved first.
+      if (persistEdits) await persistEdits({});
       const plan = await api.post<SiteAgentPlan>(`/website/sites/${siteId}/agent/plan`, {
         action: "instruction",
         prompt: text,
