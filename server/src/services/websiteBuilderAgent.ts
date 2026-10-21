@@ -1,4 +1,7 @@
-import { startPublishJob, advancePublishJob, publishJobCommitted } from "./websitePublishJobs.js";
+import { startPublishJob, advancePublishJob, failPublishJob, publishJobCommitted } from "./websitePublishJobs.js";
+import { publishPreflight, recordGuardOverride } from "./websitePagePublication.js";
+import { syncDemoFromSitePage } from "./websitePageContext.js";
+import { offerPagePublished } from "./context/business.js";
 import { beforeWebsiteExternalAction } from "../lib/websiteWorkContext.js";
 import { capacity } from "../lib/capacity.js";
 import { enqueueWebsiteWork } from "./websiteWorkQueue.js";
@@ -2699,8 +2702,12 @@ const uploadAttachmentSchema = z
 
 const batchPublishAgentSchema = z.object({
   revisions: z.record(z.number().int().nonnegative()).optional(),
-  pageIds: z.array(z.string().max(120)).max(100).optional(),
+  // Named, always: an empty body used to mean every page with a draft on the
+  // site, including drafts somebody else was still writing.
+  pageIds: z.array(z.string().max(120)).min(1, "Choose the pages to publish.").max(100),
   message: z.string().max(300).optional(),
+  /** A site manager stepping over the publish guard, as on a page's own Publish. */
+  forceOverride: z.boolean().optional(),
 });
 
 const escalateDeveloperSchema = z.object({
@@ -2922,10 +2929,11 @@ export function registerWebsiteBuilderAgent(
   router.post("/sites/:siteId/agent/publish-batch", async (req: Request, res: Response, next) => {
     try {
       const site = await access.loadSite(req, req.params.siteId);
-      const body = batchPublishAgentSchema.parse(req.body ?? {});
       // Paused for non-payment means nothing changes on the site. The queue
       // asked this; publishing in the request, with admission off, did not.
+      // Asked before the body is read, so a paused site hears that first.
       await assertEditingNotPaused(req, site.id);
+      const body = batchPublishAgentSchema.parse(req.body ?? {});
       if (capacity.admission) {
         const pages = await prisma.sitePage.findMany({ where: { siteId: site.id, status: { not: "HIDDEN" },
           ...(body.pageIds?.length ? { id: { in: body.pageIds } } : {}) }, take: 101, select: { id: true, draftRevision: true } });
@@ -3000,6 +3008,9 @@ export async function executeBatchPublish(req: Request, site: Site) {
 
       const result = await withWebsitePublishLocks(candidates.map(page => page.id), async tx => {
         const pagesToCommit: Array<{ page: SitePage; html: string; expectedSource: string; values: Record<string, FieldValue> }> = [];
+        type Guarded = { page: SitePage; guard: Awaited<ReturnType<typeof publishPreflight>>["guard"] };
+        const blocked: Guarded[] = [];
+        const overridden: Guarded[] = [];
         for (const selected of candidates) {
           const page = await tx.sitePage.findUniqueOrThrow({ where: { id: selected.id } });
           if (body.revisions && body.revisions[page.id] !== page.draftRevision) throw new WebsiteError(409, `${page.title} changed while queued. Review its draft again.`);
@@ -3009,19 +3020,39 @@ export async function executeBatchPublish(req: Request, site: Site) {
           if (source.sourceFile) throw new WebsiteError(409, `${page.title} uses framework source. Publish it through the page review, which preserves its components.`);
           const plan = buildPublishPlan({ source: source.html, values });
           if (!plan.publishable || !plan.html) throw Object.assign(new WebsiteError(409, `${page.title} cannot be published. Review its draft again.`), { problems: plan.problems, conflicts: plan.conflicts, missing: plan.missing });
+          const { guard, overriding } = await publishPreflight({ actor: req, site, page, candidateHtml: plan.html, sourceHtml: source.html, values, forceOverride: body.forceOverride === true });
+          if (!guard.canPublish && !overriding) blocked.push({ page, guard });
+          if (overriding) overridden.push({ page, guard });
           pagesToCommit.push({ page, html: plan.html, expectedSource: source.html, values });
         }
+        // Every page is asked before any is refused, so the person hears about
+        // all of them at once rather than one per attempt.
+        if (blocked.length) {
+          throw Object.assign(
+            new WebsiteError(400, `Nothing was published. ${blocked.map(({ page, guard }) => `${page.title}: ${guard.summary}`).join(" ")}`.slice(0, 1000)),
+            { blockedPages: blocked.map(({ page, guard }) => ({ id: page.id, title: page.title, summary: guard.summary, blockers: guard.blockers, warnings: guard.warnings })) },
+          );
+        }
+        for (const { page, guard } of overridden) await recordGuardOverride(req, site, page, guard);
 
         const author = req.dbUser?.name ?? req.dbUser?.email ?? "Website Agent";
         const watched = pagesToCommit[0]!;
         const job = await startPublishJob({ site, pageId: watched.page.id, kind: "PAGE", startedById: req.dbUser?.id,
           detail: { pages: pagesToCommit.map(({ page }) => page.id) } });
         await advancePublishJob(job.id, "COMMITTING");
-        const commit = await publishPages({
-          site,
-          message: body.message?.trim() || `Website Agent: published ${pagesToCommit.length} page${pagesToCommit.length === 1 ? "" : "s"} (${author})`,
-          pages: pagesToCommit,
-        });
+        let commit: { sha: string; url: string };
+        try {
+          commit = await publishPages({
+            site,
+            message: body.message?.trim() || `Website Agent: published ${pagesToCommit.length} page${pagesToCommit.length === 1 ? "" : "s"} (${author})`,
+            pages: pagesToCommit,
+          });
+        } catch (error) {
+          // Left COMMITTING, the job read as still going for ever, and the
+          // reason GitHub gave was lost.
+          await failPublishJob(job.id, "COMMIT_FAILED", error instanceof Error ? error.message : "The commit did not happen.");
+          throw error;
+        }
         await advancePublishJob(job.id, "COMMITTING", { commitSha: commit.sha, commitUrl: commit.url });
         await beforeWebsiteExternalAction();
         const publishedAt = new Date();
@@ -3051,6 +3082,12 @@ export async function executeBatchPublish(req: Request, site: Site) {
           detail: { sha: commit.sha, url: commit.url, pages: pagesToCommit.map(({ page }) => ({ id: page.id, title: page.title, path: page.path })) },
         } });
         });
+        // What a page's own Publish does afterwards, done here too: the
+        // workforce's brief of the offer, and the demo copy of a hosted page.
+        for (const { page, html } of pagesToCommit) {
+          offerPagePublished(site, page.filePath);
+          await syncDemoFromSitePage(site, page.id, html, true);
+        }
         return { publishedPages: pagesToCommit.length, commitSha: commit.sha, commitUrl: commit.url, pages: pagesToCommit.map(({ page }) => ({ id: page.id, title: page.title, path: page.path })) };
       });
   return result;

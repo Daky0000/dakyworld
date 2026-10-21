@@ -1548,3 +1548,15 @@ for, so nobody undoes it.
   `website-escalation:<id>`). Staff (`website.manage`, internal) see every
   request and alone may change its status; anybody else sees only their own.
   `checks/websiteEscalations.ts` (DB).
+- **Publish All asks what a page's Publish asks (H3, L3, L11).**
+  `publishPreflight` (`websitePagePublication.ts`) is the one pre-flight: site
+  not scheduled for deletion, the publish guard, and the override rule
+  (`manage` only, written down by `recordGuardOverride`). `executeBatchPublish`
+  runs it on every page before refusing, so a refusal names each blocked page
+  (`blockedPages`) and nothing goes live. A failed commit marks the job
+  `COMMIT_FAILED` with GitHub's reason instead of leaving it committing for
+  ever, and a published batch runs `offerPagePublished` and
+  `syncDemoFromSitePage` per page as the single path does. `pageIds` is
+  required — an empty body used to publish every draft on the site — and the
+  pause check runs before the body is read, so a paused site hears that first.
+  `checks/websiteAgentBatchPublish.ts` (DB).

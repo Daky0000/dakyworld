@@ -11,9 +11,10 @@ import { hasSourceManifest } from "./websitePageManifest.js";
 import { assertEditingNotPaused, assertTierFeatureAccess } from "./websiteTierPlans.js";
 import { advancePublishJob, failPublishJob, publishJobCommitted, publishJobView, startPublishJob } from "./websitePublishJobs.js";
 import { ensureHostedAddress } from "./websiteHosting.js";
-import { runPublishGuardChecks } from "./websitePublishGuard.js";
+import { runPublishGuardChecks, type PublishGuardResult } from "./websitePublishGuard.js";
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
+import { Prisma, type Site, type SitePage } from "@prisma/client";
+import type { FieldValue } from "./website/index.js";
 import { prisma } from "../lib/prisma.js";
 import { assertWebsiteSiteAccess, getWebsiteCapabilities } from "./websiteAccess.js";
 import { editingSource, sourceHash, versionValues, categoriseChanges, describeChanges, buildPublishPlan, discoverFields } from "./website/index.js";
@@ -21,6 +22,42 @@ import { pageSource, pageUrl, publishPage, publishSourcePage, siteRepo, underSit
 import { offerPagePublished } from "./context/business.js";
 import { assertSiteNotPendingDeletion } from "./websiteDeletion.js";
 import { draftValues, loadPage, syncDemoFromSitePage } from "./websitePageContext.js";
+/**
+ * What every publish asks of a page before anything is committed, whichever
+ * button started it — the page's own Publish, or Publish All after the agent.
+ *
+ * The guard is the agency's rule for what a client may publish, so only
+ * somebody who may change the site's settings may step over it, and it is
+ * written down when they do (`recordGuardOverride`). Until 21 Oct 2026 the
+ * agent's Publish All asked none of this: a page the guard refused, or a site
+ * already scheduled for deletion, went live from the chat.
+ */
+export async function publishPreflight(input: {
+    actor: WebsiteActor;
+    site: Site;
+    page: Pick<SitePage, "id" | "title">;
+    candidateHtml: string;
+    sourceHtml: string;
+    values: Record<string, FieldValue>;
+    forceOverride?: boolean;
+}): Promise<{ guard: PublishGuardResult; overriding: boolean }> {
+    assertSiteNotPendingDeletion(input.site);
+    const policy = (input.site.settings as Record<string, any> | null)?.editingPolicy;
+    const guard = runPublishGuardChecks({
+        candidateHtml: input.candidateHtml,
+        sourceHtml: input.sourceHtml,
+        draftValues: input.values,
+        brandGuard: policy?.brandGuard,
+    });
+    const overriding = !guard.canPublish && input.forceOverride === true
+        && (await getWebsiteCapabilities(input.actor, input.site.id)).capabilities.manage;
+    return { guard, overriding };
+}
+
+export async function recordGuardOverride(actor: WebsiteActor, site: Pick<Site, "id">, page: Pick<SitePage, "id" | "title">, guard: PublishGuardResult) {
+    await prisma.siteAuditEvent.create({ data: { siteId: site.id, kind: "PUBLISH_GUARD_OVERRIDDEN", summary: `${actor.dbUser?.name ?? "Somebody"} published ${page.title} over the publish guard: ${guard.summary}`.slice(0, 500), actorName: actor.dbUser?.name ?? "Website editor", actorId: actor.dbUser?.id, detail: { pageId: page.id, blockers: guard.blockers } as Prisma.InputJsonValue } });
+}
+
 export function executePagePublish(req: Request) {
     return publishPageCommand(req, { pageId: req.params.pageId, body: req.body });
 }
@@ -119,27 +156,12 @@ export async function publishPageCommand(actor: WebsiteActor, input: {
             await failPublishJob(job.id, "CONFLICT", "The page already said all of this.");
             throw new WebsiteError(400, "The page already says all of this. Nothing to publish.");
         }
-        // Safe Publish Guard Pre-flight Check
-        const policy = (site.settings as Record<string, any> | null)?.editingPolicy;
-        const guard = runPublishGuardChecks({
-            candidateHtml: plan.html,
-            sourceHtml: source.html,
-            draftValues: values,
-            brandGuard: policy?.brandGuard,
-        });
-        // The guard is the agency's rule for what a client may publish, so only
-        // somebody who may change the site's settings may step over it — and it
-        // is written down when they do. Before, `forceOverride: true` from any
-        // publisher skipped it and left no trace.
-        const overriding = !guard.canPublish && body?.forceOverride === true
-            && (await getWebsiteCapabilities(actor, site.id)).capabilities.manage;
+        const { guard, overriding } = await publishPreflight({ actor, site, page, candidateHtml: plan.html, sourceHtml: source.html, values, forceOverride: body?.forceOverride === true });
         if (!guard.canPublish && !overriding) {
             await failPublishJob(job.id, "CONFLICT", guard.summary);
             throw Object.assign(new WebsiteError(400, guard.summary), { blockers: guard.blockers, warnings: guard.warnings });
         }
-        if (overriding) {
-            await prisma.siteAuditEvent.create({ data: { siteId: site.id, kind: "PUBLISH_GUARD_OVERRIDDEN", summary: `${actor.dbUser?.name ?? "Somebody"} published ${page.title} over the publish guard: ${guard.summary}`.slice(0, 500), actorName: actor.dbUser?.name ?? "Website editor", actorId: actor.dbUser?.id, detail: { pageId: page.id, blockers: guard.blockers } as Prisma.InputJsonValue } });
-        }
+        if (overriding) await recordGuardOverride(actor, site, page, guard);
         // Read once for the labels the summary is written in. The plan has already
         // parsed the page; this is the same parse and is kept separate rather than
         // threaded out of the plan, because a publish summary that silently depended
