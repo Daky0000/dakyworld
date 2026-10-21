@@ -13,7 +13,7 @@ import { prisma } from "../lib/prisma.js";
 import { setSiteSetting } from "./websiteSiteSettings.js";
 import type { Prisma, SitePage } from "@prisma/client";
 import { pageSource, WebsiteError } from "./website/site.js";
-import { applyValues, discoverFields, editingSource, fieldValues, type FieldValue } from "./website/index.js";
+import { applyValues, discoverFields, editingSource, fieldValues, replaceTextOnly, type FieldValue } from "./website/index.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
 import { assertEditAllowance, writePageEdit } from "./websiteTierPlans.js";
 
@@ -112,9 +112,9 @@ export function registerWebsiteBatchEditingRoutes(router: Router): void {
 
         for (const field of discovery.fields) {
           const val = draft[field.id]?.value ?? field.value;
-          if (typeof val === "string" && regex.test(val)) {
+          const proposed = typeof val === "string" ? replaceTextOnly(val, regex, body.replacement) : val;
+          if (typeof val === "string" && proposed !== val) {
             const matches = val.match(regex) || [];
-            const proposed = val.replace(regex, body.replacement);
             occurrences.push({
               pageId: page.id,
               pageTitle: page.title,
@@ -191,8 +191,8 @@ export function registerWebsiteBatchEditingRoutes(router: Router): void {
           }
 
           const existingValue = newDraft[field.id]?.value ?? field.value;
-          if (typeof existingValue === "string" && regex.test(existingValue)) {
-            const nextValue = existingValue.replace(regex, body.replacement);
+          const nextValue = typeof existingValue === "string" ? replaceTextOnly(existingValue, regex, body.replacement) : existingValue;
+          if (typeof existingValue === "string" && nextValue !== existingValue) {
             newDraft[field.id] = {
               ...(newDraft[field.id] || {}),
               value: nextValue,
@@ -301,10 +301,11 @@ export function registerWebsiteBatchEditingRoutes(router: Router): void {
             const regex = new RegExp(escapeRegExp(oldVal), "gi");
             for (const field of discovery.fields) {
               const cur = updatedDraft[field.id]?.value ?? field.value;
-              if (typeof cur === "string" && regex.test(cur)) {
+              const replaced = typeof cur === "string" ? replaceTextOnly(cur, regex, token.value) : cur;
+              if (typeof cur === "string" && replaced !== cur) {
                 updatedDraft[field.id] = {
                   ...(updatedDraft[field.id] || {}),
-                  value: cur.replace(regex, token.value),
+                  value: replaced,
                   original: (updatedDraft[field.id]?.original ?? field.value) as any,
                 };
                 pageMutated = true;

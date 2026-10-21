@@ -198,3 +198,26 @@ export function sanitizeRich(html: string): string {
 export function sanitizePlain(text: string): string {
   return escapeText(text.replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ")).trim();
 }
+
+/**
+ * Replaces words in a field's value and leaves its markup alone.
+ *
+ * A rich field's value carries its own links (`<a href="…">`), and a plain
+ * replace rewrote them too: changing "shop" to "store" in a paragraph moved
+ * its link from /shop to /store. Only the text between tags is touched here.
+ *
+ * The replacement is used as written — a `$` in it is a dollar sign, not a
+ * reference to the match — and a global pattern's `lastIndex` is not carried
+ * from one call to the next, which made `pattern.test` skip every other field.
+ */
+export function replaceTextOnly(value: string, pattern: RegExp | string, replacement: string): string {
+  return value
+    .split(/(<[^>]*>)/)
+    .map((part, index) => {
+      if (index % 2 === 1) return part;
+      if (typeof pattern === "string") return pattern ? part.split(pattern).join(replacement) : part;
+      pattern.lastIndex = 0;
+      return part.replace(pattern, () => replacement);
+    })
+    .join("");
+}

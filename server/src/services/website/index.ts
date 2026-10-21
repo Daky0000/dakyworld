@@ -67,6 +67,7 @@ export { DOCUMENT_KEY, draftDocument, editingSource, fieldValues, sourceHash, do
 export { changeStructure, structureControls, StructureError } from "./structure.js";
 // A whole-document rewrite skips the sanitiser, so whoever accepts one asks this instead.
 export { introducedActiveContent } from "./activeContent.js";
+export { replaceTextOnly } from "./sanitize.js";
 export type { StructureAction, StructureControl } from "./structure.js";
 
 // Literal React source editing stays behind the same core boundary as HTML.

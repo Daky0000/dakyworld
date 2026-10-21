@@ -1596,3 +1596,16 @@ for, so nobody undoes it.
   `scripts/enableAiForBusiness.ts` (dry run; `--apply --backup <file>`)
   switches on Business sites that carry an `aiEnabled: false` nobody chose.
   `checks/websiteAiSwitch.ts` (DB).
+- **Phone links keep their `+`; a text replace never moves a link (M1, M2).**
+  `planCrossPageContentChange` writes `tel:+…` when the new number starts
+  with `+` (it used to drop it and dial a local number that does not exist),
+  and rewrites `wa.me/<digits>` and `api.whatsapp.com/send?phone=<digits>`
+  links whose digits match — only for an international number; a local one
+  leaves them and the reply names them. `replaceTextOnly`
+  (`website/sanitize.ts`) changes the words between tags and nothing inside
+  them; the planner and Find & replace / Global content
+  (`websiteBatchEditing.ts`) use it, so "shop" → "store" no longer moves a
+  rich paragraph's `/shop/menu` link, and the generic `href` rewrite is gone.
+  It also uses the replacement as written (a `$` used to be read as a match
+  reference) and resets a global pattern's `lastIndex`, which made `test`
+  skip every other field. `checks/websiteBuilderAgent.ts`.

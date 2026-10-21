@@ -17,7 +17,7 @@ import {
   readableAgentRequest,
   siteAgentApplyInputSchema,
 } from "../src/services/websiteBuilderAgent.js";
-import { discoverFields, type FieldValue } from "../src/services/website/index.js";
+import { discoverFields, replaceTextOnly, type FieldValue } from "../src/services/website/index.js";
 
 // ---------------------------------------------------------------------------
 // 1. Utilities & Normalization Assertions
@@ -173,7 +173,40 @@ assert.ok(headerPhoneChange.after.includes("+1 (555) 019-9234"));
 const headerCallChange = homePhonePlan.changes.find(c => c.fieldId === "header.call");
 assert.ok(headerCallChange, "Header call action link is updated");
 assert.equal(headerCallChange.property, "href");
-assert.ok(headerCallChange.after.startsWith("tel:15550199234"));
+
+// A replacement that starts with + keeps it in the tel: link (audit M1): the
+// link used to lose it and dial a local number that does not exist.
+assert.equal(headerCallChange.after, "tel:+15550199234");
+
+// WhatsApp links follow the number when the new one is international, and are
+// named rather than broken when it is not (M1).
+const whatsAppPage = {
+  ...mockPages[0]!,
+  id: "page-whatsapp",
+  sourceHtml: `<!doctype html><html><body><main>
+  <a data-dw-field="wa.chat" href="https://wa.me/12345678900?text=Hi">Chat on WhatsApp</a>
+  <a data-dw-field="wa.api" href="https://api.whatsapp.com/send?phone=12345678900">Message us</a>
+  <p data-dw-field="wa.rich">Visit <a href="/shop/menu">our shop</a> or call +1 (234) 567-8900.</p>
+</main></body></html>`,
+} as SitePage;
+const waPlan = await planCrossPageContentChange(mockSite, [whatsAppPage], { findText: "+1 (234) 567-8900", replaceText: "+44 20 7946 0000", kind: "phone" });
+const waEdits = waPlan.pages[0]!.edits;
+assert.equal(waEdits["wa.chat"]?.href, "https://wa.me/442079460000?text=Hi", "the wa.me link keeps its message");
+assert.equal(waEdits["wa.api"]?.href, "https://api.whatsapp.com/send?phone=442079460000");
+const localPlan = await planCrossPageContentChange(mockSite, [whatsAppPage], { findText: "+1 (234) 567-8900", replaceText: "020 7946 0000", kind: "phone" });
+assert.equal(localPlan.pages[0]?.edits["wa.chat"]?.href, undefined, "a local number cannot go into a WhatsApp link");
+assert.match(localPlan.explanation, /WhatsApp links need the number with its country code/);
+
+// A text replace changes words, never a link (M2): "shop" → "store" used to
+// move /shop/menu to /store/menu.
+const wordsPlan = await planCrossPageContentChange(mockSite, [whatsAppPage], { findText: "shop", replaceText: "store", kind: "text" });
+assert.equal(wordsPlan.pages[0]?.edits["wa.rich"]?.value, `Visit <a href="/shop/menu">our store</a> or call +1 (234) 567-8900.`);
+const ctaPlan = await planCrossPageContentChange(mockSite, mockPages, { findText: "contact", replaceText: "reach", kind: "text" });
+assert.equal(ctaPlan.pages.find((p) => p.pageId === "page-home")?.edits["hero.cta"], undefined, "the /contact link is not rewritten");
+const everyShop = /shop/gi;
+assert.equal(replaceTextOnly("Shop now", everyShop, "Store"), "Store now");
+assert.equal(replaceTextOnly("Our shop", everyShop, "store"), "Our store", "a global pattern used twice does not skip the second value");
+assert.equal(replaceTextOnly("Price: TBC", /TBC/g, "$& $5"), "Price: $& $5", "a dollar sign in the replacement is a dollar sign");
 
 // ---------------------------------------------------------------------------
 // 6. Test: Cross-Page Email Replacement

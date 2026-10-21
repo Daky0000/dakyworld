@@ -33,6 +33,7 @@ import {
   versionValues,
   safeStyle,
   sanitizeValue,
+  replaceTextOnly,
   structureControls,
   validateFieldChange,
   restoreDocument,
@@ -899,8 +900,15 @@ export async function planCrossPageContentChange(
   const isEmail = options.kind === "email" || (options.kind === "auto" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedFind));
 
   const findDigits = isPhone ? trimmedFind.replace(/\D/g, "") : "";
-  const replaceTelHref = isPhone ? `tel:${trimmedReplace.replace(/\D/g, "")}` : "";
+  const replaceDigits = isPhone ? trimmedReplace.replace(/\D/g, "") : "";
+  // The leading + is what makes a number international; dropping it sent
+  // "+233 20 …" callers to a local number that does not exist.
+  const replaceInternational = isPhone && trimmedReplace.startsWith("+");
+  const replaceTelHref = isPhone ? `tel:${replaceInternational ? "+" : ""}${replaceDigits}` : "";
   const replaceMailHref = isEmail ? `mailto:${trimmedReplace}` : "";
+  // WhatsApp only takes a number with its country code. A local one cannot go
+  // into a wa.me link, so those links are left alone and named in the reply.
+  const whatsAppLeftAlone: string[] = [];
 
   const pagePlans: SiteAgentPagePlan[] = [];
   let totalChanges = 0;
@@ -917,23 +925,22 @@ export async function planCrossPageContentChange(
         let fieldModified = false;
 
         if (field.kind !== "image" && field.value) {
+          // Words only: a rich value's own links are its markup, and a plain
+          // replace used to rewrite them too (M2).
           let nextValue = field.value;
-          if (field.value.includes(trimmedFind)) {
-            nextValue = field.value.split(trimmedFind).join(trimmedReplace);
+          if (replaceTextOnly(field.value, trimmedFind, trimmedReplace) !== field.value) {
+            nextValue = replaceTextOnly(field.value, trimmedFind, trimmedReplace);
           } else if (isPhone && findDigits.length >= 8) {
             const matches = field.value.match(PHONE_REGEX);
             if (matches) {
               for (const m of matches) {
                 if (m.replace(/\D/g, "") === findDigits) {
-                  nextValue = nextValue.split(m).join(trimmedReplace);
+                  nextValue = replaceTextOnly(nextValue, m, trimmedReplace);
                 }
               }
             }
           } else if (isEmail) {
-            const emailSearch = new RegExp(escapeRegExp(trimmedFind), "gi");
-            if (emailSearch.test(field.value)) {
-              nextValue = field.value.replace(emailSearch, trimmedReplace);
-            }
+            nextValue = replaceTextOnly(field.value, new RegExp(escapeRegExp(trimmedFind), "gi"), trimmedReplace);
           }
 
           if (nextValue !== field.value) {
@@ -951,19 +958,23 @@ export async function planCrossPageContentChange(
 
         if (field.href) {
           let nextHref = field.href;
+          const whatsApp = isPhone ? /^(https?:\/\/(?:wa\.me\/|api\.whatsapp\.com\/send\/?\?(?:[^#]*&)?phone=))\+?(\d+)/i.exec(field.href) : null;
           if (isPhone && field.href.toLowerCase().startsWith("tel:")) {
             const hrefDigits = field.href.slice(4).replace(/\D/g, "");
             if (hrefDigits === findDigits || field.href.includes(trimmedFind)) {
               nextHref = replaceTelHref;
             }
+          } else if (whatsApp && whatsApp[2] === findDigits) {
+            if (replaceInternational) nextHref = `${whatsApp[1]}${replaceDigits}${field.href.slice(whatsApp[0].length)}`;
+            else whatsAppLeftAlone.push(`${field.label} on ${page.title}`);
           } else if (isEmail && field.href.toLowerCase().startsWith("mailto:")) {
             const mailAddr = field.href.slice(7).split("?")[0] ?? "";
             if (mailAddr.toLowerCase() === trimmedFind.toLowerCase() || field.href.toLowerCase().includes(trimmedFind.toLowerCase())) {
               nextHref = replaceMailHref;
             }
-          } else if (field.href.includes(trimmedFind)) {
-            nextHref = field.href.split(trimmedFind).join(trimmedReplace);
           }
+          // No other link is rewritten: a text replace that matched part of an
+          // address ("shop" in /shop/menu) used to move the link (M2).
 
           if (nextHref !== field.href) {
             currentEdit.href = nextHref;
@@ -1003,9 +1014,12 @@ export async function planCrossPageContentChange(
   const explanation = totalChanges > 0
     ? `Updated ${label} from "${trimmedFind}" to "${trimmedReplace}" across ${pagePlans.length} page${pagePlans.length === 1 ? "" : "s"} (${totalChanges} field${totalChanges === 1 ? "" : "s"}).`
     : `No matching ${label} found for "${trimmedFind}" on this website.`;
+  const whatsAppNote = whatsAppLeftAlone.length
+    ? ` WhatsApp links need the number with its country code (starting with +), so ${whatsAppLeftAlone.slice(0, 3).join(", ")}${whatsAppLeftAlone.length > 3 ? ` and ${whatsAppLeftAlone.length - 3} more` : ""} still point to the old number.`
+    : "";
 
   return enrichPlanWithApprovalMetadata({
-    explanation,
+    explanation: explanation + whatsAppNote,
     actionKind: "content",
     summary: {
       totalPages: pages.filter(p => p.status !== "HIDDEN").length,
