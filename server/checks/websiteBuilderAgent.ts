@@ -14,6 +14,7 @@ import {
   planCrossPageContentChange,
   applyAgentSitePlan,
   siteAgentCommandSchema,
+  readableAgentRequest,
   siteAgentApplyInputSchema,
 } from "../src/services/websiteBuilderAgent.js";
 import { discoverFields, type FieldValue } from "../src/services/website/index.js";
@@ -196,6 +197,22 @@ assert.equal(emailChangeHref.after, "mailto:support@acme.example.com");
 // ---------------------------------------------------------------------------
 assert.equal(siteAgentCommandSchema.safeParse({ action: "replace_font", toFont: "Inter" }).success, true);
 assert.equal(siteAgentCommandSchema.safeParse({ action: "replace_font", toFont: "" }).success, false, "toFont must not be empty");
+
+// The chat sends the editor's own unsaved edits with a request (audit H7): an
+// icon edit or a long paragraph used to fail the whole request.
+assert.equal(siteAgentCommandSchema.safeParse({
+  action: "instruction", prompt: "Make the heading bold",
+  edits: { "hero.cta": { icon: { library: "arrow-right" }, iconPosition: "end" }, "hero.text": { value: "x".repeat(15_000) } },
+}).success, true, "an icon edit and a long paragraph are accepted");
+const refusal = (body: unknown) => {
+  try { readableAgentRequest(siteAgentCommandSchema, body); return ""; } catch (error) { return (error as Error).message; }
+};
+assert.equal(refusal({ action: "instruction", prompt: "x".repeat(3_001) }), "Keep the request under 3,000 characters.");
+assert.equal(
+  refusal({ action: "instruction", prompt: "Use these", attachments: Array.from({ length: 11 }, (_, i) => ({ filename: `f${i}.pdf`, url: `/f${i}.pdf` })) }),
+  "Attach up to 10 files at a time.",
+);
+assert.equal(refusal({ action: "instruction", prompt: "x" }), "Describe the change you want to make or attach a file.");
 assert.equal(siteAgentCommandSchema.safeParse({ action: "replace_color", fromColor: "#111", toColor: "#222" }).success, true);
 assert.equal(siteAgentCommandSchema.safeParse({ action: "replace_color", fromColor: "" }).success, false);
 assert.equal(siteAgentCommandSchema.safeParse({ action: "instruction", prompt: "a" }).success, false, "prompt must be at least 2 chars unless attachment present");

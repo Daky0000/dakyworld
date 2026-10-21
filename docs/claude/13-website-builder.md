@@ -1569,3 +1569,14 @@ for, so nobody undoes it.
   the page, then send again."). Chosen from words → `requiresApproval: true`.
   `findMatchingFieldOnPage` keeps its first-candidate fallback for the other
   handlers. `checks/websiteBuilderAgent.ts`.
+- **The chat's requests match what the editor sends (H7).**
+  `agentFieldEditSchema` takes `icon`/`iconPosition` and 20,000-character
+  values, the same as the draft route, because the chat sends the editor's
+  unsaved edits with every request and an icon edit used to fail it whole.
+  `readableAgentRequest` refuses with the limit in words ("Keep the request
+  under 3,000 characters.", "Attach up to 10 files at a time.") instead of
+  "Validation failed"; plan, apply and publish-batch use it. The textarea has
+  `maxLength` and a counter near the end, and the eleventh attachment is left
+  out with a sentence. The error handler now passes a `WebsiteError`'s
+  `blockers`, `warnings` and `blockedPages` through — a page's own Publish was
+  dropping the guard's reasons too.

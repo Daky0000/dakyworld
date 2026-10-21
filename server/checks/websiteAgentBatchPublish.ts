@@ -40,6 +40,7 @@ const { ensureSystemRoles } = await import("../src/lib/accessRoles.js");
 const { createSession } = await import("../src/lib/session.js");
 const { attachUser, requireAuth } = await import("../src/middleware/auth.js");
 const { websiteRouter } = await import("../src/routes/website.js");
+const { errorHandler } = await import("../src/middleware/errorHandler.js");
 const { restoreDocument } = await import("../src/services/website/document.js");
 const { pageSource } = await import("../src/services/website/site.js");
 
@@ -51,7 +52,8 @@ const cookie = `dw_session=${await createSession(owner.id)}`;
 
 const app = express();
 app.use(express.json({ limit: "8mb" })); app.use(attachUser); app.use("/api", requireAuth); app.use("/api/website", websiteRouter);
-app.use((err: { status?: number; message?: string }, _req: express.Request, res: express.Response, _next: express.NextFunction) => res.status(err.status ?? 500).json({ error: err.message }));
+// The app's own error handler, so a refusal carries what the editor is sent.
+app.use(errorHandler);
 const server = app.listen(0, "127.0.0.1");
 await new Promise((resolve) => server.once("listening", resolve));
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/website`;

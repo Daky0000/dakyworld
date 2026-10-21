@@ -112,7 +112,7 @@ try {
   let filed: { ticketId: string; reportNumber: string } = { ticketId: "", reportNumber: "" };
   await check("the editor's Request developer help files one, with a stored number", async () => {
     const response = await call("editor", "POST", `/sites/${siteId}/agent/escalate`, { prompt: `${mark}: connect our booking system`, pageId });
-    assert.equal(response.status, 200, response.body.error?.trim());
+    assert.equal(response.status, 201, response.body.error?.trim());
     filed = response.body as typeof filed;
     assert.match(filed.reportNumber, /^ESC-\d{4}-\d{3,}$/);
     const row = await prisma.websiteEscalation.findUniqueOrThrow({ where: { id: filed.ticketId } });
@@ -122,7 +122,7 @@ try {
   });
   await check("a second request gets the next number, not the same one", async () => {
     const response = await call("manager", "POST", `/sites/${siteId}/agent/escalate`, { prompt: `${mark}: add a members area` });
-    assert.equal(response.status, 200, response.body.error?.trim());
+    assert.equal(response.status, 201, response.body.error?.trim());
     const [year, n] = [filed.reportNumber.slice(4, 8), Number(filed.reportNumber.slice(9))];
     assert.equal((response.body as { reportNumber: string }).reportNumber, `ESC-${year}-${String(n + 1).padStart(3, "0")}`);
   });

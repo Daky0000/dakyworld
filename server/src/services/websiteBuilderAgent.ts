@@ -54,8 +54,12 @@ import { createWebsiteEscalation } from "./websiteEscalationService.js";
 // Schemas & Types
 // ============================================================================
 
+// The same shape the draft route accepts (`draftBody` in routes/website.ts):
+// the chat sends the editor's own unsaved edits with a plan request, and an
+// icon edit, or a long paragraph, used to fail the whole request as
+// "Validation failed".
 export const agentFieldEditSchema = z.object({
-  value: z.string().max(12_000).optional(),
+  value: z.string().max(20_000).optional(),
   href: z.string().max(2_000).optional(),
   alt: z.string().max(2_000).optional(),
   style: z.string().max(8_000).optional(),
@@ -65,6 +69,8 @@ export const agentFieldEditSchema = z.object({
     tablet: z.string().max(2_000).optional(),
     mobile: z.string().max(2_000).optional(),
   }).strict().optional(),
+  icon: z.union([z.object({ library: z.string().min(1).max(60) }).strict(), z.object({ src: z.string().min(1).max(2_000) }).strict()]).nullable().optional(),
+  iconPosition: z.enum(["start", "end"]).optional(),
 }).strict();
 export type AgentFieldEdit = z.infer<typeof agentFieldEditSchema>;
 
@@ -124,6 +130,28 @@ export const siteAgentCommandSchema = z
     { message: "Describe the change you want to make or attach a file." }
   );
 export type SiteAgentCommand = z.infer<typeof siteAgentCommandSchema>;
+
+/**
+ * Reads a chat request, refusing with a sentence that names the limit — a
+ * too-long message or one attachment too many used to come back as
+ * "Validation failed", which says nothing about what to change.
+ */
+export function readableAgentRequest<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, body: unknown): T {
+  const result = schema.safeParse(body ?? {});
+  if (result.success) return result.data;
+  const issue = result.error.issues[0];
+  const where = issue?.path.join(".") ?? "";
+  if (issue?.code === "too_big") {
+    const limit = Number(issue.maximum).toLocaleString("en-GB");
+    if (where === "prompt") throw new WebsiteError(400, `Keep the request under ${limit} characters.`);
+    if (where === "attachments") throw new WebsiteError(400, `Attach up to ${limit} files at a time.`);
+    if (where.startsWith("edits.")) throw new WebsiteError(400, `An unsaved edit on this page is longer than the ${limit} characters a field can hold. Shorten it, then send again.`);
+    if (where === "history") throw new WebsiteError(400, `Only the last ${limit} turns of the conversation can be sent.`);
+  }
+  throw new WebsiteError(400, issue?.message && issue.message !== "Required" && !/^(?:Invalid|Expected|Unrecognized)/.test(issue.message)
+    ? issue.message
+    : `This request could not be read${where ? ` (${where})` : ""}. Reload the editor and send it again.`);
+}
 
 export const siteAgentApplyInputSchema = z.object({
   pageRevisions: z.record(z.string(), z.number()),
@@ -2707,7 +2735,7 @@ export async function applyAgentSitePlan(
 
 function editableValues(value: FieldValue): AgentFieldEdit {
   const result: AgentFieldEdit = {};
-  for (const key of ["value", "href", "alt", "style", "variant", "newTab", "responsive"] as const) {
+  for (const key of ["value", "href", "alt", "style", "variant", "newTab", "responsive", "icon", "iconPosition"] as const) {
     if (value[key] !== undefined) {
       Object.assign(result, { [key]: value[key] });
     }
@@ -2938,7 +2966,7 @@ export function registerWebsiteBuilderAgent(
   // 3. Generate a site-wide or single-page plan from user command or instruction
   router.post("/sites/:siteId/agent/plan", async (req: Request, res: Response, next) => {
     try {
-      const body = siteAgentCommandSchema.parse(req.body);
+      const body = readableAgentRequest(siteAgentCommandSchema, req.body);
       const site = await access.loadSite(req, req.params.siteId);
       if (capacity.admission) {
         const job = await enqueueWebsiteWork(req, site.id, "BUILDER_PLAN", body);
@@ -2954,7 +2982,7 @@ export function registerWebsiteBuilderAgent(
   // 4. Apply the approved plan to page drafts
   router.post("/sites/:siteId/agent/apply", async (req: Request, res: Response, next) => {
     try {
-      const body = siteAgentApplyInputSchema.parse(req.body);
+      const body = readableAgentRequest(siteAgentApplyInputSchema, req.body);
       const site = await access.loadSite(req, req.params.siteId);
       // Refused up front while paused, before any page is read; the limit is
       // asked once the plan knows which pages it changes.
@@ -2978,7 +3006,7 @@ export function registerWebsiteBuilderAgent(
       // asked this; publishing in the request, with admission off, did not.
       // Asked before the body is read, so a paused site hears that first.
       await assertEditingNotPaused(req, site.id);
-      const body = batchPublishAgentSchema.parse(req.body ?? {});
+      const body = readableAgentRequest(batchPublishAgentSchema, req.body);
       if (capacity.admission) {
         const pages = await prisma.sitePage.findMany({ where: { siteId: site.id, status: { not: "HIDDEN" },
           ...(body.pageIds?.length ? { id: { in: body.pageIds } } : {}) }, take: 101, select: { id: true, draftRevision: true } });
@@ -3028,7 +3056,7 @@ export function registerWebsiteBuilderAgent(
 }
 
 export async function executeBatchPublish(req: Request, site: Site) {
-      const body = batchPublishAgentSchema.parse(req.body ?? {});
+      const body = readableAgentRequest(batchPublishAgentSchema, req.body);
       await assertWebsiteSiteAccess(req, site.id, "publish");
       const pages = await prisma.sitePage.findMany({
         where: { siteId: site.id, ...(body.pageIds?.length ? { id: { in: body.pageIds } } : {}) },

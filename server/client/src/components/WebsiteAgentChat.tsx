@@ -122,6 +122,10 @@ function PermissionModeIcon({
   );
 }
 
+/** The server's own limits (`siteAgentCommandSchema`), so they are met here rather than refused there. */
+const MAX_PROMPT_LENGTH = 3_000;
+const MAX_ATTACHMENTS = 10;
+
 function shouldPlanRequireApproval(plan: SiteAgentPlan, mode: SiteAgentPermissionMode): boolean {
   const hasActions =
     plan.summary.totalChanges > 0 ||
@@ -332,7 +336,17 @@ export function WebsiteAgentChat({
   }, [isOpen]);
 
   async function handleFilesSelected(files: FileList | File[]) {
-    const list = Array.from(files);
+    const chosen = Array.from(files);
+    // The server takes ten with one message; more used to fail the request whole.
+    const list = chosen.slice(0, Math.max(0, MAX_ATTACHMENTS - pendingAttachments.length));
+    if (list.length < chosen.length) {
+      setMessages((prev) => [...prev, {
+        id: `err-attach-${Date.now()}`,
+        sender: "agent",
+        text: `Up to ${MAX_ATTACHMENTS} files can go with one message, so ${chosen.length - list.length === 1 ? "one was" : `${chosen.length - list.length} were`} left out.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      }]);
+    }
     if (!list.length || !canEdit) return;
 
     setIsUploading(true);
@@ -1351,6 +1365,7 @@ export function WebsiteAgentChat({
                 ref={inputRef}
                 rows={1}
                 value={input}
+                maxLength={MAX_PROMPT_LENGTH}
                 aria-label="Message the builder agent"
                 onChange={(e) => {
                   setInput(e.target.value);
@@ -1387,7 +1402,11 @@ export function WebsiteAgentChat({
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="M21 16l-5-5-9 9" /></svg>
                   )}
                 </button>
-                <span className="dx-hint">Changes land as a draft</span>
+                <span className="dx-hint" aria-live="polite">
+                  {input.length > MAX_PROMPT_LENGTH - 500
+                    ? `${input.length.toLocaleString("en-GB")} of ${MAX_PROMPT_LENGTH.toLocaleString("en-GB")} characters`
+                    : "Changes land as a draft"}
+                </span>
                 <button
                   type="submit"
                   className="dx-send"

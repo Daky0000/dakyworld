@@ -181,6 +181,10 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
       ...("problems" in err ? { problems: err.problems } : {}),
       ...("conflicts" in err ? { conflicts: err.conflicts } : {}),
       ...("missing" in err ? { missing: err.missing } : {}),
+      // The publish guard's reasons: what the person has to change to publish.
+      ...("blockers" in err ? { blockers: err.blockers } : {}),
+      ...("warnings" in err ? { warnings: err.warnings } : {}),
+      ...("blockedPages" in err ? { blockedPages: err.blockedPages } : {}),
     });
   }
 
