@@ -3686,7 +3686,7 @@ export type SiteAgentPermissionMode = "smart" | "full" | "ask";
 
 export type SiteAgentPlan = {
   explanation: string;
-  actionKind: "font" | "color" | "content" | "instruction" | "structure" | "command" | "attachment" | "escalation" | "escalation_offer";
+  actionKind: "font" | "color" | "content" | "instruction" | "structure" | "command" | "attachment" | "escalation" | "escalation_offer" | "clarify";
   summary: {
     totalPages: number;
     affectedPages: number;

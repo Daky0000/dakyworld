@@ -191,7 +191,7 @@ export type SiteAgentStructuralAction = {
 export type SiteAgentPlan = {
   explanation: string;
   /** `escalation` is a request already filed (only ever by the person); `escalation_offer` offers the button. */
-  actionKind: "font" | "color" | "content" | "instruction" | "structure" | "attachment" | "command" | "escalation" | "escalation_offer";
+  actionKind: "font" | "color" | "content" | "instruction" | "structure" | "attachment" | "command" | "escalation" | "escalation_offer" | "clarify";
   summary: {
     totalPages: number;
     affectedPages: number;
@@ -1253,17 +1253,34 @@ function findMatchingFieldOnPage(
   promptLower: string,
   filterFn?: (field: SiteField) => boolean
 ): SiteField | null {
+  const ranked = rankFieldOnPage(fields, selectedFieldId, promptLower, filterFn);
+  return ranked.field ?? (filterFn ? fields.filter(filterFn) : fields)[0] ?? null;
+}
+
+/**
+ * The element a request is about, and how sure that is: `selected` when the
+ * person picked it, otherwise the best word score and whether another element
+ * scored the same. `field` is null when no word named anything — the caller
+ * decides whether to fall back or to ask.
+ */
+function rankFieldOnPage(
+  fields: SiteField[],
+  selectedFieldId: string | null | undefined,
+  promptLower: string,
+  filterFn?: (field: SiteField) => boolean
+): { field: SiteField | null; selected: boolean; score: number; tied: boolean } {
   const candidates = filterFn ? fields.filter(filterFn) : fields;
-  if (!candidates.length) return null;
+  if (!candidates.length) return { field: null, selected: false, score: 0, tied: false };
 
   if (selectedFieldId) {
     const exactSelected = candidates.find(f => f.id === selectedFieldId);
-    if (exactSelected) return exactSelected;
+    if (exactSelected) return { field: exactSelected, selected: true, score: Infinity, tied: false };
   }
 
   // Score candidates by how well their label, tag, or current value matches words in promptLower
   let bestField: SiteField | null = null;
   let bestScore = 0;
+  let tied = false;
 
   for (const field of candidates) {
     let score = 0;
@@ -1290,10 +1307,13 @@ function findMatchingFieldOnPage(
     if (score > bestScore) {
       bestScore = score;
       bestField = field;
+      tied = false;
+    } else if (score > 0 && score === bestScore) {
+      tied = true;
     }
   }
 
-  return bestField ?? candidates[0] ?? null;
+  return { field: bestField, selected: false, score: bestScore, tied };
 }
 
 export async function planAgentInstruction(
@@ -1559,15 +1579,33 @@ export async function planAgentInstruction(
           return Boolean(sel && (sel.kind === "button" || sel.tag === "a" || sel.href !== undefined));
         })());
 
+      // With nothing selected, a file used to go to whichever element came
+      // first — a PDF re-pointed the page's main "Order now" button, an image
+      // became the header's background — and was applied at once. Now: when no
+      // word names the element, or two elements fit equally, ask; when words
+      // chose it, show the plan for approval instead of applying it.
+      const askWhich = (filename: string): SiteAgentPlan => ({
+        explanation: `Which element should use ${filename}? Select it on the page, then send again.`,
+        actionKind: "clarify",
+        summary: { totalPages: livePages.length, affectedPages: 0, totalChanges: 0 },
+        pages: [],
+        requiresApproval: false,
+        approvalReasons: [],
+        riskLevel: "low",
+      });
+      const unclear = (ranked: ReturnType<typeof rankFieldOnPage>) => !ranked.selected && (!ranked.field || ranked.tied);
+
       // 1. Replace Background with Attached Image
       if (wantsBackground && imageAttachments[0]) {
         const img = imageAttachments[0];
-        const targetField = findMatchingFieldOnPage(
+        const ranked = rankFieldOnPage(
           fields,
           options?.selectedFieldId,
           lower,
           (f) => f.kind === "container" || /^(?:section|div|header|main|article|aside|footer)$/i.test(f.tag)
-        ) ?? fields.find(f => f.kind !== "image") ?? fields[0];
+        );
+        if (unclear(ranked)) return askWhich(img.filename);
+        const targetField = ranked.field;
 
         if (targetField) {
           const currentDecls = parseCssDeclarations(targetField.style);
@@ -1606,7 +1644,8 @@ export async function planAgentInstruction(
               actionKind: "attachment",
               summary: { totalPages: livePages.length, affectedPages: 1, totalChanges: 1 },
               pages: [pagePlan],
-              requiresApproval: false,
+              requiresApproval: !ranked.selected,
+              approvalReasons: ranked.selected ? [] : [`Chose "${targetField.label}" from your words; nothing was selected.`],
             });
           }
         }
@@ -1615,12 +1654,14 @@ export async function planAgentInstruction(
       // 2. Link Button or Anchor to Attached File (or Image)
       if (wantsLink) {
         const targetFile = fileAttachments[0] ?? primaryAttachment;
-        const targetField = findMatchingFieldOnPage(
+        const ranked = rankFieldOnPage(
           fields,
           options?.selectedFieldId,
           lower,
           (f) => f.kind === "button" || f.tag === "a" || f.href !== undefined
         );
+        if (unclear(ranked)) return askWhich(targetFile.filename);
+        const targetField = ranked.field;
 
         if (targetField) {
           const prevEdit = existingDraft[targetField.id] ? editableValues(existingDraft[targetField.id]) : {};
@@ -1665,7 +1706,8 @@ export async function planAgentInstruction(
               changes,
               edits: { [targetField.id]: nextEdit },
             }],
-            requiresApproval: false,
+            requiresApproval: !ranked.selected,
+            approvalReasons: ranked.selected ? [] : [`Chose "${targetField.label}" from your words; nothing was selected.`],
           });
         }
       }
@@ -1673,12 +1715,14 @@ export async function planAgentInstruction(
       // 3. Replace an <img> Element with Attached Image
       if (imageAttachments[0]) {
         const img = imageAttachments[0];
-        const targetField = findMatchingFieldOnPage(
+        const ranked = rankFieldOnPage(
           fields,
           options?.selectedFieldId,
           lower,
           (f) => f.kind === "image"
         );
+        if (unclear(ranked)) return askWhich(img.filename);
+        const targetField = ranked.field;
 
         if (targetField) {
           const prevEdit = existingDraft[targetField.id] ? editableValues(existingDraft[targetField.id]) : {};
@@ -1707,7 +1751,8 @@ export async function planAgentInstruction(
               }],
               edits: { [targetField.id]: nextEdit },
             }],
-            requiresApproval: false,
+            requiresApproval: !ranked.selected,
+            approvalReasons: ranked.selected ? [] : [`Chose "${targetField.label}" from your words; nothing was selected.`],
           });
         }
       }

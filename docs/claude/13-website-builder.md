@@ -1560,3 +1560,12 @@ for, so nobody undoes it.
   required — an empty body used to publish every draft on the site — and the
   pause check runs before the body is read, so a paused site hears that first.
   `checks/websiteAgentBatchPublish.ts` (DB).
+- **An attachment with nothing selected asks which element (H5).** With no
+  selection, a file went to whichever element came first and was applied at
+  once — a PDF re-pointed the main "Order now" button, an image became the
+  header's background. `rankFieldOnPage` now says how a target was chosen:
+  selected, by words, or not at all. No word names one, or two fit equally →
+  `actionKind: "clarify"` ("Which element should use menu.pdf? Select it on
+  the page, then send again."). Chosen from words → `requiresApproval: true`.
+  `findMatchingFieldOnPage` keeps its first-candidate fallback for the other
+  handlers. `checks/websiteBuilderAgent.ts`.

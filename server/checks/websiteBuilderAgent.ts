@@ -246,9 +246,44 @@ const bgAttachmentPlan = await planAgentInstruction(
     ],
   }
 );
-assert.equal(bgAttachmentPlan.actionKind, "attachment");
-assert.equal(bgAttachmentPlan.summary.totalChanges, 1);
-const bgChange = bgAttachmentPlan.pages[0]?.changes[0];
+// Nothing selected and no word names an element: the agent asks (audit H5).
+// It used to put the image behind whichever element came first — the header.
+assert.equal(bgAttachmentPlan.actionKind, "clarify");
+assert.equal(bgAttachmentPlan.summary.totalChanges, 0);
+assert.match(bgAttachmentPlan.explanation, /Which element should use hero-banner\.png\?/);
+
+const summarisePlan = await planAgentInstruction(
+  mockSite,
+  mockPages,
+  "summarise this PDF into the About section",
+  { pageId: "page-home", attachments: [{ id: "asset-doc-2", filename: "menu.pdf", url: "/assets/dw/menu.pdf", kind: "file" }] }
+);
+assert.equal(summarisePlan.actionKind, "clarify", "a file with no named target is not linked to the first button");
+
+// Words chose the target, but nothing was selected: shown for approval, never applied at once.
+const guessedLinkPlan = await planAgentInstruction(
+  mockSite,
+  mockPages,
+  "Let this button link to this file",
+  { pageId: "page-home", attachments: [{ id: "asset-doc-3", filename: "pricing-guide.pdf", url: "/assets/dw/pricing-guide.pdf", kind: "file" }] }
+);
+assert.equal(guessedLinkPlan.actionKind, "attachment");
+assert.ok(guessedLinkPlan.pages[0]?.edits["hero.cta"], "the page's one button is the one the words name");
+assert.equal(guessedLinkPlan.requiresApproval, true, "a target chosen from words waits for approval");
+
+const bgSelectedPlan = await planAgentInstruction(
+  mockSite,
+  mockPages,
+  "Replace my background with this image",
+  {
+    pageId: "page-home",
+    selectedFieldId: discoverFields(homeHtml).fields.find((field) => field.kind === "container")?.id,
+    attachments: [{ id: "asset-bg-2", filename: "hero-banner.png", url: "/assets/dw/hero-banner.png", kind: "image" }],
+  }
+);
+assert.equal(bgSelectedPlan.actionKind, "attachment");
+assert.equal(bgSelectedPlan.requiresApproval, false, "a selected element is applied as before");
+const bgChange = bgSelectedPlan.pages[0]?.changes[0];
 assert.ok(bgChange, "Background change created");
 assert.equal(bgChange.property, "background-image");
 assert.ok(bgChange.after.includes("/assets/dw/hero-banner.png"));
