@@ -65,29 +65,71 @@ async function run() {
   // ---------------------------------------------------------------------------
   // 3. Section Template Matcher & HTML Generation Assertions
   // ---------------------------------------------------------------------------
+  // Only an explicit request for a new section inserts one.
   assert.equal(matchSectionTemplateRequest("add a pricing table to this page"), "pricing");
-  assert.equal(matchSectionTemplateRequest("insert customer testimonials reviews"), "testimonials");
+  assert.equal(matchSectionTemplateRequest("insert a customer testimonials section"), "testimonials");
   assert.equal(matchSectionTemplateRequest("generate a modern faq accordion"), "faq");
   assert.equal(matchSectionTemplateRequest("add a features grid"), "features");
-  assert.equal(matchSectionTemplateRequest("create a call to action cta banner"), "cta");
+  assert.equal(matchSectionTemplateRequest("create a call to action banner"), "cta");
   assert.equal(matchSectionTemplateRequest("add a contact section with our phone"), "contact");
-  assert.equal(matchSectionTemplateRequest("include our leadership team"), "team");
+  assert.equal(matchSectionTemplateRequest("add a team section"), "team");
   assert.equal(matchSectionTemplateRequest("build a new hero banner"), "hero");
-  assert.equal(matchSectionTemplateRequest("just change background to red"), null);
+  assert.equal(matchSectionTemplateRequest("add a services section below the hero"), "features");
+  // Requests that only mention a section used to insert one (21 Oct 2026 audit, C2).
+  for (const prompt of [
+    "put our new phone number 020 555 1234 in the contact section",
+    "change the hero image to the new picture i attached",
+    "add a question mark to the main heading",
+    "update the testimonials with this new review from ama",
+    "make the pricing button link to the new pricing page",
+    "add 'members get 10% off' under the main heading",
+    "include our leadership team",
+    "just change background to red",
+  ]) assert.equal(matchSectionTemplateRequest(prompt), null, `"${prompt}" must not insert a section`);
 
+  // Nothing a business would have to vouch for is invented: no names, quotes,
+  // ratings, prices or contact details that are not the site's own.
   const sectionKeys: SectionKind[] = ["testimonials", "pricing", "faq", "features", "cta", "contact", "team", "hero"];
+  const invented = /dakyx|ayipah|kwame mensah|abena osei|emmanuel appiah|kofi owusu|sarah arthur|ama mensah|david osei|founder|★|GHS|\$\d|\d+\s*%|roi\b/i;
   for (const key of sectionKeys) {
     const template = SECTION_TEMPLATES[key];
     assert.ok(template, `Template for ${key} must exist`);
-    const html = template.generateHtml({ siteName: "DakyXTech Test Site" });
+    const html = template.generateHtml({ siteName: "Acme Bakery" });
     assert.ok(html.includes("<section"), `Generated HTML for ${key} must have <section>`);
-    assert.ok(html.length > 100, `Generated HTML for ${key} must be substantive`);
+    assert.ok(!invented.test(html), `the ${key} section invents nothing: ${html.match(invented)?.[0]}`);
+    assert.ok(!/\sclass="/.test(html), `the ${key} section styles itself inline, so it renders on a site without Tailwind`);
   }
+  assert.ok(SECTION_TEMPLATES.testimonials.generateHtml().includes("[Customer name]"), "a review waits for a real customer");
+  assert.ok(SECTION_TEMPLATES.pricing.generateHtml().includes("[Price]"), "a plan waits for a real price");
+  assert.ok(SECTION_TEMPLATES.team.generateHtml().includes("[Name]"), "a team card waits for a real person");
+  assert.ok(SECTION_TEMPLATES.hero.generateHtml({ siteName: "<script>x</script>" }).includes("&lt;script&gt;"), "the site name is escaped");
+  assert.ok(SECTION_TEMPLATES.faq.generateHtml({ id: "sec-faq" }).includes('id="sec-faq"'), "a fixed id is kept, for navigation links");
 
-  // Test intelligent HTML injection
-  const baseHtmlWithFooter = `<!doctype html><html><body><main><h1>Welcome</h1></main><footer>Footer</footer></body></html>`;
-  const injected = injectSectionIntoHtml(baseHtmlWithFooter, `<section id="test-sec">New Section</section>`);
-  assert.ok(injected.indexOf(`id="test-sec"`) < injected.indexOf("<footer"), "Section must be injected before <footer>");
+  // Contact: the site's own details when it has them, placeholders when not.
+  const ownContact = SECTION_TEMPLATES.contact.generateHtml({ phone: "+233 24 123 4567", email: "hello@ama.example" });
+  assert.ok(ownContact.includes('href="tel:+233241234567"'), "tel: keeps the international +");
+  assert.ok(ownContact.includes('href="mailto:hello@ama.example"'));
+  assert.ok(ownContact.includes('href="https://wa.me/233241234567"'));
+  const localContact = SECTION_TEMPLATES.contact.generateHtml({ phone: "024 123 4567" });
+  assert.ok(localContact.includes('href="tel:0241234567"') && !localContact.includes("wa.me"), "no WhatsApp link without a country code");
+  const noContact = SECTION_TEMPLATES.contact.generateHtml();
+  assert.ok(noContact.includes("[Your phone number]") && noContact.includes("[Your email address]"));
+  assert.ok(!/tel:|mailto:|wa\.me/.test(noContact), "and links nowhere");
+
+  // Placement: before the page's own footer, never a quote's.
+  const section = `<section id="test-sec">New Section</section>`;
+  const before = (html: string, marker: string) => html.indexOf(`id="test-sec"`) < html.indexOf(marker);
+  const quoteFooter = `<!doctype html><html><body><main><section><blockquote><p>Best jollof.</p><footer>Kofi, Osu</footer></blockquote></section></main><footer><p>Page footer</p></footer></body></html>`;
+  const placed = injectSectionIntoHtml(quoteFooter, section);
+  assert.ok(placed.indexOf(`id="test-sec"`) > placed.indexOf("</blockquote>") && before(placed, "<footer><p>Page footer"), "a quote's footer is not the page's");
+  const wrapped = `<!doctype html><html><body><div id="app"><main><h1>Hi</h1></main><footer>Page footer</footer></div></body></html>`;
+  assert.ok(before(injectSectionIntoHtml(wrapped, section), "<footer>Page footer"), "a footer inside a layout wrapper is still the page's");
+  const noFooter = `<!doctype html><html><body><main><h1>Hi</h1></main><p>After main</p></body></html>`;
+  const inMain = injectSectionIntoHtml(noFooter, section);
+  assert.ok(before(inMain, "</main>"), "with no footer it goes at the end of main");
+  const bare = `<!doctype html><html><body><h1>Hi</h1></body></html>`;
+  assert.ok(before(injectSectionIntoHtml(bare, section), "</body>"), "and with no main, at the end of the body");
+  assert.ok(injectSectionIntoHtml(bare, "<section>$& and $`</section>").includes("$& and $`"), "spliced by offset, so $ patterns stay as written");
 
   console.log("✓ Section generation & HTML injection engine passed all checks.");
 

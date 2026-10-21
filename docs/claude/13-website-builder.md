@@ -1506,3 +1506,29 @@ for, so nobody undoes it.
   plans are made against the page as saved. The autosave timer asks again
   whether anything is unsaved when it fires. `checks/browser/agentChat.mjs`
   (fast and slow apply, and a two-page plan); it fails on the old code.
+- **A saved page SEO is publishable.** `/seo/page` stored the new title and
+  description twice: inside the document it writes, and as `meta.0`/`meta.1`
+  field edits stamped against the page *before* that document. At publish the
+  field found the new title where it expected the old one, so every SEO draft
+  was refused as "the page has changed since these edits were made" — on any
+  site. They travel in the document only now; `checks/websiteToolDrafts.ts`
+  found it by publishing.
+- **Ready-made sections invent nothing, and look like sections (C2, M14,
+  M15).** One template set (`websiteSectionTemplates.ts`) serves the agent,
+  the editor's Insert section and the starter sites; the second set in
+  `websiteSeo.ts` is gone. Anything a business would have to vouch for — a
+  customer's words, a name, a price, a phone number — is a placeholder in
+  square brackets: the old sets carried `hello@dakyx.com`, DakyX's founder as
+  the customer's team, DakyX's prices and five-star reviews from people who do
+  not exist. Contact uses the site's own phone and email where its pages show
+  them (`tel:` keeps the `+`; WhatsApp only with a country code). Sections are
+  styled inline — the Tailwind markup arrived unstyled on any site without
+  Tailwind. `injectSectionIntoHtml` reads the page: before the last footer
+  with only layout wrappers around it, else the end of `main`, else the end of
+  `body` — the first `<footer` in the text is often a quote's attribution. The
+  agent inserts a section only for an explicit request ("add a pricing
+  section"); any add/new word plus any section word used to be enough, so "put
+  our new phone number in the contact section" inserted a section and never
+  changed the number. The chat lists an inserted section's fields without tick
+  boxes, because the section is one signed rewrite.
+  `checks/websiteBuilderAgentEscalation.ts`.

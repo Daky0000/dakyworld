@@ -18,6 +18,7 @@ import {
 import { setSiteSetting, updateSiteSettings } from "./websiteSiteSettings.js";
 import { invalidateSource } from "./website/sourceCache.js";
 import { assertEditAllowance, countPageEdit, writePageEdit } from "./websiteTierPlans.js";
+import { SECTION_TEMPLATES, injectSectionIntoHtml, type SectionKind } from "./websiteSectionTemplates.js";
 
 export interface PageSeoData {
   title: string;
@@ -517,30 +518,16 @@ export function registerWebsiteSeoRoutes(
       const currentHtml = editingSource(source.html, existingDraft);
       const updatedHtml = applyPageSeoToHtml(currentHtml, body);
 
-      // Also sync meta.0 (title) and meta.1 (description) into page.draft when present.
-      // A field's value is spliced into the page exactly as stored — the title
-      // between its tags, the description between its quotes — so each is
-      // stored escaped for where it goes, as the document above was. Stored
-      // raw, a title of `</title><script>…` was markup waiting for whichever
-      // publish applied it.
-      const { fields } = discoverFields(source.html);
+      // The title and description travel inside the document written below,
+      // like every other head tag this save changes. They used to be stored as
+      // field edits too, stamped against the page *before* that document — so
+      // at publish the field found the new title where it expected the old
+      // one, and every SEO draft was refused as "the page has changed since
+      // these edits were made". An earlier edit of either field in the editor
+      // is superseded by this save the same way.
       const nextDraft: Record<string, FieldValue> = { ...existingDraft };
-      const titleField = fields.find((f) => f.id === "meta.0");
-      if (titleField && body.title !== undefined) {
-        nextDraft["meta.0"] = {
-          ...(nextDraft["meta.0"] ?? {}),
-          value: escapeText(body.title.trim()),
-          original: titleField.value,
-        };
-      }
-      const descField = fields.find((f) => f.id === "meta.1");
-      if (descField && body.description !== undefined) {
-        nextDraft["meta.1"] = {
-          ...(nextDraft["meta.1"] ?? {}),
-          value: escapeAttr(body.description.trim()),
-          original: descField.value,
-        };
-      }
+      if (body.title !== undefined) delete nextDraft["meta.0"];
+      if (body.description !== undefined) delete nextDraft["meta.1"];
 
       let commitInfo: { sha: string; url: string } | null = null;
       const repo = siteRepo(site);
@@ -800,127 +787,16 @@ export function registerWebsiteSeoRoutes(
       // A new section is an edit of the page like any other.
       const allowance = await assertEditAllowance(req, site.id, page);
 
-      const SECTION_TEMPLATES: Record<string, { label: string; html: string }> = {
-        hero: {
-          label: "Hero Banner with Dual CTA",
-          html: `<section style="padding:72px 24px;max-width:1120px;margin:0 auto;text-align:center;">
-  <p style="font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#3157FF;margin:0 0 12px;">Built for Modern Teams</p>
-  <h2 style="font-size:clamp(2rem,4vw,3.25rem);line-height:1.12;font-weight:800;margin:0 auto 18px;max-width:760px;">Grow faster with a website engineered to convert every visitor</h2>
-  <p style="font-size:1.1rem;line-height:1.65;color:#526077;max-width:620px;margin:0 auto 28px;">Launch high-converting pages, optimize your search rankings, and turn incoming traffic into qualified customer conversations.</p>
-  <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:12px;">
-    <a href="#contact" style="display:inline-block;padding:13px 24px;border-radius:12px;background:#08101F;color:#ffffff;font-weight:600;text-decoration:none;">Get Started Today</a>
-    <a href="#services" style="display:inline-block;padding:13px 24px;border-radius:12px;border:1px solid #CBD5E1;color:#08101F;font-weight:600;text-decoration:none;">Explore Services</a>
-  </div>
-</section>`,
-        },
-        features: {
-          label: "3-Column Features & Benefits Grid",
-          html: `<section style="padding:64px 24px;max-width:1120px;margin:0 auto;">
-  <div style="text-align:center;max-width:640px;margin:0 auto 40px;">
-    <h2 style="font-size:2rem;font-weight:700;margin:0 0 12px;">Why clients choose us</h2>
-    <p style="font-size:1rem;color:#526077;margin:0;">Everything you need to deliver fast, measurable results for your business.</p>
-  </div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px;">
-    <div style="padding:28px;border-radius:16px;border:1px solid #E2E8F0;background:#ffffff;">
-      <h3 style="font-size:1.2rem;font-weight:700;margin:0 0 10px;">Fast Turnaround</h3>
-      <p style="font-size:0.95rem;line-height:1.6;color:#526077;margin:0;">We move from strategy to launch in days, keeping every milestone transparent and on schedule.</p>
-    </div>
-    <div style="padding:28px;border-radius:16px;border:1px solid #E2E8F0;background:#ffffff;">
-      <h3 style="font-size:1.2rem;font-weight:700;margin:0 0 10px;">Conversion Focused</h3>
-      <p style="font-size:0.95rem;line-height:1.6;color:#526077;margin:0;">Every headline, call-to-action, and layout is crafted to turn visitors into paying customers.</p>
-    </div>
-    <div style="padding:28px;border-radius:16px;border:1px solid #E2E8F0;background:#ffffff;">
-      <h3 style="font-size:1.2rem;font-weight:700;margin:0 0 10px;">Dedicated Support</h3>
-      <p style="font-size:0.95rem;line-height:1.6;color:#526077;margin:0;">Our team stays with you after launch with proactive updates, SEO tuning, and priority care.</p>
-    </div>
-  </div>
-</section>`,
-        },
-        pricing: {
-          label: "Pricing Plans Comparison",
-          html: `<section style="padding:64px 24px;max-width:1120px;margin:0 auto;">
-  <div style="text-align:center;max-width:640px;margin:0 auto 40px;">
-    <h2 style="font-size:2rem;font-weight:700;margin:0 0 12px;">Simple, transparent pricing</h2>
-    <p style="font-size:1rem;color:#526077;margin:0;">Pick the plan that matches your current stage and scale anytime.</p>
-  </div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px;">
-    <div style="padding:32px;border-radius:18px;border:1px solid #E2E8F0;background:#ffffff;">
-      <h3 style="font-size:1.15rem;font-weight:700;margin:0 0 8px;">Starter</h3>
-      <p style="font-size:2rem;font-weight:800;margin:0 0 16px;">$299<span style="font-size:0.9rem;font-weight:400;color:#64748B;"> / project</span></p>
-      <p style="font-size:0.95rem;color:#526077;margin:0 0 24px;">Ideal for new businesses launching their first professional presence.</p>
-      <a href="#contact" style="display:block;text-align:center;padding:12px 18px;border-radius:10px;border:1px solid #08101F;color:#08101F;font-weight:600;text-decoration:none;">Choose Starter</a>
-    </div>
-    <div style="padding:32px;border-radius:18px;border:2px solid #3157FF;background:#ffffff;box-shadow:0 12px 32px rgba(49,87,255,0.10);">
-      <h3 style="font-size:1.15rem;font-weight:700;margin:0 0 8px;">Growth</h3>
-      <p style="font-size:2rem;font-weight:800;margin:0 0 16px;">$699<span style="font-size:0.9rem;font-weight:400;color:#64748B;"> / project</span></p>
-      <p style="font-size:0.95rem;color:#526077;margin:0 0 24px;">Full custom design, SEO setup, and lead-capture integration included.</p>
-      <a href="#contact" style="display:block;text-align:center;padding:12px 18px;border-radius:10px;background:#3157FF;color:#ffffff;font-weight:600;text-decoration:none;">Choose Growth</a>
-    </div>
-  </div>
-</section>`,
-        },
-        testimonials: {
-          label: "Client Testimonials Grid",
-          html: `<section style="padding:64px 24px;max-width:1120px;margin:0 auto;">
-  <h2 style="font-size:2rem;font-weight:700;text-align:center;margin:0 0 36px;">Trusted by growing businesses</h2>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:24px;">
-    <blockquote style="margin:0;padding:28px;border-radius:16px;border:1px solid #E2E8F0;background:#F8FAFC;">
-      <p style="font-size:1rem;line-height:1.65;color:#1E293B;margin:0 0 16px;">"Since launching our updated website, inbound inquiries have more than doubled and customers compliment how easy it is to book."</p>
-      <footer style="font-size:0.9rem;font-weight:700;color:#0F172A;">Ama Mensah · Founder, Studio K</footer>
-    </blockquote>
-    <blockquote style="margin:0;padding:28px;border-radius:16px;border:1px solid #E2E8F0;background:#F8FAFC;">
-      <p style="font-size:1rem;line-height:1.65;color:#1E293B;margin:0 0 16px;">"The speed, attention to detail, and built-in SEO made an immediate difference in our local search rankings."</p>
-      <footer style="font-size:0.9rem;font-weight:700;color:#0F172A;">David Osei · Managing Director</footer>
-    </blockquote>
-  </div>
-</section>`,
-        },
-        faq: {
-          label: "Frequently Asked Questions",
-          html: `<section style="padding:64px 24px;max-width:820px;margin:0 auto;">
-  <h2 style="font-size:2rem;font-weight:700;text-align:center;margin:0 0 32px;">Frequently asked questions</h2>
-  <div style="display:flex;flex-direction:column;gap:16px;">
-    <div style="padding:20px 24px;border-radius:14px;border:1px solid #E2E8F0;background:#ffffff;">
-      <h3 style="font-size:1.05rem;font-weight:700;margin:0 0 8px;">How quickly can we get started?</h3>
-      <p style="font-size:0.95rem;line-height:1.6;color:#526077;margin:0;">We kick off within 24 hours of onboarding and deliver your first interactive milestone within the first week.</p>
-    </div>
-    <div style="padding:20px 24px;border-radius:14px;border:1px solid #E2E8F0;background:#ffffff;">
-      <h3 style="font-size:1.05rem;font-weight:700;margin:0 0 8px;">Can we update text and photos ourselves later?</h3>
-      <p style="font-size:0.95rem;line-height:1.6;color:#526077;margin:0;">Yes — every heading, paragraph, button, and image on this page is visually editable at any time without touching code.</p>
-    </div>
-  </div>
-</section>`,
-        },
-        "cta-banner": {
-          label: "High-Impact Call to Action Banner",
-          html: `<section style="padding:56px 24px;max-width:1080px;margin:32px auto;">
-  <div style="padding:48px 32px;border-radius:24px;background:#08101F;color:#ffffff;text-align:center;">
-    <h2 style="font-size:clamp(1.6rem,3vw,2.4rem);font-weight:800;margin:0 0 12px;color:#ffffff;">Ready to take the next step?</h2>
-    <p style="font-size:1.05rem;color:#CBD5E1;max-width:540px;margin:0 auto 24px;">Book a quick call or message our team on WhatsApp to get a tailored plan for your business.</p>
-    <a href="#contact" style="display:inline-block;padding:13px 28px;border-radius:12px;background:#3157FF;color:#ffffff;font-weight:600;text-decoration:none;">Speak With Our Team</a>
-  </div>
-</section>`,
-        },
-      };
-
-      const chosen = SECTION_TEMPLATES[body.templateId];
-      if (!chosen) throw new WebsiteError(400, "Unknown section template.");
+      // The same placeholder sections the Builder agent inserts, placed the same
+      // way. This route had its own set, with invented reviews ("Ama Mensah ·
+      // Founder, Studio K") and prices, put before the first `<footer` in the
+      // page — which is often a quote's attribution, not the page's footer.
+      const kinds: Record<typeof body.templateId, SectionKind> = { hero: "hero", features: "features", pricing: "pricing", testimonials: "testimonials", faq: "faq", "cta-banner": "cta" };
+      const chosen = SECTION_TEMPLATES[kinds[body.templateId]];
 
       const source = await pageSource(site, page);
       const existingDraft = (page.draft ?? {}) as Record<string, FieldValue>;
-      let currentHtml = editingSource(source.html, existingDraft);
-
-      // Functions, not strings: the pricing section's "$299" sits one edit away
-      // from a `$&` that `String.replace` would expand.
-      if (/<\/main\s*>/i.test(currentHtml)) {
-        currentHtml = currentHtml.replace(/<\/main\s*>/i, () => `\n${chosen.html}\n</main>`);
-      } else if (/<footer\b/i.test(currentHtml)) {
-        currentHtml = currentHtml.replace(/<footer\b/i, () => `${chosen.html}\n<footer`);
-      } else if (/<\/body\s*>/i.test(currentHtml)) {
-        currentHtml = currentHtml.replace(/<\/body\s*>/i, () => `\n${chosen.html}\n</body>`);
-      } else {
-        currentHtml = `${currentHtml}\n${chosen.html}`;
-      }
+      const currentHtml = injectSectionIntoHtml(editingSource(source.html, existingDraft), chosen.generateHtml({ siteName: site.name }));
 
       // A draft only: `sourceHtml` stays the base this draft is measured against
       // (see `writeToolEdit`).

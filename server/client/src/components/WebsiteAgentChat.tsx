@@ -1066,6 +1066,11 @@ export function WebsiteAgentChat({
                           {msg.plan.pages.map((p) => (
                             <div key={p.pageId} className="rounded-lg bg-sunken p-2 text-[11px]">
                               <div className="font-semibold text-ink">{p.pageTitle}</div>
+                              {/* An inserted section arrives as one signed page rewrite, so its
+                                  fields are listed, not ticked: unticking them used to change nothing. */}
+                              {msg.plan?.documentHtmlUpdates?.[p.pageId] && (
+                                <p className="mt-1 text-[10px] text-muted">The new section is added whole; change its words on the page afterwards.</p>
+                              )}
                               <div className="mt-1 space-y-1">
                                 {p.changes.slice(0, 6).map((c, i) => {
                                   const isChecked = !(excludedFieldsByMsg[msg.id] ?? []).includes(
@@ -1077,7 +1082,7 @@ export function WebsiteAgentChat({
                                       className="flex items-center justify-between text-muted text-[10px] gap-2 cursor-pointer select-none"
                                     >
                                       <span className="flex items-center gap-1.5 min-w-0 truncate">
-                                        {!msg.applied && (
+                                        {!msg.applied && !msg.plan?.documentHtmlUpdates?.[p.pageId] && (
                                           <input
                                             type="checkbox"
                                             checked={isChecked}

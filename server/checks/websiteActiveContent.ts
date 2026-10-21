@@ -567,10 +567,13 @@ async function main() {
       const metaDraft = (await fresh(metaPage.id)).draft as Record<string, FieldValue>;
       const metaHtml = metaDraft[DOCUMENT_KEY]?.document?.html ?? "";
       equal("a title that closes its tag, and a description with an apostrophe in it, add nothing that runs", introducedActiveContent(scripted, metaHtml), []);
-      ok("…and the title field is stored escaped", !String(metaDraft["meta.0"]?.value).includes("<"));
+      // The title and description travel inside the document, escaped there,
+      // and never as field edits stamped against the page before it — those
+      // made every SEO draft unpublishable (checks/websiteToolDrafts.ts).
+      ok("…and they are not also stored as field edits", metaDraft["meta.0"] === undefined && metaDraft["meta.1"] === undefined);
+      ok("…and the title is escaped inside the document", !/<title>[^<]*<script/i.test(metaHtml));
       const description = elements(metaHtml, "meta").find((node) => node.attrs.some((attr) => attr.name === "name" && attr.value === "description"));
       ok("an apostrophe in a description cannot end a single-quoted attribute", Boolean(description) && !description!.attrs.some((attr) => attr.name === "http-equiv"));
-      ok("…and the description field is stored escaped for its quotes", !/['"]/.test(String(metaDraft["meta.1"]?.value)));
     } finally {
       server.close();
     }

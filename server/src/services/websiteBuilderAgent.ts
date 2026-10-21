@@ -332,15 +332,6 @@ function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 function extractInlineStyleFonts(html: string): string[] {
   const fonts: string[] = [];
   const regex = /font-family\s*:\s*([^;}"']+)/gi;
@@ -1248,20 +1239,35 @@ export function isExplicitEscalationRequest(prompt: string): boolean {
   );
 }
 
+const SECTION_WORDS: Array<[RegExp, SectionKind]> = [
+  [/^(?:testimonials?|reviews?)$/, "testimonials"],
+  [/^(?:pricing|prices?|plans?)$/, "pricing"],
+  [/^(?:faqs?|frequently asked questions)$/, "faq"],
+  [/^(?:features?|benefits?|services?)$/, "features"],
+  [/^(?:cta|call to action)$/, "cta"],
+  [/^(?:contact|contact details|contact info)$/, "contact"],
+  [/^team$/, "team"],
+  [/^hero$/, "hero"],
+];
+
+/**
+ * An explicit request for a new section, and nothing else: "add a pricing
+ * section", "insert a testimonials block", "generate an FAQ accordion".
+ *
+ * Any of add/put/new/include… anywhere in the message, plus any section word
+ * anywhere, used to be enough — so "put our new phone number in the contact
+ * section" inserted a whole contact section and never changed the number, "add
+ * a question mark to the main heading" inserted an FAQ, and "update the
+ * testimonials with this new review" inserted three blank reviews. The section
+ * now has to be the thing being added, within two words of the verb, and named
+ * as a section, block, table and the like. Everything else goes on to the
+ * handlers below and the model.
+ */
 export function matchSectionTemplateRequest(lower: string): SectionKind | null {
-  const hasAddIntent = /\b(add|insert|create|generate|include|put|build|new)\b/i.test(lower);
-  if (!hasAddIntent) return null;
-
-  if (/\b(testimonials?|reviews?|client feedback|ratings?)\b/i.test(lower)) return "testimonials";
-  if (/\b(pricing|price tables?|plans? tables?|tiers?|subscription plans?)\b/i.test(lower)) return "pricing";
-  if (/\b(faqs?|frequently asked|questions?|q&a|accordions?)\b/i.test(lower)) return "faq";
-  if (/\b(features?|benefits?|services? grids?|capabilities)\b/i.test(lower)) return "features";
-  if (/\b(cta|call to actions?|conversion banners?|sign up banners?)\b/i.test(lower)) return "cta";
-  if (/\b(contacts?|get in touch|reach out|contact info|contact cards?)\b/i.test(lower)) return "contact";
-  if (/\b(teams?|staffs?|our people|leadership|executives?|members?)\b/i.test(lower)) return "team";
-  if (/\b(heros?|hero banners?|header banners?|above the fold)\b/i.test(lower)) return "hero";
-
-  return null;
+  const match = /\b(?:add|insert|create|generate|build|include)\s+(?:(?:a|an|another|one|new|the)\s+){0,2}(?:[a-z'-]+\s+){0,2}?(testimonials?|reviews?|pricing|prices?|plans?|faqs?|frequently asked questions|features?|benefits?|services?|cta|call to action|contact details|contact info|contact|team|hero)\s+(?:section|block|table|grid|accordion|banner|cards?|strip|area)\b/i.exec(lower);
+  if (!match) return null;
+  const word = match[1]!.toLowerCase();
+  return SECTION_WORDS.find(([pattern]) => pattern.test(word))?.[1] ?? null;
 }
 
 function findMatchingFieldOnPage(
@@ -1430,13 +1436,14 @@ export async function planAgentInstruction(
         ...(options?.edits ?? {}),
       };
       const currentHtml = editingSource(source.html, existingDraft);
-      const sectionHtml = template.generateHtml({
-        // The site's name is placed in the section as words, so it is escaped
-        // as words — and `$` with it, because `injectSectionIntoHtml` splices
-        // with `String.replace`, which reads `$&` and `` $` `` in what it is
-        // handed as "the match" and "everything before it".
-        siteName: escapeHtml(site.name).replace(/\$/g, "&#36;"),
-      });
+      // The site's own phone number and email, where its pages already show
+      // them; otherwise the section says "[Your phone number]". The templates
+      // escape what they are given and `injectSectionIntoHtml` splices by
+      // offset, so plain text goes in.
+      const overview = sectionTemplateKey === "contact" ? await scanSiteOverview(site, pages) : null;
+      const phone = overview?.phoneNumbers[0]?.number;
+      const email = overview?.emails[0]?.email;
+      const sectionHtml = template.generateHtml({ siteName: site.name, phone, email });
       const nextHtml = injectSectionIntoHtml(currentHtml, sectionHtml);
       const { fields: currentFields } = discoverFields(currentHtml);
       const { fields: nextFields } = discoverFields(nextHtml);
@@ -1452,7 +1459,7 @@ export async function planAgentInstruction(
       }));
 
       return enrichPlanWithApprovalMetadata({
-        explanation: `Generated and added a modern responsive ${template.label} section to "${currentPage.title}". The new section contains ${newFields.length} editable elements ready for your content.`,
+        explanation: `Added a ${template.label.toLowerCase()} section to "${currentPage.title}", above the page's footer. Names, quotes, prices and anything else only your business can give are placeholders in [square brackets], for your own words${phone || email ? "; the contact details are the ones your pages already show" : ""}. Nothing is live until you publish.`,
         actionKind: "structure",
         summary: { totalPages: livePages.length, affectedPages: 1, totalChanges: Math.max(1, newFields.length) },
         pages: [

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { parseHtml, walk, type ElementNode } from "./website/parse.js";
 
 export type SectionKind =
   | "testimonials"
@@ -10,381 +11,249 @@ export type SectionKind =
   | "team"
   | "hero";
 
+export type SectionContext = {
+  siteName?: string;
+  primaryColor?: string;
+  /** The site's own phone number and email address, when its pages already show them. */
+  phone?: string;
+  email?: string;
+  /** A fixed id, for a page whose navigation links to the section. */
+  id?: string;
+};
+
 export type SectionTemplate = {
   kind: SectionKind;
   label: string;
   description: string;
-  generateHtml: (context?: { siteName?: string; primaryColor?: string; phone?: string; email?: string }) => string;
+  generateHtml: (context?: SectionContext) => string;
 };
+
+/*
+ * Ready-made sections: the Builder agent's "add a … section", the editor's own
+ * Insert section, and the starter sites.
+ *
+ * **Everything a business would have to vouch for is a placeholder in square
+ * brackets.** These used to carry DakyXTech's own details into customers'
+ * pages — hello@dakyx.com as the contact address, a team led by DakyX's
+ * founder, DakyX's prices — and five-star reviews from named people who do not
+ * exist. Published unedited, that is a business presenting invented
+ * endorsements as its own. A heading may say "What our customers say"; a
+ * customer's words, a name, a price or a phone number may only come from the
+ * business, or stand as "[Customer name]" until they do.
+ *
+ * **Inline styles, not utility classes.** The sections were Tailwind markup with
+ * no stylesheet, so on a page that does not load Tailwind they arrived as
+ * unstyled text. Every value put into them is escaped here, so callers pass
+ * plain text.
+ */
+
+const esc = (value: string) =>
+  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+const accentOf = (ctx?: SectionContext) => (ctx?.primaryColor && /^#[0-9a-f]{3,8}$/i.test(ctx.primaryColor.trim()) ? ctx.primaryColor.trim() : "#3157ff");
+const idOf = (kind: SectionKind, ctx?: SectionContext) =>
+  ctx?.id && /^[A-Za-z][\w-]{0,60}$/.test(ctx.id) ? ctx.id : `sec-${kind}-${randomUUID().slice(0, 6)}`;
+
+/** A phone number the section can link to: `tel:` keeps the international `+`. */
+function phoneOf(raw?: string): { text: string; tel: string; whatsapp: string | null } | null {
+  const text = raw?.trim() ?? "";
+  const digits = text.replace(/\D/g, "");
+  if (digits.length < 6 || digits.length > 15) return null;
+  const international = text.startsWith("+");
+  // wa.me needs the country code, so a number written without one gets no
+  // WhatsApp link rather than one that reaches somebody else.
+  return { text, tel: `${international ? "+" : ""}${digits}`, whatsapp: international ? digits : null };
+}
+const emailOf = (raw?: string) => {
+  const text = raw?.trim() ?? "";
+  return /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']{2,}$/.test(text) ? text : null;
+};
+
+const section = (id: string, inner: string, background = "#ffffff") => `
+<section id="${id}" style="padding:64px 20px;background:${background};border-top:1px solid #e2e8f0;">
+  <div style="max-width:1080px;margin:0 auto;">
+${inner}
+  </div>
+</section>
+`;
+const intro = (accent: string, eyebrow: string, title: string, text: string) => `    <div style="text-align:center;max-width:640px;margin:0 auto 40px;">
+      <p style="margin:0;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:${accent};">${eyebrow}</p>
+      <h2 style="margin:8px 0 0;font-size:32px;line-height:1.2;font-weight:800;color:#0f172a;">${title}</h2>
+      <p style="margin:12px 0 0;font-size:16px;line-height:1.6;color:#475569;">${text}</p>
+    </div>`;
+const grid = (cards: string[], min = 240) => `    <div style="display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(${min}px,1fr));">
+${cards.join("\n")}
+    </div>`;
+const card = (inner: string) => `      <div style="padding:24px;border:1px solid #e2e8f0;border-radius:16px;background:#ffffff;">
+${inner}
+      </div>`;
+const button = (accent: string, label: string, href = "#") =>
+  `<a href="${href}" style="display:inline-block;padding:12px 24px;border-radius:12px;background:${accent};color:#ffffff;font-weight:600;text-decoration:none;">${label}</a>`;
 
 export const SECTION_TEMPLATES: Record<SectionKind, SectionTemplate> = {
   testimonials: {
     kind: "testimonials",
-    label: "Client Testimonials & Reviews",
-    description: "3-column modern customer review grid with star ratings, quotes, and author titles.",
+    label: "Testimonials",
+    description: "Three review cards, each waiting for a real customer's words, name and business.",
     generateHtml: (ctx) => {
-      const id = `sec-testimonials-${randomUUID().slice(0, 6)}`;
-      return `
-<section id="${id}" class="py-16 md:py-24 bg-slate-50 border-t border-slate-200">
-  <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-    <div class="text-center max-w-2xl mx-auto mb-12">
-      <span class="text-xs font-bold uppercase tracking-widest text-blue-600">Client Reviews</span>
-      <h2 class="text-3xl md:text-4xl font-extrabold text-slate-900 mt-2 tracking-tight">Trusted by leading companies</h2>
-      <p class="text-sm md:text-base text-slate-600 mt-3">See how businesses achieve continuous growth with our proven systems and dedicated delivery.</p>
-    </div>
-    <div class="grid gap-6 md:grid-cols-3">
-      <div class="rounded-2xl bg-white p-6 shadow-sm border border-slate-200 flex flex-col justify-between">
-        <div>
-          <div class="flex items-center gap-1 text-amber-400 text-sm mb-3">★★★★★</div>
-          <p class="text-slate-700 text-sm leading-relaxed italic">"Working with them completely transformed our operational speed. Our new digital platform generated immediate ROI within the very first month."</p>
-        </div>
-        <div class="mt-6 flex items-center gap-3 pt-4 border-t border-slate-100">
-          <div class="h-10 w-10 rounded-full bg-blue-100 text-blue-800 font-bold flex items-center justify-center text-sm">KA</div>
-          <div>
-            <h4 class="text-sm font-semibold text-slate-900">Kwame Mensah</h4>
-            <p class="text-xs text-slate-500">Managing Director · Apex Logistics</p>
-          </div>
-        </div>
-      </div>
-      <div class="rounded-2xl bg-white p-6 shadow-sm border border-slate-200 flex flex-col justify-between">
-        <div>
-          <div class="flex items-center gap-1 text-amber-400 text-sm mb-3">★★★★★</div>
-          <p class="text-slate-700 text-sm leading-relaxed italic">"The attention to detail, response times, and engineering execution are unmatched. It feels like having our own world-class in-house technology team."</p>
-        </div>
-        <div class="mt-6 flex items-center gap-3 pt-4 border-t border-slate-100">
-          <div class="h-10 w-10 rounded-full bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center text-sm">AO</div>
-          <div>
-            <h4 class="text-sm font-semibold text-slate-900">Abena Osei</h4>
-            <p class="text-xs text-slate-500">Chief Operating Officer · Goldline Services</p>
-          </div>
-        </div>
-      </div>
-      <div class="rounded-2xl bg-white p-6 shadow-sm border border-slate-200 flex flex-col justify-between">
-        <div>
-          <div class="flex items-center gap-1 text-amber-400 text-sm mb-3">★★★★★</div>
-          <p class="text-slate-700 text-sm leading-relaxed italic">"Super clean design and exceptionally reliable performance. Zero downtime and our clients constantly compliment our new modern web experience."</p>
-        </div>
-        <div class="mt-6 flex items-center gap-3 pt-4 border-t border-slate-100">
-          <div class="h-10 w-10 rounded-full bg-purple-100 text-purple-800 font-bold flex items-center justify-center text-sm">EA</div>
-          <div>
-            <h4 class="text-sm font-semibold text-slate-900">Emmanuel Appiah</h4>
-            <p class="text-xs text-slate-500">Founder & CEO · Starlight Media</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-`;
+      const accent = accentOf(ctx);
+      const review = () => card(`        <blockquote style="margin:0;font-size:16px;line-height:1.6;color:#1e293b;">[A customer's own words — use a real review, with their permission]</blockquote>
+        <p style="margin:16px 0 0;font-size:14px;font-weight:700;color:#0f172a;">[Customer name]</p>
+        <p style="margin:4px 0 0;font-size:13px;color:#64748b;">[Their business or town]</p>`);
+      return section(idOf("testimonials", ctx), `${intro(accent, "Reviews", "What our customers say", "[One line on who your customers are]")}
+${grid([review(), review(), review()])}`, "#f8fafc");
     },
   },
 
   pricing: {
     kind: "pricing",
-    label: "Tiered Pricing Cards",
-    description: "3-tier pricing comparison table with highlighted popular plan and feature checklists.",
+    label: "Pricing",
+    description: "Three plan cards, each waiting for a plan name, price and what it includes.",
     generateHtml: (ctx) => {
-      const id = `sec-pricing-${randomUUID().slice(0, 6)}`;
-      return `
-<section id="${id}" class="py-16 md:py-24 bg-white border-t border-slate-200">
-  <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-    <div class="text-center max-w-2xl mx-auto mb-12">
-      <span class="text-xs font-bold uppercase tracking-widest text-blue-600">Transparent Pricing</span>
-      <h2 class="text-3xl md:text-4xl font-extrabold text-slate-900 mt-2 tracking-tight">Flexible plans designed for growth</h2>
-      <p class="text-sm md:text-base text-slate-600 mt-3">Choose the plan that fits your business stage. Upgrade or cancel anytime with zero friction.</p>
-    </div>
-    <div class="grid gap-6 md:grid-cols-3 items-stretch">
-      <div class="rounded-2xl bg-slate-50 p-6 border border-slate-200 flex flex-col justify-between">
-        <div>
-          <span class="text-xs font-bold text-slate-700 uppercase tracking-wider">Starter</span>
-          <div class="mt-3 flex items-baseline gap-1">
-            <span class="text-3xl font-extrabold text-slate-900">GHS 2,500</span>
-            <span class="text-xs text-slate-500">/month</span>
-          </div>
-          <p class="text-xs text-slate-600 mt-2">Essential setup and reliable ongoing support for solo entrepreneurs.</p>
-          <ul class="mt-6 space-y-2.5 text-xs text-slate-700">
-            <li class="flex items-center gap-2"><span class="text-emerald-500 font-bold">✓</span> Fast cloud hosting & SSL</li>
-            <li class="flex items-center gap-2"><span class="text-emerald-500 font-bold">✓</span> Mobile responsive layout</li>
-            <li class="flex items-center gap-2"><span class="text-emerald-500 font-bold">✓</span> Up to 5 custom pages</li>
-            <li class="flex items-center gap-2"><span class="text-emerald-500 font-bold">✓</span> Standard support access</li>
-          </ul>
-        </div>
-        <a href="#contact" class="mt-8 block w-full text-center py-2.5 px-4 rounded-xl border border-slate-300 bg-white text-xs font-semibold text-slate-900 hover:bg-slate-100 transition shadow-xs">Get Started</a>
-      </div>
-      <div class="rounded-2xl bg-slate-900 p-6 border-2 border-blue-500 text-white flex flex-col justify-between relative shadow-lg">
-        <span class="absolute -top-3 right-6 bg-blue-500 text-white text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full shadow-xs">Most Popular</span>
-        <div>
-          <span class="text-xs font-bold text-blue-400 uppercase tracking-wider">Growth Retainer</span>
-          <div class="mt-3 flex items-baseline gap-1">
-            <span class="text-3xl font-extrabold text-white">GHS 5,000</span>
-            <span class="text-xs text-slate-400">/month</span>
-          </div>
-          <p class="text-xs text-slate-300 mt-2">Accelerated delivery, ongoing enhancements, and proactive optimization.</p>
-          <ul class="mt-6 space-y-2.5 text-xs text-slate-300">
-            <li class="flex items-center gap-2"><span class="text-blue-400 font-bold">✓</span> Everything in Starter</li>
-            <li class="flex items-center gap-2"><span class="text-blue-400 font-bold">✓</span> AI Copy & Layout Assistant</li>
-            <li class="flex items-center gap-2"><span class="text-blue-400 font-bold">✓</span> Core Web Vitals speed tuning</li>
-            <li class="flex items-center gap-2"><span class="text-blue-400 font-bold">✓</span> Priority turnaround within 24h</li>
-            <li class="flex items-center gap-2"><span class="text-blue-400 font-bold">✓</span> Monthly strategy consultation</li>
-          </ul>
-        </div>
-        <a href="#contact" class="mt-8 block w-full text-center py-2.5 px-4 rounded-xl bg-blue-600 text-xs font-semibold text-white hover:bg-blue-500 transition shadow-md">Choose Growth</a>
-      </div>
-      <div class="rounded-2xl bg-slate-50 p-6 border border-slate-200 flex flex-col justify-between">
-        <div>
-          <span class="text-xs font-bold text-slate-700 uppercase tracking-wider">Enterprise Concierge</span>
-          <div class="mt-3 flex items-baseline gap-1">
-            <span class="text-3xl font-extrabold text-slate-900">Custom</span>
-          </div>
-          <p class="text-xs text-slate-600 mt-2">Custom web architecture, high-volume platforms, and direct founder access.</p>
-          <ul class="mt-6 space-y-2.5 text-xs text-slate-700">
-            <li class="flex items-center gap-2"><span class="text-emerald-500 font-bold">✓</span> Everything in Growth</li>
-            <li class="flex items-center gap-2"><span class="text-emerald-500 font-bold">✓</span> Custom integrations & APIs</li>
-            <li class="flex items-center gap-2"><span class="text-emerald-500 font-bold">✓</span> Dedicated engineering lead</li>
-            <li class="flex items-center gap-2"><span class="text-emerald-500 font-bold">✓</span> Guaranteed SLA uptime</li>
-          </ul>
-        </div>
-        <a href="#contact" class="mt-8 block w-full text-center py-2.5 px-4 rounded-xl border border-slate-300 bg-white text-xs font-semibold text-slate-900 hover:bg-slate-100 transition shadow-xs">Contact Founder</a>
-      </div>
-    </div>
-  </div>
-</section>
-`;
+      const accent = accentOf(ctx);
+      const plan = () => card(`        <h3 style="margin:0;font-size:18px;font-weight:700;color:#0f172a;">[Plan name]</h3>
+        <p style="margin:8px 0 0;font-size:28px;font-weight:800;color:#0f172a;">[Price]</p>
+        <p style="margin:8px 0 0;font-size:14px;line-height:1.6;color:#475569;">[Who this plan is for]</p>
+        <ul style="margin:16px 0 20px;padding-left:18px;font-size:14px;line-height:1.8;color:#334155;">
+          <li>[What is included]</li>
+          <li>[What is included]</li>
+          <li>[What is included]</li>
+        </ul>
+        ${button(accent, "[Button words]")}`);
+      return section(idOf("pricing", ctx), `${intro(accent, "Pricing", "[Your pricing headline]", "[One line on how your pricing works]")}
+${grid([plan(), plan(), plan()])}`);
     },
   },
 
   faq: {
     kind: "faq",
-    label: "FAQ Accordion Questions",
-    description: "4-item clean accordion questions & answers.",
+    label: "Frequently asked questions",
+    description: "Questions that open to show their answers, each waiting for your own.",
     generateHtml: (ctx) => {
-      const id = `sec-faq-${randomUUID().slice(0, 6)}`;
-      return `
-<section id="${id}" class="py-16 md:py-24 bg-slate-50 border-t border-slate-200">
-  <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-    <div class="text-center max-w-2xl mx-auto mb-12">
-      <span class="text-xs font-bold uppercase tracking-widest text-blue-600">Frequently Asked Questions</span>
-      <h2 class="text-3xl md:text-4xl font-extrabold text-slate-900 mt-2 tracking-tight">Everything you need to know</h2>
-      <p class="text-sm md:text-base text-slate-600 mt-3">Find clear answers to common questions about our delivery, process, and ongoing support.</p>
-    </div>
-    <div class="space-y-4">
-      <details class="group rounded-2xl bg-white p-5 border border-slate-200 cursor-pointer transition">
-        <summary class="flex items-center justify-between font-semibold text-slate-900 text-sm list-none select-none">
-          <span>How fast can our new website be launched?</span>
-          <span class="transition group-open:rotate-180 text-slate-400">▼</span>
-        </summary>
-        <p class="mt-3 text-xs md:text-sm text-slate-600 leading-relaxed">Most business websites launch within 7 to 14 working days. If you choose our pre-designed templates or import an existing site, delivery is usually even faster.</p>
-      </details>
-      <details class="group rounded-2xl bg-white p-5 border border-slate-200 cursor-pointer transition">
-        <summary class="flex items-center justify-between font-semibold text-slate-900 text-sm list-none select-none">
-          <span>Can I easily edit text and images myself?</span>
-          <span class="transition group-open:rotate-180 text-slate-400">▼</span>
-        </summary>
-        <p class="mt-3 text-xs md:text-sm text-slate-600 leading-relaxed">Yes. You get full access to our visual editor and AI assistant where you can click any heading, paragraph, or image to update it with zero technical knowledge required.</p>
-      </details>
-      <details class="group rounded-2xl bg-white p-5 border border-slate-200 cursor-pointer transition">
-        <summary class="flex items-center justify-between font-semibold text-slate-900 text-sm list-none select-none">
-          <span>What payment methods do you support?</span>
-          <span class="transition group-open:rotate-180 text-slate-400">▼</span>
-        </summary>
-        <p class="mt-3 text-xs md:text-sm text-slate-600 leading-relaxed">We accept MTN Mobile Money, Telecel Cash, Visa, Mastercard, and direct bank transfers. Invoices are paid securely through Paystack.</p>
-      </details>
-      <details class="group rounded-2xl bg-white p-5 border border-slate-200 cursor-pointer transition">
-        <summary class="flex items-center justify-between font-semibold text-slate-900 text-sm list-none select-none">
-          <span>Is search engine optimization (SEO) included?</span>
-          <span class="transition group-open:rotate-180 text-slate-400">▼</span>
-        </summary>
-        <p class="mt-3 text-xs md:text-sm text-slate-600 leading-relaxed">Yes. Every page comes pre-configured with semantic HTML, automated OpenGraph social share cards, meta descriptions, fast Core Web Vitals caching, and mobile-first responsiveness.</p>
-      </details>
-    </div>
-  </div>
-</section>
-`;
+      const accent = accentOf(ctx);
+      const item = () => `      <details style="padding:16px 20px;border:1px solid #e2e8f0;border-radius:14px;background:#ffffff;">
+        <summary style="cursor:pointer;font-size:16px;font-weight:700;color:#0f172a;">[A question your customers ask]</summary>
+        <p style="margin:12px 0 0;font-size:15px;line-height:1.6;color:#475569;">[Your answer]</p>
+      </details>`;
+      return section(idOf("faq", ctx), `${intro(accent, "FAQ", "Frequently asked questions", "[One line inviting other questions]")}
+    <div style="display:flex;flex-direction:column;gap:12px;max-width:760px;margin:0 auto;">
+${[item(), item(), item(), item()].join("\n")}
+    </div>`);
     },
   },
 
   features: {
     kind: "features",
-    label: "Features & Value Propositions",
-    description: "3-column feature grid with modern icon badges and benefit descriptions.",
+    label: "Features",
+    description: "Three cards for what you do well and why it matters to your customers.",
     generateHtml: (ctx) => {
-      const id = `sec-features-${randomUUID().slice(0, 6)}`;
-      return `
-<section id="${id}" class="py-16 md:py-24 bg-white border-t border-slate-200">
-  <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-    <div class="text-center max-w-2xl mx-auto mb-12">
-      <span class="text-xs font-bold uppercase tracking-widest text-blue-600">Core Advantages</span>
-      <h2 class="text-3xl md:text-4xl font-extrabold text-slate-900 mt-2 tracking-tight">Engineered for maximum reliability</h2>
-      <p class="text-sm md:text-base text-slate-600 mt-3">Everything your company needs to operate seamlessly without hiring a bloated internal team.</p>
-    </div>
-    <div class="grid gap-8 md:grid-cols-3">
-      <div class="rounded-2xl border border-slate-200 bg-slate-50/50 p-6">
-        <div class="h-10 w-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-lg mb-4">⚡</div>
-        <h3 class="text-lg font-bold text-slate-900">Blazing Fast Speed</h3>
-        <p class="mt-2 text-xs md:text-sm text-slate-600 leading-relaxed">Global CDN caching and sub-second page loads ensure your visitors convert instead of bouncing away.</p>
-      </div>
-      <div class="rounded-2xl border border-slate-200 bg-slate-50/50 p-6">
-        <div class="h-10 w-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center font-bold text-lg mb-4">🛡️</div>
-        <h3 class="text-lg font-bold text-slate-900">Bank-Grade Security</h3>
-        <p class="mt-2 text-xs md:text-sm text-slate-600 leading-relaxed">Automated daily backups, SSL encryption, and continuous monitoring to guard your brand reputation.</p>
-      </div>
-      <div class="rounded-2xl border border-slate-200 bg-slate-50/50 p-6">
-        <div class="h-10 w-10 rounded-xl bg-purple-100 text-purple-600 flex items-center justify-center font-bold text-lg mb-4">🤖</div>
-        <h3 class="text-lg font-bold text-slate-900">AI-Powered Updates</h3>
-        <p class="mt-2 text-xs md:text-sm text-slate-600 leading-relaxed">Generate marketing copy, translate languages, and re-theme your pages with conversational intelligence.</p>
-      </div>
-    </div>
-  </div>
-</section>
-`;
+      const accent = accentOf(ctx);
+      const feature = () => card(`        <h3 style="margin:0;font-size:18px;font-weight:700;color:#0f172a;">[Something you do well]</h3>
+        <p style="margin:8px 0 0;font-size:15px;line-height:1.6;color:#475569;">[One sentence on why it matters to your customer]</p>`);
+      return section(idOf("features", ctx), `${intro(accent, "[What you offer]", "[Why customers choose you]", "[One line summing up your service]")}
+${grid([feature(), feature(), feature()])}`);
     },
   },
 
   cta: {
     kind: "cta",
-    label: "Call to Action Banner",
-    description: "High-contrast action banner with headline, subheadline, and primary button.",
+    label: "Call to action",
+    description: "A banner inviting visitors to take the next step.",
     generateHtml: (ctx) => {
-      const id = `sec-cta-${randomUUID().slice(0, 6)}`;
-      return `
-<section id="${id}" class="py-16 md:py-20 bg-slate-900 text-white">
-  <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-    <h2 class="text-3xl md:text-4xl font-extrabold tracking-tight">Ready to elevate your digital presence?</h2>
-    <p class="mt-3 text-sm md:text-base text-slate-300 max-w-2xl mx-auto">Get in touch today for a direct consultation. Let us build and manage the high-performing digital systems your business deserves.</p>
-    <div class="mt-8 flex flex-wrap justify-center gap-4">
-      <a href="#contact" class="inline-flex items-center justify-center px-6 py-3 rounded-xl bg-white text-slate-900 text-xs md:text-sm font-bold shadow-md hover:bg-slate-100 transition">Get Started Today →</a>
-      <a href="tel:${ctx?.phone || "+233200000000"}" class="inline-flex items-center justify-center px-6 py-3 rounded-xl border border-slate-700 bg-slate-800/80 text-white text-xs md:text-sm font-semibold hover:bg-slate-800 transition">Call Founder Directly</a>
-    </div>
-  </div>
-</section>
-`;
+      const accent = accentOf(ctx);
+      return section(idOf("cta", ctx), `    <div style="padding:40px 28px;border-radius:24px;background:#0f172a;text-align:center;">
+      <h2 style="margin:0;font-size:30px;line-height:1.2;font-weight:800;color:#ffffff;">[A short invitation to act]</h2>
+      <p style="margin:12px auto 24px;max-width:540px;font-size:16px;line-height:1.6;color:#cbd5e1;">[One line on what happens next]</p>
+      ${button(accent, "[Button words]")}
+    </div>`);
     },
   },
 
   contact: {
     kind: "contact",
-    label: "Direct Contact & Details",
-    description: "Contact cards with telephone, email, WhatsApp, and office hours.",
+    label: "Contact details",
+    description: "Phone, email and WhatsApp cards — filled with the site's own details where its pages already show them.",
     generateHtml: (ctx) => {
-      const id = `sec-contact-${randomUUID().slice(0, 6)}`;
-      const phone = ctx?.phone || "+233 20 000 0000";
-      const email = ctx?.email || "hello@dakyx.com";
-      return `
-<section id="${id}" class="py-16 md:py-24 bg-white border-t border-slate-200">
-  <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-    <div class="text-center max-w-2xl mx-auto mb-12">
-      <span class="text-xs font-bold uppercase tracking-widest text-blue-600">Get In Touch</span>
-      <h2 class="text-3xl md:text-4xl font-extrabold text-slate-900 mt-2 tracking-tight">Speak with our team</h2>
-      <p class="text-sm md:text-base text-slate-600 mt-3">We are available Monday to Friday, 8:00 AM – 6:00 PM GMT.</p>
-    </div>
-    <div class="grid gap-6 md:grid-cols-3">
-      <a href="tel:${phone.replace(/\s+/g, "")}" class="rounded-2xl border border-slate-200 bg-slate-50/60 p-6 block hover:border-slate-400 transition">
-        <span class="text-2xl mb-3 block">📞</span>
-        <h3 class="text-sm font-bold text-slate-900">Telephone</h3>
-        <p class="text-xs text-slate-600 mt-1">${phone}</p>
-        <span class="text-xs font-semibold text-blue-600 mt-4 block">Call now →</span>
-      </a>
-      <a href="mailto:${email}" class="rounded-2xl border border-slate-200 bg-slate-50/60 p-6 block hover:border-slate-400 transition">
-        <span class="text-2xl mb-3 block">✉️</span>
-        <h3 class="text-sm font-bold text-slate-900">Email Address</h3>
-        <p class="text-xs text-slate-600 mt-1">${email}</p>
-        <span class="text-xs font-semibold text-blue-600 mt-4 block">Send message →</span>
-      </a>
-      <a href="https://wa.me/${phone.replace(/[^0-9]/g, "")}" target="_blank" rel="noreferrer" class="rounded-2xl border border-slate-200 bg-slate-50/60 p-6 block hover:border-slate-400 transition">
-        <span class="text-2xl mb-3 block">💬</span>
-        <h3 class="text-sm font-bold text-slate-900">WhatsApp Chat</h3>
-        <p class="text-xs text-slate-600 mt-1">Instant messaging & support</p>
-        <span class="text-xs font-semibold text-emerald-600 mt-4 block">Chat on WhatsApp →</span>
-      </a>
-    </div>
-  </div>
-</section>
-`;
+      const accent = accentOf(ctx);
+      const phone = phoneOf(ctx?.phone);
+      const email = emailOf(ctx?.email);
+      const cards = [
+        card(`        <h3 style="margin:0;font-size:16px;font-weight:700;color:#0f172a;">Phone</h3>
+        <p style="margin:8px 0 0;font-size:15px;color:#334155;">${phone ? `<a href="tel:${esc(phone.tel)}" style="color:${accent};font-weight:600;text-decoration:none;">${esc(phone.text)}</a>` : "[Your phone number]"}</p>`),
+        card(`        <h3 style="margin:0;font-size:16px;font-weight:700;color:#0f172a;">Email</h3>
+        <p style="margin:8px 0 0;font-size:15px;color:#334155;">${email ? `<a href="mailto:${esc(email)}" style="color:${accent};font-weight:600;text-decoration:none;">${esc(email)}</a>` : "[Your email address]"}</p>`),
+        ...(phone?.whatsapp
+          ? [card(`        <h3 style="margin:0;font-size:16px;font-weight:700;color:#0f172a;">WhatsApp</h3>
+        <p style="margin:8px 0 0;font-size:15px;color:#334155;"><a href="https://wa.me/${phone.whatsapp}" style="color:${accent};font-weight:600;text-decoration:none;">Message us on WhatsApp</a></p>`)]
+          : []),
+      ];
+      return section(idOf("contact", ctx), `${intro(accent, "Contact", "Get in touch", "[When and how you can be reached]")}
+${grid(cards)}`, "#f8fafc");
     },
   },
 
   team: {
     kind: "team",
-    label: "Team Leadership Showcase",
-    description: "3-member team profile cards with names, titles, and bio snippets.",
+    label: "Team",
+    description: "Three cards for the people behind the business, each waiting for a name, role and line about them.",
     generateHtml: (ctx) => {
-      const id = `sec-team-${randomUUID().slice(0, 6)}`;
-      return `
-<section id="${id}" class="py-16 md:py-24 bg-slate-50 border-t border-slate-200">
-  <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-    <div class="text-center max-w-2xl mx-auto mb-12">
-      <span class="text-xs font-bold uppercase tracking-widest text-blue-600">Our Leadership</span>
-      <h2 class="text-3xl md:text-4xl font-extrabold text-slate-900 mt-2 tracking-tight">The people behind the work</h2>
-      <p class="text-sm md:text-base text-slate-600 mt-3">Experienced technologists, designers, and systems architects dedicated to your brand.</p>
-    </div>
-    <div class="grid gap-6 md:grid-cols-3">
-      <div class="rounded-2xl bg-white border border-slate-200 p-6 text-center shadow-xs">
-        <div class="h-20 w-20 rounded-full bg-slate-200 mx-auto font-bold text-slate-600 flex items-center justify-center text-xl mb-4">DA</div>
-        <h3 class="text-base font-bold text-slate-900">Dan Kwame Ayipah</h3>
-        <p class="text-xs text-blue-600 font-semibold mt-0.5">Founder & Lead Architect</p>
-        <p class="text-xs text-slate-600 mt-3 leading-relaxed">5+ years engineering high-availability platforms, security automations, and digital growth infrastructure across West Africa.</p>
-      </div>
-      <div class="rounded-2xl bg-white border border-slate-200 p-6 text-center shadow-xs">
-        <div class="h-20 w-20 rounded-full bg-slate-200 mx-auto font-bold text-slate-600 flex items-center justify-center text-xl mb-4">KO</div>
-        <h3 class="text-base font-bold text-slate-900">Kofi Owusu</h3>
-        <p class="text-xs text-blue-600 font-semibold mt-0.5">Senior Web Engineer</p>
-        <p class="text-xs text-slate-600 mt-3 leading-relaxed">Specialist in performant frontend interfaces, responsive styling, and modern accessibility standards.</p>
-      </div>
-      <div class="rounded-2xl bg-white border border-slate-200 p-6 text-center shadow-xs">
-        <div class="h-20 w-20 rounded-full bg-slate-200 mx-auto font-bold text-slate-600 flex items-center justify-center text-xl mb-4">SA</div>
-        <h3 class="text-base font-bold text-slate-900">Sarah Arthur</h3>
-        <p class="text-xs text-blue-600 font-semibold mt-0.5">Product & Client Operations</p>
-        <p class="text-xs text-slate-600 mt-3 leading-relaxed">Ensuring smooth delivery schedules, seamless client onboarding, and proactive retainer care.</p>
-      </div>
-    </div>
-  </div>
-</section>
-`;
+      const accent = accentOf(ctx);
+      const person = () => card(`        <h3 style="margin:0;font-size:18px;font-weight:700;color:#0f172a;">[Name]</h3>
+        <p style="margin:4px 0 0;font-size:13px;font-weight:600;color:${accent};">[Role]</p>
+        <p style="margin:12px 0 0;font-size:15px;line-height:1.6;color:#475569;">[One line about them]</p>`);
+      return section(idOf("team", ctx), `${intro(accent, "Team", "[The people behind the business]", "[One line about how you work together]")}
+${grid([person(), person(), person()])}`);
     },
   },
 
   hero: {
     kind: "hero",
-    label: "Modern Hero Banner",
-    description: "High-impact hero with headline, subheadline, dual action buttons, and trust metrics.",
+    label: "Hero",
+    description: "A headline, a sentence and a button for the top of a page.",
     generateHtml: (ctx) => {
-      const id = `sec-hero-${randomUUID().slice(0, 6)}`;
-      const name = ctx?.siteName || "Your Company";
-      return `
-<section id="${id}" class="py-20 md:py-32 bg-slate-900 text-white relative overflow-hidden">
-  <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 text-center relative z-10">
-    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/20 text-blue-400 text-xs font-semibold uppercase tracking-wider mb-6 border border-blue-500/30">Next-Generation Platform</span>
-    <h1 class="text-4xl md:text-6xl font-extrabold tracking-tight leading-tight max-w-4xl mx-auto">Build, scale, and dominate your market with ${name}</h1>
-    <p class="mt-5 text-base md:text-lg text-slate-300 max-w-2xl mx-auto leading-relaxed">We deliver high-impact digital systems, beautiful web architecture, and continuous technical reliability.</p>
-    <div class="mt-8 flex flex-wrap justify-center gap-4">
-      <a href="#contact" class="px-6 py-3 rounded-xl bg-blue-600 text-white text-xs md:text-sm font-bold shadow-lg hover:bg-blue-500 transition">Explore Solutions →</a>
-      <a href="#about" class="px-6 py-3 rounded-xl border border-slate-700 bg-slate-800 text-slate-200 text-xs md:text-sm font-semibold hover:bg-slate-700 transition">Learn More</a>
-    </div>
-  </div>
-</section>
-`;
+      const accent = accentOf(ctx);
+      const eyebrow = ctx?.siteName?.trim() ? esc(ctx.siteName.trim()) : "[Your business name]";
+      return section(idOf("hero", ctx), `    <div style="text-align:center;max-width:760px;margin:0 auto;">
+      <p style="margin:0;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:${accent};">${eyebrow}</p>
+      <h1 style="margin:12px 0 0;font-size:44px;line-height:1.1;font-weight:800;color:#0f172a;">[Your headline: what you do, and for whom]</h1>
+      <p style="margin:16px auto 28px;max-width:620px;font-size:18px;line-height:1.6;color:#475569;">[A sentence on the result your customers get]</p>
+      ${button(accent, "[Button words]")}
+    </div>`);
     },
   },
 };
 
+/** Elements inside which a `<footer>` belongs to that element, not to the page. */
+const CONTENT_ELEMENTS = new Set(["blockquote", "article", "aside", "figure", "section", "li", "details", "dialog", "form", "table", "nav", "header", "footer", "address"]);
+
 /**
- * Inserts a section into HTML before the footer, before closing main, or before closing body.
+ * Puts a new section before the page's own footer, or at the end of its main
+ * content.
+ *
+ * Found by reading the page, not by searching its text. The first `<footer` in
+ * a page is very often not the page's footer: a quote's attribution is written
+ * `<blockquote>…<footer>Kofi, Osu</footer></blockquote>`, and a card can have
+ * one too, so new sections used to land inside a testimonial. The page's footer
+ * is the last one with nothing but layout wrappers (`body`, `main`, a `div`)
+ * around it.
  */
 export function injectSectionIntoHtml(html: string, sectionHtml: string): string {
-  // 1. Try before <footer>
-  if (/<footer\b/i.test(html)) {
-    return html.replace(/<footer\b/i, `${sectionHtml.trim()}\n<footer`);
-  }
-  // 2. Try before </main>
-  if (/<\/main>/i.test(html)) {
-    return html.replace(/<\/main>/i, `${sectionHtml.trim()}\n</main>`);
-  }
-  // 3. Try before </body>
-  if (/<\/body>/i.test(html)) {
-    return html.replace(/<\/body>/i, `${sectionHtml.trim()}\n</body>`);
-  }
-  // 4. Fallback append
-  return `${html.trim()}\n${sectionHtml.trim()}`;
+  const root = parseHtml(html);
+  const nodes = [...walk(root)];
+  const body = nodes.find((node) => node.tag === "body") ?? null;
+  const pageFooter = nodes
+    .filter((node) => node.tag === "footer")
+    .filter((node) => {
+      for (let parent = node.parent; parent && parent !== body && parent !== root; parent = parent.parent) {
+        if (CONTENT_ELEMENTS.has(parent.tag)) return false;
+      }
+      return true;
+    })
+    .pop();
+  const closed = (node: ElementNode | null | undefined): node is ElementNode =>
+    Boolean(node && !node.selfClosing && node.end > node.innerEnd && node.innerEnd >= node.innerStart);
+  const main = nodes.find((node) => node.tag === "main");
+  const at = pageFooter ? pageFooter.start : closed(main) ? main.innerEnd : closed(body) ? body.innerEnd : html.length;
+  return `${html.slice(0, at)}${sectionHtml.trim()}\n${html.slice(at)}`;
 }
 
 export type StarterTemplateKey = "business" | "saas" | "portfolio" | "local" | "blank";
@@ -453,11 +322,13 @@ export function generateStarterSiteHtml(options: {
   const template = STARTER_TEMPLATES[templateKey];
   const siteName = options.siteName.trim() || "My Website";
   const primaryColor = options.primaryColor || "#3157ff";
+  const name = esc(siteName);
 
+  // Each section takes a fixed id, because the navigation below links to them.
   const sectionsHtml = template.sections
     .map((kind) => {
       const sec = SECTION_TEMPLATES[kind];
-      return sec ? sec.generateHtml({ siteName, primaryColor }) : "";
+      return sec ? sec.generateHtml({ siteName, primaryColor, id: `sec-${kind}` }) : "";
     })
     .filter(Boolean)
     .join("\n\n");
@@ -467,7 +338,7 @@ export function generateStarterSiteHtml(options: {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${siteName}</title>
+  <title>${name}</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     html { scroll-behavior: smooth; }
@@ -477,7 +348,7 @@ export function generateStarterSiteHtml(options: {
 <body class="min-h-screen flex flex-col justify-between antialiased">
   <header class="sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-slate-200">
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-      <a href="/" class="font-bold text-lg text-slate-900 tracking-tight">${siteName}</a>
+      <a href="/" class="font-bold text-lg text-slate-900 tracking-tight">${name}</a>
       <nav class="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600">
         <a href="#sec-features" class="hover:text-blue-600 transition">Features</a>
         <a href="#sec-testimonials" class="hover:text-blue-600 transition">Reviews</a>
@@ -492,7 +363,7 @@ ${sectionsHtml}
   </main>
   <footer class="bg-slate-900 text-slate-400 py-12 border-t border-slate-800">
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
-      <p>© ${new Date().getFullYear()} ${siteName}. All rights reserved.</p>
+      <p>© ${new Date().getFullYear()} ${name}. All rights reserved.</p>
       <p>Powered by DakyXTech Website Builder</p>
     </div>
   </footer>
