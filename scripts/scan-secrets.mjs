@@ -62,6 +62,9 @@ const ALLOWED = [
    */
   /-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----\\n/,
   /`-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----`/,
+  // A form's placeholder showing the shape a pasted key takes — a header with
+  // nothing after it (PublishingSettings.tsx).
+  /placeholder=\{[^}]*"-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----"\}/,
   /postgres(?:ql)?:\/\/postgres:postgres@/,
   /postgres(?:ql)?:\/\/user:password@/,
   // The browser checks' stand-in database: port 1 on loopback, which nothing
