@@ -103,6 +103,13 @@ Pages' classic build. Measure it with the Phase 4 script below.
 
 ## What Dan has to do, in order
 
+**Every key below can be pasted into the OS at Settings → Publishing** instead
+of Railway (`services/publishingSettings.ts`, added 21 Oct 2026). That screen
+lists each step as done, partly or to do, shows the addresses to paste into
+GitHub, Netlify and Vercel, asks GitHub as the app which permissions it really
+holds, and has the global switch for each fast route. A Railway variable still
+wins where one is set, and the screen then shows the field as pinned.
+
 ### 1. GitHub App read permissions (Route D)
 
 On <https://github.com/organizations/dakyworld/settings/apps/dakyworld-website-editor>

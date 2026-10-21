@@ -66,7 +66,7 @@ const APP_SETTINGS: Record<AppKind, { id: string; key: string; name: string }> =
 async function appJwt(app: AppKind = "main"): Promise<string> {
   const id = await getSetting(APP_SETTINGS[app].id);
   const key = (await getSetting(APP_SETTINGS[app].key))?.replace(/\\n/g, "\n");
-  if (!id || !key) throw new GitHubError(503, `${APP_SETTINGS[app].name} is not set up. Add its ID and private key under Settings → Developer.`);
+  if (!id || !key) throw new GitHubError(503, `${APP_SETTINGS[app].name} is not set up. Add its ID and private key under Settings → Publishing.`);
 
   const now = Math.floor(Date.now() / 1000);
   const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
@@ -147,6 +147,33 @@ export async function siteGithubCredential(site: { githubInstallationId: string 
   if (!site.githubInstallationId) return null;
   if (!(await githubAppConfigured())) return null;
   return { token: await installationToken(site.githubInstallationId), kind: "installation", label: `installation ${site.githubInstallationId}` };
+}
+
+export type AppIdentity = { ok: true; slug: string; name: string; permissions: Record<string, string> } | { ok: false; error: string };
+
+/**
+ * What GitHub says the app is, asked as the app itself.
+ *
+ * The one honest answer to "did the ID and the private key I pasted belong
+ * together", and to "did I add the read permissions", because GitHub returns
+ * the permissions the app has now, not the ones somebody meant to tick. It
+ * says nothing about whether each installation's owner approved them.
+ */
+export async function appIdentity(app: AppKind = "main"): Promise<AppIdentity> {
+  try {
+    const response = await fetch(`${API_BASE}/app`, {
+      headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${await appJwt(app)}`, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "dakyworld-os" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { message?: string } | null;
+      return { ok: false, error: `GitHub refused the app's own sign-in (${response.status}${body?.message ? `: ${body.message}` : ""}). The ID and the private key may belong to different apps.` };
+    }
+    const body = (await response.json()) as { slug?: string; name?: string; permissions?: Record<string, string> };
+    return { ok: true, slug: body.slug ?? "", name: body.name ?? "", permissions: body.permissions ?? {} };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "GitHub could not be reached." };
+  }
 }
 
 /** Whether the opt-in DakyX Pages app exists yet. */

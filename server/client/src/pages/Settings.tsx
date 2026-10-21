@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../lib/api";
 import { AgentReposPanel, HubtelPanel, PaystackPanel } from "../components/GhanaPayments";
 import { SmsCallbackPanel, WhatsAppPanel } from "../components/MessagingSettings";
+import { PublishingPanels } from "../components/PublishingSettings";
 import type {
   ActorHealthReport,
   AppSettings,
@@ -49,6 +50,7 @@ type SectionId =
   | "storage"
   | "alerts"
   | "developer"
+  | "publishing"
   | "webhooks"
   | "general";
 
@@ -65,6 +67,7 @@ const SECTIONS: { id: SectionId; label: string; blurb: string }[] = [
   { id: "storage", label: "File storage", blurb: "Where generated PDFs are kept" },
   { id: "alerts", label: "Alerts", blurb: "Slack, for anything worth interrupting you" },
   { id: "developer", label: "Developer", blurb: "GitHub, for the technical agents" },
+  { id: "publishing", label: "Publishing", blurb: "Keys for faster Website Builder publishes" },
   { id: "webhooks", label: "Webhooks", blurb: "Events in from the website and partners" },
   { id: "general", label: "General", blurb: "Public URL and default timezone" },
 ];
@@ -151,6 +154,14 @@ export function Settings() {
         return data.alerts.configured ? "ok" : "idle";
       case "developer":
         return data.developer.configured ? "ok" : "idle";
+      // Green once the GitHub App works with every read permission; amber for
+      // anything saved short of that, since a half-set app fails at Connect.
+      case "publishing": {
+        const app = data.publishing.githubApp;
+        if (app.identity?.ok && app.permissions.every((entry) => entry.ok)) return "ok";
+        const anySet = [app, data.publishing.pagesApp, data.publishing.netlify, data.publishing.vercel].some((group) => group.fields.some((field) => field.set));
+        return anySet ? "warn" : "idle";
+      }
       // Always available — the secret mints itself, so there is nothing to
       // wait on and a warning dot here would be permanent noise.
       case "webhooks":
@@ -171,7 +182,7 @@ export function Settings() {
         <nav className="os-settings-nav" aria-label="Settings categories">
           <label className="os-settings-select"><span>Settings category</span><select className="input" value={section} onChange={event => choose(event.target.value as SectionId)}>{SECTIONS.map(entry => <option key={entry.id} value={entry.id}>{entry.label}</option>)}</select></label>
           <div className="os-settings-links">
-          {[{label:"Workspace", ids:["system", "general", "security"]}, {label:"Connections", ids:["email", "messaging", "google", "payments", "storage", "alerts"]}, {label:"Automation & development", ids:["analyst", "models", "capture", "developer", "webhooks"]}].map(group => <section key={group.label}>
+          {[{label:"Workspace", ids:["system", "general", "security"]}, {label:"Connections", ids:["email", "messaging", "google", "payments", "storage", "alerts"]}, {label:"Automation & development", ids:["analyst", "models", "capture", "developer", "publishing", "webhooks"]}].map(group => <section key={group.label}>
             <h2>{group.label}</h2>
             {SECTIONS.filter(entry => group.ids.includes(entry.id)).map(entry => <button key={entry.id} type="button" aria-current={section === entry.id ? "page" : undefined} onClick={() => choose(entry.id)} title={entry.blurb}>
               <span>{entry.label}</span><span className={`os-connection-state state-${status(entry.id)}`} aria-label={status(entry.id) === "warn" ? "Needs attention" : status(entry.id) === "idle" ? "Not connected" : "Available"} />
@@ -219,6 +230,7 @@ export function Settings() {
                   <AgentReposPanel settings={data} />
                 </div>
               )}
+              {section === "publishing" && <PublishingPanels settings={data} />}
               {section === "webhooks" && <WebhooksPanel settings={data} />}
               {section === "general" && <GeneralPanel settings={data} />}
             </>

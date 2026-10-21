@@ -42,6 +42,7 @@ import { assertImageBytes, FileTypeError } from "../lib/fileType.js";
 import { BRAND_SLOTS, DEFAULT_PROFILE, brandImages, companyProfile, deleteBrandImage, saveBrandImage, saveCompanyProfile, type BrandSlot } from "../services/systemProfile.js";
 import { gateBy } from "../middleware/permissionGate.js";
 import { businessContextStatus, syncBusinessOffer } from "../services/context/business.js";
+import { PublishingInputError, clearPublishingGroup, describePublishing, forgetAppIdentities, isPublishingGroup, saveDisabledRoutes, savePublishingGroup } from "../services/publishingSettings.js";
 
 /**
  * Everything the Owner configures at runtime, in one place.
@@ -291,6 +292,7 @@ async function describeAll(req: Request) {
     email: await describeEmail(),
     alerts: await describeSlack(),
     developer: await describeGitHub(),
+    publishing: await describePublishing(),
     calendar: await describeCalendar(),
     webhooks: await describeWebhooks(req, appUrl),
     system: await describeSystem(),
@@ -1656,6 +1658,54 @@ settingsRouter.delete("/cloudinary", async (req, res, next) => {
       deleteSetting(SETTING.CLOUDINARY_API_KEY),
       deleteSetting(SETTING.CLOUDINARY_API_SECRET),
     ]);
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Publishing --------------------------------------------------------------
+//
+// The publish router's outside credentials: see services/publishingSettings.ts.
+
+settingsRouter.put("/publishing/routes", async (req, res, next) => {
+  try {
+    const { disabled } = z.object({ disabled: z.array(z.string()) }).parse(req.body);
+    await saveDisabledRoutes(disabled);
+    res.json(await describeAll(req));
+  } catch (err) {
+    if (err instanceof PublishingInputError) return res.status(409).json({ error: err.message });
+    next(err);
+  }
+});
+
+settingsRouter.post("/publishing/recheck", async (req, res, next) => {
+  try {
+    forgetAppIdentities();
+    res.json(await describeAll(req));
+  } catch (err) {
+    next(err);
+  }
+});
+
+settingsRouter.put("/publishing/:group", async (req, res, next) => {
+  try {
+    const group = String(req.params.group);
+    if (!isPublishingGroup(group)) return res.status(404).json({ error: "No such publishing connection." });
+    const { values } = z.object({ values: z.record(z.string().max(10_000)) }).parse(req.body);
+    await savePublishingGroup(group, values);
+    res.json(await describeAll(req));
+  } catch (err) {
+    if (err instanceof PublishingInputError) return res.status(400).json({ error: err.message });
+    next(err);
+  }
+});
+
+settingsRouter.delete("/publishing/:group", async (req, res, next) => {
+  try {
+    const group = String(req.params.group);
+    if (!isPublishingGroup(group)) return res.status(404).json({ error: "No such publishing connection." });
+    await clearPublishingGroup(group);
     res.json(await describeAll(req));
   } catch (err) {
     next(err);

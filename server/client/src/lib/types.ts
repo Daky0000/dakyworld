@@ -717,6 +717,28 @@ export interface MessagingSettings {
   countryCode: string;
 }
 
+export type PublishRouteName = "direct" | "pages" | "hook";
+
+export interface PublishingField {
+  id: string;
+  label: string;
+  env: string;
+  secret: boolean;
+  multiline: boolean;
+  placeholder: string | null;
+  set: boolean;
+  envManaged: boolean;
+  /** The saved value, masked when secret; "saved" for a private key. */
+  shown: string | null;
+}
+
+export interface PublishingApp {
+  fields: PublishingField[];
+  configured: boolean;
+  identity: { ok: true; slug: string; name: string } | { ok: false; error: string } | null;
+  permissions: Array<{ key: string; label: string; level: string | null; ok: boolean }>;
+}
+
 export interface AppSettings {
   apify: {
     connected: boolean;
@@ -820,6 +842,14 @@ export interface AppSettings {
     approvers: string[];
   };
   developer: { configured: boolean; envManaged: boolean; token: string | null; owner: string | null };
+  /** The publish router's outside credentials. See server/src/services/publishingSettings.ts. */
+  publishing: {
+    githubApp: PublishingApp & { urls: { callback: string; webhook: string } };
+    pagesApp: PublishingApp & { urls: { setup: string } };
+    netlify: { fields: PublishingField[]; configured: boolean; urls: { redirect: string } };
+    vercel: { fields: PublishingField[]; configured: boolean; urls: { redirect: string } };
+    routes: { envManaged: boolean; disabled: PublishRouteName[] };
+  };
   calendar: {
     connected: boolean;
     /** False when the Google connection predates calendar access and needs redoing. */
