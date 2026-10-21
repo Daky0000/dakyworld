@@ -373,6 +373,55 @@ async function writeToolEdit(
   if (!written.count) throw new WebsiteError(409, `${page.title} was saved by somebody else while this was being made. Nothing was changed — reopen the page and try again.`);
 }
 
+/**
+ * "Auto-Optimize All Pages": the generated title, description and social tags
+ * saved as a draft on every visible page, as the per-page Save does one at a
+ * time. The button sent no page and the route required one, so every press
+ * answered "Validation failed" (audit M16). Nothing is published; a page saved
+ * by somebody meanwhile is named and left as it is.
+ */
+async function autoGenerateEveryPage(req: Request, site: Site): Promise<{ updatedPages: number; unchangedPages: number; skipped: string[] }> {
+  const pages = await prisma.sitePage.findMany({ where: { siteId: site.id, status: { not: "HIDDEN" } }, orderBy: [{ sortOrder: "asc" }, { path: "asc" }], take: 100 });
+  let updatedPages = 0;
+  let unchangedPages = 0;
+  const skipped: string[] = [];
+  for (const page of pages) {
+    try {
+      const source = await pageSource(site, page);
+      const existingDraft = (page.draft ?? {}) as Record<string, FieldValue>;
+      const currentHtml = editingSource(source.html, existingDraft);
+      const seo = generateSmartPageSeo(site, page, currentHtml);
+      const updatedHtml = applyPageSeoToHtml(currentHtml, {
+        title: seo.title, description: seo.description, keywords: seo.keywords,
+        ogTitle: seo.ogTitle, ogDescription: seo.ogDescription,
+        ...(seo.twitterCard === "summary" || seo.twitterCard === "summary_large_image" ? { twitterCard: seo.twitterCard } : {}),
+      });
+      if (updatedHtml === currentHtml) { unchangedPages += 1; continue; }
+      // As the per-page save: the title and description travel in the document.
+      const nextDraft: Record<string, FieldValue> = { ...existingDraft };
+      delete nextDraft["meta.0"];
+      delete nextDraft["meta.1"];
+      const docDraft = restoreDocument(source.html, existingDraft, updatedHtml, "Auto-generated page SEO");
+      await writeToolEdit(req, site.id, page, { before: currentHtml, after: updatedHtml }, {
+        draft: { ...nextDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
+      });
+      updatedPages += 1;
+    } catch (error) {
+      // Paused, or out of edits, stops the run: the next page would say the same.
+      if (error instanceof WebsiteError && (error.status === 402 || error.status === 403)) throw error;
+      skipped.push(`${page.title}: ${error instanceof Error ? error.message : "could not be read"}`);
+    }
+  }
+  if (updatedPages) {
+    await prisma.siteAuditEvent.create({ data: {
+      siteId: site.id, kind: "SEO_PAGE_UPDATED", summary: `Auto-generated SEO metadata on ${updatedPages} page${updatedPages === 1 ? "" : "s"} (saved as drafts)`,
+      actorName: req.dbUser?.name ?? req.dbUser?.email ?? "Website Manager", actorId: req.dbUser?.id,
+      detail: { updatedPages, unchangedPages, skipped } as Prisma.InputJsonValue,
+    } });
+  }
+  return { updatedPages, unchangedPages, skipped };
+}
+
 export function registerWebsiteSeoRoutes(
   router: Router,
   access: {
@@ -490,7 +539,11 @@ export function registerWebsiteSeoRoutes(
   router.post("/sites/:siteId/seo/auto-generate", async (req: Request, res: Response, next) => {
     try {
       const site = await access.loadSite(req, req.params.siteId);
-      const { pageId } = z.object({ pageId: z.string().min(1) }).parse(req.body ?? {});
+      const { pageId } = z.object({ pageId: z.string().min(1).optional(), applyDraft: z.boolean().optional() }).parse(req.body ?? {});
+      if (!pageId) {
+        res.json(await autoGenerateEveryPage(req, site));
+        return;
+      }
       const page = await prisma.sitePage.findFirst({ where: { id: pageId, siteId: site.id } });
       if (!page) throw new WebsiteError(404, "Page not found.");
 

@@ -123,6 +123,20 @@ try {
       assert.equal(page.draft, null, "the draft was cleared by the publish");
     });
   }
+
+  console.log("\nAuto-Optimize All Pages, with no page named");
+  await check("saves generated tags as drafts on every page and says how many (it used to be refused outright)", async () => {
+    const before = await prisma.sitePage.findMany({ where: { siteId }, select: { id: true, sourceHtml: true } });
+    const response = await call("POST", `/sites/${siteId}/seo/auto-generate`, { applyDraft: true });
+    assert.equal(response.status, 200, response.body.error?.trim());
+    assert.equal(typeof response.body.updatedPages, "number");
+    assert.ok((response.body.updatedPages as number) + (response.body.unchangedPages as number) === before.length, "every page is accounted for");
+    for (const page of before) {
+      assert.equal((await row(page.id)).sourceHtml, page.sourceHtml, "nothing is published and no base moves");
+      const detail = await call("GET", `/pages/${page.id}`);
+      assert.equal((detail.body.structure as { stale?: boolean } | undefined)?.stale, false);
+    }
+  });
 } finally {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   if (siteId) await prisma.site.deleteMany({ where: { id: siteId } });

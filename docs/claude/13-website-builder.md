@@ -1633,3 +1633,11 @@ for, so nobody undoes it.
   validation problems…"). "Delete the heading text" removes the heading when
   it can be removed; when it cannot, and it may not be empty, the agent asks
   for the new words instead. "Clear all text" skips what may not be empty.
+- **Auto-Optimize All Pages works (M16).** `POST /seo/auto-generate` with no
+  `pageId` saves the generated title, description and social tags as a draft
+  on every visible page (`autoGenerateEveryPage`, through `writeToolEdit`, so
+  no base moves) and returns `updatedPages`, `unchangedPages` and `skipped`.
+  The button sent no page while the route required one, so every press was
+  "Validation failed". A pause or an exhausted edit allowance stops the run;
+  a page somebody saved meanwhile is named and left alone.
+  `checks/websiteToolDrafts.ts`.

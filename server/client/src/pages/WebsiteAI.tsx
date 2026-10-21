@@ -225,7 +225,7 @@ export function WebsiteAI() {
     mutationFn: async (opts?: { pageId?: string; applyDraft?: boolean }) => {
       if (!site) return null;
       setError(null);
-      return api.post<{ pageId?: string; seo?: PageSeoInfo; updatedPages?: number }>(
+      return api.post<{ pageId?: string; seo?: PageSeoInfo; updatedPages?: number; unchangedPages?: number; skipped?: string[] }>(
         `/website/sites/${site.id}/seo/auto-generate`,
         { pageId: opts?.pageId, applyDraft: opts?.applyDraft ?? true },
       );
@@ -238,7 +238,7 @@ export function WebsiteAI() {
         if (res.seo.canonical && !seoCanonical) setSeoCanonical(res.seo.canonical);
         setSeoStatusMsg("Generated SEO title, description, and keyword tags from this page's headings and copy.");
       } else if (res?.updatedPages !== undefined) {
-        setSeoStatusMsg(`Auto-generated and applied smart SEO tags across ${res.updatedPages} pages.`);
+        setSeoStatusMsg(`Saved generated SEO tags as drafts on ${res.updatedPages} page${res.updatedPages === 1 ? "" : "s"}${res.unchangedPages ? ` (${res.unchangedPages} already had them)` : ""}. Publish to put them live.${res.skipped?.length ? ` Left alone: ${res.skipped.join(" ")}` : ""}`);
       }
       void qc.invalidateQueries({ queryKey: ["website", "seo", site?.id] });
     },
