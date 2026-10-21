@@ -91,6 +91,8 @@ export const agentChatHistoryTurnSchema = z.object({
   role: z.enum(["user", "assistant"]),
   text: z.string().max(1_500),
   targetFieldIds: z.array(z.string().max(200)).max(20).optional(),
+  /** The page those fields are on. A turn without one is never reused as a target. */
+  targetPageId: z.string().max(120).optional(),
 });
 export type AgentChatHistoryTurn = z.infer<typeof agentChatHistoryTurnSchema>;
 
@@ -1191,6 +1193,16 @@ export function seoTextRequest(message: string, what: RegExp): [string, string] 
   return text ? [rest, text] : null;
 }
 
+/** The element "it", "this" or "that" points at: the last one changed on this page, if the message has a pronoun at all. */
+export function historyTarget(history: AgentChatHistoryTurn[], pageId: string, lower: string): string | null {
+  if (!/\b(it|this|that|these|those)\b/i.test(lower)) return null;
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const turn = history[i];
+    if (turn?.targetPageId === pageId && turn.targetFieldIds?.length) return turn.targetFieldIds[0]!;
+  }
+  return null;
+}
+
 /** Said instead of filing anything: the chat shows Request developer help under it. */
 function developerHelpOffer(explanation: string, totalPages: number): SiteAgentPlan {
   return {
@@ -1324,17 +1336,12 @@ export async function planAgentInstruction(
   const livePages = pages.filter(p => p.status !== "HIDDEN");
   const currentPage = (options?.pageId ? pages.find(p => p.id === options?.pageId) : null) ?? livePages[0] ?? null;
 
-  // Resolve referential pronouns ("make it bigger", "bold it", "center that") from recent conversation history
-  let resolvedSelectedFieldId = options?.selectedFieldId ?? null;
-  if (!resolvedSelectedFieldId && history.length > 0 && /\b(it|this|that|same|bigger|smaller|bold|center|colour|color)\b/i.test(lower)) {
-    for (let i = history.length - 1; i >= 0; i -= 1) {
-      const turn = history[i];
-      if (turn?.targetFieldIds && turn.targetFieldIds.length > 0) {
-        resolvedSelectedFieldId = turn.targetFieldIds[0]!;
-        break;
-      }
-    }
-  }
+  // "Make it bigger", "bold that": the element the conversation last changed,
+  // on this page. Only a pronoun counts — the words bigger/bold/colour used to
+  // be enough, so after a heading edit "change the text colour to red on the
+  // footer copyright" turned the heading red — and history is kept per site,
+  // so a target from another page is never reused (audit M4).
+  const resolvedSelectedFieldId = options?.selectedFieldId ?? (currentPage ? historyTarget(history, currentPage.id, lower) : null);
   if (options && resolvedSelectedFieldId) {
     options = { ...options, selectedFieldId: resolvedSelectedFieldId };
   }

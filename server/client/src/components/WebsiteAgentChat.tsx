@@ -679,9 +679,10 @@ export function WebsiteAgentChat({
       .map((m) => ({
         role: (m.sender === "user" ? "user" : "assistant") as "user" | "assistant",
         text: m.text.slice(0, 600),
-        targetFieldIds: m.plan?.pages
-          .flatMap((p) => p.changes.map((c) => c.fieldId))
-          .slice(0, 10),
+        // One page's targets, named with their page, so "make it bigger" never
+        // reaches for an element on another page.
+        targetPageId: m.plan?.pages[0]?.pageId,
+        targetFieldIds: m.plan?.pages[0]?.changes.map((c) => c.fieldId).slice(0, 10),
       }));
 
     setMessages((prev) => [...prev, userMsg]);

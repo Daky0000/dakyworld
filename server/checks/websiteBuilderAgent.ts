@@ -16,6 +16,7 @@ import {
   siteAgentCommandSchema,
   readableAgentRequest,
   seoTextRequest,
+  historyTarget,
   siteAgentApplyInputSchema,
 } from "../src/services/websiteBuilderAgent.js";
 import { discoverFields, replaceTextOnly, type FieldValue } from "../src/services/website/index.js";
@@ -170,6 +171,14 @@ assert.equal(seoTextRequest("Change the page title to Home Cooking Accra and mak
 assert.equal(seoTextRequest("Change the page title to Home Cooking Accra", titleWords)?.[1], "Home Cooking Accra");
 assert.equal(seoTextRequest("Set the page title to 'Fish and Chips, Osu'.", titleWords)?.[1], "Fish and Chips, Osu", "quoted text is taken as written");
 assert.equal(seoTextRequest("Make the title bigger", titleWords), null);
+
+
+// "It" means the element last changed on this page, and only a pronoun means it (audit M4).
+const headingTurn = [{ role: "assistant" as const, text: "Made the heading bold.", targetPageId: "page-home", targetFieldIds: ["hero.title"] }];
+assert.equal(historyTarget(headingTurn, "page-home", "make it bigger"), "hero.title");
+assert.equal(historyTarget(headingTurn, "page-home", "change the text color to red on the footer copyright"), null, "a named target is not overridden");
+assert.equal(historyTarget(headingTurn, "page-about", "make it bigger"), null, "a target on another page is never reused");
+assert.equal(historyTarget([{ role: "assistant", text: "Done.", targetFieldIds: ["hero.title"] }], "page-home", "make it bigger"), null, "a turn that does not say its page is not reused");
 
 // ---------------------------------------------------------------------------
 // 5. Test: Cross-Page Content & Contact Replacement (Phone number)
