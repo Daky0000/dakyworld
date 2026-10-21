@@ -1532,3 +1532,19 @@ for, so nobody undoes it.
   changed the number. The chat lists an inserted section's fields without tick
   boxes, because the section is one signed rewrite.
   `checks/websiteBuilderAgentEscalation.ts`.
+- **Developer requests are filed only on the person's yes (H1, H2, H6, L8,
+  L10, L12; Dan, 21 Oct 2026).** The keyword scope guard is gone: it refused,
+  and filed a request for, any message with *lead*, *salary*, *bank transfer*,
+  *pipeline* and the like — words on a business's own pages. The help-phrase
+  matcher now matches only a message that is *wholly* a request for a person,
+  and like the model's `escalate` intent it answers with an offer
+  (`actionKind: "escalation_offer"`); the chat's Request developer help button
+  (`POST /agent/escalate`) is the one way a request is filed from the agent.
+  `WebsiteEscalation.reportNumber` is stored once, under an advisory lock
+  (`ESC-<year>-<n>`, highest + 1 per year — not a row count, which a deleted
+  site would make reissue a number); it used to be recomputed from list
+  positions, so the chat and the list disagreed. Every request is emailed to
+  `OWNER_EMAIL` and posted to Slack (`postNotification`, idempotency key
+  `website-escalation:<id>`). Staff (`website.manage`, internal) see every
+  request and alone may change its status; anybody else sees only their own.
+  `checks/websiteEscalations.ts` (DB).

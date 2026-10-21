@@ -187,7 +187,8 @@ export type SiteAgentStructuralAction = {
 
 export type SiteAgentPlan = {
   explanation: string;
-  actionKind: "font" | "color" | "content" | "instruction" | "structure" | "attachment" | "command" | "escalation";
+  /** `escalation` is a request already filed (only ever by the person); `escalation_offer` offers the button. */
+  actionKind: "font" | "color" | "content" | "instruction" | "structure" | "attachment" | "command" | "escalation" | "escalation_offer";
   summary: {
     totalPages: number;
     affectedPages: number;
@@ -1179,64 +1180,37 @@ export function builderTaskLevel(prompt: string, attachments: number, downgrade 
 // Scope Guardrails & Section Matcher
 // ============================================================================
 
-export type ScopeEvaluation = {
-  inScope: boolean;
-  category?: "crm_or_leads" | "billing_or_account" | "custom_backend" | "complex_engineering" | "other";
-  topic?: string;
-  reason?: string;
-};
-
-export function evaluateBuilderScope(prompt: string): ScopeEvaluation {
-  const p = prompt.toLowerCase();
-
-  // 1. CRM / Leads / Customer pipelines / Cold emailing / Contact exports
-  if (/\b(?:crm|leads?|pipeline|cold email|outbound sequence|customer relationship|lead capture list|export contacts|subscriber list|bulk email|blast email)\b/i.test(p)) {
-    return {
-      inScope: false,
-      category: "crm_or_leads",
-      topic: "CRM, Lead Management & Outbound Communications",
-      reason: "Lead pipelines, CRM contacts, and mass outbound email marketing are managed outside the Website Builder.",
-    };
-  }
-
-  // 2. Financials / Payroll / Staff salaries / Bank transfers / Invoices OS
-  if (/\b(?:payroll|salaries|salary|pay staff|employee wages|bank transfer|wire transfer|refund customer|accounting ledger|financial report|tax invoice)\b/i.test(p)) {
-    return {
-      inScope: false,
-      category: "billing_or_account",
-      topic: "Financial & Payroll Operations",
-      reason: "Payroll, staff compensation, bank transfers, and internal financial ledgers are handled outside the Website Builder.",
-    };
-  }
-
-  // 3. Server administration / Docker / SSH / Database dropping / OS Root
-  if (/\b(?:drop table|drop database|truncate table|ssh root|restart server|ec2|docker compose|deploy kubernetes|grant admin role|modify env vars|system password)\b/i.test(p)) {
-    return {
-      inScope: false,
-      category: "custom_backend",
-      topic: "Server & Database Infrastructure",
-      reason: "Server infrastructure, database management, and host configurations are handled outside the Website Builder.",
-    };
-  }
-
-  // 4. Custom native backend applications / API microservices
-  if (/\b(?:build a backend api|create a postgres database|write node\.js server|custom microservice|backend webhook)\b/i.test(p)) {
-    return {
-      inScope: false,
-      category: "complex_engineering",
-      topic: "Custom Backend Microservices",
-      reason: "Custom backend microservice architecture requires engineering implementation outside the visual builder.",
-    };
-  }
-
-  return { inScope: true };
+/**
+ * The whole message is a request for a person: "I need a developer",
+ * "Request developer help", "talk to a human".
+ *
+ * Only the whole message. This used to match anywhere, so "change the button
+ * text to 'Let us help'" or "add a line: for private bookings, contact the
+ * owner" filed a developer request instead of making the edit. And it is
+ * answered with an offer, never a filing: a request is filed only when the
+ * person presses Request developer help (Dan, 21 Oct 2026).
+ *
+ * The keyword scope guard that stood beside this is gone. It refused any
+ * message containing words like *lead*, *CRM*, *salary*, *bank transfer* or
+ * *financial report* — ordinary words on a business's website — and filed a
+ * request for each. What is out of the editor's reach is the model's to say
+ * (its `escalate` intent), and that too is only an offer.
+ */
+export function isExplicitEscalationRequest(prompt: string): boolean {
+  return /^\s*(?:please\s+)?(?:i\s+(?:need|want|would\s+like)\s+(?:a\s+|to\s+talk\s+to\s+a\s+)?(?:developer|human|person)(?:'s)?(?:\s+help)?|request\s+(?:developer\s+)?help|(?:can|could)\s+a\s+developer\s+help(?:\s+(?:me|with\s+this|us))?|let\s+us\s+help|hand\s*off\s+to\s+(?:a\s+)?developer|talk\s+to\s+(?:a\s+)?(?:developer|human|person)|(?:get|ask)\s+(?:a\s+)?developer(?:\s+to\s+help)?|escalate(?:\s+this)?)\s*[.!?]*\s*$/i.test(prompt);
 }
 
-export function isExplicitEscalationRequest(prompt: string): boolean {
-  const p = prompt.toLowerCase();
-  return (
-    /\b(?:escalate(?:\s+this)?\s+to\s+(?:the\s+)?owner|report(?:\s+this)?\s+to\s+(?:the\s+)?owner|send(?:\s+a)?\s+report\s+to\s+(?:the\s+)?owner|talk\s+to\s+(?:the\s+)?owner|contact(?:\s+the)?\s+owner|ask(?:\s+the)?\s+owner|talk\s+to\s+dan|report\s+to\s+dan|ask\s+dan|hand\s*off\s+to\s+(?:a\s+)?developer|developer\s+handoff|submit\s+(?:an?\s+)?escalation|need\s+(?:a\s+)?developer|developer(?:'s)?\s+help|request\s+(?:developer\s+)?help|let\s+us\s+help|talk\s+to\s+(?:a\s+)?(?:developer|human|person))\b/i.test(p)
-  );
+/** Said instead of filing anything: the chat shows Request developer help under it. */
+function developerHelpOffer(explanation: string, totalPages: number): SiteAgentPlan {
+  return {
+    explanation,
+    actionKind: "escalation_offer",
+    summary: { totalPages, affectedPages: 0, totalChanges: 0 },
+    pages: [],
+    requiresApproval: false,
+    approvalReasons: [],
+    riskLevel: "low",
+  };
 }
 
 const SECTION_WORDS: Array<[RegExp, SectionKind]> = [
@@ -1355,72 +1329,13 @@ export async function planAgentInstruction(
   }
 
   // --------------------------------------------------------------------------
-  // Scope Guardrail: Strictly restrict tasks to the Website Builder domain
-  // --------------------------------------------------------------------------
-  const scopeResult = evaluateBuilderScope(trimmed);
-  if (!scopeResult.inScope) {
-    const escalation = await createWebsiteEscalation({
-      siteId: site.id,
-      pageId: currentPage?.id,
-      pageTitle: currentPage?.title,
-      userPrompt: prompt,
-      reason: "OUT_OF_SCOPE",
-      category: scopeResult.category ?? "other",
-      agentNotes: `User prompt is outside website builder scope (${scopeResult.topic}): ${scopeResult.reason}. Developer help requested.`,
-    });
-
-    return enrichPlanWithApprovalMetadata({
-      explanation: `I can change your website's words, layout, styling, pictures and SEO, and "${scopeResult.topic}" is outside that, so I've asked a DakyXTech developer to help (request ${escalation.reportNumber}). They can see this page and what you asked, and will get back to you.`,
-      actionKind: "escalation",
-      summary: { totalPages: livePages.length, affectedPages: 0, totalChanges: 0 },
-      pages: [],
-      escalation: {
-        id: escalation.id,
-        reportNumber: escalation.reportNumber,
-        reason: escalation.reason,
-        category: escalation.category,
-        agentNotes: escalation.agentNotes,
-        status: escalation.status,
-        createdAt: escalation.createdAt.toISOString(),
-        siteId: site.id,
-        pageTitle: currentPage?.title ?? null,
-      },
-      requiresApproval: false,
-    });
-  }
-
-  // --------------------------------------------------------------------------
-  // Explicit User Escalation to Owner
+  // A request for a person, and nothing else: offered, never filed here
   // --------------------------------------------------------------------------
   if (isExplicitEscalationRequest(trimmed)) {
-    const escalation = await createWebsiteEscalation({
-      siteId: site.id,
-      pageId: currentPage?.id,
-      pageTitle: currentPage?.title,
-      userPrompt: prompt,
-      reason: "OWNER_REQUESTED",
-      category: "other",
-      agentNotes: `User asked for developer help from the website builder agent chat.`,
-    });
-
-    return enrichPlanWithApprovalMetadata({
-      explanation: `Your request for developer help (${escalation.reportNumber}) has been sent. A DakyXTech developer can see this page and what you asked, and will get back to you.`,
-      actionKind: "escalation",
-      summary: { totalPages: livePages.length, affectedPages: 0, totalChanges: 0 },
-      pages: [],
-      escalation: {
-        id: escalation.id,
-        reportNumber: escalation.reportNumber,
-        reason: escalation.reason,
-        category: escalation.category,
-        agentNotes: escalation.agentNotes,
-        status: escalation.status,
-        createdAt: escalation.createdAt.toISOString(),
-        siteId: site.id,
-        pageTitle: currentPage?.title ?? null,
-      },
-      requiresApproval: false,
-    });
+    return developerHelpOffer(
+      "A DakyXTech developer can take this on. Press Request developer help below and they will see this page and what you asked.",
+      livePages.length,
+    );
   }
 
   // --------------------------------------------------------------------------
@@ -2235,37 +2150,18 @@ export async function planAgentInstruction(
     const proposed = aiData.pages.reduce((sum, page) => sum + page.changes.length, 0) + aiData.structuralActions.length;
     const dropped: string[] = [];
 
+    // Out of the editor's reach, in the model's judgement: said, and offered.
+    // It used to be filed on the person's behalf with "I've asked a developer"
+    // — and nobody was told.
     if (aiData.intent === "escalate") {
-      const esc = await createWebsiteEscalation({
-        siteId: site.id,
-        pageId: currentPage?.id,
-        pageTitle: currentPage?.title,
-        userPrompt: trimmed,
-        reason: "UNSUPPORTED_CAPABILITY",
-        category: (aiData.escalationCategory as any) || "complex_engineering",
-        agentNotes: aiData.escalationReason || aiData.explanation || "AI model determined request requires developer assistance beyond automated layout editing.",
-      });
-
-      return enrichPlanWithApprovalMetadata({
-        explanation: `${aiData.explanation ? `${aiData.explanation.trim()} ` : ""}This needs a developer rather than the editor, so I've asked a DakyXTech developer to help (request ${esc.reportNumber}). They will get back to you.`,
-        actionKind: "escalation",
-        summary: { totalPages: livePages.length, affectedPages: 0, totalChanges: 0 },
-        pages: [],
-        escalation: {
-          id: esc.id,
-          reportNumber: esc.reportNumber,
-          reason: esc.reason,
-          category: esc.category,
-          agentNotes: esc.agentNotes,
-          status: esc.status,
-          createdAt: esc.createdAt.toISOString(),
-          siteId: site.id,
-          pageTitle: currentPage?.title ?? null,
-        },
-        requiresApproval: false,
+      return {
+        ...developerHelpOffer(
+          `${aiData.explanation ? `${aiData.explanation.trim()} ` : ""}This needs a developer rather than the editor. Press Request developer help below and a DakyXTech developer will see this page and what you asked.`,
+          livePages.length,
+        ),
         costUsd: result.costUsd,
         model: result.model,
-      });
+      };
     }
 
     if (aiData.editorCommand) {
@@ -3044,12 +2940,13 @@ export function registerWebsiteBuilderAgent(
     } catch (error) { next(error); }
   });
 
-  // 6. Escalate a code-managed or structural request to a DakyXTech developer & site owner
+  // 6. The person asks a DakyXTech developer for help — the only way a request
+  // is filed from the chat (Request developer help).
   router.post("/sites/:siteId/agent/escalate", async (req: Request, res: Response, next) => {
     try {
       const body = escalateDeveloperSchema.parse(req.body ?? {});
       const site = await access.loadSite(req, req.params.siteId);
-      const author = req.dbUser?.name ?? req.dbUser?.email ?? "Website Owner";
+      const author = req.dbUser?.name ?? req.dbUser?.email ?? "Website editor";
 
       const escalation = await createWebsiteEscalation({
         siteId: site.id,
@@ -3057,7 +2954,8 @@ export function registerWebsiteBuilderAgent(
         userPrompt: body.prompt,
         reason: "OWNER_REQUESTED",
         category: "complex_engineering",
-        agentNotes: body.reason ?? "User escalated directly from Website Builder Agent chat",
+        agentNotes: body.reason ?? "Requested from the Builder agent chat",
+        userId: req.dbUser?.id ?? null,
         userEmail: req.dbUser?.email ?? null,
         userName: author,
       });

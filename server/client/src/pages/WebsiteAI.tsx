@@ -626,7 +626,7 @@ export function WebsiteAI() {
                 }`}
               >
                 <IconAlertCircle />
-                <span>Owner Reports</span>
+                <span>Developer requests</span>
                 {escalations.data?.openCount !== undefined && escalations.data.openCount > 0 && (
                   <span
                     className={`ml-1 rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
@@ -1104,7 +1104,7 @@ export function WebsiteAI() {
               </div>
             )}
 
-            {/* TAB 6: Owner Reports & Escalations Dashboard */}
+            {/* TAB 6: Developer requests */}
             {activeTab === "escalations" && (
               <div className="space-y-6">
                 {/* Header Context Banner */}
@@ -1115,17 +1115,17 @@ export function WebsiteAI() {
                         <IconAlertCircle size={16} />
                       </span>
                       <h4 className="text-sm font-bold text-ink">
-                        Website Builder Escalations &amp; Owner Handoff Reports
+                        Developer requests
                       </h4>
                     </div>
                     {escalations.data?.openCount !== undefined && (
                       <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
-                        {escalations.data.openCount} Open Action{escalations.data.openCount === 1 ? "" : "s"}
+                        {escalations.data.openCount} open
                       </span>
                     )}
                   </div>
                   <p className="text-xs text-muted leading-relaxed">
-                    The Website Builder Agent operates strictly within the website design domain (page copy, styling, layout sections, typography, images, and SEO). When a client requests actions outside this scope (such as CRM leads, outbound cold email campaigns, staff payroll, or custom server engineering), or when an automated layout operation cannot be fulfilled, an Escalation Report is dispatched directly here for business owner review.
+                    People editing a website ask for a developer from the Builder agent chat by pressing Request developer help. Each request arrives here with the page they were on and what they asked, and is emailed to the owner and posted to Slack as it is filed.
                   </p>
                 </div>
 
@@ -1161,15 +1161,15 @@ export function WebsiteAI() {
 
                 {/* Reports Listing */}
                 {escalations.isLoading ? (
-                  <div className="py-12 text-center text-xs text-muted">Loading escalation reports…</div>
+                  <div className="py-12 text-center text-xs text-muted">Loading developer requests…</div>
                 ) : !escalations.data?.items.length ? (
                   <div className="rounded-2xl border border-line bg-cream/30 py-12 text-center">
                     <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 mb-2">
                       <IconCheck size={20} />
                     </div>
-                    <h5 className="text-sm font-semibold text-ink">No Escalation Reports</h5>
+                    <h5 className="text-sm font-semibold text-ink">No developer requests</h5>
                     <p className="text-xs text-muted mt-1 max-w-sm mx-auto">
-                      All website builder actions are running smoothly within scope. When requests require owner or developer follow-up, they will appear here.
+                      When somebody presses Request developer help in the Builder agent chat, the request appears here.
                     </p>
                   </div>
                 ) : (
@@ -1225,7 +1225,7 @@ export function WebsiteAI() {
                                   ? "Custom Engineering"
                                   : item.reason === "EXECUTION_FAILURE"
                                     ? "Execution Error"
-                                    : "Client Escalation"}
+                                    : "Developer help requested"}
                             </span>
 
                             {/* Category Pill */}
@@ -1298,7 +1298,7 @@ export function WebsiteAI() {
                               <div className="font-semibold flex items-center gap-1.5">
                                 <IconCheck size={12} />
                                 <span>
-                                  Resolved by {item.resolvedBy || "Owner"} on{" "}
+                                  Resolved by {item.resolvedBy || "staff"} on{" "}
                                   {new Date(item.resolvedAt).toLocaleDateString()}
                                 </span>
                               </div>
@@ -1336,7 +1336,7 @@ export function WebsiteAI() {
                               </div>
                               <div>
                                 <label className="block text-[11px] font-semibold text-muted mb-1">
-                                  Owner Notes / Resolution Details (optional)
+                                  Notes (optional)
                                 </label>
                                 <textarea
                                   rows={2}
@@ -1421,7 +1421,7 @@ export function WebsiteAI() {
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-bold text-amber-800 uppercase">
-                      Escalation Report Dispatched
+                      Developer help requested
                     </span>
                     {plan.escalation?.reportNumber && (
                       <span className="font-mono text-xs font-semibold text-ink">
@@ -1439,7 +1439,7 @@ export function WebsiteAI() {
                   }}
                 >
                   <IconAlertCircle />
-                  <span>Open Owner Reports</span>
+                  <span>Open developer requests</span>
                 </Button>
               </div>
 

@@ -5412,6 +5412,8 @@ model WebsiteUsage {
 /// to the owner queue so human engineers can assist the client.
 model WebsiteEscalation {
   id           String    @id @default(cuid())
+  /// ESC-<year>-<n>, given once when filed; the chat, the list and the email all quote it.
+  reportNumber String    @unique
   site         Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
   siteId       String
   pageId       String?
@@ -5420,6 +5422,8 @@ model WebsiteEscalation {
   reason       String    // "OUT_OF_SCOPE" | "UNSUPPORTED_CAPABILITY" | "EXECUTION_FAILURE" | "OWNER_REQUESTED"
   category     String    // "custom_backend" | "third_party_integration" | "crm_or_leads" | "billing_or_account" | "complex_engineering" | "other"
   agentNotes   String
+  /// Who asked. Requests filed before 21 Oct 2026 have only the email.
+  userId       String?
   userEmail    String?
   userName     String?
   status       String    @default("OPEN") // "OPEN" | "IN_REVIEW" | "RESOLVED"
@@ -5431,6 +5435,7 @@ model WebsiteEscalation {
 
   @@index([siteId, status])
   @@index([status, createdAt])
+  @@index([userId])
 }
 
 /// A repository somebody has proved, through GitHub, that they can reach with

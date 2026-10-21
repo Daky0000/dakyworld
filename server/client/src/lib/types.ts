@@ -3686,7 +3686,7 @@ export type SiteAgentPermissionMode = "smart" | "full" | "ask";
 
 export type SiteAgentPlan = {
   explanation: string;
-  actionKind: "font" | "color" | "content" | "instruction" | "structure" | "command" | "attachment" | "escalation";
+  actionKind: "font" | "color" | "content" | "instruction" | "structure" | "command" | "attachment" | "escalation" | "escalation_offer";
   summary: {
     totalPages: number;
     affectedPages: number;
@@ -3737,6 +3737,8 @@ export type WebsiteEscalationReportItem = {
 export type WebsiteEscalationListResponse = {
   openCount: number;
   total: number;
+  /** Staff only: whether this account may move a request along. */
+  canUpdate?: boolean;
   items: WebsiteEscalationReportItem[];
 };
 

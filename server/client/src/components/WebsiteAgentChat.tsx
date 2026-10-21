@@ -32,6 +32,7 @@ type ChatMessage = {
   publishedLive?: boolean;
   publishingLive?: boolean;
   escalatedTicketId?: string | null;
+  escalatedReportNumber?: string | null;
   escalating?: boolean;
   requiresApproval?: boolean;
   applyResult?: SiteAgentApplyResult | null;
@@ -413,7 +414,7 @@ export function WebsiteAgentChat({
       prev.map((m) => (m.id === messageId ? { ...m, escalating: true } : m)),
     );
     try {
-      const res = await api.post<{ ticketId: string; message: string }>(
+      const res = await api.post<{ ticketId: string; reportNumber: string; message: string }>(
         `/website/sites/${siteId}/agent/escalate`,
         {
           prompt: promptText || "Developer assistance requested from Website Builder Agent",
@@ -424,7 +425,7 @@ export function WebsiteAgentChat({
       setMessages((prev) =>
         prev.map((m) =>
           m.id === messageId
-            ? { ...m, escalating: false, escalatedTicketId: res.ticketId }
+            ? { ...m, escalating: false, escalatedTicketId: res.ticketId, escalatedReportNumber: res.reportNumber }
             : m,
         ),
       );
@@ -1219,7 +1220,7 @@ export function WebsiteAgentChat({
                         {msg.escalatedTicketId ? (
                           <div className="inline-flex items-center gap-1.5 text-[11px] font-medium text-positive-text">
                             <IconCheck />
-                            <span>Request sent. A DakyXTech developer can see this page and what you asked, and will get back to you.</span>
+                            <span>Request sent{msg.escalatedReportNumber ? ` (#${msg.escalatedReportNumber})` : ""}. A DakyXTech developer can see this page and what you asked, and will get back to you.</span>
                           </div>
                         ) : (
                           <div className="flex items-center justify-between gap-2">

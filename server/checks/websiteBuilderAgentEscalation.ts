@@ -1,16 +1,20 @@
 /**
- * Verification test suite for Website Builder Agent Scope Guardrails,
- * Section Generation Capabilities, and Owner Escalation Reporting.
+ * The Builder agent's developer-help offer and its section templates.
+ *
+ * Until 21 Oct 2026 a keyword guard refused, and filed a developer request
+ * for, any message containing words like "lead", "salary" or "bank transfer",
+ * and a phrase matched anywhere ("let us help", "contact the owner") filed one
+ * too. Now nothing is filed except by the person pressing Request developer
+ * help; only a message that is wholly a request for a person is answered with
+ * the offer.
  */
 import assert from "node:assert/strict";
-import type { Site, SitePage } from "@prisma/client";
 import {
-  evaluateBuilderScope,
   isExplicitEscalationRequest,
   matchSectionTemplateRequest,
-  planAgentInstruction,
   siteAgentApplyInputSchema,
 } from "../src/services/websiteBuilderAgent.js";
+import * as agent from "../src/services/websiteBuilderAgent.js";
 import {
   SECTION_TEMPLATES,
   injectSectionIntoHtml,
@@ -21,46 +25,37 @@ async function run() {
   console.log("Starting Website Builder Agent Scope & Escalation Checks...");
 
   // ---------------------------------------------------------------------------
-  // 1. Strict Scope Evaluation Guardrail Assertions
+  // 1. Ordinary copy is never refused or filed (audit H1, H2)
   // ---------------------------------------------------------------------------
-  const crmEval = evaluateBuilderScope("Delete CRM lead 492 and blast outbound cold email sequence");
-  assert.equal(crmEval.inScope, false, "CRM & Outbound email must be flagged as out-of-scope");
-  assert.equal(crmEval.category, "crm_or_leads");
-
-  const payrollEval = evaluateBuilderScope("Pay staff salaries and transfer funds to employee account");
-  assert.equal(payrollEval.inScope, false, "Staff payroll must be flagged as out-of-scope");
-  assert.equal(payrollEval.category, "billing_or_account");
-
-  const dbEval = evaluateBuilderScope("Drop database table users and restart production server via docker");
-  assert.equal(dbEval.inScope, false, "Server/DB administration must be flagged as out-of-scope");
-  assert.equal(dbEval.category, "custom_backend");
-
-  const backendMicroserviceEval = evaluateBuilderScope("Build a backend api with postgres database");
-  assert.equal(backendMicroserviceEval.inScope, false, "Custom backend microservice must be flagged as out-of-scope");
-  assert.equal(backendMicroserviceEval.category, "complex_engineering");
-
-  const inScopeEval1 = evaluateBuilderScope("Change the hero heading to 'World Class Construction' and make it blue");
-  assert.equal(inScopeEval1.inScope, true, "Visual heading copy & color must be in scope");
-
-  const inScopeEval2 = evaluateBuilderScope("Add a testimonials section and pricing table to our homepage");
-  assert.equal(inScopeEval2.inScope, true, "Section generation must be in scope");
-
-  const inScopeEval3 = evaluateBuilderScope("Change font family to Inter across all pages and optimize SEO description");
-  assert.equal(inScopeEval3.inScope, true, "Typography & SEO must be in scope");
-
-  console.log("✓ Scope Guardrails successfully enforce website builder boundary.");
+  assert.equal("evaluateBuilderScope" in agent, false, "the keyword scope guard is gone");
+  for (const prompt of [
+    // H1: refused as out of scope because of a word on the page.
+    "Change the hero heading to 'Lead generation that actually works'",
+    "Make the Team Lead title under Kofi's photo bold",
+    "On the careers page say the salary is GHS 4,000 a month",
+    "Add a line under prices: We accept bank transfer and MoMo",
+    "Link the button to our 2025 financial report PDF",
+    "Change our tagline to 'The CRM built for Ghanaian shops'",
+    "Replace 'oil and gas pipeline services' with 'pipeline engineering'",
+    // H2: a help phrase inside the copy filed a request.
+    "Change the button text to 'Let us help'",
+    "Add a line: For private bookings, contact the owner",
+    "Make the CTA say 'Need a developer? Talk to us'",
+    "Rename the support heading to 'Request help'",
+  ]) {
+    assert.equal(isExplicitEscalationRequest(prompt), false, `"${prompt}" is an edit, not a request for a person`);
+  }
+  console.log("✓ Ordinary copy edits are neither refused nor filed.");
 
   // ---------------------------------------------------------------------------
-  // 2. Explicit Escalation Intent Assertions
+  // 2. A message that is wholly a request for a person gets the offer
   // ---------------------------------------------------------------------------
-  assert.equal(isExplicitEscalationRequest("Please escalate this to the owner"), true);
-  assert.equal(isExplicitEscalationRequest("send a report to the owner regarding this layout"), true);
-  assert.equal(isExplicitEscalationRequest("I want to talk to Dan about this"), true);
-  assert.equal(isExplicitEscalationRequest("report to Dan"), true);
-  assert.equal(isExplicitEscalationRequest("hand off to developer"), true);
+  for (const phrase of ["I need a developer", "Please request developer help.", "hand off to developer", "talk to a human", "escalate this"]) {
+    assert.equal(isExplicitEscalationRequest(phrase), true, `"${phrase}" asks for a person`);
+  }
   assert.equal(isExplicitEscalationRequest("change button text to Submit"), false);
 
-  console.log("✓ Explicit Escalation matcher successfully detects owner handoffs.");
+  console.log("✓ Only a whole-message request for a person is offered developer help.");
 
   // ---------------------------------------------------------------------------
   // 3. Section Template Matcher & HTML Generation Assertions
