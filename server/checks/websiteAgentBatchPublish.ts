@@ -102,7 +102,7 @@ try {
   await draft(guarded, 1, redirect);
   await check("a page the guard refuses stops the batch, and the refusal names it", async () => {
     const response = await call("POST", `/sites/${guarded.id}/agent/publish-batch`, { pageIds: guarded.pages.map((page) => page.id) });
-    assert.equal(response.status, 400, response.body.error);
+    assert.equal(response.status, 400, response.body.error?.trim());
     assert.match(response.body.error ?? "", /About/);
     const blocked = response.body.blockedPages as Array<{ title: string }>;
     assert.deepEqual(blocked.map((page) => page.title), ["About"]);
@@ -118,7 +118,7 @@ try {
   });
   await check("the page the guard is happy with publishes on its own", async () => {
     const response = await call("POST", `/sites/${guarded.id}/agent/publish-batch`, { pageIds: [guarded.pages[0]!.id] });
-    assert.equal(response.status, 200, response.body.error);
+    assert.equal(response.status, 200, response.body.error?.trim());
     const page = await prisma.sitePage.findUniqueOrThrow({ where: { id: guarded.pages[0]!.id } });
     assert.ok(page.publishedHtml?.includes("Batch words"));
   });
@@ -128,7 +128,7 @@ try {
   await draft(leaving, 0, ordinary);
   await check("is refused, and the page stays a draft", async () => {
     const response = await call("POST", `/sites/${leaving.id}/agent/publish-batch`, { pageIds: [leaving.pages[0]!.id] });
-    assert.equal(response.status, 409, response.body.error);
+    assert.equal(response.status, 409, response.body.error?.trim());
     assert.equal((await prisma.sitePage.findUniqueOrThrow({ where: { id: leaving.pages[0]!.id } })).publishedHtml, null);
   });
 

@@ -57,8 +57,10 @@ export function isWebsiteStaff(req: WebsiteActor): boolean {
 async function nextReportNumber(tx: Pick<typeof prisma, "$queryRaw" | "$executeRaw">, year: number): Promise<string> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('website-escalation-number'))`;
   const prefix = `ESC-${year}-`;
+  // No number is passed in: Prisma binds a JS integer as bigint, and
+  // Postgres has no substring(text from bigint).
   const rows = await tx.$queryRaw<Array<{ highest: number | null }>>`
-    SELECT max(substring("reportNumber" from ${prefix.length + 1})::int) AS highest
+    SELECT max(split_part("reportNumber", '-', 3)::int) AS highest
     FROM "WebsiteEscalation"
     WHERE "reportNumber" LIKE ${`${prefix}%`}`;
   return `${prefix}${String((rows[0]?.highest ?? 0) + 1).padStart(3, "0")}`;
