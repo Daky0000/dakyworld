@@ -1472,3 +1472,23 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   The DSNs are committed on purpose — they only permit sending — and
   `SENTRY_DSN=off` stops it. The CSP's `connect-src` names exactly the ingest
   host. `checks/monitoring.ts`.
+
+## The Builder agent audit fixes (21 Oct 2026)
+
+Three audits of the Builder agent were compiled into one document kept outside
+this repository; the finding ids below are its. Each entry says what a rule is
+for, so nobody undoes it.
+
+- **A draft save never moves a page's base (C3).** On a hosted or imported
+  page `sourceHtml` is what the draft is measured against — the draft's
+  `$document` records its hash. The five SEO tools that rewrite a page and
+  Insert section (`websiteSeo.ts`) wrote their result into `sourceHtml` as
+  well as into the draft, so from the next read the draft was stale: the
+  editor said publishing was blocked, every layout change and every publish
+  was refused, and discarding left the tool's change in the base, where a
+  publish with no draft cannot reach it. Only a publish moves the base now.
+  Pages already caught are put back by `scripts/repairStaleToolDrafts.ts`
+  (dry run by default; `--apply --backup <file>`), which restores the
+  published HTML where the draft was made against it and lists the rest for a
+  person. `checks/websiteToolDrafts.ts` runs each tool on a hosted page and
+  then publishes it.

@@ -346,6 +346,13 @@ export function generateSmartPageSeo(site: Site, page: SitePage, html: string): 
  * read at, and a page that moved meanwhile is a conflict that changes and
  * counts nothing. A run that leaves the page exactly as it was (the optimiser
  * with nothing left to fix) still saves, and spends nothing.
+ *
+ * **A draft save never writes `sourceHtml`.** On a hosted or imported page that
+ * column is the base the draft is measured against — the draft's `$document`
+ * records its hash — so these tools used to move the base under their own draft:
+ * from the next read the draft was stale, every layout change and every publish
+ * was refused, and discarding left the tool's change baked into the base where
+ * no publish could reach it. Only a publish moves the base.
  */
 async function writeToolEdit(
   req: Request,
@@ -565,7 +572,6 @@ export function registerWebsiteSeoRoutes(
       } else {
         const docDraft = restoreDocument(source.html, existingDraft, updatedHtml, "Updated page SEO metadata");
         await writeToolEdit(req, site.id, page, { before: currentHtml, after: updatedHtml }, {
-          ...(page.sourceHtml !== null ? { sourceHtml: updatedHtml } : {}),
           draft: { ...nextDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
         });
       }
@@ -661,7 +667,6 @@ export function registerWebsiteSeoRoutes(
       const docDraft = restoreDocument(source.html, existingDraft, currentHtml, `Added ${body.schemaType} JSON-LD Schema`);
       // Before the sitemap commit below, so a refused edit sends nothing.
       await writeToolEdit(req, site.id, page, { before, after: currentHtml }, {
-        ...(page.sourceHtml !== null ? { sourceHtml: currentHtml } : {}),
         draft: { ...existingDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
       });
 
@@ -771,7 +776,6 @@ export function registerWebsiteSeoRoutes(
       );
 
       await writeToolEdit(req, site.id, page, { before, after: currentHtml }, {
-        ...(page.sourceHtml !== null ? { sourceHtml: currentHtml } : {}),
         draft: { ...existingDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
       });
 
@@ -918,9 +922,10 @@ export function registerWebsiteSeoRoutes(
         currentHtml = `${currentHtml}\n${chosen.html}`;
       }
 
+      // A draft only: `sourceHtml` stays the base this draft is measured against
+      // (see `writeToolEdit`).
       const docDraft = restoreDocument(source.html, existingDraft, currentHtml, `Inserted section: ${chosen.label}`);
       const written = await prisma.$transaction((tx) => writePageEdit(tx, allowance, { id: page.id, draftRevision: page.draftRevision }, {
-        ...(page.sourceHtml !== null ? { sourceHtml: currentHtml } : {}),
         draft: { ...existingDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
         draftRevision: { increment: 1 },
         draftSavedAt: new Date(),
@@ -1023,7 +1028,6 @@ export function registerWebsiteSeoRoutes(
           `Optimized Page Speed (${lazyImagesAdded} lazy-load images, ${externalLinksHardened} links hardened)`,
         );
         await writeToolEdit(req, site.id, page, { before, after: html }, {
-          ...(page.sourceHtml !== null ? { sourceHtml: html } : {}),
           draft: { ...existingDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
         });
       }
@@ -1151,7 +1155,6 @@ export function registerWebsiteSeoRoutes(
 
       const docDraft = restoreDocument(source.html, existingDraft, html, label);
       await writeToolEdit(req, site.id, page, { before, after: html }, {
-        ...(page.sourceHtml !== null ? { sourceHtml: html } : {}),
         draft: { ...existingDraft, ...docDraft } as unknown as Prisma.InputJsonValue,
       });
 
