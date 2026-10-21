@@ -49,6 +49,7 @@ import {
   type SectionKind,
 } from "./websiteSectionTemplates.js";
 import { createWebsiteEscalation } from "./websiteEscalationService.js";
+import { assertSiteAiEnabled } from "./websiteAiSwitch.js";
 
 // ============================================================================
 // Schemas & Types
@@ -2800,6 +2801,9 @@ const escalateDeveloperSchema = z.object({
  */
 export async function executeBuilderPlan(site: Site, input: unknown, userId: string | null | undefined): Promise<SiteAgentPlan> {
   const body = siteAgentCommandSchema.parse(input);
+  // The site's one AI switch. Asked here, so the queued plan asks it too; the
+  // fixed commands (a font, a colour, a phone number) are not AI and are not stopped.
+  if (body.action === "instruction") await assertSiteAiEnabled(site);
       const pages = await prisma.sitePage.findMany({
         where: { siteId: site.id },
         orderBy: [{ sortOrder: "asc" }, { path: "asc" }],

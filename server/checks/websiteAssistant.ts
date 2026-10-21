@@ -13,7 +13,7 @@ import { AGENT_SEEDS } from "../src/services/agentRegistry.js";
 assert.equal(writerJob("website.editor")?.agentKey, "website.editor");
 assert.ok(AGENT_SEEDS.some(agent => agent.key === "website.editor"), "the assistant's wording has a real owner on the roster");
 assert.match(await shippedDoctrine("website.editor"), /Preserve their design/);
-assert.equal(websiteDesignOptions.parse({}).aiEnabled, false, "AI remains disabled until a manager enables it");
+assert.equal(websiteDesignOptions.parse({}).aiEnabled, undefined, "nothing chosen: the site's plan decides (siteAiEnabled)");
 assert.equal(websiteDesignOptions.safeParse({ aiEnabled: "true" }).success, false);
 assert.equal(websiteDesignOptions.safeParse({ brandVoice: "x".repeat(4001) }).success, false);
 assert.equal(importedWebsiteFields('<!doctype html><html><head><title>Page</title></head><body><h1>Welcome</h1></body></html>'), 1);
@@ -124,7 +124,7 @@ try {
   const request = () => fetch(`http://127.0.0.1:${address.port}/pages/page/assistant`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: "Make the heading clearer", values: {} }) });
   const disabled = await request();
   assert.equal(disabled.status, 403);
-  assert.match((await disabled.json() as { error: string }).error, /disabled/);
+  assert.match((await disabled.json() as { error: string }).error, /AI is switched off for this website/);
   assert.equal(authorised, 1, "AI settings are read after page authorization");
   denied = true;
   const refused = await request();

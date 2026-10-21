@@ -201,7 +201,7 @@ try {
     await runWebsiteWork(running);
     const finished = await prisma.websiteWorkJob.findUniqueOrThrow({ where: { id: jobId } });
     assert.equal(finished.state, "FAILED");
-    assert.match(finished.error ?? "", /AI suggestions are disabled for this site/, "stopped by the site setting, not by a plan the colleague does not have");
+    assert.match(finished.error ?? "", /AI is switched off for this website/, "stopped by the site setting, not by a plan the colleague does not have");
     await prisma.site.update({ where: { id: biz.siteId }, data: { settings: { aiEnabled: true } } });
   });
   await check("a run that never reached a model goes back to the account it was counted against", async () => {

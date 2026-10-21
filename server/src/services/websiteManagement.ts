@@ -36,6 +36,7 @@ import { analyzeImportPackage, commitPackageToSite } from "./websitePackageImpor
 import { generatePagePrepublishReport, generateSitePrepublishReport } from "./websitePrepublishReport.js";
 import { updateSiteSettings } from "./websiteSiteSettings.js";
 import { HOST_DOMAIN, PLACEHOLDER_HOST_DOMAIN, PLACEHOLDER_HOSTS, expectedHostedUrl, hostedPublicUrl, isSlugAddress } from "./websiteHosting.js";
+import { siteAiEnabled } from "./websiteAiSwitch.js";
 
 const publicUrl = z.string().url().max(2000).refine(value => {
   const url = new URL(value);
@@ -65,7 +66,8 @@ export const websiteDesignOptions = z.object({
   colours: z.array(z.string().regex(/^#[0-9a-fA-F]{6}$/)).max(16).default([]),
   fonts: z.array(z.string().trim().min(1).max(80).regex(/^[a-zA-Z0-9 ,.-]+$/)).max(12).default([]),
   brandVoice: z.string().max(4000).default(""),
-  aiEnabled: z.boolean().default(false),
+  /** Unset means the plan decides — see `siteAiEnabled`. */
+  aiEnabled: z.boolean().optional(),
 });
 
 /** Metadata alone is not an editable page: SPA shells usually have a title. */
@@ -518,13 +520,14 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       // the server.
       github: { installationId: site.githubInstallationId, repositoryId: site.githubRepositoryId, accessLostAt: site.githubAccessLostAt },
       clientId: site.clientId,
-      options: websiteDesignOptions.parse(site.settings ?? {}),
+      options: { ...websiteDesignOptions.parse(site.settings ?? {}), aiEnabled: await siteAiEnabled(site) },
     });
   }));
 
   router.get("/sites/:siteId/design", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
-    let { colours, fonts, aiEnabled, presets } = websiteDesignOptions.parse(site.settings ?? {});
+    let { colours, fonts, presets } = websiteDesignOptions.parse(site.settings ?? {});
+    const aiEnabled = await siteAiEnabled(site);
     if (colours.length === 0) {
       const pages = await prisma.sitePage.findMany({
         where: { siteId: site.id },
@@ -551,7 +554,9 @@ export function registerWebsiteManagement(router: Router, access: Access) {
   router.put("/sites/:siteId/design", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
     const input = websiteDesignOptions.partial().parse(req.body ?? {});
-    const previous = websiteDesignOptions.parse(site.settings ?? {});
+    // Compared with what the screen was shown, so sending the switch back as it
+    // was is not a change (and not a Pro-only theme edit for a Starter site).
+    const previous = { ...websiteDesignOptions.parse(site.settings ?? {}), aiEnabled: await siteAiEnabled(site) };
     const changed = Object.keys(input).filter(key => JSON.stringify(input[key as keyof typeof input]) !== JSON.stringify(previous[key as keyof typeof previous]));
     if (!changed.length) return res.json({ saved: false, options: previous });
     await assertTierFeatureAccess(req, "themeSettings", site.id);
@@ -571,7 +576,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     if (data.clientId && !(await prisma.client.findUnique({ where: { id: data.clientId }, select: { id: true } }))) {
       throw new WebsiteError(400, "That client is not in the system.");
     }
-    const previousOptions = websiteDesignOptions.parse(site.settings ?? {});
+    const previousOptions = { ...websiteDesignOptions.parse(site.settings ?? {}), aiEnabled: await siteAiEnabled(site) };
     const optionsChanged = Object.keys(options).filter(key => JSON.stringify(options[key as keyof typeof options]) !== JSON.stringify(previousOptions[key as keyof typeof previousOptions]));
     if (optionsChanged.length > 0) {
       await assertTierFeatureAccess(req, "themeSettings", site.id);

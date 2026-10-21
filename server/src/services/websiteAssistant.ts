@@ -12,6 +12,7 @@ import { check, scopesForAgent, BudgetExceeded, forgetBudgets } from "./budgets.
 import { writerSystem } from "./writers/brief.js";
 import { buildPreview, buildPublishPlan, discoverFields, sanitizeValue, safeStyle, validateFieldChange, editingSource, structureControls, type FieldValue, type SiteField } from "./website/index.js";
 import { pageSource, pageUrl, WebsiteError } from "./website/site.js";
+import { assertSiteAiEnabled } from "./websiteAiSwitch.js";
 
 // A model may choose a control and its value; it never chooses a selector,
 // file, command, stylesheet or script. The visual inspector owns the same kinds
@@ -235,8 +236,8 @@ export function registerWebsiteAssistant(router: Router, access: { loadPage: (re
       const body = websiteAssistantInput.parse(req.body);
       const { page, site } = await access.loadPage(req, req.params.pageId);
       if (page.status === "HIDDEN") throw new WebsiteError(403, "This page is hidden from editing. Restore it before requesting suggestions.");
-      const settings = z.object({ aiEnabled: z.boolean().default(false), brandVoice: z.string().max(4_000).default("") }).parse(site.settings ?? {});
-      if (!settings.aiEnabled) throw new WebsiteError(403, "AI suggestions are disabled for this site. Enable them in Website settings.");
+      const settings = z.object({ brandVoice: z.string().max(4_000).default("") }).parse(site.settings ?? {});
+      await assertSiteAiEnabled(site);
       if (capacity.admission) {
         res.status(202).json(await enqueueWebsiteWork(req, site.id, "ASSISTANT", { pageId: page.id, body }));
         return;
@@ -260,8 +261,8 @@ export async function executeQueuedAssistant(req: Request, siteId: string, input
   const page = await prisma.sitePage.findFirst({ where: { id: parsed.pageId, siteId }, include: { site: true } });
   if (!page || page.status === "HIDDEN") throw new WebsiteError(404, "That page is not available.");
   await assertWebsiteSiteAccess(req, siteId, "edit");
-  const settings = z.object({ aiEnabled: z.boolean().default(false), brandVoice: z.string().default("") }).parse(page.site.settings ?? {});
-  if (!settings.aiEnabled) throw new WebsiteError(403, "AI suggestions are disabled for this site.");
+  const settings = z.object({ brandVoice: z.string().default("") }).parse(page.site.settings ?? {});
+  await assertSiteAiEnabled(page.site);
   const source = await pageSource(page.site, page, { fresh: true });
   return suggestWebsiteChanges({ source: editingSource(source.html, (page.draft ?? {}) as Record<string, FieldValue>), ...parsed.body, brandVoice: settings.brandVoice });
 }

@@ -1580,3 +1580,19 @@ for, so nobody undoes it.
   out with a sentence. The error handler now passes a `WebsiteError`'s
   `blockers`, `warnings` and `blockedPages` through — a page's own Publish was
   dropping the guard's reasons too.
+- **One AI switch per website, on for Business (H8; Dan, 21 Oct 2026).**
+  `siteAiEnabled` (`services/websiteAiSwitch.ts`): a saved `settings.aiEnabled`
+  wins; with nothing saved the site's *own* plan decides — its paying
+  subscription, else its client's active retainer — and Business is on. It is
+  never decided from the viewer, so staff and the customer see the same
+  switch. The design assistant (both paths) and the Builder agent's
+  `instruction` plans (in `executeBuilderPlan`, so the queue asks too) refuse
+  with "AI is switched off for this website…"; the fixed font/colour/phone
+  commands are not AI and still run. The editor shows the agent only when the
+  switch is on. `websiteDesignOptions.aiEnabled` is optional now — its old
+  `default(false)` was written into settings on every save, so the settings
+  routes compare with the *effective* value the screen was shown, or sending
+  the switch back unchanged would count as a (Pro-only) theme edit.
+  `scripts/enableAiForBusiness.ts` (dry run; `--apply --backup <file>`)
+  switches on Business sites that carry an `aiEnabled: false` nobody chose.
+  `checks/websiteAiSwitch.ts` (DB).

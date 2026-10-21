@@ -1537,6 +1537,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   structuralHistory.current = step => { if (step < 0 ? page.data?.structure?.canUndo : page.data?.structure?.canRedo) void runStructure(step < 0 ? "undo" : "redo"); };
 
   const { status: tierStatus } = useWebsiteTierStatus(page.data?.site?.id);
+  // The plan includes the agent and the site's one AI switch is on (it is on
+  // for Business unless somebody switched it off).
+  const agentAvailable = canEdit && (!tierStatus?.features || tierStatus.features.aiBuilderAgent) && design.data?.options.aiEnabled === true;
 
   /** Normal or Hover, in the Style tab. A new selection starts at Normal. */
   const [styleState, setStyleState] = useState<"normal" | "hover">("normal");
@@ -2330,7 +2333,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           canDuplicate={!readOnly && Boolean(picked.structure?.duplicate)}
           canDelete={!readOnly && Boolean(picked.structure?.remove || picked.structure?.forceRemove)}
           hasParent={Boolean(picked.parentId)}
-          agent={canEdit && (!tierStatus?.features || tierStatus.features.aiBuilderAgent)}
+          agent={agentAvailable}
           onEdit={() => tell({ type: "edit", id: picked.id })}
           onBold={() => formatWhole("bold")}
           onItalic={() => formatWhole("italic")}
@@ -3395,7 +3398,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 </button>
               </div>
             )}
-            {canEdit && (!tierStatus?.features || tierStatus.features.aiBuilderAgent) && !agentOpen && (
+            {agentAvailable && !agentOpen && (
               <button
                 type="button"
                 className="dx-ai"
@@ -3912,7 +3915,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
             <div className="dx-pop-pad"><b>{ctxField.label}</b></div>
             {isText && !readOnly && item("Edit text", <IconEdit size={15} />, () => { setInspectorTab("general"); tell({ type: "edit", id: ctxField.id }); }, { keys: "Dbl-click" })}
             {isImage && !readOnly && item("Replace image", <IconImage size={15} />, () => { setAssetTargetMode("image"); setAssetModalOpen(true); })}
-            {canEdit && (!tierStatus?.features || tierStatus.features.aiBuilderAgent) && item("Ask the agent about this", <IconSparkles size={15} />, () => setAgentOpen(true))}
+            {agentAvailable && item("Ask the agent about this", <IconSparkles size={15} />, () => setAgentOpen(true))}
             {item("Add a note", <IconMessageSquare size={15} />, () => setPanel("notes"))}
             <hr />
             {item("Copy", <IconCopy size={15} />, () => {
