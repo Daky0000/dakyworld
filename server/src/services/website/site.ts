@@ -283,7 +283,7 @@ export async function siteStylesheets(site: Site, page: SitePage, html: string, 
  * WordPress always writes them, absolute. Other hosts (font and icon CDNs) are
  * not this site's design. For reading what an element does on hover.
  */
-export async function pageStyleTexts(site: Site, page: SitePage, html: string, limit = 12): Promise<Array<{ href: string; css: string }>> {
+export async function pageStyleTexts(site: Site, page: SitePage, html: string, limit = 20): Promise<Array<{ href: string; css: string }>> {
   const sheets: Array<{ href: string; css: string }> = [];
   for (const match of html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)) sheets.push({ href: "inline", css: match[1]! });
   const base = new URL(pageUrl(site, page));
@@ -291,12 +291,19 @@ export async function pageStyleTexts(site: Site, page: SitePage, html: string, l
     .filter((tag) => /rel\s*=\s*["']?stylesheet/i.test(tag[0]))
     .map((tag) => decodeEntities(/href\s*=\s*["']([^"']+)["']/i.exec(tag[0])?.[1] ?? ""))
     .filter(Boolean)
+    // Other hosts never count against the limit, and a page builder's
+    // generated CSS — where an element's own hover lives — is read first: a
+    // WordPress page with its plugins links thirty files, Elementor's late.
+    .filter((href) => { try { return new URL(href, base).host === base.host; } catch { return false; } })
+    .sort((a, b) => Number(/\/elementor\/css\//.test(b)) - Number(/\/elementor\/css\//.test(a)))
     .slice(0, limit);
   for (const href of hrefs) {
     const relative = !/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith("//");
     let css: string | null = null;
     if (relative && site.sourceKind !== "wordpress") css = await readStylesheet(site, page, href).catch(() => null);
-    else {
+    // A framework's built CSS (`/_next/static/…`, `/assets/index-….css`) is
+    // in no repository; the live site is the only place it exists.
+    if (css === null) {
       const url = (() => { try { return new URL(href, base); } catch { return null; } })();
       if (!url || url.host !== base.host || !/^https?:$/.test(url.protocol)) continue;
       const key = sourceKey({ siteId: site.id, repo: null, branch: "", filePath: `live-css:${url.href}` });

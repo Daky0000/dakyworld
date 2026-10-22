@@ -1818,9 +1818,15 @@ trees Elementor 4.3.5 actually produces.
 
 `GET /pages/:id/hover-rules` returns every `:hover` rule of the page's inline
 `<style>`s, its same-host stylesheets (`pageStyleTexts`, relative or — as
-WordPress writes them — absolute, up to twelve) and the Tailwind CSS built for
-its `hover:` classes, with `:hover` stripped from the selector
-(`services/website/hover.ts`). The Hover view matches them against the selected
+WordPress writes them — absolute, up to twenty, other hosts never counted and
+anything under `/elementor/css/` read first) and the Tailwind CSS built for its
+`hover:` classes, with `:hover` stripped from the selector
+(`services/website/hover.ts`; `checks/websiteHover.ts`). A stylesheet that is
+not in the repository — a framework's build output, `/_next/static/…` — is read
+from the live site. Classic Elementor writes hover into `post-<id>.css`; V4
+writes it into `local-<id>-frontend-desktop.css` as `.elementor .e-<id>-…:hover`.
+An escaped `\:hover` inside a Tailwind class name (`.focus\:hover\:underline`)
+is part of the name, not a pseudo-class — the strip is `(?<!\\):hover`. The Hover view matches them against the selected
 element with `element.matches` in the frame (it has the element; the frame
 cannot read another origin's `cssRules`), lists what the site already does
 under "On this website already", shows those values as the controls'

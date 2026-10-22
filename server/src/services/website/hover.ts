@@ -29,12 +29,12 @@ export function hoverRules(sheets: Array<{ css: string }>): HoverRule[] {
       const media = rule.parent?.type === "atrule" && (rule.parent as postcss.AtRule).name === "media" ? (rule.parent as postcss.AtRule).params : undefined;
       for (const part of rule.selectors) {
         // A pseudo-element (`:hover::after`) is not the element; nothing to edit there.
-        if (!part.includes(":hover") || /::?(before|after|placeholder|marker|selection)\b/i.test(part)) continue;
-        const selector = part.replace(/:hover\b/g, "").replace(/\s+/g, " ").trim();
+        if (!/(?<!\\):hover\b/.test(part) || /::?(before|after|placeholder|marker|selection)\b/i.test(part)) continue;
+        const selector = part.replace(/(?<!\\):hover\b/g, "").replace(/\s+/g, " ").trim();
         if (!selector) continue;
         // Hovering the element itself when `:hover` sits on the last compound.
         const last = part.trim().split(/\s*[\s>+~]\s*/).pop() ?? "";
-        rules.push({ selector, hover: part.trim(), self: last.includes(":hover"), ...(media ? { media } : {}), declarations });
+        rules.push({ selector, hover: part.trim(), self: /(?<!\\):hover\b/.test(last), ...(media ? { media } : {}), declarations });
       }
     });
   }
