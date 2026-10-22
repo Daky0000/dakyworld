@@ -49,13 +49,45 @@ Object.defineProperty(prisma, "llmCall", { value: { create: async () => ({}), fi
 
 const { callModel } = await import("../src/lib/models/call.js");
 const { FREE_LADDER_BY_JOB, TIER_MODELS } = await import("../src/lib/models/registry.js");
-const { AI_PLAN_JSON_SCHEMA, builderTaskLevel, planFromModel } = await import("../src/services/websiteBuilderAgent.js");
+const { AI_PLAN_JSON_SCHEMA, builderTaskLevel, planFromModel, routeBuilderRequest, scoreBuilderRequest } = await import("../src/services/websiteBuilderAgent.js");
 
 try {
   assert.equal(builderTaskLevel("make this heading bold", 0), "standard");
   assert.equal(builderTaskLevel("change the font on every page", 0), "complex");
   assert.equal(builderTaskLevel("use this photo as the hero", 1), "complex");
   assert.equal(builderTaskLevel("change the font across the whole site", 0, true), "standard", "a spend ceiling holds it at standard");
+  // The router, as the OS agents have it: rules that can say simple, a free
+  // look only on a boundary, held to one step, and the budget last.
+  const lookedAt: string[] = [];
+  const look = (answer: "simple" | "standard" | "complex") => async (_agent: unknown, facts: { brief: string }) => {
+    lookedAt.push(facts.brief);
+    return { level: answer, reason: "a stub's opinion" };
+  };
+  const route = (prompt: string, extra: Partial<Parameters<typeof routeBuilderRequest>[0]> = {}) =>
+    routeBuilderRequest({ prompt, attachments: 0, selected: false, downgrade: false, mode: "full", look: look("complex") as never, ...extra });
+
+  const bold = await route("make this bold", { selected: true });
+  assert.equal(bold.level, "simple", bold.sentence);
+  assert.equal(bold.decidedBy, "rules", "a clearly small request is not worth a look");
+  assert.ok(scoreBuilderRequest({ prompt: "make this bold", attachments: 0, selected: true }).score < -1);
+
+  lookedAt.length = 0;
+  const unclear = await route("make the hero heading say Fresh bread every morning");
+  assert.equal(lookedAt.length, 1, "a boundary score asks the free model once");
+  assert.equal(unclear.decidedBy, "model");
+  assert.equal(unclear.level, "standard", "held to one step from the rules even when the look says complex");
+
+  const wide = await route("rewrite the copy on every page to sound warmer and add a testimonials section", { look: look("simple") as never });
+  assert.equal(wide.level, "complex", wide.sentence);
+  assert.equal((await route("rewrite the copy on every page to sound warmer and add a testimonials section", { downgrade: true })).level, "standard", "a spend ceiling holds it at standard");
+
+  lookedAt.length = 0;
+  assert.equal((await route("make the hero heading say Fresh bread every morning", { mode: "rules" })).decidedBy, "rules");
+  assert.equal(lookedAt.length, 0, "mode rules never asks a model");
+  const legacy = await route("make this bold", { mode: "off" });
+  assert.deepEqual([legacy.level, legacy.decidedBy], ["standard", "legacy"], "routing off is the old answer");
+  assert.match(bold.sentence, /Free models first/);
+
   for (const level of ["standard", "complex"] as const) {
     asked.length = 0;
     const result = await callModel<unknown>({
@@ -75,7 +107,7 @@ try {
     assert.ok(result.fallbackNote?.includes("so Claude answered"), result.fallbackNote ?? "no note");
     console.log(`${level}: ${asked.join(" → ")}`);
   }
-  console.log("websiteAgentChain: sized like the agents, free agent ladder first, then Claude at the task level's model — passed");
+  console.log("websiteAgentChain: sized by the agents' router (rules, a free look on the line, the budget), free agent ladder first, then Claude at the task level's model — passed");
 } finally {
   server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));

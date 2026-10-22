@@ -1564,7 +1564,21 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const { status: tierStatus } = useWebsiteTierStatus(page.data?.site?.id);
   // The plan includes the agent and the site's one AI switch is on (it is on
   // for Business unless somebody switched it off).
-  const agentAvailable = canEdit && (!tierStatus?.features || tierStatus.features.aiBuilderAgent) && design.data?.options.aiEnabled === true;
+  const agentInPlan = !tierStatus?.features || tierStatus.features.aiBuilderAgent;
+  const agentAvailable = canEdit && agentInPlan && design.data?.options.aiEnabled === true;
+  // The button is shown to everyone who can edit, whether or not the agent can
+  // run: hidden, a site with AI switched off — every site with no plan behind
+  // it, unless somebody ticked the box — simply had no agent, and nothing said
+  // why or where to turn it on.
+  const [agentOff, setAgentOff] = useState(false);
+  const switchAiOn = useMutation({
+    mutationFn: () => api.put<{ saved: boolean }>(`/website/sites/${page.data!.site.id}/design`, { aiEnabled: true }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["website", "design", page.data?.site.id] });
+      setAgentOff(false);
+      setAgentOpen(true);
+    },
+  });
 
   /** Normal or Hover, in the Style tab. A new selection starts at Normal. */
   const [styleState, setStyleStateRaw] = useState<"normal" | StyleState>("normal");
@@ -3435,18 +3449,39 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 </button>
               </div>
             )}
-            {agentAvailable && !agentOpen && (
+            {canEdit && !agentOpen && design.data && (
               <button
                 type="button"
-                className="dx-ai"
+                className={`dx-ai${agentAvailable ? "" : " dx-ai-off"}`}
                 data-tour="agent"
-                title="Builder agent — describe a change and it makes it"
+                title={agentAvailable ? "Builder agent — describe a change and it makes it" : "Builder agent — off for this website"}
                 aria-label="Builder agent"
                 aria-pressed={agentOpen}
-                onClick={() => setAgentOpen(true)}
+                onClick={() => (agentAvailable ? setAgentOpen(true) : setAgentOff((open) => !open))}
               >
                 <IconBot size={21} />
               </button>
+            )}
+            {agentOff && !agentAvailable && (
+              <div className="dx-ai-card" role="dialog" aria-label="The Builder agent is off">
+                <h3>{agentInPlan ? "AI is switched off for this website" : `The Builder agent is not on the ${tierStatus?.tierName ?? "current"} plan`}</h3>
+                <p className="dx-hint">
+                  {agentInPlan
+                    ? "One switch covers the Builder agent and the design assistant. It starts on for Business websites; on any other website somebody has to switch it on."
+                    : "The agent that makes changes from a sentence comes with the Business plan."}
+                </p>
+                {switchAiOn.error && <p className="dx-err">{switchAiOn.error instanceof Error ? switchAiOn.error.message : "It could not be switched on."}</p>}
+                <div className="dx-btns">
+                  {agentInPlan ? (
+                    <button type="button" className="dx-btn dx-pri" disabled={switchAiOn.isPending} onClick={() => switchAiOn.mutate()}>
+                      {switchAiOn.isPending ? "Switching on…" : "Switch AI on"}
+                    </button>
+                  ) : (
+                    <Link to="/website/balance" className="dx-btn dx-pri">See plans</Link>
+                  )}
+                  <button type="button" className="dx-btn dx-ghost" onClick={() => setAgentOff(false)}>Not now</button>
+                </div>
+              </div>
             )}
           </main>
         )}

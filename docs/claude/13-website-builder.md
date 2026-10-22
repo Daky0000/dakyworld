@@ -1882,6 +1882,36 @@ and an edit made there publishes back into Elementor's hover keys.
   took the content and left Elementor's wrapper with its id, so the publish
   saw nothing to do; a widget the edit emptied is deleted (`emptiedWidgets`).
 
+### The agent is always on the canvas, and sized by the OS's router (22 Oct 2026, third pass)
+
+- **The agent button is shown to everyone who can edit, whatever the AI
+  switch says.** It was rendered only when `siteAiEnabled` was true, and that
+  is false on every site with no plan behind it unless somebody ticked the box
+  in Website settings — the Owner's own connected WordPress site among them —
+  so the agent was simply absent, with nothing saying why. Off, the button is
+  drawn dashed and opens a card that says why: AI switched off (with **Switch AI
+  on**, the same `PUT /sites/:id/design` the settings checkbox makes, and the
+  chat opens once it is on) or not on the plan (with the plans link).
+- **The builder agent is sized by the agents' router** — `routeBuilderRequest`,
+  the same four steps as `routeTask`: `agents.routing` off is the old
+  rules-only answer; the rules (`scoreBuilderRequest`, on `scoreTask`'s scale —
+  below zero simple, four and up complex) can now say **simple**, which the old
+  `builderTaskLevel` never did, so "make this bold" went to the mid paid model
+  whenever the free ones failed; a boundary score in mode `full` gets the
+  agents' own free look (`lookAtTask`, NVIDIA only, held to one step, abandoned
+  after 8 s because a person is waiting); and a ceiling in its downgrade band
+  holds it at standard. The level then picks the paid model and the effort; the
+  three free rungs of the `agent` ladder always serve first. A short sentence
+  about the whole site is not "a short request". The reply carries `routing`,
+  and the chat shows one quiet line — "Simple task · free models first ·
+  answered by …" — with the router's sentence on hover.
+- **The model's picture of the site is a sample of twelve pages**, the current
+  page first and then the shortest paths. It read every page of the site on
+  every message: on a WordPress site with two hundred pages that was 37 seconds
+  before the model was asked anything; it is about two now. Site-wide font,
+  colour, phone and email changes still read every page, because they change
+  every page.
+
 ### The agent does what the editor does (22 Oct 2026)
 
 The planner's operations gained `set_tablet_style`, `set_mobile_style`,

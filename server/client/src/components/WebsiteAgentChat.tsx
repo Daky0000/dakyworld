@@ -27,6 +27,8 @@ type ChatMessage = {
   userPrompt?: string;
   attachments?: SiteAgentAttachment[];
   plan?: SiteAgentPlan | null;
+  /** How the router sized the request and which model answered — one quiet line under the reply. */
+  routed?: { level: string; sentence: string; model?: string } | null;
   applied?: boolean;
   autoApplied?: boolean;
   publishedLive?: boolean;
@@ -719,6 +721,7 @@ export function WebsiteAgentChat({
         userPrompt: text,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         plan: hasActionableChanges ? plan : null,
+        routed: plan.routing ? { level: plan.routing.level, sentence: plan.routing.sentence, model: plan.model } : null,
         requiresApproval: needsApproval,
       };
 
@@ -1003,6 +1006,11 @@ export function WebsiteAgentChat({
                   )}
 
                   <p className="whitespace-pre-wrap">{msg.text}</p>
+                  {msg.routed && (
+                    <p className="mt-1.5 text-[11px] leading-snug text-muted" title={msg.routed.sentence}>
+                      {msg.routed.level.charAt(0).toUpperCase() + msg.routed.level.slice(1)} task · free models first{msg.routed.model ? ` · answered by ${msg.routed.model}` : ""}
+                    </p>
+                  )}
 
                   {/* Plan Proposal / Auto-Execution Card */}
                   {msg.plan && (

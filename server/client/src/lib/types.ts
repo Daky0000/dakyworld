@@ -3743,6 +3743,8 @@ export type SiteAgentPlan = {
   riskLevel?: "low" | "medium" | "high";
   costUsd?: number;
   model?: string;
+  /** How the OS's task router sized the request: the level picks the paid model that takes over from the free ones. */
+  routing?: { level: "simple" | "standard" | "complex"; effort: string; decidedBy: "rules" | "model" | "legacy"; sentence: string };
 };
 
 export type WebsiteEscalationReportItem = {
