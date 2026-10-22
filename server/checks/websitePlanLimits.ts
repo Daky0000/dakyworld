@@ -79,18 +79,18 @@ function boot(env: Record<string, string>, withLabel = false) {
   return JSON.parse(result.stdout.trim().split("\n").pop()!) as { EDITOR: number; CARE: number; MANAGED: number; label: { MANAGED: string; CARE: string; careHighlight: string } | null };
 }
 try {
-  await check("unset, the plans get their own numbers: Starter 0, Pro 10, Business 50", () => {
-    assert.deepEqual(boot({}), { EDITOR: 0, CARE: 10, MANAGED: 50, label: null });
+  await check("unset, the plans get their own numbers: Starter 5, Pro 10, Business 50", () => {
+    assert.deepEqual(boot({}), { EDITOR: 5, CARE: 10, MANAGED: 50, label: null });
   });
   await check("each plan's number can be moved on its own", () => {
-    assert.deepEqual(boot({ AI_DAILY_LIMIT_CARE: "3", AI_DAILY_LIMIT_MANAGED: "80" }), { EDITOR: 0, CARE: 3, MANAGED: 80, label: null });
+    assert.deepEqual(boot({ AI_DAILY_LIMIT_CARE: "3", AI_DAILY_LIMIT_MANAGED: "80" }), { EDITOR: 5, CARE: 3, MANAGED: 80, label: null });
   });
   await check("a blank line means the default, never zero", () => {
-    assert.deepEqual(boot({ AI_DAILY_LIMIT_CARE: "", AI_DAILY_USER_LIMIT: " " }), { EDITOR: 0, CARE: 10, MANAGED: 50, label: null });
+    assert.deepEqual(boot({ AI_DAILY_LIMIT_CARE: "", AI_DAILY_USER_LIMIT: " " }), { EDITOR: 5, CARE: 10, MANAGED: 50, label: null });
   });
   await check("the old single number, where it is set, still caps every plan", () => {
-    assert.deepEqual(boot({ AI_DAILY_USER_LIMIT: "2" }), { EDITOR: 0, CARE: 2, MANAGED: 2, label: null });
-    assert.deepEqual(boot({ AI_DAILY_USER_LIMIT: "20" }), { EDITOR: 0, CARE: 10, MANAGED: 20, label: null });
+    assert.deepEqual(boot({ AI_DAILY_USER_LIMIT: "2" }), { EDITOR: 2, CARE: 2, MANAGED: 2, label: null });
+    assert.deepEqual(boot({ AI_DAILY_USER_LIMIT: "20" }), { EDITOR: 5, CARE: 10, MANAGED: 20, label: null });
   });
   await check("a nonsense value stops the service at boot rather than switching AI off", () => {
     const refused = boot({ AI_DAILY_LIMIT_MANAGED: "-1" });
@@ -109,10 +109,10 @@ try {
   await check("so does Pro's, in the label and in the plan's own list", () => {
     // The eleventh run of a day is refused on Pro; a plan that said only "50 a
     // month" let a customer find the daily number by being refused.
-    assert.equal(labels({}).CARE, "50 AI prompts / mo, up to 10 a day");
-    assert.equal(labels({}).careHighlight, "AI Copy & Section Assistant (50 runs/mo, up to 10 a day)");
-    assert.equal(labels({ AI_DAILY_LIMIT_CARE: "4" }).CARE, "50 AI prompts / mo, up to 4 a day");
-    assert.equal(labels({ AI_DAILY_USER_LIMIT: "3" }).careHighlight, "AI Copy & Section Assistant (50 runs/mo, up to 3 a day)");
+    assert.equal(labels({}).CARE, "100 AI requests / mo for the Builder agent and the assistant, up to 10 a day");
+    assert.equal(labels({}).careHighlight, "AI Builder Agent & Copy Assistant (100 runs/mo, up to 10 a day)");
+    assert.equal(labels({ AI_DAILY_LIMIT_CARE: "4" }).CARE, "100 AI requests / mo for the Builder agent and the assistant, up to 4 a day");
+    assert.equal(labels({ AI_DAILY_USER_LIMIT: "3" }).careHighlight, "AI Builder Agent & Copy Assistant (100 runs/mo, up to 3 a day)");
   });
   // The public page and the runbook are not built from the numbers, so they are
   // held to them here: each must say the defaults a deployment actually has.
@@ -121,8 +121,9 @@ try {
   const repoFile = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
   await check("the public Pro card states the daily number as well as the monthly one", () => {
     const page = repoFile("../../website-builder.html");
-    assert.ok(page.includes(`AI assistant for copy and layout suggestions (50 requests a month, up to ${defaults.CARE} a day)`), "Pro's AI line on website-builder.html");
-    assert.ok(page.includes(`unlimited AI runs (fair use: ${defaults.MANAGED} a day)`), "Business's AI line on website-builder.html");
+    assert.ok(page.includes(`AI builder agent: describe a change and it makes it (30 requests a month, up to ${defaults.EDITOR} a day)`), "Starter's AI line on website-builder.html");
+    assert.ok(page.includes(`(100 requests a month between them, up to ${defaults.CARE} a day)`), "Pro's AI line on website-builder.html");
+    assert.ok(page.includes(`Unlimited AI runs for the builder agent and the assistant (fair use: ${defaults.MANAGED} a day)`), "Business's AI line on website-builder.html");
   });
   await check("the capacity runbook gives each plan's default, not the old two a day", () => {
     const runbook = repoFile("../deploy/CAPACITY.md");
@@ -472,7 +473,6 @@ try {
   /* ----------------------------------------------- AI, a day at a time ---- */
 
   console.log("\nAI runs a day, through the queue");
-  await prisma.site.update({ where: { id: siteId }, data: { settings: { aiEnabled: true } } });
   const jobsToday = (count: number) => prisma.$transaction([
     prisma.websiteWorkJob.deleteMany({ where: { userId: owner.id } }),
     prisma.websiteWorkJob.createMany({ data: Array.from({ length: count }, () => ({
@@ -481,6 +481,33 @@ try {
   ]);
   const ask = () => call("POST", `/pages/${pageC}/assistant`, { prompt: "Make the heading warmer" }, { "Idempotency-Key": randomUUID().replace(/-/g, "") });
   const jobCount = () => prisma.websiteWorkJob.count({ where: { userId: owner.id } });
+  const askAgent = () => call("POST", `/sites/${siteId}/agent/plan`, { action: "instruction", prompt: "Make the heading warmer", pageId: pageC }, { "Idempotency-Key": randomUUID().replace(/-/g, "") });
+  const setPrompts = (aiPrompts: number) => prisma.websiteUsage.upsert({ where: { userId_period: { userId: owner.id, period: usagePeriod() } }, create: { userId: owner.id, period: usagePeriod(), aiPrompts }, update: { aiPrompts } });
+
+  // Every plan has the Builder agent since 22 Oct 2026: Starter 30 a month and
+  // 5 a day. Set here: the declined-payment notice above leaves the plan on Business.
+  await prisma.websitePurchase.update({ where: { id: purchase.id }, data: { tier: "EDITOR" } });
+  await check("Starter: the Builder agent is on the plan, and a request is queued and spends one of thirty", async () => {
+    await prisma.websiteWorkJob.deleteMany({ where: { userId: owner.id } });
+    await setPrompts(0);
+    const queued = await askAgent();
+    assert.equal(queued.status, 202, queued.body.error);
+    assert.equal((await prisma.websiteUsage.findUniqueOrThrow({ where: { userId_period: { userId: owner.id, period: usagePeriod() } } })).aiPrompts, 1);
+  });
+  await check("Starter: the sixth request of a day is refused, naming the plan's number", async () => {
+    await jobsToday(5);
+    const refused = await askAgent();
+    assert.equal(refused.status, 429, refused.body.error);
+    assert.match(refused.body.error ?? "", /AI allowance on Starter \(5 a day\)/);
+  });
+  await check("Starter: the thirty-first of the month is refused", async () => {
+    await prisma.websiteWorkJob.deleteMany({ where: { userId: owner.id } });
+    await setPrompts(30);
+    const refused = await askAgent();
+    assert.equal(refused.status, 429, refused.body.error);
+    assert.match(refused.body.error ?? "", /monthly AI allowance is used/);
+    await setPrompts(0);
+  });
 
   await prisma.websitePurchase.update({ where: { id: purchase.id }, data: { tier: "CARE" } });
   await check("Pro: the eleventh run of the day is refused, naming the plan's number", async () => {

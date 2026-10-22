@@ -218,8 +218,11 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     importsLimitLabel: "3 imports / mo",
     editsLimit: 30,
     editsLimitLabel: "30 page edits / mo (a page counts once a day)",
-    aiPromptsLimit: 0,
-    aiPromptsLimitLabel: "Not included",
+    // The Builder agent is on every plan (the Owner's call, 22 Oct 2026), with
+    // a monthly cap below Business: Starter 30, Pro 100, shared with the design
+    // assistant where the plan has it.
+    aiPromptsLimit: 30,
+    aiPromptsLimitLabel: `30 Builder agent requests / mo, up to ${dailyAiLimit("EDITOR")} a day`,
     websiteLimit: 1,
     userLimit: 2,
     supportPriority: "STANDARD",
@@ -234,7 +237,7 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
       themeSettings: false,
       seoInspector: false,
       aiAssistant: false,
-      aiBuilderAgent: false,
+      aiBuilderAgent: true,
       sourceCodeEditor: false,
       pullRequestPublish: false,
       brandPresets: false,
@@ -244,13 +247,13 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
       "Up to 3 HTML page imports per month",
       "30 page edits a month — a page counts once a day, however many changes you make",
       "Visual Layout & Style Inspector",
+      `AI Builder Agent (30 requests/mo, up to ${dailyAiLimit("EDITOR")} a day)`,
       "1 website · up to 2 team members",
     ],
     restrictedFeatures: [
       "Global Theme Palette & Color Tokens (Pro+)",
       "Page SEO Inspector & Metadata Auditor (Pro+)",
       "AI Copy & Layout Assistant (Pro+)",
-      "Autonomous AI Builder Agent (Business)",
       "Raw HTML/JSX Source Code Editor & GitHub PRs (Business)",
     ],
   },
@@ -270,11 +273,11 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     importsLimitLabel: "15 imports / mo",
     editsLimit: 200,
     editsLimitLabel: "200 page edits / mo (a page counts once a day)",
-    aiPromptsLimit: 50,
+    aiPromptsLimit: 100,
     // And a daily ceiling the queue enforces, from the number it reads — the
     // eleventh run of a day is refused, and a label that said only "a month"
     // left that to be found out by being refused.
-    aiPromptsLimitLabel: `50 AI prompts / mo, up to ${dailyAiLimit("CARE")} a day`,
+    aiPromptsLimitLabel: `100 AI requests / mo for the Builder agent and the assistant, up to ${dailyAiLimit("CARE")} a day`,
     websiteLimit: 3,
     userLimit: 5,
     supportPriority: "PRIORITY",
@@ -289,7 +292,7 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
       themeSettings: true,
       seoInspector: true,
       aiAssistant: true,
-      aiBuilderAgent: false,
+      aiBuilderAgent: true,
       sourceCodeEditor: false,
       pullRequestPublish: false,
       brandPresets: true,
@@ -300,11 +303,10 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
       "200 page edits a month — a page counts once a day, however many changes you make",
       "Global Theme Color System & Brand Presets",
       "Full Page SEO Inspector & Metadata Auditor",
-      `AI Copy & Section Assistant (50 runs/mo, up to ${dailyAiLimit("CARE")} a day)`,
+      `AI Builder Agent & Copy Assistant (100 runs/mo, up to ${dailyAiLimit("CARE")} a day)`,
       "Up to 3 websites · 5 team members",
     ],
     restrictedFeatures: [
-      "Autonomous AI Builder Agent (Business)",
       "Raw HTML/JSX Source Code Editor & GitHub PRs (Business)",
     ],
   },
@@ -863,10 +865,13 @@ export async function assertTierFeatureAccess(
     );
   }
 
-  if (!options.skipUsageLimit && feature === "aiAssistant" && usage.aiPromptsUsed >= plan.aiPromptsLimit) {
+  // One monthly allowance for both: an agent request and an assistant prompt
+  // each spend one. The agent was never capped because only Business, which
+  // is unlimited, had it.
+  if (!options.skipUsageLimit && (feature === "aiAssistant" || feature === "aiBuilderAgent") && usage.aiPromptsUsed >= plan.aiPromptsLimit) {
     throw new WebsiteError(
       403,
-      `Monthly AI Assistant prompt limit reached (${usage.aiPromptsUsed}/${plan.aiPromptsLimit}) on ${yourPlan(status)}.${upgradeSentence(plan.tier, status.pricing.currency, (next) => next.aiPromptsLimitLabel)}`,
+      `This month's AI allowance is used (${usage.aiPromptsUsed}/${plan.aiPromptsLimit}) on ${yourPlan(status)}. It resets on the 1st; ordinary editing remains available.${upgradeSentence(plan.tier, status.pricing.currency, (next) => next.aiPromptsLimitLabel)}`,
     );
   }
 }

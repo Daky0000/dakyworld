@@ -7,8 +7,10 @@ async function runChecks() {
   let checksPassed = 0;
 
   // 1. Verify Tier plans have proper AI prompt limits and quota structures
-  assert.ok(WEBSITE_TIER_PLANS.EDITOR.aiPromptsLimit === 0, "EDITOR tier should have 0 AI prompts included");
-  assert.ok(WEBSITE_TIER_PLANS.CARE.aiPromptsLimit === 50, "CARE tier should have 50 AI prompts included");
+  // Every plan has the Builder agent since 22 Oct 2026: Starter 30 a month, Pro 100 (shared with the assistant).
+  assert.ok(WEBSITE_TIER_PLANS.EDITOR.aiPromptsLimit === 30, "EDITOR tier should have 30 AI requests included");
+  assert.ok(WEBSITE_TIER_PLANS.EDITOR.features.aiBuilderAgent && WEBSITE_TIER_PLANS.CARE.features.aiBuilderAgent, "every plan has the Builder agent");
+  assert.ok(WEBSITE_TIER_PLANS.CARE.aiPromptsLimit === 100, "CARE tier should have 100 AI requests included");
   assert.ok(WEBSITE_TIER_PLANS.MANAGED.aiPromptsLimit >= 10000, "MANAGED tier should have high/unlimited AI prompts");
   checksPassed += 3;
 

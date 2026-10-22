@@ -102,8 +102,13 @@ websiteRouter.use((req, _res, next) => {
     if (!feature) return;
     const siteId = (await websiteRequestSiteId(req.path)) ?? undefined;
     if (feature === "aiBuilderAgent") {
-      await assertTierFeatureAccess(req, "aiBuilderAgent", siteId);
-      if (!capacity.admission && req.method === "POST" && /\/agent\/(?:plan|apply)\/?$/.test(req.path)) await recordAiPromptUsed(req, siteId);
+      // A request to the agent spends one from the monthly allowance, and only
+      // the request: applying the plan it made calls no model, and counting
+      // both halved every capped plan's allowance. With admission on, the queue
+      // checks and spends it instead.
+      const asking = req.method === "POST" && /\/agent\/plan\/?$/.test(req.path);
+      await assertTierFeatureAccess(req, "aiBuilderAgent", siteId, { skipUsageLimit: !asking || capacity.admission });
+      if (!capacity.admission && asking) await recordAiPromptUsed(req, siteId);
     } else if (feature === "aiAssistant") {
       await assertTierFeatureAccess(req, "aiAssistant", siteId, { skipUsageLimit: capacity.admission && /\/pages\/[^/]+\/assistant\/?$/.test(req.path) });
       if (!capacity.admission && req.method === "POST") await recordAiPromptUsed(req, siteId);

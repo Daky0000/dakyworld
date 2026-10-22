@@ -109,7 +109,30 @@ try {
     assert.equal(response.body.saved, false);
     assert.equal((await call("POST", `/sites/${business.id}/agent/plan`, undo(business))).status, 200);
   });
+
+  console.log("\nThe monthly cap, without the queue");
+  const { usagePeriod } = await import("../src/services/websiteEntitlement.js");
+  const prompts = async () => (await prisma.websiteUsage.findUnique({ where: { userId_period: { userId: owner.id, period: usagePeriod() } } }))?.aiPrompts ?? 0;
+  const setPrompts = (aiPrompts: number) => prisma.websiteUsage.upsert({ where: { userId_period: { userId: owner.id, period: usagePeriod() } }, create: { userId: owner.id, period: usagePeriod(), aiPrompts }, update: { aiPrompts } });
+  await prisma.websitePurchase.updateMany({ where: { userId: owner.id }, data: { tier: "EDITOR" } });
+  await check("Starter has the agent: a request is answered and spends one", async () => {
+    await setPrompts(29);
+    const response = await call("POST", `/sites/${business.id}/agent/plan`, undo(business));
+    assert.equal(response.status, 200, response.body.error?.trim());
+    assert.equal(await prompts(), 30);
+  });
+  await check("applying the plan it made spends nothing — it calls no model", async () => {
+    await call("POST", `/sites/${business.id}/agent/apply`, { plan: { explanation: "", actionKind: "command", summary: { totalPages: 1, affectedPages: 0, totalChanges: 0 }, pages: [] }, pageRevisions: {} });
+    assert.equal(await prompts(), 30);
+  });
+  await check("the thirty-first request of the month is refused, saying when it resets", async () => {
+    const response = await call("POST", `/sites/${business.id}/agent/plan`, undo(business));
+    assert.equal(response.status, 403);
+    assert.match(response.body.error ?? "", /This month's AI allowance is used \(30\/30\).*resets on the 1st/);
+    assert.equal(await prompts(), 30);
+  });
 } finally {
+  await prisma.websiteUsage.deleteMany({ where: { userId: owner.id } });
   await new Promise<void>((resolve) => server.close(() => resolve()));
   if (siteIds.length) await prisma.site.deleteMany({ where: { id: { in: siteIds } } });
   await prisma.websitePurchase.deleteMany({ where: { userId: owner.id } });

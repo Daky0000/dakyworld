@@ -1393,7 +1393,7 @@ A launch audit, then fixes. What each rule is for, so nobody undoes it.
   membership still does, and a site the person cannot see is a 404, not its
   owner's plan. A colleague is told "this website's" plan, and is not shown the
   owner's purchase. `checks/websitePlanScope.ts`.
-- **The daily AI allowance is the plan's** — Starter 0, Pro 10, Business 50
+- **The daily AI allowance is the plan's** — Starter 5 (0 until 22 Oct 2026), Pro 10, Business 50
   (`AI_DAILY_LIMIT_EDITOR/_CARE/_MANAGED`); the legacy `AI_DAILY_USER_LIMIT`,
   when set, still caps every plan. Pro's and Business's labels read the same
   numbers the queue enforces; the public page states the defaults, and
@@ -1593,6 +1593,22 @@ for, so nobody undoes it.
   allowance). `checks/websiteAiOn.ts` (DB) holds it: the agent answers on a
   Business site, a site with no plan and a site still saying `aiEnabled:
   false`, and a PUT carrying the switch saves nothing.
+- **Every plan has the Builder agent, with a monthly cap below Business (the
+  Owner's call, 22 Oct 2026).** Starter 30 requests a month and 5 a day
+  (`AI_DAILY_LIMIT_EDITOR`, which was 0 and would have refused every one);
+  Pro 100 a month shared with the design assistant, 10 a day; Business
+  unlimited within its 50 a day. One allowance, `aiPromptsLimit`, counts both
+  AI features. The monthly cap was enforced for the assistant only — the agent
+  had only ever been on unlimited Business — and now `assertTierFeatureAccess`
+  enforces it for `aiBuilderAgent` too, on `POST /agent/plan` only. **Applying
+  a plan spends nothing**: the direct path used to record a prompt on both
+  `/agent/plan` and `/agent/apply`, so every request cost two and a capped
+  plan would have had half its allowance; the queued path always counted the
+  request alone. A request counts whichever model answers it — it is counted
+  before it runs. `checks/websitePlanLimits.ts` (queued: Starter's sixth of a
+  day and thirty-first of a month refused) and `checks/websiteAiOn.ts` (direct,
+  apply free) hold it; the public cards, the setup guide and
+  `deploy/CAPACITY.md` say the same numbers.
 - **Phone links keep their `+`; a text replace never moves a link (M1, M2).**
   `planCrossPageContentChange` writes `tel:+…` when the new number starts
   with `+` (it used to drop it and dial a local number that does not exist),

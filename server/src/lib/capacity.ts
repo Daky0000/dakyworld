@@ -33,7 +33,8 @@ export const capacity = {
    * reach the fifty a month it is sold with. The plan decides now.
    */
   aiDailyByTier: {
-    EDITOR: optionalSetting("AI_DAILY_LIMIT_EDITOR", 0),
+    // Starter has the Builder agent since 22 Oct 2026 (30 a month); 0 here refused every request.
+    EDITOR: optionalSetting("AI_DAILY_LIMIT_EDITOR", 5),
     CARE: optionalSetting("AI_DAILY_LIMIT_CARE", 10),
     MANAGED: optionalSetting("AI_DAILY_LIMIT_MANAGED", 50),
   } satisfies Record<WebsitePlanTier, number>,
