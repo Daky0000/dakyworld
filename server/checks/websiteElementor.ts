@@ -39,6 +39,7 @@ const html = `<!doctype html><html><head><title>Bakery</title></head><body>
   </div>
   <div class="elementor-element elementor-element-con0002 e-con e-parent" data-id="con0002" data-element_type="container">
     <div class="elementor-element elementor-element-hd30003 elementor-widget elementor-widget-heading" data-id="hd30003" data-element_type="widget" data-widget_type="heading.default"><h2 class="elementor-heading-title">Second container</h2></div>
+    <div class="elementor-element elementor-element-ic30001 elementor-view-default elementor-widget elementor-widget-icon" data-id="ic30001" data-element_type="widget" data-widget_type="icon.default"><div class="elementor-icon-wrapper"><a class="elementor-icon" href="https://bakery.test/"><svg aria-hidden="true" class="e-font-icon-svg e-fas-star" viewBox="0 0 576 512"><path d="M259.3 17.8"></path></svg></a></div></div>
   </div>
   <div class="elementor-element elementor-element-fb40001 e-con e-atomic-element e-flexbox-base" data-id="fb40001" data-element_type="e-flexbox">
     <h2 data-interaction-id="hd40001" class="e-heading-base e-default-h2">Atomic heading</h2>
@@ -61,6 +62,7 @@ const pageTree = (): ElementorNode[] => [
   ] },
   { id: "con0002", elType: "container", settings: [], elements: [
     { id: "hd30003", elType: "widget", widgetType: "heading", settings: { title: "Second container" }, elements: [] },
+    { id: "ic30001", elType: "widget", widgetType: "icon", settings: { selected_icon: { value: "fas fa-star", library: "fa-solid" }, link: { url: "https://bakery.test/" } }, elements: [] },
   ] },
   { id: "fb40001", elType: "e-flexbox", settings: [], elements: [
     { id: "hd40001", elType: "widget", widgetType: "e-heading", settings: { title: h("Atomic heading"), tag: s("h2") }, elements: [] },
@@ -240,6 +242,20 @@ check("words changed before a layout change are not lost when the layout is publ
   assert.deepEqual([result.unmappable, result.problems], [[], []]);
   assert.equal((node(pageData(result), "hd30002").settings as Record<string, unknown>).title, "Fresh bread every day");
   assert.ok(!JSON.stringify(pageData(result)).includes("Second container"));
+});
+
+check("an icon is not an edit after a layout change (the snapshot's own markers are not differences)", () => {
+  const values = changeStructure(html, {}, { kind: "remove", fieldId: fieldFor(html, "fb40001").id, force: true }).values;
+  const result = apply(values);
+  assert.deepEqual([result.unmappable, result.problems], [[], []]);
+  assert.deepEqual(pageData(result).map((entry) => entry.id), ["con0001", "con0002"]);
+});
+
+check("deleting a classic widget's heading deletes the widget, not only its words", () => {
+  const values = changeStructure(html, {}, { kind: "remove", fieldId: field("Second container").id, force: true }).values;
+  const result = apply(values);
+  assert.deepEqual([result.unmappable, result.problems], [[], []]);
+  assert.deepEqual(node(pageData(result), "con0002").elements!.map((entry) => entry.id), ["ic30001"]);
 });
 
 check("a section added from the library is refused, not dropped on publish in silence", () => {

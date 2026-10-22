@@ -30,7 +30,7 @@
  * layout snapshot — the page with the change made — and replayed on the tree
  * by element id.
  */
-import { attr, parseHtml, walk, type ElementNode } from "./parse.js";
+import { attr, decodeEntities, parseHtml, walk, type ElementNode } from "./parse.js";
 import { readPage, type FieldValue, type SiteField } from "./regions.js";
 import { DOCUMENT_KEY, draftDocument } from "./document.js";
 import { meaningful, needle, normalise, normaliseUrl, plainText, wholeOccurrences } from "./wordpress.js";
@@ -610,6 +610,19 @@ function elementOrder(html: string): Map<string | null, string[]> {
   return order;
 }
 
+/** Classic widgets with nothing left in them to see. */
+function emptiedWidgets(html: string): Set<string> {
+  const out = new Set<string>();
+  for (const node of walk(parseHtml(html))) {
+    const id = attr(node, "data-id");
+    if (!id || !/\belementor-widget\b/.test(attr(node, "class") ?? "")) continue;
+    const inner = html.slice(node.start, node.end).replace(/^<[^>]*>/, "");
+    const visible = /<(img|svg|video|iframe|picture|input|select|textarea|canvas|hr)\b/i.test(inner) || decodeEntities(inner.replace(/<[^>]*>/g, "")).trim() !== "";
+    if (!visible) out.add(id);
+  }
+  return out;
+}
+
 function freshId(): string {
   return Math.random().toString(16).slice(2, 9).padEnd(7, "0");
 }
@@ -649,6 +662,13 @@ function applyLayout(original: string, edited: string, documents: ElementorDocum
   const refused: string[] = [];
   const all = (map: Map<string | null, string[]>) => new Set([...map.values()].flat());
   const had = all(before);
+  // A classic widget is a wrapper around its content, and the editor's delete
+  // takes the content — the heading, the button — leaving an empty wrapper
+  // that still carries the id. Emptied by the edit, it is deleted.
+  const emptiedNow = emptiedWidgets(edited);
+  const emptiedBefore = emptiedWidgets(original);
+  const gone = (id: string) => emptiedNow.has(id) && !emptiedBefore.has(id);
+  for (const [parent, sequence] of after) after.set(parent, sequence.filter((id) => !gone(id)));
   const has = all(after);
   const documentOf = (id: string) => [...documents.values()].find((document) => findNode(document.data, id));
 
@@ -714,6 +734,11 @@ function applyLayout(original: string, edited: string, documents: ElementorDocum
  * ids — and whatever differs in a field's words, link, picture or styling is
  * an edit, whichever side of the layout change it was made on.
  */
+/** Without the editor's own `data-dw-*` attributes. */
+function unmarked(html: string): string {
+  return html.replace(/\s+data-dw-[a-z-]+="[^"]*"/g, "");
+}
+
 function foldEdits(original: string, layout: string, explicit: Record<string, FieldValue>): { values: Record<string, FieldValue>; refused: Array<{ htmlFieldId: string; part: string; message: string }> } {
   const group = (kind: string) => (kind === "text" || kind === "richtext" ? "words" : kind === "link" || kind === "button" ? "link" : kind);
   const keyed = (html: string) => {
@@ -749,8 +774,16 @@ function foldEdits(original: string, layout: string, explicit: Record<string, Fi
   const refused: Array<{ htmlFieldId: string; part: string; message: string }> = [];
   for (const [key, field] of after) {
     const mine = explicit[field.id];
+    // The theme cannot be edited here, so a difference there that nobody
+    // typed is the editor's own (a regenerated style, a re-rendered wrapper)
+    // and must not refuse the publish as "part of the theme".
     const was = before.get(key);
-    const value = mine?.value ?? field.value;
+    if (key.startsWith("theme:") && !mine && was) continue;
+    // The snapshot is the editor's own copy of the page, marked up with its
+    // `data-dw-*` attributes inside every element — an icon's HTML, a list
+    // item's span. Unmarked, they are the same; compared marked, every icon
+    // on the page read as an edit and refused the publish ("no words here").
+    const value = mine?.value ?? unmarked(field.value);
     const href = mine?.href ?? field.href;
     const alt = mine?.alt ?? field.alt;
     const style = mine?.style ?? field.style ?? "";
@@ -768,7 +801,8 @@ function foldEdits(original: string, layout: string, explicit: Record<string, Fi
       continue;
     }
     const edit: FieldValue = {};
-    if (value !== was.value) Object.assign(edit, { value, original: was.value });
+    // An icon is changed through `icon`, never its HTML.
+    if (field.kind !== "icon" && value !== unmarked(was.value)) Object.assign(edit, { value, original: was.value });
     if (href !== undefined && href !== was.href) Object.assign(edit, { href, originalHref: was.href });
     if (alt !== undefined && alt !== was.alt) Object.assign(edit, { alt, originalAlt: was.alt ?? "" });
     if (style !== (was.style ?? "")) Object.assign(edit, { style, originalStyle: was.style ?? "" });
