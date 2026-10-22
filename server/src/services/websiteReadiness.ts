@@ -4,6 +4,8 @@ import { prisma } from "../lib/prisma.js";
 import { githubConfigured, repoAllowed } from "../lib/github.js";
 import { summariseCompatibility, type SiteCompatibility } from "./website/compatibility.js";
 import { pageSource, siteRepo, underSiteCredential, WebsiteError } from "./website/site.js";
+import { isWordPressSite, wordpressPostOf } from "./websiteWordPress.js";
+import { builderEditable, builderRefusal, detectWordPressBuilder } from "./website/index.js";
 
 /**
  * Whether a website is one this editor can honestly be sold for.
@@ -27,6 +29,20 @@ type Access = { loadSite: (req: Request, id: string) => Promise<Site> };
 const PAGE_LIMIT = 60;
 
 export async function siteCompatibility(site: Site, pages: SitePage[]): Promise<SiteCompatibility> {
+  // A WordPress site publishes into WordPress, so "can it go live" is whether
+  // the Application Password still works — not a repository it will never have.
+  if (isWordPressSite(site)) {
+    const connection = await prisma.wordPressConnection.findUnique({ where: { siteId: site.id } });
+    const blocked = !connection
+      ? "This WordPress site is not connected yet. Connect it under Website settings with an Application Password."
+      : connection.pausedAt
+        ? `WordPress stopped accepting the Application Password, so nothing can be published until it is replaced under Website settings. ${connection.pausedReason ?? ""}`.trim()
+        : null;
+    return summariseCompatibility({
+      pages: await readForReport(site, pages),
+      publishing: { repository: false, credentials: Boolean(connection && !connection.pausedAt), branch: null, blocked, wordpress: connection ? { username: connection.username, siteUrl: connection.siteUrl } : null },
+    });
+  }
   const repo = siteRepo(site);
   const credentials = await underSiteCredential(site, githubConfigured);
   const allowed = repo ? await repoAllowed(repo).catch(() => false) : false;
@@ -39,10 +55,22 @@ export async function siteCompatibility(site: Site, pages: SitePage[]): Promise<
         ? `${repo} is not on the list of repositories this system may write to. Add it under Settings → Developer.`
         : null;
 
-  const read = await Promise.all(
+  return summariseCompatibility({ pages: await readForReport(site, pages), publishing: { repository: Boolean(repo), credentials, branch: site.repoBranch, blocked } });
+}
+
+async function readForReport(site: Site, pages: SitePage[]) {
+  return Promise.all(
     pages.slice(0, PAGE_LIMIT).map(async (page) => {
       try {
         const source = await pageSource(site, page);
+        // A WordPress page made with Elementor and friends reads as perfectly
+        // good HTML and is still read-only here: its words are in the builder's
+        // own data. Graded on the HTML alone it came out "Fully editable".
+        const post = isWordPressSite(site) ? wordpressPostOf(page) : null;
+        if (post) {
+          const builder = detectWordPressBuilder({ postId: post.id, content: "", html: source.html });
+          if (!builderEditable(builder)) return { pageId: page.id, title: page.title, path: page.path, unreadable: builderRefusal(builder) };
+        }
         return { pageId: page.id, title: page.title, path: page.path, html: source.html };
       } catch (error) {
         // A page that cannot be read is a finding, not a failure: it is exactly
@@ -51,8 +79,6 @@ export async function siteCompatibility(site: Site, pages: SitePage[]): Promise<
       }
     }),
   );
-
-  return summariseCompatibility({ pages: read, publishing: { repository: Boolean(repo), credentials, branch: site.repoBranch, blocked } });
 }
 
 export function registerWebsiteReadiness(router: Router, access: Access) {

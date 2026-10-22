@@ -9,7 +9,7 @@ import { raisePayment } from "./payments.js";
 import { createSubscription, createSubscriptionPlan } from "../lib/paystack.js";
 import { ensureCustomerAccount, sendSetPasswordLink } from "./accountAccess.js";
 import { fetchWebsiteText } from "../lib/websiteFetch.js";
-import { discoverFields } from "./website/index.js";
+import { discoverFields, wordpressPurchaseNote, wordpressSiteHint } from "./website/index.js";
 import { WebsiteError } from "./website/site.js";
 
 export const WEBSITE_TIERS = {
@@ -31,7 +31,11 @@ export async function assessPurchaseCompatibility(websiteUrl: string) {
     };
   }
   const lower = html.toLowerCase();
-  if (/wp-content|wp-includes|name=["']generator["'][^>]+wordpress/.test(lower)) return { status: "NOT_SUPPORTED", notes: "WordPress uses its own editing and publishing model." };
+  // WordPress is connected with an Application Password and edited in place
+  // since 21 Oct 2026 (services/websiteWordPress.ts). What the customer is told
+  // here is what the editor will do with this page, including the read-only case.
+  const wordpress = wordpressSiteHint(html);
+  if (wordpress.wordpress) return { status: "COMPATIBLE_WITH_LIMITATIONS", notes: wordpressPurchaseNote(wordpress.builder) };
   if (/cdn\.shopify\.com|shopify\.theme|myshopify\.com/.test(lower)) return { status: "NOT_SUPPORTED", notes: "Shopify themes use Shopify's own editing and publishing model." };
   const dynamic = /id=["'](?:root|__next|__nuxt)["']/.test(lower) || /data-reactroot|_next\/static|_nuxt\//.test(lower);
   return dynamic
@@ -54,9 +58,10 @@ export async function inspectPublicWebsite(rawUrl: string) {
   const lower = html.toLowerCase();
   let status: "COMPATIBLE" | "COMPATIBLE_WITH_LIMITATIONS" | "NOT_SUPPORTED" = "COMPATIBLE";
   let notes = "Ready for visual editing, AI Agent commands, and 1-click GitHub publishing.";
-  if (/wp-content|wp-includes|name=["']generator["'][^>]+wordpress/.test(lower)) {
-    status = "NOT_SUPPORTED";
-    notes = "WordPress uses its own database editing model. We can migrate it to a fast static/GitHub site for you on our Care or Managed plan.";
+  const wordpress = wordpressSiteHint(html);
+  if (wordpress.wordpress) {
+    status = "COMPATIBLE_WITH_LIMITATIONS";
+    notes = wordpressPurchaseNote(wordpress.builder);
   } else if (/cdn\.shopify\.com|shopify\.theme|myshopify\.com/.test(lower)) {
     status = "NOT_SUPPORTED";
     notes = "Shopify themes use Shopify's liquid theme editor.";

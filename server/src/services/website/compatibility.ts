@@ -156,7 +156,11 @@ export type SiteCompatibility = {
   findings: CompatibilityFinding[];
   totals: { pages: number; readable: number; editable: number } & Record<FieldKind, number>;
   /** What has to be true before anything can go live, and whether it is. */
-  publishing: { repository: boolean; credentials: boolean; branch: string | null; blocked: string | null };
+  publishing: {
+    repository: boolean; credentials: boolean; branch: string | null; blocked: string | null;
+    /** Set for a WordPress site: publishing writes into WordPress as this account, not to a repository. */
+    wordpress?: { username: string; siteUrl: string } | null;
+  };
   readiness: SiteReadiness;
 };
 
@@ -179,7 +183,11 @@ export const READINESS_LABEL: Record<SiteReadiness, string> = {
 
 export function summariseCompatibility(input: {
   pages: Array<{ pageId: string; title: string; path: string; html?: string; unreadable?: string }>;
-  publishing: { repository: boolean; credentials: boolean; branch: string | null; blocked: string | null };
+  publishing: {
+    repository: boolean; credentials: boolean; branch: string | null; blocked: string | null;
+    /** Set for a WordPress site: publishing writes into WordPress as this account, not to a repository. */
+    wordpress?: { username: string; siteUrl: string } | null;
+  };
 }): SiteCompatibility {
   const pages: SiteCompatibility["pages"] = [];
   const totals = { pages: input.pages.length, readable: 0, editable: 0, text: 0, richtext: 0, link: 0, button: 0, image: 0, icon: 0, container: 0, background: 0, unsupported: 0 };

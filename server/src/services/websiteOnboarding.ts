@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma.js";
 import { siteCompatibility } from "./websiteReadiness.js";
 import { READINESS_LABEL, sharedCandidates } from "./website/index.js";
 import { pageSource, WebsiteError } from "./website/site.js";
+import { isWordPressSite } from "./websiteWordPress.js";
 import { money, productAccess } from "./products.js";
 
 /**
@@ -60,7 +61,22 @@ export async function onboardingSteps(site: Site): Promise<{ steps: OnboardingSt
 
   steps.push(step("address", "Website address", "done", site.publicUrl, { href: "/website/settings", action: "Change" }));
 
-  steps.push(
+  // A WordPress site has no repository or branch to check. What stands in for
+  // both is the connection: an Application Password that works, read back by
+  // opening a real page from WordPress.
+  const wordpress = isWordPressSite(site);
+  if (wordpress) {
+    const connected = report.publishing.wordpress;
+    steps.push(
+      !connected
+        ? step("wordpress", "WordPress connected", "todo", "Not connected yet. Make an Application Password in WordPress (Users → Profile) and connect the site.", { href: "/website/settings", action: "Connect it" })
+        : report.publishing.blocked
+          ? step("wordpress", "WordPress connected", "blocked", report.publishing.blocked, { href: "/website/settings", action: "Replace the password" })
+          : step("wordpress", "WordPress connected", "done", `Signed in to ${connected.siteUrl.replace(/^https?:\/\//, "")} as ${connected.username}, with an Application Password.`, { href: "/website/settings", action: "Change" }),
+    );
+  }
+
+  if (!wordpress) steps.push(
     report.publishing.repository
       ? step("repository", "Repository connected", "done", `${site.repoOwner}/${site.repoName} on ${site.repoBranch}`, { href: "/website/settings", action: "Change" })
       : step("repository", "Repository connected", "todo", "No repository yet. Pages can be imported and edited, but nothing can be published.", {
@@ -88,7 +104,7 @@ export async function onboardingSteps(site: Site): Promise<{ steps: OnboardingSt
       });
     }
   }
-  steps.push(branch);
+  if (!wordpress) steps.push(branch);
 
   steps.push(
     pages.length
@@ -131,7 +147,11 @@ export async function onboardingSteps(site: Site): Promise<{ steps: OnboardingSt
   // client who edits the header on five pages separately has been let down by
   // onboarding rather than by the editor.
   let shared: OnboardingStep;
-  if (sharedElements > 0) {
+  if (wordpress) {
+    // Menus, headers and footers on a WordPress site are the theme's, changed
+    // once in WordPress; the editor refuses shared elements there.
+    shared = step("shared", "Shared elements", "done", "WordPress keeps the parts every page shares — menus, header, footer, widgets — in the theme, so they are changed once in WordPress.");
+  } else if (sharedElements > 0) {
     shared = step("shared", "Shared elements", "done", `${sharedElements} set up.`, { href: "/website/sites", action: "Review" });
   } else if (pages.length < 2) {
     shared = step("shared", "Shared elements", "todo", "A shared element needs at least two pages.");
@@ -161,7 +181,9 @@ export async function onboardingSteps(site: Site): Promise<{ steps: OnboardingSt
   steps.push(
     report.publishing.blocked
       ? step("publishing", "Publishing works", "blocked", report.publishing.blocked, { href: "/website/settings", action: "Fix it" })
-      : step("publishing", "Publishing works", "done", `Commits go to ${site.repoOwner}/${site.repoName} on ${site.repoBranch}, and the live page is checked afterwards.`),
+      : wordpress
+        ? step("publishing", "Publishing works", "done", `Changes are written into the pages in WordPress as ${report.publishing.wordpress?.username ?? "the connected account"}, and the live page is checked afterwards.`)
+        : step("publishing", "Publishing works", "done", `Commits go to ${site.repoOwner}/${site.repoName} on ${site.repoBranch}, and the live page is checked afterwards.`),
   );
 
   steps.push(

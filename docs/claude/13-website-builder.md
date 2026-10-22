@@ -1731,6 +1731,21 @@ The customer guide is `website-builder-setup.html#wordpress`.
   SEO plugin owns the `<head>`), shared elements (a synced pattern or template
   part is WordPress's), the agent's Publish All, and theme parts — menus,
   footers, widgets.
+- **A WordPress site has to get through checkout and onboarding, not only the
+  editor.** Until 22 Oct 2026 `assessPurchaseCompatibility` marked any page
+  carrying `wp-content` NOT_SUPPORTED and `startWebsitePurchase` refused it with
+  a 422, so a WordPress owner could not buy the product that now edits their
+  site; the public website check said the same. Both now answer
+  COMPATIBLE_WITH_LIMITATIONS with `wordpressPurchaseNote`, which says how
+  connecting works and, when the homepage is an Elementor (or similar) page,
+  that those pages open read-only. The Onboarding checklist swaps "Repository
+  connected" and "Branch readable" for one "WordPress connected" step (blocked,
+  with WordPress's own reason, when the password has been paused), shared
+  elements are WordPress's, and "Publishing works" names the account.
+  `siteCompatibility` checks the connection instead of GitHub, and grades a
+  meta-builder page "Not supported" with the builder's refusal — read on its
+  HTML alone, an Elementor page came out "Fully editable" and the site
+  "Excellent".
 - **Not built yet:** posts (the plumbing takes `wordpress/posts/<id>`; the scan
   lists pages only), drafts and private pages (they have no public page to
   open), and the meta-storing builders. Elementor 4.3 ships an official MCP
@@ -1738,7 +1753,7 @@ The customer guide is `website-builder-setup.html#wordpress`.
   that, or a small companion plugin exposing `_elementor_data`, is the next
   step for Elementor.
 
-`checks/websiteWordPress.ts` (23) runs the mapper on strings — half of it
+`checks/websiteWordPress.ts` (27) runs the mapper on strings — half of it
 negatives, each asserting the content came back byte-identical — and then the
 real routes against a stub WordPress on a local port: connect, each refusal,
 the refused redirect, the page list, the editor's locks, publish, a stale

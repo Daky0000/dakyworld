@@ -101,6 +101,39 @@ export function detectWordPressBuilder(input: { postId: number; content: string;
   return "classic";
 }
 
+/**
+ * What a public page says about the site behind it, before anything is
+ * connected: whether it is WordPress, and which builder made *this* page. Used
+ * at checkout, where there is no post id and no password — only the homepage.
+ */
+export function wordpressSiteHint(html: string): { wordpress: boolean; builder: WordPressBuilder | null } {
+  const lower = html.toLowerCase();
+  const wordpress = /wp-content|wp-includes|name=["']generator["'][^>]+wordpress/.test(lower);
+  if (!wordpress) return { wordpress: false, builder: null };
+  const builder: WordPressBuilder | null =
+    /data-elementor-type=["'](wp-page|wp-post|single)/.test(lower) ? "elementor"
+      : /\bfl-builder-content\b/.test(lower) ? "beaver"
+        : /\bid=["']brx-content["']/.test(lower) ? "bricks"
+          : /\bclass=["'][^"']*\bct-section\b/.test(lower) ? "oxygen"
+            : /\bbrz-root__container\b/.test(lower) ? "brizy"
+              : /\bet_pb_section\b/.test(lower) ? "divi"
+                : /\bvc_row\b/.test(lower) ? "wpbakery"
+                  : /\bfusion-builder-container\b|\bfusion-fullwidth\b/.test(lower) ? "avada"
+                    : /\bwp-block-/.test(lower) ? "blocks"
+                      : null;
+  return { wordpress, builder };
+}
+
+/** What a WordPress customer is told before paying: what will work, and what will not. */
+export function wordpressPurchaseNote(builder: WordPressBuilder | null): string {
+  const how = "WordPress site: after payment you connect it with a WordPress Application Password — nothing to install. Words, links and pictures in your pages' content are edited here and published straight back into WordPress; menus, footers and styling stay in WordPress.";
+  if (builder && !builderEditable(builder)) {
+    const name = WORDPRESS_BUILDER_LABEL[builder];
+    return `${how} This page is built with ${name}, and ${name} pages open read-only for now, because ${name} keeps its words where WordPress does not let other apps edit them. Pages made with the block editor, the classic editor, Divi, WPBakery or Avada are fully editable.`;
+  }
+  return how;
+}
+
 /** Why a page made with a meta-storing builder cannot be edited yet, and what to do. */
 export function builderRefusal(builder: WordPressBuilder): string {
   const name = WORDPRESS_BUILDER_LABEL[builder];

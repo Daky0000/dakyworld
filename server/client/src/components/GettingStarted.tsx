@@ -64,7 +64,7 @@ export function GettingStarted({ site, pages }: { site: SiteSummary; pages: Site
     },
     {
       id: "publish",
-      title: site.hosted ? "Publish it — it is live straight away" : "Publish it",
+      title: site.hosted ? "Publish it — it is live straight away" : site.sourceKind === "wordpress" ? "Publish it into WordPress" : "Publish it",
       done: Boolean(site.lastPublishedAt),
       action: withDraft || firstPage ? { label: "Open the page", to: `/website/pages/${withDraft ?? firstPage}` } : undefined,
     },

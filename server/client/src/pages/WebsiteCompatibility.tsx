@@ -27,7 +27,7 @@ type Report = {
   findings: Array<{ code: string; grade: Grade; title: string; detail: string; count: number }>;
   pages: Array<{ pageId: string; title: string; path: string; editable: number; grade: Grade; unreadable?: string; findings: Array<{ code: string; title: string; grade: Grade; count: number }> }>;
   totals: { pages: number; readable: number; editable: number; text: number; richtext: number; link: number; button: number; image: number; container: number };
-  publishing: { repository: boolean; credentials: boolean; branch: string | null; blocked: string | null };
+  publishing: { repository: boolean; credentials: boolean; branch: string | null; blocked: string | null; wordpress?: { username: string; siteUrl: string } | null };
   truncated: number;
 };
 
@@ -123,9 +123,19 @@ export function WebsiteCompatibility() {
             </dl>
 
             <div className="mt-4 space-y-1.5 text-sm">
-              <Line ok={report.data.publishing.repository} text={report.data.site.repo ? `Repository ${report.data.site.repo}` : "No repository connected"} />
-              <Line ok={report.data.publishing.credentials} text="GitHub access for publishing" />
-              <Line ok={!report.data.publishing.blocked} text={report.data.publishing.blocked ?? `Publishing to ${report.data.publishing.branch ?? "the default branch"}`} />
+              {report.data.publishing.wordpress !== undefined ? (
+                // A WordPress site publishes into WordPress: no repository, no GitHub.
+                <>
+                  <Line ok={Boolean(report.data.publishing.wordpress)} text={report.data.publishing.wordpress ? `WordPress, signed in as ${report.data.publishing.wordpress.username}` : "WordPress not connected"} />
+                  <Line ok={!report.data.publishing.blocked} text={report.data.publishing.blocked ?? "Publishing writes into the pages in WordPress"} />
+                </>
+              ) : (
+                <>
+                  <Line ok={report.data.publishing.repository} text={report.data.site.repo ? `Repository ${report.data.site.repo}` : "No repository connected"} />
+                  <Line ok={report.data.publishing.credentials} text="GitHub access for publishing" />
+                  <Line ok={!report.data.publishing.blocked} text={report.data.publishing.blocked ?? `Publishing to ${report.data.publishing.branch ?? "the default branch"}`} />
+                </>
+              )}
             </div>
 
             {report.data.truncated > 0 && (

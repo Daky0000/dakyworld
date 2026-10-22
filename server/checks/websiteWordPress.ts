@@ -52,7 +52,10 @@ const { ensureSystemRoles } = await import("../src/lib/accessRoles.js");
 const { createSession } = await import("../src/lib/session.js");
 const { attachUser, requireAuth } = await import("../src/middleware/auth.js");
 const { websiteRouter } = await import("../src/routes/website.js");
-const { applyWordPressEdits, detectWordPressBuilder, wordpressFieldMap, discoverFields } = await import("../src/services/website/index.js");
+const { applyWordPressEdits, detectWordPressBuilder, wordpressFieldMap, discoverFields, wordpressSiteHint, wordpressPurchaseNote } = await import("../src/services/website/index.js");
+const { onboardingSteps } = await import("../src/services/websiteOnboarding.js");
+const { siteCompatibility } = await import("../src/services/websiteReadiness.js");
+const { assessPurchaseCompatibility, inspectPublicWebsite } = await import("../src/services/websiteCommerce.js");
 const { checkWordPress, wordpressEndpoint } = await import("../src/services/websiteWordPress.js");
 process.env.DEV_NO_AUTH = "true";
 
@@ -230,6 +233,15 @@ await check("Divi: a module title in a shortcode attribute is writable, and refu
   const quoted = applyWordPressEdits({ html, source, values: { [title.id]: { value: 'The "best" bread', original: title.value } } });
   assert.equal(quoted.problems.length, 1);
   assert.equal(quoted.content, content);
+});
+
+await check("checkout reads a WordPress homepage as WordPress, and says what an Elementor page will do", () => {
+  assert.deepEqual(wordpressSiteHint('<link rel="stylesheet" href="/wp-content/themes/x/style.css"><div class="wp-block-group">'), { wordpress: true, builder: "blocks" });
+  assert.deepEqual(wordpressSiteHint('<script src="/wp-includes/js/x.js"></script><div data-elementor-type="wp-page" data-elementor-id="5">'), { wordpress: true, builder: "elementor" });
+  assert.deepEqual(wordpressSiteHint("<html><body>A static page</body></html>"), { wordpress: false, builder: null });
+  assert.match(wordpressPurchaseNote("blocks"), /Application Password/);
+  assert.doesNotMatch(wordpressPurchaseNote("blocks"), /read-only/);
+  assert.match(wordpressPurchaseNote("elementor"), /Elementor pages open read-only/);
 });
 
 await check("REST routes are built for both API root shapes", () => {
@@ -525,6 +537,41 @@ try {
     assert.equal(scanned.status, 200, scanned.body.error);
     assert.equal(scanned.body.added, 1);
     assert.equal(scanned.body.sourceKind, "wordpress");
+  });
+
+  await check("a WordPress site can be bought: checkout no longer refuses it", async () => {
+    const purchase = await assessPurchaseCompatibility(origin);
+    assert.equal(purchase.status, "COMPATIBLE_WITH_LIMITATIONS");
+    assert.match(purchase.notes, /Application Password/);
+    const preview = await inspectPublicWebsite(origin);
+    assert.notEqual(preview.status, "NOT_SUPPORTED");
+  });
+
+  await check("onboarding checks the WordPress connection instead of a repository it will never have", async () => {
+    const site = await prisma.site.findUniqueOrThrow({ where: { id: siteId } });
+    const { steps } = await onboardingSteps(site);
+    const keys = steps.map((entry) => entry.key);
+    assert.ok(keys.includes("wordpress") && !keys.includes("repository") && !keys.includes("branch"), keys.join(","));
+    const byKey = Object.fromEntries(steps.map((entry) => [entry.key, entry]));
+    assert.equal(byKey.wordpress!.state, "done", byKey.wordpress!.detail);
+    assert.equal(byKey.publishing!.state, "done", byKey.publishing!.detail);
+    assert.match(byKey.publishing!.detail, /into the pages in WordPress as efua/);
+    // A password WordPress stopped taking blocks publishing, and says which.
+    await prisma.wordPressConnection.update({ where: { siteId }, data: { pausedAt: new Date(), pausedReason: "WordPress did not accept that Application Password for efua." } });
+    const paused = Object.fromEntries((await onboardingSteps(site)).steps.map((entry) => [entry.key, entry]));
+    await prisma.wordPressConnection.update({ where: { siteId }, data: { pausedAt: null, pausedReason: null } });
+    assert.equal(paused.wordpress!.state, "blocked");
+    assert.equal(paused.publishing!.state, "blocked");
+  });
+
+  await check("the compatibility report does not call an Elementor page editable", async () => {
+    const site = await prisma.site.findUniqueOrThrow({ where: { id: siteId } });
+    const pages = await prisma.sitePage.findMany({ where: { siteId } });
+    const report = await siteCompatibility(site, pages);
+    const studio = report.pages.find((entry) => entry.path === "/studio")!;
+    assert.equal(studio.grade, "unsupported");
+    assert.notEqual(report.rating, "Excellent");
+    assert.equal(report.pages.find((entry) => entry.path === "/about")!.grade === "unsupported", false);
   });
 
   await check("the SEO editor and shared publishing send a WordPress site to WordPress", async () => {
