@@ -1063,7 +1063,7 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
   [data-dw-selected] { outline: 2px solid #2563EB !important; outline-offset: 2px; }
   [data-dw-editing] { cursor: text !important; outline: 2px solid #2563EB !important; outline-offset: 2px; }
   [data-dw-editing]:hover { outline-style: solid !important; }
-  [data-dw-shown] { opacity: 1 !important; transform: none !important; filter: none !important; }
+  [data-dw-shown] { opacity: 1 !important; transform: none !important; filter: none !important; visibility: visible !important; }
   [data-dw-field]:hover, [data-dw-field]:hover *,
   [data-dw-selected], [data-dw-selected] *,
   [data-dw-editing], [data-dw-editing] * {
@@ -1258,6 +1258,15 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
   //
   // Only here, never in the plain Preview: that one is meant to be the page
   // exactly as a visitor gets it, animations and all.
+  // Hidden with visibility rather than opacity until an animation script
+  // runs: Elementor's entrance animations (elementor-invisible) and WOW.js.
+  // No script of the page's runs in this frame, so they never would — a whole
+  // Elementor heading vanished from the editor while the live page showed it.
+  // Named, because visibility: hidden on its own is also how a closed menu
+  // stays closed, and that must stay closed.
+  function waitingForScript(node) {
+    return Boolean(node.classList) && (node.classList.contains("elementor-invisible") || node.classList.contains("wow"));
+  }
   function force() {
     var fields = document.querySelectorAll("[data-dw-field]");
     for (var i = 0; i < fields.length; i++) {
@@ -1267,13 +1276,18 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
           var style = window.getComputedStyle(node);
           // Something the page means to keep hidden — a closed menu, a tab
           // nobody is on — has no box and stays hidden.
-          if (style.display !== "none" && style.visibility !== "hidden" && parseFloat(style.opacity) < 0.1) {
+          var waiting = waitingForScript(node);
+          if (style.display !== "none" && (waiting || (style.visibility !== "hidden" && parseFloat(style.opacity) < 0.1))) {
             node.setAttribute("data-dw-shown", "");
           }
         }
         node = node.parentElement;
       }
     }
+    // Elementor holds back the background picture of every section below the
+    // first until its lazy-load script marks it; mark them as that script would.
+    var lazy = document.querySelectorAll(".e-con.e-parent:not(.e-lazyloaded)");
+    for (var l = 0; l < lazy.length; l++) lazy[l].classList.add("e-lazyloaded");
   }
   var swept = false;
   function sweep() {

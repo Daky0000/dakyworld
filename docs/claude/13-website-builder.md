@@ -1746,6 +1746,18 @@ The customer guide is `website-builder-setup.html#wordpress`.
   meta-builder page "Not supported" with the builder's refusal — read on its
   HTML alone, an Elementor page came out "Fully editable" and the site
   "Excellent".
+- **Elementor hides animated elements with `visibility`, and no page script
+  runs in the editing frame.** An entrance animation renders as
+  `elementor-invisible` (`visibility: hidden`) until Elementor's frontend
+  script plays it, so the heading was on the live page and gone from the
+  editor. The editor's reveal sweep (`force` in `pickerAssets`) lifted only
+  near-zero opacity, deliberately leaving `visibility: hidden` alone because
+  that is also how a closed menu stays closed; it now also reveals the two named
+  script-gated classes, `elementor-invisible` and WOW.js's `wow`, and marks
+  `.e-con.e-parent` sections `e-lazyloaded` so their background pictures are not
+  held back. V4 (Atomic) "Interactions" are applied by script from a JSON blob
+  and hide nothing server-side. Found against a real local WordPress with
+  Elementor 4.3.5 on SQLite, which is the way to look at one of these again.
 - **Not built yet:** posts (the plumbing takes `wordpress/posts/<id>`; the scan
   lists pages only), drafts and private pages (they have no public page to
   open), and the meta-storing builders. Elementor 4.3 ships an official MCP
