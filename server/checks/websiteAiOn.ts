@@ -1,13 +1,15 @@
 /**
- * One AI switch per website, on for Business unless somebody switched it off.
+ * There is no AI switch: the Builder agent is on for every website.
  *
- *   DATABASE_URL=postgresql://…/<a local *test* database> npx tsx checks/websiteAiSwitch.ts
+ *   DATABASE_URL=postgresql://…/<a local *test* database> npx tsx checks/websiteAiOn.ts
  *
- * Until 21 Oct 2026 the switch was the design assistant's alone and defaulted
- * to off, while the Builder agent ignored it. Held here: a Business site with
- * nothing saved is on, a site with no plan is off, the agent obeys the switch,
- * and the settings screen sending the switch back unchanged does not count as
- * changing it.
+ * Until 22 Oct 2026 each website had one AI switch, on by default only for
+ * Business sites, so every other site — the Owner's own connected WordPress
+ * site among them — had no agent until somebody found the box, and anybody
+ * could switch it off. The Owner's call: on for everybody, never off. Held
+ * here: the agent answers on a Business site, on a site with no plan, and on a
+ * site whose settings still say `aiEnabled: false`; the settings screen no
+ * longer shows a switch; and sending one changes nothing.
  *
  * Needs Postgres and nothing else. Every row it makes is removed at the end.
  */
@@ -41,10 +43,9 @@ const { createSession } = await import("../src/lib/session.js");
 const { attachUser, requireAuth } = await import("../src/middleware/auth.js");
 const { websiteRouter } = await import("../src/routes/website.js");
 const { errorHandler } = await import("../src/middleware/errorHandler.js");
-const { siteAiEnabled } = await import("../src/services/websiteAiSwitch.js");
 
 await ensureSystemRoles();
-const mark = `aiswitch-${randomUUID().slice(0, 8)}`;
+const mark = `aion-${randomUUID().slice(0, 8)}`;
 const ownerRole = await prisma.accessRole.findUniqueOrThrow({ where: { key: "owner" } });
 const owner = await prisma.user.create({ data: { email: `${mark}@example.test`, name: "Yaw Switch", role: "OWNER", accessRoleId: ownerRole.id } });
 const cookie = `dw_session=${await createSession(owner.id)}`;
@@ -89,44 +90,24 @@ try {
   const unpaid = await site("unpaid");
   const undo = (row: { pages: Array<{ id: string }> }) => ({ action: "instruction", prompt: "Undo my last change", pageId: row.pages[0]!.id });
 
-  console.log("\nWhat the switch says");
-  await check("a Business website nobody has chosen for is on", async () => {
-    assert.equal(await siteAiEnabled(business), true);
-    assert.equal((await call("GET", `/sites/${business.id}/design`)).body.options && ((await call("GET", `/sites/${business.id}/design`)).body.options as { aiEnabled: boolean }).aiEnabled, true);
-  });
-  await check("a website with no plan behind it is off until somebody switches it on", async () => {
-    assert.equal(await siteAiEnabled(unpaid), false);
-  });
-  await check("a Business website somebody switched off stays off", async () => {
-    assert.equal(await siteAiEnabled(switchedOff), false);
-  });
-
-  console.log("\nThe Builder agent obeys it");
-  await check("the agent answers on a Business website with nothing saved", async () => {
-    const response = await call("POST", `/sites/${business.id}/agent/plan`, undo(business));
-    assert.equal(response.status, 200, response.body.error?.trim());
-  });
-  await check("and refuses, in a sentence, where AI is switched off", async () => {
-    const response = await call("POST", `/sites/${switchedOff.id}/agent/plan`, undo(switchedOff));
-    assert.equal(response.status, 403);
-    assert.match(response.body.error ?? "", /AI is switched off for this website/);
-  });
-  await check("the fixed commands are not AI and still run", async () => {
-    const response = await call("POST", `/sites/${switchedOff.id}/agent/plan`, { action: "replace_font", toFont: "Inter" });
-    assert.equal(response.status, 200, response.body.error?.trim());
-  });
+  console.log("\nThe agent answers everywhere");
+  for (const [name, row] of [["a Business website", business], ["a website with no plan behind it", unpaid], ["a website whose settings still say aiEnabled: false", switchedOff]] as const) {
+    await check(`on ${name}`, async () => {
+      const response = await call("POST", `/sites/${row.id}/agent/plan`, undo(row));
+      assert.equal(response.status, 200, response.body.error?.trim());
+    });
+  }
 
   console.log("\nThe settings screen");
-  await check("sending the switch back as it was shown is not a change", async () => {
-    const shown = (await call("GET", `/sites/${business.id}/design`)).body.options as Record<string, unknown>;
-    const response = await call("PUT", `/sites/${business.id}/design`, { aiEnabled: shown.aiEnabled });
-    assert.equal(response.status, 200, response.body.error?.trim());
-    assert.equal(response.body.saved, false);
+  await check("shows no switch", async () => {
+    const shown = (await call("GET", `/sites/${switchedOff.id}/design`)).body.options as Record<string, unknown>;
+    assert.equal("aiEnabled" in shown, false);
   });
-  await check("switching it off is saved, and the agent then refuses", async () => {
+  await check("and sending one changes nothing: not saved, and the agent still answers", async () => {
     const response = await call("PUT", `/sites/${business.id}/design`, { aiEnabled: false });
     assert.equal(response.status, 200, response.body.error?.trim());
-    assert.equal((await call("POST", `/sites/${business.id}/agent/plan`, undo(business))).status, 403);
+    assert.equal(response.body.saved, false);
+    assert.equal((await call("POST", `/sites/${business.id}/agent/plan`, undo(business))).status, 200);
   });
 } finally {
   await new Promise<void>((resolve) => server.close(() => resolve()));

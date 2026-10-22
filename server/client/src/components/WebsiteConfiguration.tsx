@@ -16,7 +16,7 @@ import { ConnectGithubApp } from "./ConnectGithubApp";
 import { ColorCodeInput } from "./InspectorControls";
 import { WebsiteWordPressPanel } from "./ConnectWordPress";
 
-type Config = { id?: string; clientId?: string | null; github?: { installationId: string | null; repositoryId: string | null; accessLostAt: string | null }; connectionEditable?: boolean; name: string; publicUrl: string; repoOwner: string | null; repoName: string | null; repoBranch: string; repoPath: string; options: { presets: BrandPreset[]; colours: string[]; fonts: string[]; brandVoice: string; aiEnabled: boolean } };
+type Config = { id?: string; clientId?: string | null; github?: { installationId: string | null; repositoryId: string | null; accessLostAt: string | null }; connectionEditable?: boolean; name: string; publicUrl: string; repoOwner: string | null; repoName: string | null; repoBranch: string; repoPath: string; options: { presets: BrandPreset[]; colours: string[]; fonts: string[]; brandVoice: string } };
 type ManagedSite = SiteSummary & { capabilities?: { manage: boolean } };
 const INPUT = "mt-1 w-full rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-blue focus:ring-2 focus:ring-blue/20 disabled:bg-cream";
 
@@ -161,7 +161,7 @@ export function WebsiteSettings() {
         <WebsitePresetSettings presets={draft.options.presets ?? []} onChange={presets => changeOption("presets", presets)} />
         <section className="rounded-2xl border border-line bg-white p-5">
           <h2 className="mb-3 font-display text-lg">AI on this website</h2>
-          <label className="flex items-start gap-3 text-sm text-ink"><input type="checkbox" className="mt-1 accent-blue" checked={draft.options.aiEnabled} onChange={event => changeOption("aiEnabled", event.target.checked)} /><span><span className="font-medium">Use AI on this website</span><span className="mt-1 block text-xs leading-relaxed text-muted">One switch for the design assistant and the Builder agent. Switched off, neither can be used on this website. It starts on for Business websites. Editors can request suggestions for selected content or the page. Every suggestion is reviewed before it is added to the draft, and publishing remains a separate action.</span></span></label>
+          <p className="text-sm leading-relaxed text-muted">The Builder agent and the design assistant are on for every website and cannot be switched off; the site's plan decides which of them it includes. Every change they make lands in the draft, and publishing stays a separate step.</p>
           <label className="mt-5 block text-xs text-muted">Brand voice<textarea className={`${INPUT} min-h-28`} maxLength={4000} value={draft.options.brandVoice} onChange={event => changeOption("brandVoice", event.target.value)} placeholder="For example: direct, welcoming and specific. Use British spelling. Keep our product names as written." /></label>
           <p className="mt-2 text-xs text-muted">These notes guide suggestions for this website. AI requests use the configured model and the existing spending limits. Visual editing works with AI disabled.</p>
         </section>

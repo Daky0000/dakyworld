@@ -597,7 +597,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const reviewLinks = useReviewLinks(pageId);
   const latestReview = reviewLinks.data?.links.find((link) => link.status !== "WITHDRAWN" && !(link.status === "PENDING" && link.expired)) ?? null;
   const latestReviewStatus = latestReview ? reviewStatusLabel(latestReview) : null;
-  const design = useQuery({ queryKey: ["website", "design", page.data?.site.id], enabled: !!page.data?.site.id, queryFn: ({ signal }) => api.get<{ options: { colours: string[]; fonts: string[]; aiEnabled: boolean; presets: BrandPreset[] } }>(`/website/sites/${page.data!.site.id}/design`, signal) });
+  const design = useQuery({ queryKey: ["website", "design", page.data?.site.id], enabled: !!page.data?.site.id, queryFn: ({ signal }) => api.get<{ options: { colours: string[]; fonts: string[]; presets: BrandPreset[] } }>(`/website/sites/${page.data!.site.id}/design`, signal) });
 
   /* ------------------------------------------------------------- history */
 
@@ -1562,23 +1562,13 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   structuralHistory.current = step => { if (step < 0 ? page.data?.structure?.canUndo : page.data?.structure?.canRedo) void runStructure(step < 0 ? "undo" : "redo"); };
 
   const { status: tierStatus } = useWebsiteTierStatus(page.data?.site?.id);
-  // The plan includes the agent and the site's one AI switch is on (it is on
-  // for Business unless somebody switched it off).
+  // The agent is on for every website and has no switch (the Owner's call,
+  // 22 Oct 2026); only the site's plan decides. The button is shown to
+  // everyone who can edit either way, so a plan without the agent says so
+  // rather than the agent simply not being there.
   const agentInPlan = !tierStatus?.features || tierStatus.features.aiBuilderAgent;
-  const agentAvailable = canEdit && agentInPlan && design.data?.options.aiEnabled === true;
-  // The button is shown to everyone who can edit, whether or not the agent can
-  // run: hidden, a site with AI switched off — every site with no plan behind
-  // it, unless somebody ticked the box — simply had no agent, and nothing said
-  // why or where to turn it on.
+  const agentAvailable = canEdit && agentInPlan;
   const [agentOff, setAgentOff] = useState(false);
-  const switchAiOn = useMutation({
-    mutationFn: () => api.put<{ saved: boolean }>(`/website/sites/${page.data!.site.id}/design`, { aiEnabled: true }),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ["website", "design", page.data?.site.id] });
-      setAgentOff(false);
-      setAgentOpen(true);
-    },
-  });
 
   /** Normal or Hover, in the Style tab. A new selection starts at Normal. */
   const [styleState, setStyleStateRaw] = useState<"normal" | StyleState>("normal");
@@ -3035,7 +3025,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           >
             <IconRefresh size={16} />
           </button>
-          {canEdit && design.data?.options.aiEnabled && (
+          {canEdit && (!tierStatus?.features || tierStatus.features.aiAssistant) && (
             <button type="button" className="dx-ib dx-hide-sm" title="Suggest changes to this page" aria-label="Assistant" onClick={() => setShowAI(true)}>
               <IconSparkles size={16} />
             </button>
@@ -3449,12 +3439,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 </button>
               </div>
             )}
-            {canEdit && !agentOpen && design.data && (
+            {canEdit && !agentOpen && (
               <button
                 type="button"
                 className={`dx-ai${agentAvailable ? "" : " dx-ai-off"}`}
                 data-tour="agent"
-                title={agentAvailable ? "Builder agent — describe a change and it makes it" : "Builder agent — off for this website"}
+                title={agentAvailable ? "Builder agent — describe a change and it makes it" : "Builder agent — not on this website's plan"}
                 aria-label="Builder agent"
                 aria-pressed={agentOpen}
                 onClick={() => (agentAvailable ? setAgentOpen(true) : setAgentOff((open) => !open))}
@@ -3463,22 +3453,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               </button>
             )}
             {agentOff && !agentAvailable && (
-              <div className="dx-ai-card" role="dialog" aria-label="The Builder agent is off">
-                <h3>{agentInPlan ? "AI is switched off for this website" : `The Builder agent is not on the ${tierStatus?.tierName ?? "current"} plan`}</h3>
-                <p className="dx-hint">
-                  {agentInPlan
-                    ? "One switch covers the Builder agent and the design assistant. It starts on for Business websites; on any other website somebody has to switch it on."
-                    : "The agent that makes changes from a sentence comes with the Business plan."}
-                </p>
-                {switchAiOn.error && <p className="dx-err">{switchAiOn.error instanceof Error ? switchAiOn.error.message : "It could not be switched on."}</p>}
+              <div className="dx-ai-card" role="dialog" aria-label="The Builder agent is not on this plan">
+                <h3>The Builder agent is not on the {tierStatus?.tierName ?? "current"} plan</h3>
+                <p className="dx-hint">The agent that makes changes from a sentence comes with the Business plan.</p>
                 <div className="dx-btns">
-                  {agentInPlan ? (
-                    <button type="button" className="dx-btn dx-pri" disabled={switchAiOn.isPending} onClick={() => switchAiOn.mutate()}>
-                      {switchAiOn.isPending ? "Switching on…" : "Switch AI on"}
-                    </button>
-                  ) : (
-                    <Link to="/website/balance" className="dx-btn dx-pri">See plans</Link>
-                  )}
+                  <Link to="/website/balance" className="dx-btn dx-pri">See plans</Link>
                   <button type="button" className="dx-btn dx-ghost" onClick={() => setAgentOff(false)}>Not now</button>
                 </div>
               </div>

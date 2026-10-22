@@ -1580,22 +1580,19 @@ for, so nobody undoes it.
   out with a sentence. The error handler now passes a `WebsiteError`'s
   `blockers`, `warnings` and `blockedPages` through — a page's own Publish was
   dropping the guard's reasons too.
-- **One AI switch per website, on for Business (H8; Dan, 21 Oct 2026).**
-  `siteAiEnabled` (`services/websiteAiSwitch.ts`): a saved `settings.aiEnabled`
-  wins; with nothing saved the site's *own* plan decides — its paying
-  subscription, else its client's active retainer — and Business is on. It is
-  never decided from the viewer, so staff and the customer see the same
-  switch. The design assistant (both paths) and the Builder agent's
-  `instruction` plans (in `executeBuilderPlan`, so the queue asks too) refuse
-  with "AI is switched off for this website…"; the fixed font/colour/phone
-  commands are not AI and still run. The editor shows the agent only when the
-  switch is on. `websiteDesignOptions.aiEnabled` is optional now — its old
-  `default(false)` was written into settings on every save, so the settings
-  routes compare with the *effective* value the screen was shown, or sending
-  the switch back unchanged would count as a (Pro-only) theme edit.
-  `scripts/enableAiForBusiness.ts` (dry run; `--apply --backup <file>`)
-  switches on Business sites that carry an `aiEnabled: false` nobody chose.
-  `checks/websiteAiSwitch.ts` (DB).
+- **There is no AI switch (22 Oct 2026, replacing H8 of 21 Oct).** For a day
+  each website had one switch, `siteAiEnabled`, on by default only for
+  Business sites; every other site — the Owner's own connected WordPress site
+  among them — had no agent until somebody found the box, and anybody could
+  switch it off. The Owner's call: the agent is on for everybody and cannot be
+  switched off. `services/websiteAiSwitch.ts`, its refusals in the assistant
+  and in `executeBuilderPlan`, the settings checkbox, `aiEnabled` in
+  `websiteDesignOptions` (an old stored value is now stripped and read by
+  nothing) and `scripts/enableAiForBusiness.ts` are gone. **What a site's plan
+  includes is the only gate** (`aiAssistant`, `aiBuilderAgent`, the prompt
+  allowance). `checks/websiteAiOn.ts` (DB) holds it: the agent answers on a
+  Business site, a site with no plan and a site still saying `aiEnabled:
+  false`, and a PUT carrying the switch saves nothing.
 - **Phone links keep their `+`; a text replace never moves a link (M1, M2).**
   `planCrossPageContentChange` writes `tel:+…` when the new number starts
   with `+` (it used to drop it and dial a local number that does not exist),
@@ -1884,14 +1881,11 @@ and an edit made there publishes back into Elementor's hover keys.
 
 ### The agent is always on the canvas, and sized by the OS's router (22 Oct 2026, third pass)
 
-- **The agent button is shown to everyone who can edit, whatever the AI
-  switch says.** It was rendered only when `siteAiEnabled` was true, and that
-  is false on every site with no plan behind it unless somebody ticked the box
-  in Website settings — the Owner's own connected WordPress site among them —
-  so the agent was simply absent, with nothing saying why. Off, the button is
-  drawn dashed and opens a card that says why: AI switched off (with **Switch AI
-  on**, the same `PUT /sites/:id/design` the settings checkbox makes, and the
-  chat opens once it is on) or not on the plan (with the plans link).
+- **The agent button is shown to everyone who can edit.** It was rendered
+  only when the site's AI switch was on, which it was not on any site without
+  a plan, so the agent was simply absent with nothing saying why. The switch is
+  gone now (above); a plan without the agent draws the button dashed and opens
+  a card that says so, with the plans link.
 - **The builder agent is sized by the agents' router** — `routeBuilderRequest`,
   the same four steps as `routeTask`: `agents.routing` off is the old
   rules-only answer; the rules (`scoreBuilderRequest`, on `scoreTask`'s scale —

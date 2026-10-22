@@ -36,7 +36,6 @@ import { analyzeImportPackage, commitPackageToSite } from "./websitePackageImpor
 import { generatePagePrepublishReport, generateSitePrepublishReport } from "./websitePrepublishReport.js";
 import { updateSiteSettings } from "./websiteSiteSettings.js";
 import { HOST_DOMAIN, PLACEHOLDER_HOST_DOMAIN, PLACEHOLDER_HOSTS, expectedHostedUrl, hostedPublicUrl, isSlugAddress } from "./websiteHosting.js";
-import { siteAiEnabled } from "./websiteAiSwitch.js";
 import { addWordPressPages, prepareWordPressSite, WORDPRESS_SOURCE_KIND, wordpressConnectInput } from "./websiteWordPress.js";
 
 const publicUrl = z.string().url().max(2000).refine(value => {
@@ -67,8 +66,12 @@ export const websiteDesignOptions = z.object({
   colours: z.array(z.string().regex(/^#[0-9a-fA-F]{6}$/)).max(16).default([]),
   fonts: z.array(z.string().trim().min(1).max(80).regex(/^[a-zA-Z0-9 ,.-]+$/)).max(12).default([]),
   brandVoice: z.string().max(4000).default(""),
-  /** Unset means the plan decides — see `siteAiEnabled`. */
-  aiEnabled: z.boolean().optional(),
+  // No `aiEnabled`. There was a per-site AI switch, on by default only for
+  // Business sites; every other site had no agent until somebody found the
+  // box, and anyone could switch it off. The Owner's call (22 Oct 2026): the
+  // agent is on for everybody and cannot be switched off, so the switch is
+  // gone, and what a site's plan includes is the only thing that decides. An
+  // `aiEnabled` still stored in a site's settings is read by nothing.
 });
 
 /** Metadata alone is not an editable page: SPA shells usually have a title. */
@@ -539,14 +542,13 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       // the server.
       github: { installationId: site.githubInstallationId, repositoryId: site.githubRepositoryId, accessLostAt: site.githubAccessLostAt },
       clientId: site.clientId,
-      options: { ...websiteDesignOptions.parse(site.settings ?? {}), aiEnabled: await siteAiEnabled(site) },
+      options: websiteDesignOptions.parse(site.settings ?? {}),
     });
   }));
 
   router.get("/sites/:siteId/design", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
     let { colours, fonts, presets } = websiteDesignOptions.parse(site.settings ?? {});
-    const aiEnabled = await siteAiEnabled(site);
     if (colours.length === 0) {
       const pages = await prisma.sitePage.findMany({
         where: { siteId: site.id },
@@ -561,7 +563,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
         if (extracted.length > 0) colours = extracted;
       }
     }
-    res.json({ options: { colours, fonts, aiEnabled, presets } });
+    res.json({ options: { colours, fonts, presets } });
   }));
 
   /**
@@ -573,9 +575,9 @@ export function registerWebsiteManagement(router: Router, access: Access) {
   router.put("/sites/:siteId/design", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
     const input = websiteDesignOptions.partial().parse(req.body ?? {});
-    // Compared with what the screen was shown, so sending the switch back as it
+    // Compared with what the screen was shown, so sending a value back as it
     // was is not a change (and not a Pro-only theme edit for a Starter site).
-    const previous = { ...websiteDesignOptions.parse(site.settings ?? {}), aiEnabled: await siteAiEnabled(site) };
+    const previous = websiteDesignOptions.parse(site.settings ?? {});
     const changed = Object.keys(input).filter(key => JSON.stringify(input[key as keyof typeof input]) !== JSON.stringify(previous[key as keyof typeof previous]));
     if (!changed.length) return res.json({ saved: false, options: previous });
     await assertTierFeatureAccess(req, "themeSettings", site.id);
@@ -595,7 +597,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     if (data.clientId && !(await prisma.client.findUnique({ where: { id: data.clientId }, select: { id: true } }))) {
       throw new WebsiteError(400, "That client is not in the system.");
     }
-    const previousOptions = { ...websiteDesignOptions.parse(site.settings ?? {}), aiEnabled: await siteAiEnabled(site) };
+    const previousOptions = websiteDesignOptions.parse(site.settings ?? {});
     const optionsChanged = Object.keys(options).filter(key => JSON.stringify(options[key as keyof typeof options]) !== JSON.stringify(previousOptions[key as keyof typeof previousOptions]));
     if (optionsChanged.length > 0) {
       await assertTierFeatureAccess(req, "themeSettings", site.id);

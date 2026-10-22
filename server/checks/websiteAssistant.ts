@@ -13,8 +13,7 @@ import { AGENT_SEEDS } from "../src/services/agentRegistry.js";
 assert.equal(writerJob("website.editor")?.agentKey, "website.editor");
 assert.ok(AGENT_SEEDS.some(agent => agent.key === "website.editor"), "the assistant's wording has a real owner on the roster");
 assert.match(await shippedDoctrine("website.editor"), /Preserve their design/);
-assert.equal(websiteDesignOptions.parse({}).aiEnabled, undefined, "nothing chosen: the site's plan decides (siteAiEnabled)");
-assert.equal(websiteDesignOptions.safeParse({ aiEnabled: "true" }).success, false);
+assert.equal("aiEnabled" in websiteDesignOptions.parse({ aiEnabled: false }), false, "there is no AI switch: a stored one is read by nothing");
 assert.equal(websiteDesignOptions.safeParse({ brandVoice: "x".repeat(4001) }).success, false);
 assert.equal(importedWebsiteFields('<!doctype html><html><head><title>Page</title></head><body><h1>Welcome</h1></body></html>'), 1);
 assert.equal(importedWebsiteFields('<!-- Saved export --><section><h1>Welcome</h1><p>We make websites.</p></section>'), 2);
@@ -112,7 +111,7 @@ const router = express.Router();
 registerWebsiteAssistant(router, { loadPage: async () => {
   authorised += 1;
   if (denied) throw Object.assign(new Error("Not your site"), { status: 403 });
-  return { site: { settings: { aiEnabled: false } } as unknown as Site, page: { status: "LIVE" } as SitePage };
+  return { site: { settings: { aiEnabled: false } } as unknown as Site, page: { status: "HIDDEN" } as SitePage };
 } });
 app.use(router);
 app.use((error: Error & { status?: number }, _req: express.Request, res: express.Response, _next: express.NextFunction) => res.status(error.status ?? 400).json({ error: error.message }));
@@ -122,10 +121,11 @@ try {
   const address = server.address();
   assert.ok(address && typeof address !== "string");
   const request = () => fetch(`http://127.0.0.1:${address.port}/pages/page/assistant`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: "Make the heading clearer", values: {} }) });
-  const disabled = await request();
-  assert.equal(disabled.status, 403);
-  assert.match((await disabled.json() as { error: string }).error, /AI is switched off for this website/);
-  assert.equal(authorised, 1, "AI settings are read after page authorization");
+  // An old `aiEnabled: false` in the settings stops nothing; the hidden page does.
+  const hidden = await request();
+  assert.equal(hidden.status, 403);
+  assert.match((await hidden.json() as { error: string }).error, /hidden from editing/);
+  assert.equal(authorised, 1, "the page is read after page authorization");
   denied = true;
   const refused = await request();
   assert.equal(refused.status, 403);

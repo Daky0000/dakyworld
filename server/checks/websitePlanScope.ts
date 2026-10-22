@@ -194,15 +194,16 @@ try {
     assert.equal((await usageOf(colleague)).aiPrompts, 0);
   });
   await check("and the worker, re-checking it as the colleague, finds the plan the request did", async () => {
-    // Switched off so the run stops at the website's own setting, after the
-    // worker's checks and before any model is called.
-    await prisma.site.update({ where: { id: biz.siteId }, data: { settings: { aiEnabled: false } } });
+    // The page hidden, so the run stops at the page, after the worker's plan
+    // checks and before any model is called. (This was the site's AI switch,
+    // until there was no switch.)
+    await prisma.sitePage.update({ where: { id: biz.pageId }, data: { status: "HIDDEN" } });
     const running = await prisma.websiteWorkJob.update({ where: { id: jobId }, data: { state: "RUNNING", leaseOwner: mark, leaseUntil: new Date(Date.now() + 60_000), attempts: 1 } });
     await runWebsiteWork(running);
     const finished = await prisma.websiteWorkJob.findUniqueOrThrow({ where: { id: jobId } });
     assert.equal(finished.state, "FAILED");
-    assert.match(finished.error ?? "", /AI is switched off for this website/, "stopped by the site setting, not by a plan the colleague does not have");
-    await prisma.site.update({ where: { id: biz.siteId }, data: { settings: { aiEnabled: true } } });
+    assert.match(finished.error ?? "", /That page is not available/, "stopped at the page, not by a plan the colleague does not have");
+    await prisma.sitePage.update({ where: { id: biz.pageId }, data: { status: "LIVE" } });
   });
   await check("a run that never reached a model goes back to the account it was counted against", async () => {
     assert.equal((await usageOf(businessOwner)).aiPrompts, 0);

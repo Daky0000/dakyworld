@@ -103,7 +103,7 @@ export function WebsiteSurvey() {
     setColorOverrides(prev => ({ ...prev, [oldColor]: nextColor }));
     if (!siteId || !/^#[\da-f]{6}$/i.test(nextColor)) return;
     try {
-      const existing = await api.get<{ options: { colours: string[]; fonts: string[]; aiEnabled: boolean; presets: BrandPreset[] } }>(`/website/sites/${siteId}/design`);
+      const existing = await api.get<{ options: { colours: string[]; fonts: string[]; presets: BrandPreset[] } }>(`/website/sites/${siteId}/design`);
       const baseColours = existing.options.colours.length
         ? existing.options.colours
         : (survey.data?.palette.colours.map(c => c.value) ?? []);
@@ -112,7 +112,6 @@ export function WebsiteSurvey() {
       await api.put(`/website/sites/${siteId}/design`, {
         colours: Array.from(new Set(replaced)).slice(0, 16),
         fonts: existing.options.fonts,
-        aiEnabled: existing.options.aiEnabled,
         presets: existing.options.presets,
       });
       void qc.invalidateQueries({ queryKey: ["website", "design", siteId] });
@@ -124,7 +123,7 @@ export function WebsiteSurvey() {
     mutationFn: async () => {
       if (!survey.data || !siteId) return;
       const presets = createPresetsFromSurvey(survey.data);
-      const existing = await api.get<{ options: { colours: string[]; fonts: string[]; aiEnabled: boolean; presets: BrandPreset[] } }>(`/website/sites/${siteId}/design`);
+      const existing = await api.get<{ options: { colours: string[]; fonts: string[]; presets: BrandPreset[] } }>(`/website/sites/${siteId}/design`);
       const mergedPresets = [
         ...existing.options.presets.filter(p => !p.id.startsWith("survey-")),
         ...presets,
@@ -134,7 +133,6 @@ export function WebsiteSurvey() {
       await api.put(`/website/sites/${siteId}/design`, {
         colours: newColours,
         fonts: newFonts,
-        aiEnabled: existing.options.aiEnabled,
         presets: mergedPresets,
       });
       return { count: presets.length };
