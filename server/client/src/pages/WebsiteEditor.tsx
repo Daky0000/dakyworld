@@ -5,12 +5,11 @@ import { WebsiteCanvasOverlay } from "../components/WebsiteCanvasOverlay";
 import { WebsiteRichText } from "../components/WebsiteRichText";
 import { WebsiteTextFormatting } from "../components/WebsiteTextFormatting";
 import { WebsiteInteractionsPanel } from "../components/WebsiteInteractionsPanel";
-import { WebsiteHoverPanel } from "../components/WebsiteHoverPanel";
+import { StyleStateSwitch, WebsiteHoverPanel, type StyleState } from "../components/WebsiteHoverPanel";
 import { WebsiteStyleTab } from "../components/WebsiteStyleTab";
 import { ElementSettings, MediaSettings, type Visibility } from "../components/WebsiteElementSettings";
 import { StyleSection } from "../components/StyleControls";
 import { mediaKind, type ElementSettingsChange } from "../../../src/shared/websiteElementSettings";
-import { Seg } from "../components/InspectorDesign";
 import { lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
@@ -465,22 +464,46 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         if (pickedId && style.display !== "none") naturalDisplays.current.set(pickedId, style.display);
         const computedMap = Object.fromEntries(INSPECTED_PROPERTIES.map(key => [key, style.getPropertyValue(key)]));
 
+        // Where the background picture shown below comes from: the element's
+        // own background, a layer inside it (Elementor's overlay, a ::before),
+        // or a cover <img> — which is a picture, not a background, so the
+        // Background section shows it but never offers to copy it.
+        computedMap["--dw-site-bg-source"] = computedMap["background-image"] && computedMap["background-image"] !== "none" ? "self" : "";
+        // A background video is not CSS. Elementor names it in the element's
+        // settings (its script, which the editing frame does not run, plays it);
+        // anywhere else it is a muted, looping <video> inside the element.
+        try {
+          const settings = JSON.parse(element.getAttribute("data-settings") || "{}") as { background_background?: string; background_video_link?: string };
+          if (settings.background_background === "video" && settings.background_video_link) computedMap["--dw-site-bg-video"] = settings.background_video_link;
+        } catch { /* not JSON: no Elementor video */ }
+        if (!computedMap["--dw-site-bg-video"]) {
+          const video = element.querySelector<HTMLVideoElement>("video[autoplay], video[loop], .elementor-background-video-container video");
+          const src = video?.getAttribute("src") || video?.querySelector("source")?.getAttribute("src");
+          if (src) computedMap["--dw-site-bg-video"] = new URL(src, doc.baseURI).href;
+        }
+
         // If this container's own background-image is "none", check ::before, ::after,
         // or a direct/nested background layer or cover <img> inside the container so
         // the Background Image placeholder always displays the visual image.
         if (!computedMap["background-image"] || computedMap["background-image"] === "none") {
           const beforeBg = view.getComputedStyle(element, "::before").getPropertyValue("background-image");
           const afterBg = view.getComputedStyle(element, "::after").getPropertyValue("background-image");
-          if (beforeBg && beforeBg !== "none" && /url\(/i.test(beforeBg)) {
+          if (beforeBg && beforeBg !== "none" && /url\(|gradient\(/i.test(beforeBg)) {
             computedMap["background-image"] = beforeBg;
-          } else if (afterBg && afterBg !== "none" && /url\(/i.test(afterBg)) {
+            computedMap["--dw-site-bg-source"] = "inside";
+          } else if (afterBg && afterBg !== "none" && /url\(|gradient\(/i.test(afterBg)) {
             computedMap["background-image"] = afterBg;
+            computedMap["--dw-site-bg-source"] = "inside";
           } else {
             const descendants = Array.from(element.querySelectorAll<HTMLElement>("*"));
             for (const desc of descendants) {
               const descBg = view.getComputedStyle(desc).getPropertyValue("background-image");
-              if (descBg && descBg !== "none" && /url\(/i.test(descBg)) {
+              // A layer that covers the element (Elementor's overlay and motion
+              // layers are absolutely positioned children), not a button's own.
+              const layer = view.getComputedStyle(desc).position === "absolute" || /elementor-(background|motion-effects)/.test(desc.className);
+              if (descBg && descBg !== "none" && /url\(|gradient\(/i.test(descBg) && (layer || /url\(/i.test(descBg))) {
                 computedMap["background-image"] = descBg;
+                computedMap["--dw-site-bg-source"] = "inside";
                 break;
               }
             }
@@ -490,6 +513,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 const imgSrc = childImg.getAttribute("src") || childImg.src;
                 if (imgSrc) {
                   computedMap["background-image"] = `url("${imgSrc}")`;
+                  computedMap["--dw-site-bg-source"] = "img";
                 }
               }
             }
@@ -1543,7 +1567,13 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const agentAvailable = canEdit && (!tierStatus?.features || tierStatus.features.aiBuilderAgent) && design.data?.options.aiEnabled === true;
 
   /** Normal or Hover, in the Style tab. A new selection starts at Normal. */
-  const [styleState, setStyleState] = useState<"normal" | "hover">("normal");
+  const [styleState, setStyleStateRaw] = useState<"normal" | StyleState>("normal");
+  // The interactive state last picked, which the switch offers beside Normal.
+  const [lastStyleState, setLastStyleState] = useState<StyleState>("hover");
+  const setStyleState = (state: "normal" | StyleState) => {
+    if (state !== "normal") setLastStyleState(state);
+    setStyleStateRaw(state);
+  };
   useEffect(() => setStyleState("normal"), [pickedId]);
 
   /** Which rail drawer is open, and which bar menu. */
@@ -3536,7 +3566,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   <div hidden={inspectorTab !== "style"} className="dx-scope-wrap">
                     {inspectorTab === "style" && (
                       <div className="dx-states" data-tour="style-states">
-                        <Seg label="Pick a state to style" value={styleState} options={[{ value: "normal", label: "Normal" }, { value: "hover", label: "Hover" }]} onChange={setStyleState} />
+                        <StyleStateSwitch value={styleState} last={lastStyleState} onChange={setStyleState} />
                       </div>
                     )}
                     {/* Said before the first control, not at the publish: a
@@ -3566,9 +3596,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                       onChange={(style) => change(picked.id, { ...edits[picked.id], style }, { commit: true })}
                     />
                   )}
-                  {inspectorTab === "style" && styleState === "hover" && (
+                  {inspectorTab === "style" && styleState !== "normal" && (
                     <WebsiteHoverPanel
                       pageId={pageId}
+                      state={styleState}
                       element={pickedElement}
                       style={edits[picked.id]?.style ?? picked.style ?? ""}
                       readOnly={readOnly}
@@ -3591,6 +3622,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                       onCommit={() => commitHistory(latestEdits.current)}
                       onPickImage={pickImage}
                       resolveImage={resolveImagePreview}
+                      videoBackground={page.data?.builtFrom?.builder === "elementor" && /^(?:container|section|column)$/.test(pickedElement?.getAttribute("data-element_type") ?? "")}
                     />
                   )}
                   {inspectorTab === "general" && (

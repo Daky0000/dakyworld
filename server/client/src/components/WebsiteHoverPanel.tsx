@@ -6,12 +6,49 @@ import { ColorCodeInput, parseStyle, writeStyle } from "./InspectorControls";
 import { Acc, Field, SHADOW_PRESETS, TILE_ICON, Tiles, Toggle, type TileOption } from "./InspectorDesign";
 
 /**
- * The Style tab's Hover view: how the element looks while the mouse is over
- * it. Every control writes one of the `--dw-hover-*` properties that the fixed
- * rules in `shared/websiteInteraction.ts` apply under `:hover`, so this is the
- * same mechanism the page already published — only easier to reach. While the
- * view is open the element is shown in its hover state on the canvas.
+ * The Style tab's state views: how the element looks while the mouse is over
+ * it (Hover), while it is being pressed (Active) and when it has keyboard
+ * focus (Focus). Every control writes one of the `--dw-<state>-*` properties
+ * that the fixed rules in `shared/websiteInteraction.ts` apply under `:hover`,
+ * `:active` and `:focus-visible`, so this is the same mechanism the page
+ * already published — only easier to reach. While a view is open the element
+ * is shown in that state on the canvas.
  */
+
+export type StyleState = "hover" | "active" | "focus";
+
+const STATES: Record<StyleState, { label: string; word: string; when: string; around: string }> = {
+  hover: { label: "Hover", word: "hover", when: "when the mouse is over it", around: "When something around this element is hovered" },
+  active: { label: "Active", word: "active", when: "while it is being pressed or clicked", around: "While something around this element is pressed" },
+  focus: { label: "Focus", word: "focus", when: "when it is reached with the keyboard (Tab)", around: "When something around this element has focus" },
+};
+
+/**
+ * Normal, and one interactive state with an arrow beside it that swaps between
+ * Hover, Active and Focus. The segment remembers the last one picked, so
+ * Normal → back is one click.
+ */
+export function StyleStateSwitch({ value, last, onChange }: { value: "normal" | StyleState; last: StyleState; onChange: (state: "normal" | StyleState) => void }) {
+  const shown = value === "normal" ? last : value;
+  return (
+    <div className="dx-segc" role="group" aria-label="Pick a state to style">
+      <button type="button" aria-pressed={value === "normal"} onClick={() => onChange("normal")}>Normal</button>
+      <span className="relative flex flex-1">
+        <button type="button" className="flex-1 !pr-7" aria-pressed={value !== "normal"} onClick={() => onChange(shown)}>{STATES[shown].label}</button>
+        <span aria-hidden="true" className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] opacity-70">▾</span>
+        <select
+          aria-label="Choose the state: hover, active or focus"
+          title="Hover, Active (pressed) or Focus (keyboard)"
+          className="absolute inset-y-0 right-0 w-7 cursor-pointer opacity-0"
+          value={shown}
+          onChange={(event) => onChange(event.target.value as StyleState)}
+        >
+          {(Object.keys(STATES) as StyleState[]).map((state) => <option key={state} value={state}>{STATES[state].label}{state === "active" ? " (pressed)" : state === "focus" ? " (keyboard)" : ""}</option>)}
+        </select>
+      </span>
+    </div>
+  );
+}
 
 const MOVES: (TileOption & { transform: string })[] = [
   { value: "none", label: "None", icon: TILE_ICON.none, transform: "" },
@@ -32,7 +69,7 @@ const SPEEDS: [string, string][] = [
   ["Slow (400 ms)", "all 400ms ease"],
 ];
 
-type HoverRule = { selector: string; hover: string; self: boolean; media?: string; declarations: Array<[string, string]> };
+type HoverRule = { state?: StyleState; selector: string; hover: string; self: boolean; media?: string; declarations: Array<[string, string]> };
 
 /** The properties a Hover control writes, and so the site's own values it can show and take over. */
 const EDITABLE: readonly string[] = INTERACTION_PROPERTIES;
@@ -43,12 +80,13 @@ const EDITABLE: readonly string[] = INTERACTION_PROPERTIES;
  * hovering something around the element (`.card:hover .title`) counts too —
  * it is still this element that changes.
  */
-function siteHover(element: HTMLElement | null, rules: HoverRule[]): { found: Map<string, { value: string; self: boolean }>; count: number } {
+function siteHover(element: HTMLElement | null, rules: HoverRule[], state: StyleState): { found: Map<string, { value: string; self: boolean }>; count: number } {
   const found = new Map<string, { value: string; self: boolean }>();
   let count = 0;
   if (!element) return { found, count };
   const view = element.ownerDocument.defaultView;
   for (const rule of rules) {
+    if ((rule.state ?? "hover") !== state) continue;
     if (rule.media && view && !view.matchMedia(rule.media).matches) continue;
     let matches = false;
     try { matches = element.matches(rule.selector); } catch { continue; }
@@ -63,15 +101,17 @@ function siteHover(element: HTMLElement | null, rules: HoverRule[]): { found: Ma
   return { found, count };
 }
 
-export function WebsiteHoverPanel({ pageId, element, style, readOnly, onChange }: { pageId?: string; element: HTMLElement | null; style: string; readOnly: boolean; onChange: (style: string) => void }) {
+export function WebsiteHoverPanel({ pageId, state = "hover", element, style, readOnly, onChange }: { pageId?: string; state?: StyleState; element: HTMLElement | null; style: string; readOnly: boolean; onChange: (style: string) => void }) {
   const map = parseStyle(style);
+  const prefix = `--dw-${state}-`;
+  const { label, word, when, around } = STATES[state];
   const rules = useQuery({
     queryKey: ["website", "hover-rules", pageId],
     enabled: !!pageId,
     staleTime: 60_000,
     queryFn: ({ signal }) => api.get<{ rules: HoverRule[] }>(`/website/pages/${pageId}/hover-rules`, signal),
   });
-  const site = useMemo(() => siteHover(element, rules.data?.rules ?? []), [element, rules.data]);
+  const site = useMemo(() => siteHover(element, rules.data?.rules ?? [], state), [element, rules.data, state]);
   const designed = (property: string) => site.found.get(property)?.value ?? "As designed";
   const write = (patch: Record<string, string | null>) => {
     const next = { ...map };
@@ -82,7 +122,7 @@ export function WebsiteHoverPanel({ pageId, element, style, readOnly, onChange }
     onChange(writeStyle(next));
   };
 
-  // Show the hover state on the canvas while this view is open.
+  // Show the state on the canvas while this view is open.
   useEffect(() => {
     if (!element) return;
     const document = element.ownerDocument;
@@ -92,59 +132,59 @@ export function WebsiteHoverPanel({ pageId, element, style, readOnly, onChange }
       sheet.textContent = interactionCss(true);
       (document.head || document.body).appendChild(sheet);
     }
-    element.setAttribute("data-dw-state-preview", "hover");
+    element.setAttribute("data-dw-state-preview", state);
     return () => element.removeAttribute("data-dw-state-preview");
-  }, [element]);
+  }, [element, state]);
 
-  const move = MOVES.find((option) => option.transform && option.transform === map["--dw-hover-transform"])?.value ?? "none";
-  const shadow = SHADOW_PRESETS.find((option) => option.css === map["--dw-hover-box-shadow"])?.value ?? (map["--dw-hover-box-shadow"] ? "" : "none");
+  const move = MOVES.find((option) => option.transform && option.transform === map[`${prefix}transform`])?.value ?? "none";
+  const shadow = SHADOW_PRESETS.find((option) => option.css === map[`${prefix}box-shadow`])?.value ?? (map[`${prefix}box-shadow`] ? "" : "none");
 
   return (
     <fieldset disabled={readOnly}>
-      <div className="dx-statebar">{TILE_ICON.cursor}<span>Styling <b>hover</b>: every change below shows when the mouse is over it</span></div>
+      <div className="dx-statebar">{TILE_ICON.cursor}<span>Styling <b>{word}</b>: every change below shows {when}</span></div>
       {site.found.size > 0 && (
         <Acc title="On this website already" summary={`${site.found.size} change${site.found.size === 1 ? "" : "s"}`} open>
-          <p className="dx-hint">What the site's own styling does on hover. Change any of it below — your value replaces the site's while the mouse is over it, and the site's file is left as it was.</p>
+          <p className="dx-hint">What the site's own styling does {when}. Change any of it below — your value replaces the site's in that state, and the site's file is left as it was.</p>
           <ul className="grid gap-1.5">
             {[...site.found].map(([property, { value, self }]) => (
               <li key={property} className="dx-crow">
-                <span title={self ? "When this element is hovered" : "When something around this element is hovered"}>{property}{self ? "" : " ·"}</span>
+                <span title={self ? `${label}: this element itself` : around}>{property}{self ? "" : " ·"}</span>
                 <code className="dx-mono min-w-0 flex-1 truncate text-right">{value}</code>
-                {EDITABLE.includes(property) && !map[`--dw-hover-${property}`] && (
-                  <button type="button" className="dx-btn dx-ghost" disabled={readOnly} onClick={() => write({ [`--dw-hover-${property}`]: value })}>Edit</button>
+                {EDITABLE.includes(property) && !map[`${prefix}${property}`] && (
+                  <button type="button" className="dx-btn dx-ghost" disabled={readOnly} onClick={() => write({ [`${prefix}${property}`]: value })}>Edit</button>
                 )}
               </li>
             ))}
           </ul>
         </Acc>
       )}
-      <Acc title="Hover options" summary={MOVES.find((option) => option.value === move)?.label} open>
+      <Acc title={`${label} options`} summary={MOVES.find((option) => option.value === move)?.label} open>
         <Field label="Movement">
-          <Tiles label="Hover movement" options={MOVES} value={move} onChange={(value) => write({ "--dw-hover-transform": MOVES.find((option) => option.value === value)?.transform ?? null })} />
+          <Tiles label={`${label} movement`} options={MOVES} value={move} onChange={(value) => write({ [`${prefix}transform`]: MOVES.find((option) => option.value === value)?.transform ?? null })} />
         </Field>
-        <Toggle label="Underline text" checked={map["--dw-hover-text-decoration"] === "underline"} onChange={(on) => write({ "--dw-hover-text-decoration": on ? "underline" : null })} />
+        <Toggle label="Underline text" checked={map[`${prefix}text-decoration`] === "underline"} onChange={(on) => write({ [`${prefix}text-decoration`]: on ? "underline" : null })} />
         <Field label="Change speed">
           <select aria-label="Change speed" value={map.transition ?? ""} onChange={(event) => write({ transition: event.target.value || null })}>
             {SPEEDS.map(([name, value]) => <option key={name} value={value}>{name}</option>)}
           </select>
         </Field>
       </Acc>
-      <Acc title="Colours" summary={map["--dw-hover-color"] || map["--dw-hover-background-color"] || "As designed"} open>
-        <div className="dx-crow"><span>Text colour</span><ColorCodeInput label="Hover text colour" value={map["--dw-hover-color"] ?? ""} placeholder={designed("color")} disabled={readOnly} onChange={(value) => write({ "--dw-hover-color": value || null })} /></div>
-        <div className="dx-crow"><span>Background</span><ColorCodeInput label="Hover background" value={map["--dw-hover-background-color"] ?? ""} placeholder={designed("background-color")} disabled={readOnly} onChange={(value) => write({ "--dw-hover-background-color": value || null })} /></div>
-        <div className="dx-crow"><span>Border</span><ColorCodeInput label="Hover border colour" value={map["--dw-hover-border-color"] ?? ""} placeholder={designed("border-color")} disabled={readOnly} onChange={(value) => write({ "--dw-hover-border-color": value || null })} /></div>
+      <Acc title="Colours" summary={map[`${prefix}color`] || map[`${prefix}background-color`] || "As designed"} open>
+        <div className="dx-crow"><span>Text colour</span><ColorCodeInput label={`${label} text colour`} value={map[`${prefix}color`] ?? ""} placeholder={designed("color")} disabled={readOnly} onChange={(value) => write({ [`${prefix}color`]: value || null })} /></div>
+        <div className="dx-crow"><span>Background</span><ColorCodeInput label={`${label} background`} value={map[`${prefix}background-color`] ?? ""} placeholder={designed("background-color")} disabled={readOnly} onChange={(value) => write({ [`${prefix}background-color`]: value || null })} /></div>
+        <div className="dx-crow"><span>Border</span><ColorCodeInput label={`${label} border colour`} value={map[`${prefix}border-color`] ?? ""} placeholder={designed("border-color")} disabled={readOnly} onChange={(value) => write({ [`${prefix}border-color`]: value || null })} /></div>
       </Acc>
       <Acc title="Effects" summary={SHADOW_PRESETS.find((option) => option.value === shadow)?.label ?? "Custom"} open>
         <Field label="Shadow">
           <Tiles
-            label="Hover shadow"
+            label={`${label} shadow`}
             options={SHADOW_PRESETS.map((option) => ({ value: option.value, label: option.label, demo: option.css }))}
             value={shadow}
-            onChange={(value) => write({ "--dw-hover-box-shadow": value === "none" ? null : SHADOW_PRESETS.find((option) => option.value === value)?.css ?? null })}
+            onChange={(value) => write({ [`${prefix}box-shadow`]: value === "none" ? null : SHADOW_PRESETS.find((option) => option.value === value)?.css ?? null })}
           />
         </Field>
         <Field label="Opacity">
-          <select aria-label="Hover opacity" value={map["--dw-hover-opacity"] ?? ""} onChange={(event) => write({ "--dw-hover-opacity": event.target.value || null })}>
+          <select aria-label={`${label} opacity`} value={map[`${prefix}opacity`] ?? ""} onChange={(event) => write({ [`${prefix}opacity`]: event.target.value || null })}>
             <option value="">As designed</option>
             {["0.9", "0.8", "0.7", "0.5"].map((value) => <option key={value} value={value}>{Number(value) * 100}%</option>)}
           </select>
@@ -156,11 +196,11 @@ export function WebsiteHoverPanel({ pageId, element, style, readOnly, onChange }
           className="dx-btn dx-ghost dx-full"
           onClick={() => {
             const next = { ...map };
-            for (const key of Object.keys(next)) if (key.startsWith("--dw-hover-")) delete next[key];
+            for (const key of Object.keys(next)) if (key.startsWith(prefix)) delete next[key];
             onChange(writeStyle(next));
           }}
         >
-          Reset hover style
+          Reset {word} style
         </button>
       </div>
     </fieldset>

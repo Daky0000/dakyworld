@@ -26,9 +26,14 @@ const rules = hoverRules([
     a:hover::after { content: ""; width: 100% }
     @media (min-width: 768px) { .nav-link:hover { opacity: .8 } }
     .broken:hover { }
+    .btn:active { transform: translateY(1px) }
+    .btn:focus-visible { box-shadow: 0 0 0 3px #3157ff }
+    .form:focus-within { border-color: red }
+    .x:activeTab { color: red }
   ` },
   { css: `.elementor-26 .elementor-element.elementor-element-bt30001 .elementor-button:hover, .elementor-26 .elementor-element.elementor-element-bt30001 .elementor-button:focus{background-color:#0f3d25;color:#ffee00;}` },
   { css: `.hover\\:bg-lime:hover{background-color:#c6f432}.focus\\:hover\\:underline:hover{text-decoration-line:underline}.group:hover .group-hover\\:text-white{color:#fff}` },
+  { css: `.elementor .e-hd40001-hv:active{color:#aa0001;}` },
   { css: `this is { not css` },
 ]);
 const find = (hover: string) => rules.find((rule) => rule.hover === hover);
@@ -57,11 +62,20 @@ check("a rule inside @media carries its condition, so the panel can match it to 
   assert.equal(find(".nav-link:hover")?.media, "(min-width: 768px)");
 });
 
-check("Elementor's post CSS: the hover part of the list, not its :focus twin", () => {
-  const rule = rules.find((entry) => entry.selector.includes("elementor-element-bt30001"));
-  assert.ok(rule);
-  assert.equal(rule.selector, ".elementor-26 .elementor-element.elementor-element-bt30001 .elementor-button");
-  assert.equal(rules.filter((entry) => entry.selector.includes("elementor-element-bt30001")).length, 1);
+check("Elementor's post CSS: its hover and its :focus twin are one rule each, for their own state", () => {
+  const button = rules.filter((entry) => entry.selector.includes("elementor-element-bt30001"));
+  assert.deepEqual(button.map((entry) => entry.state).sort(), ["focus", "hover"]);
+  assert.ok(button.every((entry) => entry.selector === ".elementor-26 .elementor-element.elementor-element-bt30001 .elementor-button"));
+});
+
+check("pressed and focus rules are read as their own state; :focus-within and :active-ish names are not", () => {
+  assert.equal(find(".btn:active")?.state, "active");
+  assert.equal(find(".btn:active")?.selector, ".btn");
+  assert.equal(find(".btn:focus-visible")?.state, "focus");
+  assert.equal(find(".btn:focus-visible")?.selector, ".btn");
+  assert.equal(find(".elementor .e-hd40001-hv:active")?.state, "active");
+  assert.ok(!rules.some((entry) => entry.hover.includes("focus-within")), "focus-within is about a child, not this element");
+  assert.ok(!rules.some((entry) => entry.hover.includes("activeTab")));
 });
 
 check("Tailwind: an escaped `\\:hover` inside a class name is part of the name", () => {

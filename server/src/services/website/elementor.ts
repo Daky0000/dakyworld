@@ -307,7 +307,9 @@ const DEVICE_V4: Record<string, string> = { desktop: "desktop", tablet: "tablet"
 const SUFFIX_V3: Record<string, string> = { desktop: "", tablet: "_tablet", mobile: "_mobile" };
 
 /** One style change to make: a property's new value (or removal) on one screen size and state. */
-type StyleChange = { device: "desktop" | "tablet" | "mobile"; state: "hover" | null; property: string; value: string | null };
+type State = "hover" | "active" | "focus";
+type StyleChange = { device: "desktop" | "tablet" | "mobile"; state: State | null; property: string; value: string | null };
+const STATE_WORD: Record<State, string> = { hover: "hover", active: "pressed (active)", focus: "keyboard focus" };
 
 /** What the Style tab, its screen-size overrides and its Hover view changed, as plain CSS. */
 function styleChanges(edit: FieldValue, field: SiteField | undefined): { changes: StyleChange[]; refused: string[] } {
@@ -320,7 +322,10 @@ function styleChanges(edit: FieldValue, field: SiteField | undefined): { changes
     for (const property of new Set([...was.keys(), ...now.keys()])) {
       const value = now.get(property) ?? null;
       if (value === (was.get(property) ?? null)) continue;
-      if (property.startsWith("--dw-hover-")) changes.push({ device, state: "hover", property: property.slice("--dw-hover-".length), value });
+      const state = /^--dw-(hover|active|focus)-(.+)$/.exec(property);
+      if (state) changes.push({ device, state: state[1] as State, property: state[2]!, value });
+      // The Background section's video: not CSS, so carried in a property of its own.
+      else if (property === "--dw-bg-video") changes.push({ device, state: null, property: "background-video", value });
       else if (property.startsWith("--dw-")) refused.push("Animations and interactions made in this editor cannot be stored in Elementor yet. Set them in Elementor's Motion Effects or Interactions.");
       else changes.push({ device, state: null, property, value });
     }
@@ -379,6 +384,20 @@ function v4Prop(property: string, value: string, existing: unknown): unknown | n
       const number = Number(value);
       return Number.isFinite(number) && number >= 0 && number <= 1 ? { $$type: "size", value: { size: Math.round(number * 100), unit: "%" } } : size(value, "%");
     }
+    case "box-shadow": {
+      // Atomic `box-shadow`: a list of `shadow` objects, every length a size prop.
+      if (value === "none") return { $$type: "box-shadow", value: [] };
+      const shadows = layersOf(value).map((one) => {
+        const tokens: string[] = one.match(/(?:[a-z-]+\([^()]*(?:\([^()]*\))?[^()]*\)|\S)+/gi) ?? [];
+        const inset = tokens.includes("inset");
+        const lengths = tokens.filter((token) => sizeOf(token) !== null);
+        const color = tokens.filter((token) => token !== "inset" && sizeOf(token) === null);
+        if (lengths.length < 2 || lengths.length > 4 || color.length > 1) return null;
+        const [h, v, blur = "0", spread = "0"] = lengths;
+        return { $$type: "shadow", value: { hOffset: size(h!), vOffset: size(v!), blur: size(blur), spread: size(spread), color: { $$type: "color", value: color[0] ?? "rgba(0, 0, 0, 1)" }, position: inset ? string("inset") : null } };
+      });
+      return shadows.some((shadow) => !shadow) ? null : { $$type: "box-shadow", value: shadows };
+    }
     case "z-index": case "column-count":
       return /^-?\d+$/.test(value) ? { $$type: "number", value: Number(value) } : null;
     case "font-family":
@@ -431,7 +450,7 @@ function applyV4Style(node: ElementorNode, changes: StyleChange[]): string[] {
     }
     const prop = v4Prop(change.property, change.value, props[key]);
     if (prop === null) {
-      refused.push(`Elementor V4 has no setting for ${change.property}: ${change.value}${change.state ? " on hover" : ""}, so that change was not published. Change it in Elementor.`);
+      refused.push(`Elementor V4 has no setting for ${change.property}: ${change.value}${change.state ? ` (${STATE_WORD[change.state]})` : ""}, so that change was not published. Change it in Elementor.`);
       continue;
     }
     props[key] = prop;
@@ -441,7 +460,7 @@ function applyV4Style(node: ElementorNode, changes: StyleChange[]): string[] {
 
 // V3: one table onto Elementor's named settings ----------------------------------
 
-type Shape = "raw" | "size" | "dims" | "image" | "font" | "number";
+type Shape = "raw" | "size" | "dims" | "image" | "font" | "number" | "video";
 type Slot = { key: string; shape: Shape; responsive: boolean; also?: Record<string, string> };
 
 const TYPOGRAPHY: Record<string, Slot> = {
@@ -455,7 +474,7 @@ const TYPOGRAPHY: Record<string, Slot> = {
   "font-family": { key: "typography_font_family", shape: "font", responsive: false },
 };
 
-function boxSlots(prefix: string, state: "hover" | null): Record<string, Slot> {
+function boxSlots(prefix: string, state: State | null): Record<string, Slot> {
   if (state === "hover") {
     return {
       "background-color": { key: `${prefix}background_hover_color`, shape: "raw", responsive: false, also: { [`${prefix}background_hover_background`]: "classic" } },
@@ -467,6 +486,8 @@ function boxSlots(prefix: string, state: "hover" | null): Record<string, Slot> {
     padding: { key: `${prefix}padding`, shape: "dims", responsive: true },
     "background-color": { key: `${prefix}background_color`, shape: "raw", responsive: false, also: { [`${prefix}background_background`]: "classic" } },
     "background-image": { key: `${prefix}background_image`, shape: "image", responsive: true, also: { [`${prefix}background_background`]: "classic" } },
+    // Containers, sections and columns only: a widget's own background has no video.
+    ...(prefix === "" ? { "background-video": { key: "background_video_link", shape: "video", responsive: false, also: { background_background: "video", background_play_on_mobile: "yes" } } as Slot } : {}),
     "border-style": { key: `${prefix}border_border`, shape: "raw", responsive: false },
     "border-width": { key: `${prefix}border_width`, shape: "dims", responsive: true },
     "border-color": { key: `${prefix}border_color`, shape: "raw", responsive: false },
@@ -476,7 +497,9 @@ function boxSlots(prefix: string, state: "hover" | null): Record<string, Slot> {
 }
 
 /** Where a classic element keeps one CSS property, for the part of it that was styled. */
-function v3Slots(node: ElementorNode, wrapper: boolean, state: "hover" | null): Record<string, Slot> {
+function v3Slots(node: ElementorNode, wrapper: boolean, state: State | null): Record<string, Slot> {
+  // Classic Elementor keeps hover settings only; pressed and focus are V4's.
+  if (state && state !== "hover") return {};
   const container = ["container", "section", "column"].includes(node.elType);
   if (container) {
     return {
@@ -559,7 +582,98 @@ function shaped(slot: Slot, property: string, value: string): unknown | null {
       const url = /url\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(value)?.[1];
       return url ? { url, id: "", size: "", alt: "", source: "library" } : value === "none" ? { url: "", id: "" } : null;
     }
+    // A file Elementor plays itself, or a YouTube or Vimeo address it embeds.
+    case "video": return /^https:\/\/[^\s"'<>]+$/.test(value.trim()) ? value.trim() : null;
   }
+}
+
+/** Top-level comma split, leaving the commas inside `rgb(…)` and `linear-gradient(…)` alone. */
+function layersOf(css: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const char of css) {
+    if (char === "(") depth += 1;
+    if (char === ")") depth -= 1;
+    if (char === "," && depth === 0) { out.push(current.trim()); current = ""; continue; }
+    current += char;
+  }
+  if (current.trim()) out.push(current.trim());
+  return out;
+}
+
+type ElementorGradient = { type: "linear" | "radial"; angle: number; position: string; stops: [{ color: string; at: number }, { color: string; at: number }] };
+
+/**
+ * A CSS gradient in the shape Elementor's gradient control stores: two
+ * colours, each at a percentage, an angle or a centre. Anything richer — a
+ * third stop, a conic gradient — has no place in it and is refused.
+ */
+function gradientOf(css: string): ElementorGradient | null {
+  const match = /^(linear|radial)-gradient\((.*)\)$/i.exec(css.trim());
+  if (!match) return null;
+  const parts = layersOf(match[2]!);
+  let angle = 180;
+  let position = "center center";
+  const first = parts[0] ?? "";
+  if (match[1]!.toLowerCase() === "linear") {
+    const degrees = /^(-?\d+(?:\.\d+)?)deg$/i.exec(first);
+    const words: Record<string, number> = { "to top": 0, "to right": 90, "to bottom": 180, "to left": 270 };
+    if (degrees) { angle = Math.round(Number(degrees[1])); parts.shift(); }
+    else if (words[first.toLowerCase()] !== undefined) { angle = words[first.toLowerCase()]!; parts.shift(); }
+  } else if (/^(circle|ellipse|at\b|closest|farthest)/i.test(first)) {
+    position = /at\s+(.+)$/i.exec(first)?.[1]?.trim() ?? "center center";
+    parts.shift();
+  }
+  if (parts.length !== 2) return null;
+  const stops = parts.map((part, index) => {
+    const at = /\s(-?\d+(?:\.\d+)?)%$/.exec(part);
+    return { color: (at ? part.slice(0, at.index) : part).trim(), at: at ? Number(at[1]) : index * 100 };
+  }) as ElementorGradient["stops"];
+  return { type: match[1]!.toLowerCase() as "linear" | "radial", angle, position, stops };
+}
+
+/** Elementor's gradient keys under a prefix: `background_` or `background_overlay_`, with a widget's `_` in front. */
+function gradientSettings(prefix: string, gradient: ElementorGradient): Record<string, unknown> {
+  return {
+    [`${prefix}background`]: "gradient",
+    [`${prefix}color`]: gradient.stops[0].color,
+    [`${prefix}color_stop`]: { unit: "%", size: gradient.stops[0].at, sizes: [] },
+    [`${prefix}color_b`]: gradient.stops[1].color,
+    [`${prefix}color_b_stop`]: { unit: "%", size: gradient.stops[1].at, sizes: [] },
+    [`${prefix}gradient_type`]: gradient.type,
+    [`${prefix}gradient_angle`]: { unit: "deg", size: gradient.angle, sizes: [] },
+    [`${prefix}gradient_position`]: gradient.position,
+  };
+}
+
+/**
+ * `background-image` as Elementor keeps it: a picture, a gradient, or — the
+ * way the Background section stacks them — a gradient over a picture, which is
+ * Elementor's background overlay on a container. Returns the settings to
+ * write, or why not.
+ */
+function backgroundSettings(slotKey: string, value: string, overlayAllowed: boolean): Record<string, unknown> | string {
+  const prefix = slotKey.replace(/background_image$/, "");
+  const layers = layersOf(value);
+  const urls = layers.filter((layer) => /^url\(/i.test(layer));
+  const gradients = layers.filter((layer) => /gradient\(/i.test(layer));
+  if (urls.length + gradients.length !== layers.length || urls.length > 1 || gradients.length > 1) {
+    return "Elementor keeps one picture and one gradient over it; this background has more layers than that. Keep one of each, or change it in Elementor.";
+  }
+  const gradient = gradients.length ? gradientOf(gradients[0]!) : null;
+  if (gradients.length && !gradient) return "Elementor's gradient has two colours at set positions; a gradient with more stops, or a conic one, cannot be stored. Change it in Elementor.";
+  const url = urls.length ? /url\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(urls[0]!)?.[1] : undefined;
+  if (url && gradient) {
+    if (!overlayAllowed) return "Only a container, section or column has an overlay in Elementor, so a gradient over a picture cannot be stored on this element. Change it in Elementor.";
+    return {
+      [`${prefix}background_background`]: "classic",
+      [`${prefix}background_image`]: { url, id: "", size: "", alt: "", source: "library" },
+      ...gradientSettings(`${prefix}background_overlay_`, gradient),
+    };
+  }
+  if (gradient) return gradientSettings(`${prefix}background_`, gradient);
+  return url ? { [`${prefix}background_background`]: "classic", [`${prefix}background_image`]: { url, id: "", size: "", alt: "", source: "library" } } : "";
 }
 
 function applyV3Style(node: ElementorNode, wrapper: boolean, changes: StyleChange[]): string[] {
@@ -568,7 +682,7 @@ function applyV3Style(node: ElementorNode, wrapper: boolean, changes: StyleChang
   for (const change of changes) {
     const slot = v3Slots(node, wrapper, change.state)[change.property];
     if (!slot || (change.device !== "desktop" && !slot.responsive)) {
-      refused.push(`Elementor has no ${change.state === "hover" ? "hover " : ""}${change.device === "desktop" ? "" : `${change.device} `}setting for ${change.property} on this element, so that change was not published. Change it in Elementor.`);
+      refused.push(`Elementor has no ${change.state ? `${STATE_WORD[change.state]} ` : ""}${change.device === "desktop" ? "" : `${change.device} `}setting for ${change.property} on this element, so that change was not published. Change it in Elementor.`);
       continue;
     }
     const key = `${slot.key}${SUFFIX_V3[change.device]}`;
@@ -576,6 +690,12 @@ function applyV3Style(node: ElementorNode, wrapper: boolean, changes: StyleChang
     if (globals && typeof globals === "object") delete globals[key];
     if (change.value === null) {
       delete settings[key];
+      continue;
+    }
+    if (change.property === "background-image" && change.device === "desktop" && /gradient\(|,/.test(change.value)) {
+      const written = backgroundSettings(slot.key, change.value, ["container", "section", "column"].includes(node.elType));
+      if (typeof written === "string") { refused.push(written || `Elementor cannot store background ${change.value}.`); continue; }
+      Object.assign(settings, written);
       continue;
     }
     const value = shaped(slot, change.property, change.value);
@@ -833,10 +953,12 @@ export type ElementorApplyResult = {
  * Writes an editor's draft into Elementor's trees, or refuses all of it.
  * Works on copies; the caller saves `changedDocuments`.
  */
-/** A background picked from the site's assets, pointed at its copy in the WordPress media library. */
+/** A background picture or video picked from the site's assets, pointed at its copy in the WordPress media library. */
 function withUploadedBackgrounds(edit: FieldValue, media: ElementorMedia | undefined): FieldValue {
   if (!media?.size) return edit;
-  const swap = (style: string | undefined) => style?.replace(/url\(\s*['"]?([^'")]+)['"]?\s*\)/gi, (token, url: string) => (media.has(url) ? `url(${media.get(url)!.url})` : token));
+  const swap = (style: string | undefined) => style
+    ?.replace(/url\(\s*['"]?([^'")]+)['"]?\s*\)/gi, (token, url: string) => (media.has(url) ? `url(${media.get(url)!.url})` : token))
+    .replace(/(--dw-bg-video:\s*)([^;\s]+)/gi, (token, name: string, url: string) => (media.has(url) ? `${name}${media.get(url)!.url}` : token));
   const responsive = edit.responsive ? Object.fromEntries(Object.entries(edit.responsive).map(([size, style]) => [size, swap(style)])) : undefined;
   return { ...edit, ...(edit.style !== undefined ? { style: swap(edit.style) } : {}), ...(responsive ? { responsive } : {}) };
 }

@@ -199,6 +199,60 @@ check("a container's box styling and an https background image go to its own set
   assert.equal((node(pageData(picked), "con0001").settings as Record<string, any>).background_image.url, "https://bakery.test/wp-content/uploads/bg.png", "a picture from the site's assets is stored as its WordPress copy");
 });
 
+check("pressed (active) and focus styling: V4 keeps them as state variants; classic Elementor has no place and says so", () => {
+  const v4 = apply({ [field("Atomic button").id]: { style: "--dw-active-background-color: #0f3d25; --dw-focus-box-shadow: 0 0 0 3px #3157ff", originalStyle: "" } });
+  const button = node(pageData(v4), "bt40001");
+  const local = Object.values(button.styles as Record<string, any>)[0];
+  assert.ok(local, JSON.stringify([v4.unmappable, v4.problems]));
+  const states = local.variants.map((entry: any) => entry.meta.state).sort();
+  assert.deepEqual(states, ["active", "focus"]);
+  assert.deepEqual([v4.unmappable, v4.problems], [[], []]);
+  const classic = apply({ [field("Order now").id]: { style: "--dw-active-background-color: #0f3d25", originalStyle: "" } });
+  assert.match(classic.unmappable.map((entry) => entry.message).join(" "), /pressed \(active\)/);
+});
+
+check("a gradient, a gradient over a picture (Elementor's overlay) and a background video map onto a container's own settings", () => {
+  const container = fieldFor(html, "con0001");
+  const gradient = apply({ [container.id]: { style: "background-image: linear-gradient(135deg, #1d6b41 10%, rgba(0, 0, 0, 0.5) 90%)", originalStyle: "" } });
+  assert.deepEqual([gradient.unmappable, gradient.problems], [[], []]);
+  const settings = node(pageData(gradient), "con0001").settings as Record<string, any>;
+  assert.equal(settings.background_background, "gradient");
+  assert.equal(settings.background_color, "#1d6b41");
+  assert.equal(settings.background_color_b, "rgba(0, 0, 0, 0.5)");
+  assert.deepEqual(settings.background_color_stop, { unit: "%", size: 10, sizes: [] });
+  assert.deepEqual(settings.background_gradient_angle, { unit: "deg", size: 135, sizes: [] });
+
+  const overlay = apply({ [container.id]: { style: "background-image: linear-gradient(to bottom, rgba(0,0,0,0.6), transparent), url('https://bakery.test/bg.png')", originalStyle: "" } });
+  assert.deepEqual([overlay.unmappable, overlay.problems], [[], []]);
+  const layered = node(pageData(overlay), "con0001").settings as Record<string, any>;
+  assert.equal(layered.background_image.url, "https://bakery.test/bg.png");
+  assert.equal(layered.background_overlay_background, "gradient");
+  assert.equal(layered.background_overlay_color, "rgba(0,0,0,0.6)");
+  assert.equal(layered.background_overlay_color_b, "transparent");
+
+  const video = applyElementorEdits({ html, documents: documents(), values: { [container.id]: { style: "--dw-bg-video: /assets/dw/loop.mp4", originalStyle: "" } }, media: new Map([["/assets/dw/loop.mp4", { id: 8, url: "https://bakery.test/wp-content/uploads/loop.mp4" }]]) });
+  assert.deepEqual([video.unmappable, video.problems], [[], []]);
+  const played = node(pageData(video), "con0001").settings as Record<string, any>;
+  assert.equal(played.background_background, "video");
+  assert.equal(played.background_video_link, "https://bakery.test/wp-content/uploads/loop.mp4");
+});
+
+check("a background Elementor has no place for is refused whole: three stops, an overlay on a widget, a video on a widget", () => {
+  const container = fieldFor(html, "con0001");
+  const heading = field("Fresh bread daily");
+  for (const [id, style] of [
+    [container.id, "background-image: linear-gradient(90deg, red, white, blue)"],
+    [heading.id, "background-image: linear-gradient(red, blue), url('https://bakery.test/bg.png')"],
+    [heading.id, "--dw-bg-video: https://bakery.test/loop.mp4"],
+    [container.id, "--dw-bg-video: http://bakery.test/loop.mp4"],
+  ] as const) {
+    const result = apply({ [id]: { style, originalStyle: "" } });
+    assert.ok(result.unmappable.length + result.problems.length > 0, style);
+    // Read and refused, an element's empty settings may come back `{}` rather than `[]`; nothing else.
+    assert.equal(JSON.stringify(pageData(result)).replaceAll('"settings":{}', '"settings":[]'), JSON.stringify(pageTree()), `nothing written for ${style}`);
+  }
+});
+
 check("V4 styling becomes typed props on the element's own style, per screen size and on hover", () => {
   const result = apply({ [field("Atomic heading").id]: { style: "color: #7a4e06; padding: 4px 8px; --dw-hover-color: #c8871b", originalStyle: "", responsive: { mobile: "font-size: 22px" }, originalResponsive: {} } });
   assert.deepEqual([result.unmappable, result.problems], [[], []]);

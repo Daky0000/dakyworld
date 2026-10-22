@@ -1834,6 +1834,54 @@ placeholders, and **Edit** copies one into its `--dw-hover-*` control. Elementor
 hover settings arrive this way for free — they are rules in `post-<id>.css` —
 and an edit made there publishes back into Elementor's hover keys.
 
+### Active and Focus beside Hover, and backgrounds the site draws (22 Oct 2026, second pass)
+
+- **The Style tab's state switch is Normal | Hover ▾.** The arrow swaps the
+  second segment between Hover, Active (pressed) and Focus (keyboard); the
+  last one picked stays offered (`StyleStateSwitch`). One panel serves all
+  three, writing `--dw-<state>-*`, which `shared/websiteInteraction.ts` already
+  applied under `:hover`, `:active` and `:focus-visible` — only the switch was
+  missing. `hover-rules` returns every state's rules, each tagged `state`
+  (`:focus` and `:focus-visible` are both focus; `:focus-within` is a child's
+  and is not read). Elementor V4 stores them as `active`/`focus` variants,
+  which it renders as `:active` and `:focus`; classic Elementor has hover
+  settings only, so Active and Focus are refused there by name. V4 gained
+  `box-shadow` (a list of atomic `shadow` objects), which every state panel
+  offers. The agent has `set_active_style` and `set_focus_style`.
+- **The Background section showed "None" for every background a stylesheet
+  draws** — every Elementor background, most framework ones — because it read
+  the element's own `style` only. It now reads the frame's computed background
+  when the element sets none, shows the picture or gradient as "On this
+  website", and **Edit this background** copies it into the element's style.
+  The inspector records where the picture came from (`--dw-site-bg-source`):
+  its own background, a layer inside it (Elementor's overlay and motion layers,
+  a `::before`) or a cover `<img>` — which is a picture, not a background, so it
+  is shown in the placeholder and never offered for copying.
+- **Gradients map onto Elementor's gradient control**, which holds two colours
+  at percentages, an angle or a centre (`gradientOf`); a third stop or a conic
+  gradient is refused. **A gradient over a picture** — how the Background
+  section stacks them — is Elementor's background *overlay*, on a container,
+  section or column only; on a widget it is refused. Elementor renders the
+  overlay as the container's `::before`.
+- **A background video is not CSS**, so it travels as `--dw-bg-video: <https
+  address>` in the style, through drafts, undo and the agent like anything
+  else, and the Elementor mapping writes `background_video_link` with
+  `background_background: video`. The control is offered on an Elementor
+  container only (a widget's background has no video); anywhere else a
+  background video is a `<video>` element inside the block, which is selected
+  and changed like any video. Elementor's script plays the video and does not
+  run in the editing frame, so the current one is read from the element's
+  `data-settings` and shown as the placeholder. A video picked from the media
+  library is uploaded to WordPress at publish like a picture.
+- **Deleting after a layout change refused the publish** ("There are no words
+  here to change") on any page with an icon: the layout snapshot carries the
+  editor's `data-dw-*` markers inside each element, so an icon's HTML compared
+  unequal to the live page's and became an edit of an element with no words.
+  `foldEdits` compares unmarked, never compares an icon by its HTML, and skips
+  theme fields nobody edited. **Deleting a classic widget's heading or button**
+  took the content and left Elementor's wrapper with its id, so the publish
+  saw nothing to do; a widget the edit emptied is deleted (`emptiedWidgets`).
+
 ### The agent does what the editor does (22 Oct 2026)
 
 The planner's operations gained `set_tablet_style`, `set_mobile_style`,

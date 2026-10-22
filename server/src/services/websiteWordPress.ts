@@ -602,12 +602,15 @@ export async function wordpressManagedFields(site: Site, page: SitePage, html: s
  * to the WordPress media library, so the page references a file WordPress has
  * rather than one served from here.
  */
+/** A file a style points at: a background picture's `url()`, or the background video's address. */
+const STYLE_ASSET = /url\(\s*['"]?([^'")]+)['"]?\s*\)|--dw-bg-video:\s*([^;\s]+)/gi;
+
 async function uploadPictures(site: Site, connection: WordPressConnection, values: Record<string, FieldValue>): Promise<WordPressMedia> {
   const media: WordPressMedia = new Map();
   // A swapped picture is a value; a background image is a `url()` in a style.
   const wanted = Object.values(values).flatMap((edit) => [
     ...(edit.value && edit.value !== edit.original ? [edit.value] : []),
-    ...[edit.style, ...Object.values(edit.responsive ?? {})].flatMap((style) => [...(style ?? "").matchAll(/url\(\s*['"]?([^'")]+)['"]?\s*\)/gi)].map((match) => match[1]!)),
+    ...[edit.style, ...Object.values(edit.responsive ?? {})].flatMap((style) => [...(style ?? "").matchAll(STYLE_ASSET)].map((match) => (match[1] ?? match[2])!)),
   ]);
   for (const value of wanted) {
     if (media.has(value)) continue;
@@ -674,7 +677,7 @@ async function writeEdits(input: { site: Site; page: SitePage; html: string; val
 async function writeElementorEdits(input: { site: Site; page: SitePage; html: string; values: Record<string, FieldValue>; connection: WordPressConnection; source: PageRead }): Promise<WriteResult> {
   const documents = input.source.elementor;
   if (!documents?.size) throw new WebsiteError(409, "This page's Elementor data could not be read. Update Elementor, or connect with an account that can edit this page.");
-  const fake = new Map(Object.values(input.values).flatMap((edit) => [edit.value, ...[edit.style, ...Object.values(edit.responsive ?? {})].flatMap((style) => [...(style ?? "").matchAll(/url\(\s*['"]?([^'")]+)['"]?\s*\)/gi)].map((match) => match[1])) ]).filter((value): value is string => !!value).map((value) => [value, { id: 0, url: "https://upload.invalid/" }]));
+  const fake = new Map(Object.values(input.values).flatMap((edit) => [edit.value, ...[edit.style, ...Object.values(edit.responsive ?? {})].flatMap((style) => [...(style ?? "").matchAll(STYLE_ASSET)].map((match) => match[1] ?? match[2])) ]).filter((value): value is string => !!value).map((value) => [value, { id: 0, url: "https://upload.invalid/" }]));
   refuseIfNeeded(applyElementorEdits({ html: input.html, documents, values: input.values, media: fake }));
   const media = await uploadPictures(input.site, input.connection, input.values);
   const applied = applyElementorEdits({ html: input.html, documents, values: input.values, media });

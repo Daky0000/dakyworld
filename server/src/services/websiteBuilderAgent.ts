@@ -967,8 +967,8 @@ const AI_AGENT_SYSTEM_DOCTRINE = `You are the Website Builder Agent for a connec
 - Layout sections: adding, generating, removing, duplicating, or reordering page blocks and sections
 - Modern styling & theme tokens: colors, backgrounds, background images, typography (font family, font size, weight, line-height, alignment), borders, padding, shadows, opacity
 - Per screen size: a style for tablets (set_tablet_style) or phones (set_mobile_style) only; set_style is every screen
-- Hover: how an element looks while the mouse is over it (set_hover_style) — text colour, background colour, border colour, shadow, opacity, a movement (transform) and underline (text-decoration). Nothing else changes on hover in the editor, so nothing else does here
-- Pictures: replacing an image or a section's background picture (set_image)
+- States: how an element looks while the mouse is over it (set_hover_style), while it is pressed (set_active_style) or when it has keyboard focus (set_focus_style) — text colour, background colour, border colour, shadow, opacity, a movement (transform) and underline (text-decoration). Nothing else changes in those states in the editor, so nothing else does here
+- Pictures: replacing an image or a section's background picture (set_image); a container's background video where the page is built with Elementor (set_background_video, an https address; empty removes it)
 - Fields marked readOnly cannot be changed here (their note says why and where to change them); never plan a change to one, and say so instead
 - Media and asset links: replacing image sources or hero backdrops with user-attached files, and linking buttons to PDFs/documents
 - Cross-page consistency: updating global brand fonts, brand colors, business phone numbers, and contact emails across all pages
@@ -1003,7 +1003,7 @@ const aiPlanSchema = z.object({
     pageId: z.string(),
     changes: z.array(z.object({
       fieldId: z.string(),
-      operation: z.enum(["replace_text", "set_link", "set_alt", "set_style", "set_tablet_style", "set_mobile_style", "set_hover_style", "set_image", "set_variant", "set_new_tab"]),
+      operation: z.enum(["replace_text", "set_link", "set_alt", "set_style", "set_tablet_style", "set_mobile_style", "set_hover_style", "set_active_style", "set_focus_style", "set_image", "set_background_video", "set_variant", "set_new_tab"]),
       property: z.string().nullable().default(null),
       value: z.string(),
     })),
@@ -1091,8 +1091,8 @@ export const AI_PLAN_JSON_SCHEMA = {
               required: ["fieldId", "operation", "property", "value"],
               properties: {
                 fieldId: { type: "string" },
-                operation: { type: "string", enum: ["replace_text", "set_link", "set_alt", "set_style", "set_tablet_style", "set_mobile_style", "set_hover_style", "set_image", "set_variant", "set_new_tab"] },
-                property: { type: "string", description: "For set_style, set_tablet_style, set_mobile_style and set_hover_style, the one CSS property, such as font-size. Otherwise an empty string." },
+                operation: { type: "string", enum: ["replace_text", "set_link", "set_alt", "set_style", "set_tablet_style", "set_mobile_style", "set_hover_style", "set_active_style", "set_focus_style", "set_image", "set_background_video", "set_variant", "set_new_tab"] },
+                property: { type: "string", description: "For set_style, set_tablet_style, set_mobile_style, set_hover_style, set_active_style and set_focus_style, the one CSS property, such as font-size. Otherwise an empty string." },
                 value: { type: "string", description: "The new text, address, description, CSS value, variant, true/false for set_new_tab, or for set_image the picture's address (an attachment url, a picture already on the site, or an https address)." },
               },
             },
@@ -1133,7 +1133,7 @@ export function planFromModel(raw: unknown): AiPlan {
       .map((page: any) => ({
         pageId: text(page.pageId),
         changes: page.changes
-          .filter((change: any) => change && text(change.fieldId) && ["replace_text", "set_link", "set_alt", "set_style", "set_tablet_style", "set_mobile_style", "set_hover_style", "set_image", "set_variant", "set_new_tab"].includes(change.operation))
+          .filter((change: any) => change && text(change.fieldId) && ["replace_text", "set_link", "set_alt", "set_style", "set_tablet_style", "set_mobile_style", "set_hover_style", "set_active_style", "set_focus_style", "set_image", "set_background_video", "set_variant", "set_new_tab"].includes(change.operation))
           .map((change: any) => ({ fieldId: text(change.fieldId), operation: change.operation, property: text(change.property) || null, value: text(change.value) })),
       })),
   };
@@ -2362,6 +2362,18 @@ export async function planAgentInstruction(
               nextEdit.value = address;
               pageChanges.push({ fieldId: field.id, label: field.label, property: "image", before: field.value, after: address });
             }
+          } else if (ch.operation === "set_background_video") {
+            // Where the editor offers it: an Elementor container, whose publish stores the address.
+            const opening = field.attrInsert === undefined ? "" : html.slice(html.lastIndexOf("<", field.attrInsert), html.indexOf(">", field.attrInsert));
+            if (field.kind !== "container" || managed?.builder !== "elementor" || !/data-element_type="(?:container|section|column)"/.test(opening)) { dropped.push(managed?.builder === "elementor" ? `In Elementor only a container, section or column has a background video, and ${field.label} is not one` : `${field.label} cannot have a background video here; on this site a background video is a video element of its own`); continue; }
+            const address = ch.value.trim();
+            if (address && !/^https:\/\/\S+$/.test(address)) { dropped.push(`${address} is not an https video address`); continue; }
+            const decls = parseCssDeclarations(nextEdit.style ?? field.style);
+            const beforeVal = decls["--dw-bg-video"] ?? "None";
+            if (address) decls["--dw-bg-video"] = address;
+            else delete decls["--dw-bg-video"];
+            nextEdit.style = safeStyle(serializeCssDeclarations(decls), field.style);
+            pageChanges.push({ fieldId: field.id, label: field.label, property: "background video", before: beforeVal, after: address || "None" });
           } else if ((ch.operation === "set_tablet_style" || ch.operation === "set_mobile_style") && ch.property) {
             const size = ch.operation === "set_tablet_style" ? "tablet" : "mobile";
             const current = (nextEdit.responsive ?? field.responsive ?? {}) as { tablet?: string; mobile?: string };
@@ -2375,16 +2387,18 @@ export async function planAgentInstruction(
             } else {
               dropped.push(`${ch.property}: ${ch.value} is not a style the editor can set on ${field.label}`);
             }
-          } else if (ch.operation === "set_hover_style" && ch.property) {
+          } else if ((ch.operation === "set_hover_style" || ch.operation === "set_active_style" || ch.operation === "set_focus_style") && ch.property) {
+            const state = ch.operation === "set_hover_style" ? "hover" : ch.operation === "set_active_style" ? "active" : "focus";
+            const when = state === "hover" ? "on hover" : state === "active" ? "while pressed" : "on keyboard focus";
             const property = ch.property.toLowerCase();
-            if (!(INTERACTION_PROPERTIES as readonly string[]).includes(property)) { dropped.push(`${property} does not change on hover in the editor`); continue; }
+            if (!(INTERACTION_PROPERTIES as readonly string[]).includes(property)) { dropped.push(`${property} does not change ${when} in the editor`); continue; }
             const decls = parseCssDeclarations(nextEdit.style ?? field.style);
-            const beforeVal = decls[`--dw-hover-${property}`] ?? "As designed";
-            if (ch.value && ch.value !== "none") decls[`--dw-hover-${property}`] = ch.value;
-            else delete decls[`--dw-hover-${property}`];
+            const beforeVal = decls[`--dw-${state}-${property}`] ?? "As designed";
+            if (ch.value && ch.value !== "none") decls[`--dw-${state}-${property}`] = ch.value;
+            else delete decls[`--dw-${state}-${property}`];
             const sanitized = safeStyle(serializeCssDeclarations(decls), field.style);
             nextEdit.style = sanitized;
-            pageChanges.push({ fieldId: field.id, label: field.label, property: `${property} on hover`, before: beforeVal, after: ch.value || "As designed" });
+            pageChanges.push({ fieldId: field.id, label: field.label, property: `${property} ${when}`, before: beforeVal, after: ch.value || "As designed" });
           } else if (ch.operation === "set_style" && ch.property) {
             const decls = parseCssDeclarations(nextEdit.style ?? field.style);
             const beforeVal = decls[ch.property.toLowerCase()] ?? "Default";

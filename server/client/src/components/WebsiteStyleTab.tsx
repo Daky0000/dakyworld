@@ -50,6 +50,8 @@ type Props = {
   /** Opens the media library; the chosen address is handed to `apply`. */
   onPickImage?: (apply: (url: string) => void) => void;
   resolveImage?: (url: string) => string;
+  /** The element can carry a background video the publish can store (an Elementor container). */
+  videoBackground?: boolean;
 };
 
 const SIDE_NAMES = ["Top", "Right", "Bottom", "Left"];
@@ -97,7 +99,7 @@ export function WebsiteStyleTab(props: Props) {
       <SizeSection c={c} facts={facts} changed={changed} />
       <PositionSection c={c} effective={effective} changed={changed} />
       <TypographySection c={c} facts={facts} fonts={props.fonts ?? []} effective={effective} changed={changed} />
-      <BackgroundSection c={c} changed={changed} onPickImage={props.onPickImage} resolveImage={props.resolveImage} />
+      <BackgroundSection c={c} changed={changed} onPickImage={props.onPickImage} resolveImage={props.resolveImage} videoBackground={props.videoBackground} />
       <BorderSection c={c} effective={effective} changed={changed} />
       <EffectsSection c={c} changed={changed} />
       {designer && <CustomCssSection c={c} onChange={onChange} />}
@@ -462,10 +464,41 @@ function TypographySection({ c, facts, fonts, effective, changed }: SectionProps
 const POSITIONS = ["center center", "center left", "center right", "top center", "top left", "top right", "bottom center", "bottom left", "bottom right"];
 const titleCase = (value: string) => value.replace(/\b\w/g, (letter) => letter.toUpperCase());
 
-function BackgroundSection({ c, changed, onPickImage, resolveImage }: SectionProps & { onPickImage?: (apply: (url: string) => void) => void; resolveImage?: (url: string) => string }) {
+/** The browser's own defaults, which say nothing about a background and are left out of a copy. */
+const BACKGROUND_DEFAULTS: Record<string, string> = { "background-size": "auto", "background-position": "0% 0%", "background-repeat": "repeat", "background-attachment": "scroll" };
+
+/**
+ * The background the page really shows, when the element's own style sets
+ * none: a page builder's or a framework's stylesheet draws it. Read from the
+ * frame, so it is what the visitor sees — a picture, a gradient, both.
+ */
+function siteBackground(c: StyleCtx): BackgroundLayer[] | null {
+  const image = c.computed["background-image"] ?? "";
+  if (!image || image === "none" || c.computed["--dw-site-bg-source"] === "img") return null;
+  const map: Record<string, string> = { "background-image": image };
+  for (const [property, fallback] of Object.entries(BACKGROUND_DEFAULTS)) {
+    const value = c.computed[property];
+    if (value && value !== fallback && c.computed["--dw-site-bg-source"] === "self") map[property] = value;
+  }
+  return readBackground(map)?.layers ?? null;
+}
+
+function BackgroundSection({ c, changed, onPickImage, resolveImage, videoBackground }: SectionProps & { onPickImage?: (apply: (url: string) => void) => void; resolveImage?: (url: string) => string; videoBackground?: boolean }) {
   const read = readBackground(c.raw);
   const layers = read?.layers ?? null;
   const color = read?.color ?? c.map["background-color"] ?? "";
+  const ownBackground = Boolean(layers?.length || c.map.background || c.map["background-image"]);
+  const fromSite = !ownBackground ? siteBackground(c) : null;
+  const video = c.map["--dw-bg-video"] ?? "";
+  const siteVideo = c.computed["--dw-site-bg-video"] ?? "";
+  const [videoDraft, setVideoDraft] = useState(video);
+  const [videoProblem, setVideoProblem] = useState<string | null>(null);
+  const saveVideo = () => {
+    const next = videoDraft.trim();
+    if (next && !/^https:\/\/\S+$/.test(next) && !/^\/?assets\/dw\/\S+$/.test(next)) { setVideoProblem("Use an https:// address — a video file, YouTube or Vimeo."); return; }
+    setVideoProblem(null);
+    if (next !== video) c.set("--dw-bg-video", next || null, true);
+  };
   const write = (next: BackgroundLayer[], nextColor = color, commit = true) => c.setMany(writeBackground(next, nextColor), commit);
   const clip = c.map["background-clip"] ?? "";
   const props = ["background", "background-image", "background-color", "background-position", "background-size", "background-repeat", "background-attachment", "background-clip"];
@@ -477,7 +510,24 @@ function BackgroundSection({ c, changed, onPickImage, resolveImage }: SectionPro
     write(next);
   };
   return (
-    <StyleSection name="background" title="Background" open={false} changed={changed(props)} summary={layers?.length ? `${layers.length} layer${layers.length === 1 ? "" : "s"}` : color || "None"}>
+    <StyleSection name="background" title="Background" open={false} changed={changed([...props, "--dw-bg-video"])} summary={video || siteVideo ? "Video" : layers?.length ? `${layers.length} layer${layers.length === 1 ? "" : "s"}` : fromSite?.length ? `${fromSite.length} from the website` : color || "None"}>
+      {fromSite && fromSite.length > 0 && (
+        <div className="dx-f">
+          <div className="dx-fl"><label>On this website</label></div>
+          {fromSite.map((layer, index) => (
+            <div key={index} className="dx-crow">
+              <span
+                className="block h-8 w-12 shrink-0 rounded-md border border-white/10 bg-cover bg-center"
+                aria-hidden="true"
+                style={layer.kind === "image" ? { backgroundImage: `url("${layer.url.replace(/"/g, "")}")` } : layer.kind === "gradient" ? { backgroundImage: writeGradient(layer.gradient) } : { backgroundColor: layer.color }}
+              />
+              <span className="min-w-0 flex-1 truncate" title={layer.kind === "image" ? layer.url : undefined}>{layerSummary(layer)}</span>
+            </div>
+          ))}
+          <p className="dx-hint">Drawn by the site's own styling{c.computed["--dw-site-bg-source"] === "inside" ? ", on a layer inside this element" : ""}. Edit copies it here, where you can change the picture, the gradient or their order.</p>
+          <button type="button" className="dx-btn dx-soft" disabled={c.readOnly} onClick={() => write(fromSite, color)}>Edit this background</button>
+        </div>
+      )}
       <Repeater<BackgroundLayer>
         label="Overlay"
         items={layers}
@@ -501,6 +551,27 @@ function BackgroundSection({ c, changed, onPickImage, resolveImage }: SectionPro
           />
         )}
       />
+      {(videoBackground || video) && c.device === "desktop" && (
+        <div className="dx-f">
+          <div className="dx-fl"><label>Video</label></div>
+          <input
+            type="url"
+            aria-label="Background video address"
+            className="dx-inp"
+            value={videoDraft}
+            placeholder={siteVideo || "None — paste a video, YouTube or Vimeo address"}
+            disabled={c.readOnly}
+            onChange={(event) => setVideoDraft(event.target.value)}
+            onBlur={saveVideo}
+            onKeyDown={(event) => { if (event.key === "Enter") saveVideo(); }}
+          />
+          {videoProblem && <p className="dx-err">{videoProblem}</p>}
+          <p className="dx-hint">Plays behind this container, muted and looping. The pictures above show while it loads{siteVideo && !video ? "; the current video is shown as the placeholder" : ""}.</p>
+        </div>
+      )}
+      {!videoBackground && !video && siteVideo && (
+        <p className="dx-hint">This background is a video element inside the block. Select the video itself to change its file.</p>
+      )}
       {!imagesHere && <p className="dx-hint">Pictures are set on Desktop. A colour or gradient layer added here replaces the Desktop layers on this screen size rather than sitting on top of them.</p>}
       <div className="dx-f">
         <div className="dx-fl"><label>Color</label></div>
