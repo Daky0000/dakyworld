@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import {
   IconAlertCircle,
@@ -28,7 +29,7 @@ type ChatMessage = {
   attachments?: SiteAgentAttachment[];
   plan?: SiteAgentPlan | null;
   /** How the router sized the request and which model answered — one quiet line under the reply. */
-  routed?: { level: string; sentence: string; model?: string } | null;
+  routed?: { level: string; sentence: string; model?: string; credits?: number } | null;
   applied?: boolean;
   autoApplied?: boolean;
   publishedLive?: boolean;
@@ -721,7 +722,7 @@ export function WebsiteAgentChat({
         userPrompt: text,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         plan: hasActionableChanges ? plan : null,
-        routed: plan.routing ? { level: plan.routing.level, sentence: plan.routing.sentence, model: plan.model } : null,
+        routed: plan.routing ? { level: plan.routing.level, sentence: plan.routing.sentence, model: plan.model, credits: plan.credits } : null,
         requiresApproval: needsApproval,
       };
 
@@ -1009,7 +1010,12 @@ export function WebsiteAgentChat({
                   {msg.routed && (
                     <p className="mt-1.5 text-[11px] leading-snug text-muted" title={msg.routed.sentence}>
                       {msg.routed.level.charAt(0).toUpperCase() + msg.routed.level.slice(1)} task · free models first{msg.routed.model ? ` · answered by ${msg.routed.model}` : ""}
+                      {msg.routed.credits !== undefined ? ` · ${msg.routed.credits} ${msg.routed.credits === 1 ? "credit" : "credits"}` : ""}
                     </p>
+                  )}
+                  {/* Out of credits: the way to more, one click away. */}
+                  {msg.sender === "agent" && /out of AI credits/.test(msg.text) && (
+                    <Link to="/website/balance" className="mt-2 inline-block text-xs font-semibold text-blue underline underline-offset-2">Buy AI credits →</Link>
                   )}
 
                   {/* Plan Proposal / Auto-Execution Card */}

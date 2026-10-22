@@ -291,8 +291,10 @@ try {
     const job = await prisma.websiteWorkJob.findUniqueOrThrow({ where: { id: queued.body.jobId } });
     assert.equal(job.userId, staff.id);
     assert.equal(job.chargedUserId, staff.id);
-    assert.equal((await usageOf(staff)).aiPrompts, 1);
-    assert.equal((await usageOf(starterOwner)).aiPrompts, 0, "a Starter meter never shows AI it cannot have");
+    // Staff spend no AI credits (22 Oct 2026): nothing is held for the run.
+    assert.equal(job.usageState, "NONE");
+    assert.equal((await usageOf(staff)).aiPrompts, 0);
+    assert.equal((await usageOf(starterOwner)).aiPrompts, 0, "a client's credits are never spent by staff");
     const plan = await planOn(starterOwner, small.siteId);
     assert.equal(plan.body.usage.aiPromptsUsed, 0);
   });

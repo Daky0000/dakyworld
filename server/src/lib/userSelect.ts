@@ -35,4 +35,7 @@ export const SESSION_USER = {
   // Which guided tours and welcome steps this person has already seen.
   uiState: true,
   deletionScheduledFor: true,
+  // The account's bought AI credits: part of the row the session carries, read
+  // fresh wherever they are spent.
+  aiCreditsBought: true,
 } satisfies Prisma.UserSelect;

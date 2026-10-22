@@ -16,6 +16,7 @@ import { signingKey } from "../lib/secrets.js";
 import { callModel } from "../lib/models/call.js";
 import { AnalystError } from "../lib/claude.js";
 import { effortForLevel, type TaskLevel } from "../lib/models/registry.js";
+import { creditsFor } from "./aiCredits.js";
 import { clampLevel, isUnclear, levelForScore, lookAtTask, routingMode, type RoutingMode } from "./agents/complexity.js";
 import { currentRun } from "../lib/runContext.js";
 import { sniff } from "../lib/fileType.js";
@@ -24,7 +25,7 @@ import { assetUrl } from "./websiteAssets.js";
 import { ensureHostedAddress } from "./websiteHosting.js";
 import { withWebsitePublishLocks, commitPublication } from "./websitePublishing.js";
 import { assertWebsiteSiteAccess } from "./websiteAccess.js";
-import { assertEditAllowance, assertEditingNotPaused, assertMediaStorageAllowance, writePageEdit, type EditAllowance } from "./websiteTierPlans.js";
+import { assertEditAllowance, assertEditingNotPaused, assertMediaStorageAllowance, chargeAiRequest, writePageEdit, type EditAllowance } from "./websiteTierPlans.js";
 import { check, scopesForAgent, BudgetExceeded, forgetBudgets } from "./budgets.js";
 import { writerSystem } from "./writers/brief.js";
 import {
@@ -255,6 +256,10 @@ export type SiteAgentPlan = {
   model?: string;
   /** How the router sized the request: the level that picks the paid model, and why. */
   routing?: { level: TaskLevel; effort: string; decidedBy: "rules" | "model" | "legacy"; sentence: string };
+  /** The vendor that answered and the level it was sized at, which decide what it costs in credits. Absent when no model was asked. */
+  answeredBy?: { provider: string; level: TaskLevel };
+  /** What this request costs in AI credits (`creditsFor`); set by the route that charges it. */
+  credits?: number;
 };
 
 export type SiteOverview = {
@@ -2369,6 +2374,7 @@ export async function planAgentInstruction(
         ),
         costUsd: result.costUsd,
         routing,
+        answeredBy: { provider: result.provider, level: routing.level },
         model: result.model,
       };
     }
@@ -2382,6 +2388,7 @@ export async function planAgentInstruction(
         pages: [],
         costUsd: result.costUsd,
         routing,
+        answeredBy: { provider: result.provider, level: routing.level },
         model: result.model,
       });
     }
@@ -2392,6 +2399,7 @@ export async function planAgentInstruction(
           ...(await planGlobalFontChange(site, pages, { fromFont: aiData.parsedOperation.from, toFont: aiData.parsedOperation.to })),
           costUsd: result.costUsd,
           routing,
+          answeredBy: { provider: result.provider, level: routing.level },
           model: result.model,
         };
       }
@@ -2400,6 +2408,7 @@ export async function planAgentInstruction(
           ...(await planGlobalColorChange(site, pages, { fromColor: aiData.parsedOperation.from, toColor: aiData.parsedOperation.to })),
           costUsd: result.costUsd,
           routing,
+          answeredBy: { provider: result.provider, level: routing.level },
           model: result.model,
         };
       }
@@ -2409,6 +2418,7 @@ export async function planAgentInstruction(
           ...(await planCrossPageContentChange(site, pages, { findText: fromP, replaceText: aiData.parsedOperation.to, kind: "phone" })),
           costUsd: result.costUsd,
           routing,
+          answeredBy: { provider: result.provider, level: routing.level },
           model: result.model,
         };
       }
@@ -2418,6 +2428,7 @@ export async function planAgentInstruction(
           ...(await planCrossPageContentChange(site, pages, { findText: fromE, replaceText: aiData.parsedOperation.to, kind: "email" })),
           costUsd: result.costUsd,
           routing,
+          answeredBy: { provider: result.provider, level: routing.level },
           model: result.model,
         };
       }
@@ -2426,6 +2437,7 @@ export async function planAgentInstruction(
           ...(await planCrossPageContentChange(site, pages, { findText: aiData.parsedOperation.from, replaceText: aiData.parsedOperation.to, kind: "text" })),
           costUsd: result.costUsd,
           routing,
+          answeredBy: { provider: result.provider, level: routing.level },
           model: result.model,
         };
       }
@@ -2603,6 +2615,7 @@ export async function planAgentInstruction(
       ...(builtStructuralActions.length > 0 ? { structuralActions: builtStructuralActions } : {}),
       costUsd: result.costUsd,
       routing,
+      answeredBy: { provider: result.provider, level: routing.level },
       model: result.model,
     });
   } catch (err) {
@@ -3048,6 +3061,9 @@ export async function executeBuilderPlan(site: Site, input: unknown, userId: str
           break;
       }
 
+  // What it costs in credits, from what answered it — said in the chat, and
+  // the same number the queue or the route then charges (`creditsFor`).
+  plan.credits = creditsFor(plan.answeredBy);
   return signDocumentUpdates(plan, site.id, userId);
 }
 
@@ -3181,6 +3197,7 @@ export function registerWebsiteBuilderAgent(
         res.status(202).json(job); return;
       }
       const plan = await executeBuilderPlan(site, body, req.dbUser?.id);
+      plan.credits = await chargeAiRequest(req, site.id, "Builder agent", plan);
       res.json(plan);
     } catch (err) {
       next(err);

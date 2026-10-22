@@ -135,6 +135,12 @@ model User {
   authTokens                AuthToken[]
   websiteSubscriptions      WebsitePurchase[]  @relation("WebsiteSubscriber")
   websiteUsage              WebsiteUsage[]
+  /// AI credits this account bought and has not spent. They never expire; a
+  /// month's plan credits (`WebsiteUsage.aiPrompts` against the plan's
+  /// allowance) are spent first.
+  aiCreditsBought           Int                @default(0)
+  aiCreditPurchases         AiCreditPurchase[]
+  aiCreditEntries           AiCreditEntry[]
   reviewLinksCreated        ReviewLink[]       @relation("ReviewLinksCreated")
   scheduledPublishesCreated ScheduledPublish[] @relation("ScheduledPublishesCreated")
   /// What this person has already been shown: guided tours finished or
@@ -225,6 +231,13 @@ model WebsiteWorkJob {
   usageState        String    @default("NONE")
   /// Whose plan the run is counted against — the website's paying owner, not always `userId`.
   chargedUserId     String?
+  /// AI credits held for, then charged to, this run: from the month's plan
+  /// credits and from bought ones. One is held when it is queued; the rest is
+  /// settled by what answered it, and all of it goes back if it fails.
+  creditsPlan       Int       @default(0)
+  creditsBought     Int       @default(0)
+  /// The month's plan credits on the plan it was queued under, for settling the rest.
+  creditLimit       Int       @default(0)
   externalStartedAt DateTime?
   actualCostUsd     Decimal   @default(0) @db.Decimal(12, 6)
   input             Json
@@ -5425,6 +5438,41 @@ model AuthToken {
 /// These counters decide what a paying customer may do, so they live here
 /// rather than in the process that happens to serve the request: a restart, a
 /// deploy or a second instance must not hand anybody a fresh allowance.
+/// A credit pack ordered from the Balance screen. Granted once, when its invoice is paid.
+model AiCreditPurchase {
+  id        String    @id @default(cuid())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The account the credits go to: the website's paying owner when bought for a website.
+  userId    String
+  invoiceId String    @unique
+  packId    String
+  credits   Int
+  grantedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+}
+
+/// Every change to an account's AI credits, for the history on the Balance screen.
+model AiCreditEntry {
+  id          String   @id @default(cuid())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  /// PURCHASE, CHARGE or REFUND.
+  kind        String
+  /// Signed: a charge is negative. Plan credits are this month's; bought ones never expire.
+  planDelta   Int      @default(0)
+  boughtDelta Int      @default(0)
+  siteId      String?
+  jobId       String?
+  invoiceId   String?
+  /// What it was for, in words: "Builder agent · standard · answered by Claude".
+  note        String
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
 model WebsiteUsage {
   id     String @id @default(cuid())
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)

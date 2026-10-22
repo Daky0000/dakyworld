@@ -11,15 +11,15 @@ async function runChecks() {
   assert.ok(WEBSITE_TIER_PLANS.EDITOR.aiPromptsLimit === 30, "EDITOR tier should have 30 AI requests included");
   assert.ok(WEBSITE_TIER_PLANS.EDITOR.features.aiBuilderAgent && WEBSITE_TIER_PLANS.CARE.features.aiBuilderAgent, "every plan has the Builder agent");
   assert.ok(WEBSITE_TIER_PLANS.CARE.aiPromptsLimit === 100, "CARE tier should have 100 AI requests included");
-  assert.ok(WEBSITE_TIER_PLANS.MANAGED.aiPromptsLimit >= 10000, "MANAGED tier should have high/unlimited AI prompts");
+  assert.ok(WEBSITE_TIER_PLANS.MANAGED.aiPromptsLimit === 300, "MANAGED tier should have 300 AI credits a month");
   checksPassed += 3;
 
   // 2. Verify Available Add-ons for Revenue Generation
   assert.ok(AVAILABLE_ADDONS.length >= 4, "Should have at least 4 available revenue add-ons");
-  const aiBooster = AVAILABLE_ADDONS.find((a) => a.id === "ai_booster_100");
-  assert.ok(aiBooster, "Should have ai_booster_100 add-on");
-  assert.equal(aiBooster?.amount, 150, "AI booster should be 150 GHS");
-  assert.equal(aiBooster?.currency, "GHS", "Currency should be GHS");
+  // The AI credit packs replaced the booster, which charged GHS 150 and granted nothing.
+  assert.ok(!AVAILABLE_ADDONS.some((a) => a.id === "ai_booster_100"), "the booster is gone");
+  const packs = AVAILABLE_ADDONS.filter((a) => a.credits);
+  assert.deepEqual(packs.map((a) => [a.id, a.credits, a.amount, a.currency]), [["credits_100", 100, 150, "GHS"], ["credits_300", 300, 400, "GHS"], ["credits_1000", 1000, 1200, "GHS"]]);
 
   const maintenancePack = AVAILABLE_ADDONS.find((a) => a.id === "maintenance_5h");
   assert.ok(maintenancePack, "Should have maintenance_5h add-on");

@@ -7,6 +7,7 @@ import { createPaymentLink, paystackConfigured, verifyTransaction, toMinor } fro
 import { checkStatus, createCheckout, hubtelConfigured } from "../lib/hubtel.js";
 import { appUrl } from "./emailSender.js";
 import { appendNote } from "./context/dossier.js";
+import { grantCreditsForInvoice } from "./aiCredits.js";
 
 /**
  * Getting an invoice paid.
@@ -180,6 +181,9 @@ async function settleInvoice(invoice: Invoice, paidAt: Date, paidVia: string | n
     if (!claimed.count) return { invoice: current, changed: false };
     await tx.websitePurchase.updateMany({ where: { invoiceId: invoice.id, status: "PAYMENT_PENDING" }, data: { status: "SETUP_PAID", setupPaidAt: paidAt, paymentAuthorization: authorization, billingEmail } });
     await tx.client.update({ where: { id: invoice.clientId }, data: { lifetimeValue: { increment: invoice.amountTotal } } });
+    // An AI credit pack's credits arrive with the payment, in the same
+    // transaction, so a paid invoice and its credits cannot come apart.
+    await grantCreditsForInvoice(tx, invoice.id);
     if (reference) await tx.paymentAttempt.updateMany({ where: { reference }, data: { state: "PAID" } });
     return { invoice: current, changed: true };
   });

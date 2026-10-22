@@ -102,17 +102,17 @@ try {
     return booted.label!;
   };
   await check("Business's label states the number the queue enforces", () => {
-    assert.equal(labels({}).MANAGED, "Unlimited AI runs (fair use: 50 a day)");
-    assert.equal(labels({ AI_DAILY_LIMIT_MANAGED: "30" }).MANAGED, "Unlimited AI runs (fair use: 30 a day)");
-    assert.equal(labels({ AI_DAILY_USER_LIMIT: "5" }).MANAGED, "Unlimited AI runs (fair use: 5 a day)", "under the old ceiling, the label says the ceiling");
+    assert.equal(labels({}).MANAGED, "300 AI credits / mo, up to 50 requests a day; more can be bought");
+    assert.equal(labels({ AI_DAILY_LIMIT_MANAGED: "30" }).MANAGED, "300 AI credits / mo, up to 30 requests a day; more can be bought");
+    assert.equal(labels({ AI_DAILY_USER_LIMIT: "5" }).MANAGED, "300 AI credits / mo, up to 5 requests a day; more can be bought", "under the old ceiling, the label says the ceiling");
   });
   await check("so does Pro's, in the label and in the plan's own list", () => {
     // The eleventh run of a day is refused on Pro; a plan that said only "50 a
     // month" let a customer find the daily number by being refused.
-    assert.equal(labels({}).CARE, "100 AI requests / mo for the Builder agent and the assistant, up to 10 a day");
-    assert.equal(labels({}).careHighlight, "AI Builder Agent & Copy Assistant (100 runs/mo, up to 10 a day)");
-    assert.equal(labels({ AI_DAILY_LIMIT_CARE: "4" }).CARE, "100 AI requests / mo for the Builder agent and the assistant, up to 4 a day");
-    assert.equal(labels({ AI_DAILY_USER_LIMIT: "3" }).careHighlight, "AI Builder Agent & Copy Assistant (100 runs/mo, up to 3 a day)");
+    assert.equal(labels({}).CARE, "100 AI credits / mo for the Builder agent and the assistant, up to 10 requests a day; more can be bought");
+    assert.equal(labels({}).careHighlight, "AI Builder Agent & Copy Assistant (100 credits/mo, up to 10 requests a day)");
+    assert.equal(labels({ AI_DAILY_LIMIT_CARE: "4" }).CARE, "100 AI credits / mo for the Builder agent and the assistant, up to 4 requests a day; more can be bought");
+    assert.equal(labels({ AI_DAILY_USER_LIMIT: "3" }).careHighlight, "AI Builder Agent & Copy Assistant (100 credits/mo, up to 3 requests a day)");
   });
   // The public page and the runbook are not built from the numbers, so they are
   // held to them here: each must say the defaults a deployment actually has.
@@ -121,9 +121,10 @@ try {
   const repoFile = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
   await check("the public Pro card states the daily number as well as the monthly one", () => {
     const page = repoFile("../../website-builder.html");
-    assert.ok(page.includes(`AI builder agent: describe a change and it makes it (30 requests a month, up to ${defaults.EDITOR} a day)`), "Starter's AI line on website-builder.html");
-    assert.ok(page.includes(`(100 requests a month between them, up to ${defaults.CARE} a day)`), "Pro's AI line on website-builder.html");
-    assert.ok(page.includes(`Unlimited AI runs for the builder agent and the assistant (fair use: ${defaults.MANAGED} a day)`), "Business's AI line on website-builder.html");
+    assert.ok(page.includes(`AI builder agent: describe a change and it makes it (30 AI credits a month, up to ${defaults.EDITOR} requests a day)`), "Starter's AI line on website-builder.html");
+    assert.ok(page.includes(`(100 AI credits a month, up to ${defaults.CARE} requests a day)`), "Pro's AI line on website-builder.html");
+    assert.ok(page.includes(`(300 AI credits a month, up to ${defaults.MANAGED} requests a day)`), "Business's AI line on website-builder.html");
+    assert.ok(page.includes("100 for GHS 150, 300 for GHS 400 or 1,000 for GHS 1,200"), "the packs, at the prices CREDIT_PACKS sells them");
   });
   await check("the capacity runbook gives each plan's default, not the old two a day", () => {
     const runbook = repoFile("../deploy/CAPACITY.md");
@@ -500,12 +501,22 @@ try {
     assert.equal(refused.status, 429, refused.body.error);
     assert.match(refused.body.error ?? "", /AI allowance on Starter \(5 a day\)/);
   });
-  await check("Starter: the thirty-first of the month is refused", async () => {
+  await check("Starter: with the month's thirty credits spent and none bought, a request is refused before it is queued", async () => {
     await prisma.websiteWorkJob.deleteMany({ where: { userId: owner.id } });
     await setPrompts(30);
     const refused = await askAgent();
-    assert.equal(refused.status, 429, refused.body.error);
-    assert.match(refused.body.error ?? "", /monthly AI allowance is used/);
+    assert.equal(refused.status, 402, refused.body.error);
+    assert.match(refused.body.error ?? "", /out of AI credits.*Buy credits/);
+    assert.equal(await jobCount(), 0);
+  });
+  await check("Starter: a bought credit lets it through, and is the one held", async () => {
+    await prisma.user.update({ where: { id: owner.id }, data: { aiCreditsBought: 2 } });
+    const queued = await askAgent();
+    assert.equal(queued.status, 202, queued.body.error);
+    const job = await prisma.websiteWorkJob.findUniqueOrThrow({ where: { id: queued.body.jobId as string } });
+    assert.deepEqual([job.creditsPlan, job.creditsBought], [0, 1]);
+    assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: owner.id } })).aiCreditsBought, 1);
+    await prisma.user.update({ where: { id: owner.id }, data: { aiCreditsBought: 0 } });
     await setPrompts(0);
   });
 

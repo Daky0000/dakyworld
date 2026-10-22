@@ -3745,6 +3745,8 @@ export type SiteAgentPlan = {
   model?: string;
   /** How the OS's task router sized the request: the level picks the paid model that takes over from the free ones. */
   routing?: { level: "simple" | "standard" | "complex"; effort: string; decidedBy: "rules" | "model" | "legacy"; sentence: string };
+  /** What the request cost in AI credits: 1 from a free model, 2/3/5 from a paid one by level, 0 with no model. */
+  credits?: number;
 };
 
 export type WebsiteEscalationReportItem = {
@@ -3854,6 +3856,10 @@ export interface ClientAiUsageSummary {
   storageQuotaLabel: string;
   tierName: string;
   canUpgrade: boolean;
+  /** AI credits: `prompts*` above are this month's plan credits; these are bought ones (never expire) and the total left. */
+  creditsBought: number;
+  creditsLeft: number;
+  creditHistory: Array<{ id: string; kind: "PURCHASE" | "CHARGE" | "REFUND" | string; planDelta: number; boughtDelta: number; note: string; createdAt: string }>;
 }
 
 export interface ClientAddon {
@@ -3864,6 +3870,8 @@ export interface ClientAddon {
   currency: string;
   badge: string;
   kind: "ai" | "maintenance" | "seo" | "domain";
+  /** An AI credit pack: the credits it adds once paid. */
+  credits?: number;
 }
 
 export interface WebsiteBalanceReport {

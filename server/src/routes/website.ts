@@ -27,7 +27,7 @@ import { discoverWordPressPages, isWordPressSite, registerWebsiteWordPress } fro
 import { registerWebsiteSurvey } from "../services/websiteSiteSurvey.js";
 import { registerWebsiteOnboarding } from "../services/websiteOnboarding.js";
 import { registerGithubAppRoutes, registerGithubConnectRoutes } from "../services/githubAppRoutes.js";
-import { assertEditAllowance, assertEditingNotPaused, assertTierFeatureAccess, recordAiPromptUsed, registerWebsiteTierRoutes, websiteRequestSiteId, websiteTierFeature, writePageEdit } from "../services/websiteTierPlans.js";
+import { assertEditAllowance, assertEditingNotPaused, assertTierFeatureAccess, registerWebsiteTierRoutes, websiteRequestSiteId, websiteTierFeature, writePageEdit } from "../services/websiteTierPlans.js";
 import { registerWebsitePublishJobs } from "../services/websitePublishJobs.js";
 import { registerWebsiteDeployRoutes } from "../services/websiteDeployRoutes.js";
 import { hostedUrlFor, registerWebsiteHosting } from "../services/websiteHosting.js";
@@ -101,17 +101,13 @@ websiteRouter.use((req, _res, next) => {
     const feature = websiteTierFeature(req.path);
     if (!feature) return;
     const siteId = (await websiteRequestSiteId(req.path)) ?? undefined;
-    if (feature === "aiBuilderAgent") {
-      // A request to the agent spends one from the monthly allowance, and only
-      // the request: applying the plan it made calls no model, and counting
-      // both halved every capped plan's allowance. With admission on, the queue
-      // checks and spends it instead.
-      const asking = req.method === "POST" && /\/agent\/plan\/?$/.test(req.path);
-      await assertTierFeatureAccess(req, "aiBuilderAgent", siteId, { skipUsageLimit: !asking || capacity.admission });
-      if (!capacity.admission && asking) await recordAiPromptUsed(req, siteId);
-    } else if (feature === "aiAssistant") {
-      await assertTierFeatureAccess(req, "aiAssistant", siteId, { skipUsageLimit: capacity.admission && /\/pages\/[^/]+\/assistant\/?$/.test(req.path) });
-      if (!capacity.admission && req.method === "POST") await recordAiPromptUsed(req, siteId);
+    // An AI request needs one credit to start; it is charged what it cost
+    // once it is answered — by the queue when admission is on, by the route
+    // (`chargeAiRequest`) when it is not. Only a request for a model is
+    // checked: applying a plan, a preview and the agent's other routes call none.
+    const asking = req.method === "POST" && (feature === "aiBuilderAgent" ? /\/agent\/plan\/?$/.test(req.path) : /\/pages\/[^/]+\/assistant\/?$/.test(req.path));
+    if (feature === "aiBuilderAgent" || feature === "aiAssistant") {
+      await assertTierFeatureAccess(req, feature, siteId, { skipUsageLimit: !asking || capacity.admission });
     } else {
       await assertTierFeatureAccess(req, feature, siteId);
     }

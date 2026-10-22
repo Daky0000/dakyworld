@@ -65,6 +65,10 @@ export interface WebsiteTierStatus {
     aiPromptsUsed: number;
     aiPromptsLimit: number | null;
     aiPromptsRemaining: number | null;
+    /** Bought AI credits (never expire), the total left with the month's, and whether this account spends credits at all. */
+    aiCreditsBought?: number;
+    aiCreditsLeft?: number | null;
+    aiCreditsExempt?: boolean;
   };
   features: WebsiteTierFeatures;
   featureSummary: string[];
@@ -253,7 +257,11 @@ function PlanUsage({ status }: { status: WebsiteTierStatus }) {
       <ul className="space-y-0.5 text-muted">
         <li>{usageLine(status.usage.editsUsed, status.usage.editsLimit, "edits")}</li>
         <li>{usageLine(status.usage.importsUsed, status.usage.importsLimit, "imports")}</li>
-        {status.features.aiAssistant && <li>{usageLine(status.usage.aiPromptsUsed, status.usage.aiPromptsLimit, "AI requests")}</li>}
+        {(status.features.aiAssistant || status.features.aiBuilderAgent) && !status.usage.aiCreditsExempt && (
+          <li>
+            {status.usage.aiCreditsLeft ?? 0} AI credits left ({status.usage.aiPromptsRemaining ?? 0} of {status.usage.aiPromptsLimit ?? 0} this month{status.usage.aiCreditsBought ? `, ${status.usage.aiCreditsBought} bought` : ""})
+          </li>
+        )}
       </ul>
     </div>
   );

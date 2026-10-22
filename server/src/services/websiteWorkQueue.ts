@@ -8,6 +8,7 @@ import { assertWebsiteSiteAccess } from "./websiteAccess.js";
 import { WebsiteError } from "./website/site.js";
 import { resolveSiteEntitlement, usagePeriod } from "./websiteEntitlement.js";
 import { WEBSITE_TIER_PLANS } from "./websiteTierPlans.js";
+import { chargeNote, creditsFor, OutOfCredits, returnCredits, settleCredits, takeCredits, type Answered, type Taken } from "./aiCredits.js";
 import { withWebsiteWork, WorkCancelledError, UncertainExternalError } from "../lib/websiteWorkContext.js";
 import { editingLockedForNonPayment } from "./websiteDunning.js";
 import { backgroundRunAllowed } from "../lib/backgroundOwnership.js";
@@ -58,14 +59,21 @@ export async function enqueueWebsiteWork(req: Request, siteId: string, kind: Web
     if (isAi && daily >= dailyLimit) throw new CapacityError(`You have used today's AI allowance on ${plan.name} (${dailyLimit} a day). It resets at midnight UTC; ordinary editing remains available.`, 429, Math.ceil((day.getTime() + 86_400_000 - Date.now()) / 1000));
     const budgetLimit = Number(process.env.RAILWAY_PROJECTED_MONTHLY_USD ?? 0) >= 40 ? Math.floor(capacity.pendingJobs / 2) : capacity.pendingJobs;
     if (pending >= (isAi ? budgetLimit : 200) || ownPending >= 2) throw new CapacityError(`${isAi ? "The AI" : "The publishing"} queue is full. Please try again later.`);
-    if (isAi) {
-    const period = usagePeriod();
-    const usage = await tx.websiteUsage.upsert({ where: { userId_period: { userId: chargedUserId, period } }, create: { userId: chargedUserId, period }, update: {} });
-    if (usage.aiPrompts >= plan.aiPromptsLimit) throw new CapacityError("Your monthly AI allowance is used.", 429, 3600);
-    await tx.websiteUsage.update({ where: { id: usage.id }, data: { aiPrompts: { increment: 1 } } });
+    // One AI credit held — the month's first, then a bought one — so somebody
+    // with none left is told now rather than after a wait. What the request
+    // finally costs is settled by what answered it (`settleWebsiteUsage`).
+    // Staff spend none.
+    const charged = isAi && entitlement.source !== "staff";
+    let held: Taken = { plan: 0, bought: 0 };
+    if (charged) {
+      const took = await takeCredits(tx, { userId: chargedUserId, limit: plan.aiPromptsLimit, wanted: 1 });
+      if (!took) throw new WebsiteError(402, new OutOfCredits(plan.aiPromptsLimit).message);
+      held = took;
     }
     const job = await tx.websiteWorkJob.create({ data: { userId, chargedUserId, siteId, kind, idempotencyKey, inputHash,
-      usagePeriod: isAi ? usagePeriod() : null, usageState: isAi ? "RESERVED" : "NONE", input: JSON.parse(serialized) as Prisma.InputJsonValue } });
+      usagePeriod: charged ? usagePeriod() : null, usageState: charged ? "RESERVED" : "NONE",
+      creditsPlan: held.plan, creditsBought: held.bought, creditLimit: charged ? plan.aiPromptsLimit : 0,
+      input: JSON.parse(serialized) as Prisma.InputJsonValue } });
     return { queued: true as const, jobId: job.id, siteId, state: job.state };
   });
 }
@@ -201,7 +209,8 @@ export async function runWebsiteWork(job: WebsiteWorkJob) {
       const cancelled = await tx.websiteWorkJob.updateMany({ where: { id: job.id, leaseOwner: job.leaseOwner, state: "RUNNING", cancelRequested: true }, data: {
         state: "CANCELLED", completedAt: new Date(), leaseOwner: null, leaseUntil: null, result: Prisma.DbNull,
       } });
-      if (completed.count || cancelled.count) await settleWebsiteUsage(tx, job.id, true);
+      if (completed.count) await settleWebsiteUsage(tx, job.id, true, value);
+      else if (cancelled.count) await settleWebsiteUsage(tx, job.id, true);
     });
   } catch (error) {
     finishing = true; clearInterval(timer);
@@ -227,17 +236,36 @@ export async function runWebsiteWork(job: WebsiteWorkJob) {
   } finally { clearInterval(timer); }
 }
 
-/** Settle once in the same transaction as a terminal state; refunds never race cancellation. */
-export async function settleWebsiteUsage(tx: Prisma.TransactionClient, jobId: string, used: boolean) {
+/**
+ * Settle once in the same transaction as a terminal state; refunds never race cancellation.
+ *
+ * `answer` is what the run returned, when it finished: its `answeredBy` decides
+ * what it costs in credits (`creditsFor`), and the held credit is topped up or
+ * partly given back to match. A run that failed gives back everything it held;
+ * one that reached a model and then failed or was cancelled keeps what it held,
+ * because the model was paid for.
+ */
+export async function settleWebsiteUsage(tx: Prisma.TransactionClient, jobId: string, used: boolean, answer?: unknown) {
   const job = await tx.websiteWorkJob.findUniqueOrThrow({ where: { id: jobId } });
   if (job.usageState !== "RESERVED" || !job.usagePeriod) return;
   const changed = await tx.websiteWorkJob.updateMany({ where: { id: jobId, usageState: "RESERVED" },
     data: { usageState: used ? "ACCOUNTED" : "RELEASED" } });
-  // Back to the account the run was counted against, which on somebody else's
-  // website is not the person who asked.
-  if (changed.count && !used) await tx.websiteUsage.updateMany({
-    where: { userId: job.chargedUserId ?? job.userId, period: job.usagePeriod, aiPrompts: { gt: 0 } }, data: { aiPrompts: { decrement: 1 } },
-  });
+  if (!changed.count) return;
+  // Back to, or charged to, the account the run was counted against, which on
+  // somebody else's website is not the person who asked. A job queued before
+  // credits held one month's prompt and recorded nothing else.
+  const userId = job.chargedUserId ?? job.userId;
+  const held: Taken = job.creditsPlan + job.creditsBought > 0 ? { plan: job.creditsPlan, bought: job.creditsBought } : { plan: 1, bought: 0 };
+  if (!used) {
+    await returnCredits(tx, { userId, taken: held, period: job.usagePeriod });
+    await tx.websiteWorkJob.update({ where: { id: jobId }, data: { creditsPlan: 0, creditsBought: 0 } });
+    return;
+  }
+  const answeredBy = answer && typeof answer === "object" ? (answer as { answeredBy?: Answered }).answeredBy : undefined;
+  const cost = answer === undefined ? held.plan + held.bought : creditsFor(answeredBy);
+  const what = job.kind === "ASSISTANT" ? "Design assistant" : "Builder agent";
+  const charged = await settleCredits(tx, { userId, limit: job.creditLimit, held, cost, period: job.usagePeriod, note: chargeNote(what, answeredBy, cost), siteId: job.siteId, jobId: job.id });
+  await tx.websiteWorkJob.update({ where: { id: jobId }, data: { creditsPlan: charged.plan, creditsBought: charged.bought } });
 }
 
 export function startWebsiteWorkQueue() {

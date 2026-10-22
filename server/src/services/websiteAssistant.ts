@@ -7,6 +7,7 @@ import type { Site, SitePage } from "@prisma/client";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { callModel } from "../lib/models/call.js";
+import { chargeAiRequest } from "./websiteTierPlans.js";
 import { currentRun } from "../lib/runContext.js";
 import { check, scopesForAgent, BudgetExceeded, forgetBudgets } from "./budgets.js";
 import { writerSystem } from "./writers/brief.js";
@@ -180,7 +181,7 @@ export function validateWebsiteAssistantPlan(context: WebsiteAssistantContext, r
   return { explanation: plan.explanation, values: patches, changes, structuralActions };
 }
 
-export async function suggestWebsiteChanges(input: { source: string; prompt: string; values: Record<string, Edit>; selectedFieldId?: string | null; brandVoice?: string }): Promise<WebsiteAssistantProposal & { costUsd: number; model: string; note: string | null }> {
+export async function suggestWebsiteChanges(input: { source: string; prompt: string; values: Record<string, Edit>; selectedFieldId?: string | null; brandVoice?: string }): Promise<WebsiteAssistantProposal & { costUsd: number; model: string; note: string | null; answeredBy?: { provider: string; level: "standard" } }> {
   const body = websiteAssistantInput.parse({ prompt: input.prompt, values: input.values, selectedFieldId: input.selectedFieldId });
   const context = prepareWebsiteAssistantContext(input.source, body.values, body.selectedFieldId);
   const controls = structureControls(input.source);
@@ -206,7 +207,8 @@ export async function suggestWebsiteChanges(input: { source: string; prompt: str
       effort: budget.action === "downgrade" ? "low" : "medium", maxTokens: budget.action === "downgrade" ? 3_000 : 6_000,
       messages: { noKey: "Connect an AI model in Settings to request website suggestions. You can continue using all visual controls." },
     });
-    return { ...validateWebsiteAssistantPlan(context, result.data), costUsd: result.costUsd, model: result.model, note: result.fallbackNote ?? budget.note };
+    // Who answered decides its cost in credits; a paid answer is charged as a standard request.
+    return { ...validateWebsiteAssistantPlan(context, result.data), costUsd: result.costUsd, model: result.model, answeredBy: { provider: result.provider, level: "standard" as const }, note: result.fallbackNote ?? budget.note };
   } finally {
     forgetBudgets();
   }
@@ -245,7 +247,8 @@ export function registerWebsiteAssistant(router: Router, access: { loadPage: (re
       running.add(runKey);
       key = runKey;
       const source = await pageSource(site, page, { fresh: true });
-      res.json(await suggestWebsiteChanges({ source: editingSource(source.html, (page.draft ?? {}) as Record<string, FieldValue>), ...body, brandVoice: settings.brandVoice }));
+      const proposal = await suggestWebsiteChanges({ source: editingSource(source.html, (page.draft ?? {}) as Record<string, FieldValue>), ...body, brandVoice: settings.brandVoice });
+      res.json({ ...proposal, credits: await chargeAiRequest(req, site.id, "Design assistant", proposal) });
     } catch (error) {
       next(error);
     } finally {

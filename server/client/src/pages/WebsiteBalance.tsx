@@ -191,36 +191,26 @@ export function WebsiteBalance() {
               </p>
             </div>
 
-            {/* 3. AI Usage Meter */}
+            {/* 3. AI credits: the month's, then bought ones */}
             <div className="rounded-2xl border border-line bg-white p-5 shadow-2xs">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-medium uppercase tracking-wider text-muted">Monthly AI Prompts</span>
-                <span className="text-xs font-semibold text-ink">
-                  {data.aiUsage.promptsLimit >= 999999
-                    ? `${data.aiUsage.promptsUsed} / ∞`
-                    : `${data.aiUsage.promptsUsed} / ${data.aiUsage.promptsLimit}`}
-                </span>
+                <span className="text-xs font-medium uppercase tracking-wider text-muted">AI credits left</span>
+                <span className="text-xs font-semibold text-ink">{data.aiUsage.creditsLeft.toLocaleString()}</span>
               </div>
-              <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+              <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-cream">
                 <div
-                  className={`h-full rounded-full transition-all ${
-                    data.aiUsage.promptsPercent >= 90
-                      ? "bg-red-500"
-                      : data.aiUsage.promptsPercent >= 70
-                      ? "bg-amber-500"
-                      : "bg-blue"
-                  }`}
+                  className={`h-full rounded-full transition-all ${data.aiUsage.promptsPercent >= 90 ? "bg-danger" : data.aiUsage.promptsPercent >= 70 ? "bg-warn" : "bg-blue"}`}
                   style={{ width: `${Math.max(4, Math.min(100, data.aiUsage.promptsPercent))}%` }}
                 />
               </div>
-              <div className="mt-2 flex items-center justify-between text-xs text-muted">
-                <span>{data.aiUsage.promptsRemaining} remaining</span>
+              <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted">
+                <span>{data.aiUsage.promptsRemaining} of {data.aiUsage.promptsLimit} this month · {data.aiUsage.creditsBought.toLocaleString()} bought</span>
                 <button
                   type="button"
-                  onClick={() => setSelectedAddon(data.availableAddons[0])}
-                  className="font-semibold text-blue hover:underline"
+                  onClick={() => setSelectedAddon(data.availableAddons.find((addon) => addon.credits) ?? null)}
+                  className="shrink-0 font-semibold text-blue hover:underline"
                 >
-                  + Top Up
+                  + Buy credits
                 </button>
               </div>
             </div>
@@ -326,27 +316,21 @@ export function WebsiteBalance() {
             </div>
 
             <div className="mt-5 grid gap-6 sm:grid-cols-3">
-              {/* AI Prompts */}
+              {/* AI credits */}
               <div className="rounded-xl border border-line/60 bg-cream/30 p-4">
                 <div className="flex items-center justify-between text-xs">
                   <span className="flex items-center gap-1.5 font-semibold text-ink">
                     <IconSparkles size={14} className="text-blue" />
-                    AI Copy & Layout Prompts
+                    AI credits
                   </span>
-                  <span className="font-mono text-muted">
-                    {data.aiUsage.promptsLimit >= 999999 ? "Unlimited" : `${data.aiUsage.promptsUsed} / ${data.aiUsage.promptsLimit}`}
-                  </span>
+                  <span className="font-mono text-muted">{data.aiUsage.promptsUsed} / {data.aiUsage.promptsLimit} this month</span>
                 </div>
-                <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-slate-200">
-                  <div
-                    className="h-full rounded-full bg-blue"
-                    style={{ width: `${Math.max(3, Math.min(100, data.aiUsage.promptsPercent))}%` }}
-                  />
+                <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-line">
+                  <div className="h-full rounded-full bg-blue" style={{ width: `${Math.max(3, Math.min(100, data.aiUsage.promptsPercent))}%` }} />
                 </div>
                 <p className="mt-2 text-[11px] text-muted">
-                  {data.aiUsage.promptsRemaining > 0
-                    ? `${data.aiUsage.promptsRemaining} prompts available for drafting content and styling`
-                    : "Monthly quota reached. Add an instant booster pack below."}
+                  {data.aiUsage.promptsRemaining} of the month's credits left, then {data.aiUsage.creditsBought.toLocaleString()} bought.{" "}
+                  {data.aiUsage.creditsLeft > 0 ? "" : "None left: buy a pack below — bought credits never expire."}
                 </p>
               </div>
 
@@ -401,10 +385,41 @@ export function WebsiteBalance() {
           </section>
 
           {/* Instant Add-on Services Store (Revenue Generator) */}
+          {/* How credits are spent, and where they went */}
+          <section className="mb-8 rounded-2xl border border-line bg-white p-6 shadow-2xs" aria-label="AI credit history">
+            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-line pb-4">
+              <div>
+                <h2 className="font-display text-lg font-bold text-ink">AI credits</h2>
+                <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">
+                  The Builder agent and the design assistant spend credits. Free AI models answer first and cost 1 credit; when they cannot, a paid model takes over and costs 2, 3 or 5 by how big the request is. Undo, a site-wide font or colour swap and adding a ready-made section cost nothing. The month's credits are spent first and come back on the 1st; bought credits never expire.
+                </p>
+              </div>
+              <span className="rounded-lg bg-cream px-2.5 py-1 text-xs font-semibold text-ink">{data.aiUsage.creditsLeft.toLocaleString()} left</span>
+            </div>
+            {data.aiUsage.creditHistory.length === 0 ? (
+              <p className="mt-4 text-xs text-muted">Nothing spent or bought yet.</p>
+            ) : (
+              <ul className="mt-3 divide-y divide-line/60">
+                {data.aiUsage.creditHistory.map((entry) => {
+                  const change = entry.planDelta + entry.boughtDelta;
+                  return (
+                    <li key={entry.id} className="flex items-center justify-between gap-4 py-2 text-xs">
+                      <span className="min-w-0 truncate text-ink">{entry.note}</span>
+                      <span className="flex shrink-0 items-center gap-3 text-muted">
+                        <span>{new Date(entry.createdAt).toLocaleDateString()}</span>
+                        <span className={`w-14 text-right font-mono font-semibold ${change > 0 ? "text-positive-text" : "text-ink"}`}>{change > 0 ? `+${change}` : change}</span>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+
           <section className="mb-8" aria-label="Add-on Services">
             <div className="mb-3">
               <h2 className="font-display text-lg font-bold text-ink">Add-on Services & Capacity Boosters</h2>
-              <p className="text-xs text-muted">Order instant developer hours, AI power packs, or technical optimizations with 1 click.</p>
+              <p className="text-xs text-muted">AI credit packs are added as soon as the invoice is paid and never expire. Developer hours and audits are scheduled by the team.</p>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -433,7 +448,7 @@ export function WebsiteBalance() {
                       className="w-full"
                       onClick={() => setSelectedAddon(addon)}
                     >
-                      Order Add-on →
+                      {addon.credits ? "Buy credits →" : "Order Add-on →"}
                     </Button>
                   </div>
                 </div>

@@ -2,7 +2,8 @@ import type { NextFunction, Request, Response, Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { WebsiteError } from "./website/site.js";
-import { resolveEntitlement, readUsage, bumpUsage, usagePeriod } from "./websiteEntitlement.js";
+import { resolveEntitlement, resolveSiteEntitlement, readUsage, bumpUsage, usagePeriod } from "./websiteEntitlement.js";
+import { CREDIT_PACKS, creditBalance } from "./aiCredits.js";
 import { WEBSITE_TIER_PLANS, tierLabels } from "./websiteTierPlans.js";
 import { createNumberedInvoice } from "./invoiceNumber.js";
 import { raisePayment } from "./payments.js";
@@ -23,18 +24,30 @@ export type AddonItem = {
   currency: string;
   badge: string;
   kind: "ai" | "maintenance" | "seo" | "domain";
+  /** For an AI credit pack: the credits paying for it adds. */
+  credits?: number;
 };
 
+/**
+ * AI credit packs, from `CREDIT_PACKS`. They replaced the "AI Prompt Booster"
+ * (22 Oct 2026), which took GHS 150 and granted nothing: the order wrote an
+ * audit line and its comment said the prompts were granted. Now the credits
+ * are added in the same transaction that marks the invoice paid
+ * (`grantCreditsForInvoice`), and they never expire.
+ */
+const CREDIT_PACK_ADDONS: AddonItem[] = CREDIT_PACKS.map((pack, index) => ({
+  id: pack.id,
+  name: `${pack.credits.toLocaleString("en-GB")} AI credits`,
+  description: `${pack.credits.toLocaleString("en-GB")} credits for the Builder agent and the design assistant, spent after the month's plan credits. They never expire.`,
+  amount: pack.amount,
+  currency: "GHS",
+  badge: index === 0 ? "Top up" : index === 1 ? "Popular" : "Lowest per credit",
+  kind: "ai",
+  credits: pack.credits,
+}));
+
 export const AVAILABLE_ADDONS: AddonItem[] = [
-  {
-    id: "ai_booster_100",
-    name: "AI Prompt Booster (+100 Prompts)",
-    description: "Add 100 high-power AI copy and layout generation runs to your account allowance.",
-    amount: 150,
-    currency: "GHS",
-    badge: "Popular",
-    kind: "ai",
-  },
+  ...CREDIT_PACK_ADDONS,
   {
     id: "maintenance_5h",
     name: "Priority Maintenance Pack (5 Hours)",
@@ -284,6 +297,12 @@ export function registerWebsiteClientPortal(router: Router) {
       const promptsLimit = planDef.aiPromptsLimit;
       const promptsRemaining = Math.max(0, promptsLimit - usage.aiPrompts);
       const promptsPercent = promptsLimit > 0 ? Math.min(100, Math.round((usage.aiPrompts / promptsLimit) * 100)) : 100;
+      // AI credits: the month's (above) and bought ones, and where they went.
+      const credits = await creditBalance(user.id, promptsLimit);
+      const creditHistory = await prisma.aiCreditEntry.findMany({
+        where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 25,
+        select: { id: true, kind: true, planDelta: true, boughtDelta: true, note: true, createdAt: true },
+      });
 
       const overallStatus: "CURRENT" | "OUTSTANDING" | "OVERDUE" = hasOverdue
         ? "OVERDUE"
@@ -320,6 +339,9 @@ export function registerWebsiteClientPortal(router: Router) {
           storageQuotaLabel: planDef.storageQuotaLabel,
           tierName: planDef.name,
           canUpgrade: entitlement.tier !== "MANAGED",
+          creditsBought: credits.bought,
+          creditsLeft: credits.total,
+          creditHistory: creditHistory.map((entry) => ({ ...entry, createdAt: entry.createdAt.toISOString() })),
         },
         invoices: formattedInvoices,
         availableAddons: AVAILABLE_ADDONS,
@@ -389,8 +411,13 @@ export function registerWebsiteClientPortal(router: Router) {
         }),
       );
 
-      // If this was an AI booster pack, immediately grant the prompts to this month's allowance
-      // or record in audit log
+      // A credit pack is granted when its invoice is paid, to the account that
+      // pays for the website it was bought for (whose credits that website's
+      // requests spend), or to the buyer's own.
+      if (addon.credits) {
+        const owner = siteId ? (await resolveSiteEntitlement(req, siteId)).chargedUserId ?? user.id : user.id;
+        await prisma.aiCreditPurchase.create({ data: { userId: owner, invoiceId: invoice.id, packId: addon.id, credits: addon.credits } });
+      }
       if (siteId) {
         await prisma.siteAuditEvent.create({
           data: {

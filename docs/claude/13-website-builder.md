@@ -1594,7 +1594,8 @@ for, so nobody undoes it.
   Business site, a site with no plan and a site still saying `aiEnabled:
   false`, and a PUT carrying the switch saves nothing.
 - **Every plan has the Builder agent, with a monthly cap below Business (the
-  Owner's call, 22 Oct 2026).** Starter 30 requests a month and 5 a day
+  Owner's call, 22 Oct 2026; credits replaced the cap the same day — see AI
+  credits below).** Starter 30 requests a month and 5 a day
   (`AI_DAILY_LIMIT_EDITOR`, which was 0 and would have refused every one);
   Pro 100 a month shared with the design assistant, 10 a day; Business
   unlimited within its 50 a day. One allowance, `aiPromptsLimit`, counts both
@@ -1894,6 +1895,57 @@ and an edit made there publishes back into Elementor's hover keys.
   theme fields nobody edited. **Deleting a classic widget's heading or button**
   took the content and left Elementor's wrapper with its id, so the publish
   saw nothing to do; a widget the edit emptied is deleted (`emptiedWidgets`).
+
+### AI credits (22 Oct 2026)
+
+The Builder agent and the design assistant spend **AI credits** (the Owner's
+call). `services/aiCredits.ts` is the whole of it; `checks/aiCredits.ts` (DB)
+holds it.
+
+- **A month's credits per plan, then bought ones.** Starter 30, Pro 100,
+  Business 300 (`aiPromptsLimit`, which now means credits; Business was
+  unlimited). They are spent first and come back on the 1st
+  (`WebsiteUsage.aiPrompts` is the month's credits spent). Bought credits are
+  `User.aiCreditsBought`, never expire, and are spent after.
+- **A request costs what answered it.** `creditsFor`: 1 when a free model
+  answered; 2, 3 or 5 by the router's level (simple, standard, complex) when a
+  paid one did; 0 when no model was asked — undo, a whole-site font or colour
+  swap, a library section. The builder agent's plan carries `answeredBy`
+  (`result.provider` + `routing.level`) and `credits`; the assistant's paid
+  answers are charged as standard.
+- **Held, then settled.** The queue holds one credit at admission
+  (`takeCredits`, guarded updates, all or nothing — a 402 "out of AI credits"
+  before anything is queued) and records it on the job (`creditsPlan`,
+  `creditsBought`, `creditLimit`). `settleWebsiteUsage(tx, id, used, value)`
+  settles by `value.answeredBy`: tops up from the month and then bought
+  credits, or gives back — bought credits first. A run that failed before a
+  model gives everything back to the pocket it came from; one that reached a
+  model keeps what it held. A job queued before credits held one month's
+  prompt and nothing else, and settles as that. Without the queue the
+  middleware checks for one credit and the route charges after the reply
+  (`chargeAiRequest`). A request is never stopped half-way: what cannot be
+  covered at settlement is written off and said in the history.
+- **Only a model request needs a credit.** The direct path counted every POST
+  to the assistant, previews included, and both `/agent/plan` and
+  `/agent/apply` — a request cost two. Now only `POST /agent/plan` and `POST
+  /pages/:id/assistant` are checked, and charged by what answered.
+- **Staff never spend credits** (`source === "staff"`): no hold, no charge,
+  still the daily fair-use limit. A staff account with a subscription of its
+  own is that subscription's customer, as for every other limit.
+- **Packs**: `CREDIT_PACKS` — 100 for GHS 150, 300 for GHS 400, 1,000 for GHS
+  1,200 — are the AI add-ons on the Balance screen. They replaced the "AI
+  Prompt Booster", which invoiced GHS 150 and granted nothing (its comment said
+  it did). Ordering one writes an `AiCreditPurchase` for the account that pays
+  for the website (or the buyer's own); `settleInvoice` calls
+  `grantCreditsForInvoice` inside the transaction that marks the invoice paid,
+  so the credits and the payment cannot come apart and a retried webhook grants
+  nothing twice. Every grant and charge is an `AiCreditEntry`, shown on the
+  Balance screen as the credit history.
+- **Where it shows**: the Balance screen (credits left, the month's and bought,
+  how they are spent, the history, the packs), the plan banner, each agent
+  reply ("… · 2 credits") and, when out, a "Buy AI credits" link in the chat.
+  The public cards and the setup guide say the numbers; `checks/websitePlanLimits.ts`
+  holds the cards to them.
 
 ### The agent is always on the canvas, and sized by the OS's router (22 Oct 2026, third pass)
 

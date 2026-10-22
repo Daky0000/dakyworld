@@ -21,6 +21,7 @@ import {
   type Entitlement,
 } from "./websiteEntitlement.js";
 import { priceFor, type PlanCurrency } from "./websitePricing.js";
+import { chargeNote, creditsFor, OutOfCredits, settleCredits, type Answered } from "./aiCredits.js";
 import { editingLockedForNonPayment } from "./websiteDunning.js";
 import { fetchWebsiteBytes } from "../lib/websiteFetch.js";
 import { sniff } from "../lib/fileType.js";
@@ -218,11 +219,11 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     importsLimitLabel: "3 imports / mo",
     editsLimit: 30,
     editsLimitLabel: "30 page edits / mo (a page counts once a day)",
-    // The Builder agent is on every plan (the Owner's call, 22 Oct 2026), with
-    // a monthly cap below Business: Starter 30, Pro 100, shared with the design
-    // assistant where the plan has it.
+    // AI credits for the month (the Owner's call, 22 Oct 2026): Starter 30,
+    // Pro 100, Business 300, spent by the Builder agent and the design
+    // assistant before any bought credits. See `services/aiCredits.ts`.
     aiPromptsLimit: 30,
-    aiPromptsLimitLabel: `30 Builder agent requests / mo, up to ${dailyAiLimit("EDITOR")} a day`,
+    aiPromptsLimitLabel: `30 AI credits / mo, up to ${dailyAiLimit("EDITOR")} requests a day; more can be bought`,
     websiteLimit: 1,
     userLimit: 2,
     supportPriority: "STANDARD",
@@ -247,7 +248,7 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
       "Up to 3 HTML page imports per month",
       "30 page edits a month — a page counts once a day, however many changes you make",
       "Visual Layout & Style Inspector",
-      `AI Builder Agent (30 requests/mo, up to ${dailyAiLimit("EDITOR")} a day)`,
+      `AI Builder Agent (30 credits/mo, up to ${dailyAiLimit("EDITOR")} requests a day)`,
       "1 website · up to 2 team members",
     ],
     restrictedFeatures: [
@@ -277,7 +278,7 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     // And a daily ceiling the queue enforces, from the number it reads — the
     // eleventh run of a day is refused, and a label that said only "a month"
     // left that to be found out by being refused.
-    aiPromptsLimitLabel: `100 AI requests / mo for the Builder agent and the assistant, up to ${dailyAiLimit("CARE")} a day`,
+    aiPromptsLimitLabel: `100 AI credits / mo for the Builder agent and the assistant, up to ${dailyAiLimit("CARE")} requests a day; more can be bought`,
     websiteLimit: 3,
     userLimit: 5,
     supportPriority: "PRIORITY",
@@ -303,7 +304,7 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
       "200 page edits a month — a page counts once a day, however many changes you make",
       "Global Theme Color System & Brand Presets",
       "Full Page SEO Inspector & Metadata Auditor",
-      `AI Builder Agent & Copy Assistant (100 runs/mo, up to ${dailyAiLimit("CARE")} a day)`,
+      `AI Builder Agent & Copy Assistant (100 credits/mo, up to ${dailyAiLimit("CARE")} requests a day)`,
       "Up to 3 websites · 5 team members",
     ],
     restrictedFeatures: [
@@ -326,11 +327,11 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     importsLimitLabel: "Unlimited imports",
     editsLimit: 999999,
     editsLimitLabel: "Unlimited edits",
-    aiPromptsLimit: 999999,
-    // Unlimited in the month, with a daily ceiling the queue enforces. Said
-    // here from the same number the queue reads, so the label cannot promise
-    // more than the refusal allows.
-    aiPromptsLimitLabel: `Unlimited AI runs (fair use: ${dailyAiLimit("MANAGED")} a day)`,
+    aiPromptsLimit: 300,
+    // 300 credits a month (unlimited until 22 Oct 2026), with the daily
+    // ceiling the queue enforces. Said here from the same number the queue
+    // reads, so the label cannot promise more than the refusal allows.
+    aiPromptsLimitLabel: `300 AI credits / mo, up to ${dailyAiLimit("MANAGED")} requests a day; more can be bought`,
     websiteLimit: 10,
     userLimit: 15,
     supportPriority: "HIGHEST",
@@ -354,7 +355,7 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
       "5 GB Media Library storage (up to 10 MB/file)",
       "Unlimited HTML page imports & unlimited edits",
       "Global Theme System, Brand Presets & SEO Inspector",
-      `Autonomous AI Builder Agent & unlimited AI runs (fair use: ${dailyAiLimit("MANAGED")} a day)`,
+      `Autonomous AI Builder Agent & Copy Assistant (300 credits/mo, up to ${dailyAiLimit("MANAGED")} requests a day)`,
       "Full Raw Source Code Editor & GitHub Pull Request publishing",
       "Up to 10 websites · 15 team members · Priority support",
     ],
@@ -536,6 +537,9 @@ export async function computeUserStorageAndUsage(req: WebsiteActor, siteId?: str
   const plan = WEBSITE_TIER_PLANS[identity.tier];
   const simulateAfter3Months = identity.simulateAfter3Months;
   const counters = await readUsage(identity.chargedUserId);
+  const boughtCredits = identity.chargedUserId && identity.source !== "staff"
+    ? (await prisma.user.findUnique({ where: { id: identity.chargedUserId }, select: { aiCreditsBought: true } }))?.aiCreditsBought ?? 0
+    : 0;
   const pricing = resolveSubscriptionPricing({
     tier: identity.tier,
     subscribedAt: identity.subscribedAt,
@@ -627,6 +631,12 @@ export async function computeUserStorageAndUsage(req: WebsiteActor, siteId?: str
       aiPromptsLimit: plan.aiPromptsLimit >= 99999 ? null : plan.aiPromptsLimit,
       aiPromptsLimitLabel: plan.aiPromptsLimitLabel,
       aiPromptsRemaining: plan.aiPromptsLimit >= 99999 ? null : Math.max(0, plan.aiPromptsLimit - counters.aiPrompts),
+      // AI credits: `aiPrompts*` above are this month's plan credits; these are
+      // the bought ones, which never expire, and whether the account spends
+      // credits at all (DakyXTech staff do not).
+      aiCreditsBought: Math.max(0, boughtCredits),
+      aiCreditsLeft: identity.source === "staff" ? null : Math.max(0, plan.aiPromptsLimit - counters.aiPrompts) + Math.max(0, boughtCredits),
+      aiCreditsExempt: identity.source === "staff",
     },
     features: plan.features,
     featureSummary: plan.featureHighlights,
@@ -865,21 +875,30 @@ export async function assertTierFeatureAccess(
     );
   }
 
-  // One monthly allowance for both: an agent request and an assistant prompt
-  // each spend one. The agent was never capped because only Business, which
-  // is unlimited, had it.
-  if (!options.skipUsageLimit && (feature === "aiAssistant" || feature === "aiBuilderAgent") && usage.aiPromptsUsed >= plan.aiPromptsLimit) {
-    throw new WebsiteError(
-      403,
-      `This month's AI allowance is used (${usage.aiPromptsUsed}/${plan.aiPromptsLimit}) on ${yourPlan(status)}. It resets on the 1st; ordinary editing remains available.${upgradeSentence(plan.tier, status.pricing.currency, (next) => next.aiPromptsLimitLabel)}`,
-    );
+  // AI credits: a request needs one to start (the month's or a bought one).
+  // What it finally costs is settled once it is known who answered it — see
+  // `services/aiCredits.ts`. Staff spend none.
+  if (!options.skipUsageLimit && (feature === "aiAssistant" || feature === "aiBuilderAgent") && !usage.aiCreditsExempt && (usage.aiCreditsLeft ?? 0) < 1) {
+    throw new WebsiteError(402, new OutOfCredits(plan.aiPromptsLimit).message);
   }
 }
 
-/** Spends an AI prompt, against the same account `assertTierFeatureAccess` checked with this `siteId`. */
-export async function recordAiPromptUsed(req: WebsiteActor, siteId?: string | null): Promise<void> {
+/**
+ * Charges an AI request answered without the queue, against the same account
+ * `assertTierFeatureAccess` checked with this `siteId`: what it cost by what
+ * answered it, the month's credits first. Nothing was held up front on this
+ * path, so the whole cost is taken after — and taken as far as it goes, never
+ * refusing a reply already made. Staff are not charged. Returns the cost.
+ */
+export async function chargeAiRequest(req: WebsiteActor, siteId: string | null | undefined, what: "Builder agent" | "Design assistant", answer: unknown): Promise<number> {
+  const answeredBy = answer && typeof answer === "object" ? (answer as { answeredBy?: Answered }).answeredBy : undefined;
+  const cost = creditsFor(answeredBy);
   const identity = await resolveSiteEntitlement(req, siteId);
-  await bumpUsage(identity.chargedUserId, "aiPrompts");
+  if (identity.source === "staff" || !identity.chargedUserId || cost === 0) return cost;
+  const userId = identity.chargedUserId;
+  const limit = WEBSITE_TIER_PLANS[identity.tier].aiPromptsLimit;
+  await prisma.$transaction((tx) => settleCredits(tx, { userId, limit, held: { plan: 0, bought: 0 }, cost, note: chargeNote(what, answeredBy, cost), siteId: siteId ?? null }));
+  return cost;
 }
 
 /**
