@@ -100,6 +100,8 @@ export { MARKDOWN_ADAPTER_VERSION, MARKDOWN_EXTENSIONS, discoverMarkdownFields, 
 export type { MarkdownField, MarkdownDiscovery, MarkdownIssue, MarkdownApplyResult } from "./markdown.js";
 export { discoverRouterRoutes, routerCandidates } from "./router.js";
 export { pageFile, drawnByScript } from "./site.js";
+export { ELEMENTOR_ADAPTER_VERSION, elementorDocumentIds, elementorFieldMap, applyElementorEdits } from "./elementor.js";
+export type { ElementorNode, ElementorDocument, ElementorDocuments, ElementorFieldMap, ElementorApplyResult, ElementorMedia } from "./elementor.js";
 export { WORDPRESS_ADAPTER_VERSION, WORDPRESS_BUILDER_LABEL, detectWordPressBuilder, wordpressSiteHint, wordpressPurchaseNote, builderEditable, builderRefusal, wordpressFieldMap, applyWordPressEdits } from "./wordpress.js";
 export type { WordPressBuilder, WordPressSource, WordPressFieldMap, WordPressMedia, WordPressApplyResult, WordPressUnmappable, WordPressProblem } from "./wordpress.js";
 export { decodeEntities } from "./parse.js";

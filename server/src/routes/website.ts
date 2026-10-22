@@ -52,7 +52,8 @@ import { recordPresence, removePresence } from "../services/websitePresence.js";
 // `site.js` is the other half and stays separate on purpose: it is the part that
 // talks to GitHub and the network, and nothing in the core does.
 import { DOCUMENT_KEY, draftDocument, editingSource, fieldValues, sourceHash, documentChanged, changeStructure, structureControls, applyValues, categoriseChanges, describeChanges, buildPreview, discoverFields, drawnByScript, isVariantOfStem, sanitizeValue, validateFieldChange, type FieldValue, type SiteField } from "../services/website/index.js";
-import { discoverPages, PAGE_LIST_FIELDS, pageSource, pageUrl, siteRepo, siteStyleClasses, WebsiteError } from "../services/website/site.js";
+import { discoverPages, PAGE_LIST_FIELDS, pageSource, pageStyleTexts, pageUrl, siteRepo, siteStyleClasses, WebsiteError } from "../services/website/site.js";
+import { hoverRules } from "../services/website/hover.js";
 
 import { tailwindCdnCss } from "../services/website/cdnStyles.js";
 
@@ -490,6 +491,9 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
         ? {
             filePath: source.sourceFile,
             detail: source.detail ?? null,
+            // Which WordPress builder made the page, so the editor can say
+            // what publishes (an Elementor page takes styling too).
+            builder: managed?.builder ?? null,
             writableFields: managed ? managed.writable.size : 0,
             // Said once, at the top, when the answer is "none of it". A page
             // where every field is locked is not three hundred separate facts;
@@ -503,7 +507,9 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
         kind: section.kind,
         fields: section.fields.map((field) => ({
           ...publicField(widen(field)),
-          structure: managed ? undefined : controls[field.id],
+          // Layout buttons stay where the source can take the change: HTML
+          // pages, and Elementor pages, whose tree is rearranged by element id.
+          structure: managed && !managed.structure ? undefined : controls[field.id],
           ...(managed && !managed.writable.has(field.id)
             ? {
                 sourceManaged: true as const,
@@ -889,6 +895,24 @@ websiteRouter.get("/pages/:pageId/preview", async (req, res, next) => {
       // by anyone but the editor itself.
       .set("X-Frame-Options", "SAMEORIGIN")
       .send(await embedWebsiteAssets(site, document.html));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * The page's own `:hover` rules — its stylesheets, Elementor's generated CSS,
+ * Tailwind's `hover:` utilities — for the Hover view to show what an element
+ * already does before anybody changes it. Matching them to an element is the
+ * editor's job: it has the element.
+ */
+websiteRouter.get("/pages/:pageId/hover-rules", async (req, res, next) => {
+  try {
+    const { page, site } = await loadPage(req, req.params.pageId);
+    const source = await pageSource(site, page);
+    const sheets = await pageStyleTexts(site, page, source.html);
+    const built = await tailwindCdnCss(source.html).catch(() => null);
+    res.set("Cache-Control", "private, max-age=60").json({ rules: hoverRules(built ? [...sheets, { css: built }] : sheets) });
   } catch (err) {
     next(err);
   }

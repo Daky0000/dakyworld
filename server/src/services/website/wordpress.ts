@@ -70,7 +70,7 @@ export const WORDPRESS_BUILDER_LABEL: Record<WordPressBuilder, string> = {
 };
 
 /** The builders whose page content is somewhere this module cannot reach. */
-const STORED_ELSEWHERE = new Set<WordPressBuilder>(["elementor", "beaver", "bricks", "oxygen", "brizy", "thrive", "siteorigin"]);
+const STORED_ELSEWHERE = new Set<WordPressBuilder>(["beaver", "bricks", "oxygen", "brizy", "thrive", "siteorigin"]);
 
 export function builderEditable(builder: WordPressBuilder): boolean {
   return !STORED_ELSEWHERE.has(builder);
@@ -127,6 +127,7 @@ export function wordpressSiteHint(html: string): { wordpress: boolean; builder: 
 /** What a WordPress customer is told before paying: what will work, and what will not. */
 export function wordpressPurchaseNote(builder: WordPressBuilder | null): string {
   const how = "WordPress site: after payment you connect it with a WordPress Application Password — nothing to install. Words, links and pictures in your pages' content are edited here and published straight back into WordPress; menus, footers and styling stay in WordPress.";
+  if (builder === "elementor") return `${how} This page is built with Elementor, which is edited in full here — words, links, pictures, styling and layout — and its headers and footers too when you connect with an Administrator account.`;
   if (builder && !builderEditable(builder)) {
     const name = WORDPRESS_BUILDER_LABEL[builder];
     return `${how} This page is built with ${name}, and ${name} pages open read-only for now, because ${name} keeps its words where WordPress does not let other apps edit them. Pages made with the block editor, the classic editor, Divi, WPBakery or Avada are fully editable.`;
@@ -145,7 +146,7 @@ export function builderRefusal(builder: WordPressBuilder): string {
 /** A boundary nothing can match across: a block comment, a quote, a paragraph break. */
 const BARRIER = "\u0000";
 
-type Normalised = {
+export type Normalised = {
   text: string;
   /** For each character of `text`, where its raw span starts and ends. */
   starts: number[];
@@ -174,7 +175,7 @@ const FOLD: Record<string, string> = {
  * values of a shortcode's attributes, which are text, because that is where
  * Divi and WPBakery keep a module's title and a button's label.
  */
-function normalise(raw: string, options: { stored: boolean }): Normalised {
+export function normalise(raw: string, options: { stored: boolean }): Normalised {
   const out: string[] = [];
   const starts: number[] = [];
   const ends: number[] = [];
@@ -308,12 +309,12 @@ function shortcodeEnd(raw: string, from: number): number {
 }
 
 /** A field's value as a search needle: normalised, trimmed, barriers impossible. */
-function needle(value: string): string {
+export function needle(value: string): string {
   return normalise(value, { stored: false }).text.trim();
 }
 
 /** Whether a needle carries any words worth matching on. */
-function meaningful(text: string): boolean {
+export function meaningful(text: string): boolean {
   return /[\p{L}\p{N}]/u.test(text.replace(/<\/?[a-z0-9-]+>/g, ""));
 }
 
@@ -321,7 +322,7 @@ function meaningful(text: string): boolean {
  * Every place `text` occurs in `haystack` as the whole of an element: bounded
  * by a tag, a barrier, or the ends, with only spaces between.
  */
-function wholeOccurrences(haystack: string, text: string): number[] {
+export function wholeOccurrences(haystack: string, text: string): number[] {
   const found: number[] = [];
   if (!text) return found;
   let from = 0;
@@ -444,7 +445,7 @@ function imageTag(content: string, src: string): { start: number; end: number; t
 }
 
 /** Compared as WordPress serves it: entities decoded, protocol-relative and `http:` treated as one. */
-function normaliseUrl(url: string): string {
+export function normaliseUrl(url: string): string {
   return decodeEntities(url.trim()).replace(/^https?:/i, "").replace(/\/+$/, "");
 }
 
@@ -500,8 +501,10 @@ export function wordpressFieldMap(input: { html: string; source: WordPressSource
   const fields = input.fields ?? readPage(input.html).fields;
   const writable = new Set<string>();
   const notes = new Map<string, string>();
-  if (!builderEditable(input.source.builder)) {
-    const failure = builderRefusal(input.source.builder);
+  // Elementor shares its data over REST, so its pages are edited through it
+  // (elementor.ts) and never through the post content's fallback copy.
+  if (!builderEditable(input.source.builder) || input.source.builder === "elementor") {
+    const failure = input.source.builder === "elementor" ? "This page is built with Elementor and is edited through Elementor's data." : builderRefusal(input.source.builder);
     for (const field of fields) notes.set(field.id, failure);
     return { writable, notes, failure };
   }
@@ -583,8 +586,8 @@ export function applyWordPressEdits(input: {
   const refuse = (unmappable: WordPressUnmappable[], problems: WordPressProblem[]): WordPressApplyResult =>
     ({ content: input.source.content, title: input.source.title, changed: [], changes: [], unmappable, problems });
 
-  if (!builderEditable(input.source.builder)) {
-    return refuse([{ htmlFieldId: "*", part: "page", message: builderRefusal(input.source.builder) }], []);
+  if (!builderEditable(input.source.builder) || input.source.builder === "elementor") {
+    return refuse([{ htmlFieldId: "*", part: "page", message: input.source.builder === "elementor" ? "This page is built with Elementor and is edited through Elementor's data." : builderRefusal(input.source.builder) }], []);
   }
   const fields = new Map(readPage(input.html).fields.map((field) => [field.id, field]));
   const unmappable: WordPressUnmappable[] = [];
@@ -747,6 +750,6 @@ function blockCommentBefore(content: string, position: number, name: string): { 
   return { start: at, end: end + 3, text: content.slice(at, end + 3) };
 }
 
-function plainText(html: string): string {
+export function plainText(html: string): string {
   return decodeEntities(html.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
 }

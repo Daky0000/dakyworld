@@ -3529,7 +3529,7 @@ export type SitePageDetail = {
   /** An empty shell its scripts fill in: shown isolated in the canvas and never clickable. */
   drawnByScript?: boolean;
   /** Set when this page is built from a source file rather than being one. */
-  builtFrom?: { filePath: string; detail: string | null; writableFields: number; problem?: string | null } | null;
+  builtFrom?: { filePath: string; detail: string | null; writableFields: number; problem?: string | null; builder?: string | null } | null;
   sections: SiteSectionRow[];
   /** Which fields belong to a shared element, and what that element is doing. */
   shared?: { scope: Record<string, SharedFieldScope>; elements: SharedElementOnPage[] };

@@ -33,8 +33,13 @@ import { downloadFromR2 } from "../lib/r2.js";
 import { invalidateSource } from "./website/sourceCache.js";
 import { WebsiteError, pageSource, pageUrl, type DiscoveredPage, type Discovery } from "./website/site.js";
 import {
+  applyElementorEdits,
   applyWordPressEdits,
   buildPublishPlan,
+  elementorDocumentIds,
+  elementorFieldMap,
+  type ElementorDocuments,
+  type ElementorNode,
   builderEditable,
   categoriseChanges,
   describeChanges,
@@ -354,7 +359,10 @@ export async function checkWordPress(input: { address: string; username: string;
   const warnings: string[] = [];
   const elsewhere = [...builders].filter((builder) => !builderEditable(builder)).map((builder) => WORDPRESS_BUILDER_LABEL[builder]);
   if (elsewhere.length) {
-    warnings.push(`${elsewhere.join(" and ")} ${elsewhere.length === 1 ? "is" : "are"} installed. Pages built with ${elsewhere.length === 1 ? "it" : "them"} keep their words in the builder's own data, which WordPress does not let other apps edit yet, so those pages open read-only here. Pages made with the block editor, the classic editor, Divi, WPBakery or Avada can be edited.`);
+    warnings.push(`${elsewhere.join(" and ")} ${elsewhere.length === 1 ? "is" : "are"} installed. Pages built with ${elsewhere.length === 1 ? "it" : "them"} keep their words in the builder's own data, which WordPress does not let other apps edit yet, so those pages open read-only here. Pages made with Elementor, the block editor, the classic editor, Divi, WPBakery or Avada can be edited.`);
+  }
+  if (builders.has("elementor") && !capabilities.manage_options) {
+    warnings.push(`${me.name} is not an Administrator, so Elementor headers, footers and other templates open read-only, and an Elementor change can take up to a day to show while Elementor's cache refreshes. Connect with an Administrator account to change templates and see changes straight away.`);
   }
   if (!capabilities.upload_files) warnings.push(`${me.name} cannot upload files in WordPress, so pictures cannot be changed from here.`);
   if (!capabilities.edit_others_pages) warnings.push(`${me.name} can only edit pages they wrote themselves. An Editor or Administrator account can edit every page.`);
@@ -435,6 +443,8 @@ type RestPost = {
   modified_gmt?: string;
   title: { raw?: string; rendered?: string };
   content?: { raw?: string; rendered?: string };
+  /** Registered post meta. Elementor shares `_elementor_data` here with anybody who can edit the post. */
+  meta?: Record<string, unknown>;
 };
 
 const MAX_PAGES = 1000;
@@ -479,11 +489,12 @@ function decode(text: string): string {
 }
 
 /** Read for the editor, briefly remembered: opening a page and its preview ask the same question twice. */
-const sourceCache = new Map<string, { at: number; source: WordPressSource & { modified: string | null; link: string } }>();
+type PageRead = WordPressSource & { modified: string | null; link: string; elementor?: ElementorDocuments };
+const sourceCache = new Map<string, { at: number; source: PageRead }>();
 const SOURCE_TTL_MS = 30_000;
 
 /** A page's stored content, read fresh from WordPress unless a recent copy will do. */
-export async function wordpressSource(site: Site, page: SitePage, html: string, options: { fresh?: boolean } = {}): Promise<WordPressSource & { modified: string | null; link: string }> {
+export async function wordpressSource(site: Site, page: SitePage, html: string, options: { fresh?: boolean } = {}): Promise<PageRead> {
   const post = wordpressPostOf(page);
   if (!post) throw new WebsiteError(409, `${page.title} is not a WordPress page. Look for pages again to bring the list up to date.`);
   const key = `${site.id}:${page.filePath}`;
@@ -496,18 +507,64 @@ export async function wordpressSource(site: Site, page: SitePage, html: string, 
   const connection = await wordpressConnection(site.id);
   const data = (await connectedCall<RestPost>(connection, `/wp/v2/${post.type === "page" ? "pages" : "posts"}/${post.id}`, { query: { context: "edit" } })).data;
   const content = data.content?.raw ?? "";
-  const source = {
+  const builder = detectWordPressBuilder({ postId: post.id, content, html });
+  const source: PageRead = {
     id: post.id,
     type: post.type,
     content,
     title: data.title.raw ?? "",
-    builder: detectWordPressBuilder({ postId: post.id, content, html }),
+    builder,
     modified: data.modified_gmt ?? null,
     link: data.link,
+    ...(builder === "elementor" ? { elementor: await elementorDocuments(connection, post, data, html) } : {}),
   };
   sourceCache.set(key, { at: Date.now(), source });
   if (sourceCache.size > 500) sourceCache.delete(sourceCache.keys().next().value!);
   return source;
+}
+
+/**
+ * The Elementor trees this page is made of: its own, and every template the
+ * live page renders (header, footer, saved sections, global widgets). A
+ * template that cannot be read — WordPress lets only administrators read
+ * Elementor's templates over REST — is left out, and its parts lock with that
+ * reason.
+ */
+async function elementorDocuments(connection: WordPressConnection, post: { type: "page" | "post"; id: number }, data: RestPost, html: string): Promise<ElementorDocuments> {
+  const documents: ElementorDocuments = new Map();
+  const parse = (raw: unknown): ElementorNode[] | null => {
+    if (typeof raw !== "string" || !raw.trim()) return null;
+    try { const tree = JSON.parse(raw); return Array.isArray(tree) ? (tree as ElementorNode[]) : null; } catch { return null; }
+  };
+  const own = parse(data.meta?._elementor_data);
+  if (own) documents.set(post.id, { postId: post.id, kind: "page", title: data.title.raw ?? "", data: own });
+  const { documents: rendered, globals } = elementorDocumentIds(html);
+  for (const id of [...new Set([...rendered, ...globals])].filter((id) => id !== post.id).slice(0, 20)) {
+    try {
+      const template = (await connectedCall<RestPost>(connection, `/wp/v2/elementor_library/${id}`, { query: { context: "edit" } })).data;
+      const tree = parse(template.meta?._elementor_data);
+      if (tree) documents.set(id, { postId: id, kind: "template", title: template.title.raw ?? "", data: tree });
+    } catch {
+      // Not readable by this account: its parts lock with that reason.
+    }
+  }
+  return documents;
+}
+
+/** Elementor's own cache of rendered elements and CSS, cleared the way its settings screen does. */
+async function clearElementorCache(connection: WordPressConnection): Promise<boolean> {
+  const route = "/elementor/v1/settings/elementor_element_cache_ttl";
+  try {
+    const current = (await connectedCall<{ data?: { value?: unknown } }>(connection, route)).data?.data?.value;
+    const kept = typeof current === "string" ? current : "";
+    // Changing the setting is what clears the cache; it is put straight back,
+    // and an unset value behaves as 24 hours exactly as before.
+    await connectedCall(connection, route, { method: "PUT", json: { value: kept === "12" ? "24" : "12" } });
+    await connectedCall(connection, route, { method: "PUT", json: { value: kept || "24" } });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function forgetSource(site: Site, page: SitePage) {
@@ -519,9 +576,18 @@ function forgetSource(site: Site, page: SitePage) {
  * framework path gives `routes/website.ts`, so the editor locks what a publish
  * would refuse, at the moment somebody clicks it.
  */
-export async function wordpressManagedFields(site: Site, page: SitePage, html: string): Promise<WordPressFieldMap & { builder?: WordPressBuilder }> {
+export async function wordpressManagedFields(site: Site, page: SitePage, html: string): Promise<WordPressFieldMap & { builder?: WordPressBuilder; structure?: boolean }> {
   try {
     const source = await wordpressSource(site, page, html);
+    if (source.builder === "elementor") {
+      if (!source.elementor?.size) {
+        const failure = "This page's Elementor data could not be read. Update Elementor to a current version, or connect with an account that can edit this page.";
+        return { writable: new Set(), notes: new Map(), failure, builder: source.builder };
+      }
+      // Elementor pages get the layout buttons too: deletes, duplicates and
+      // moves are replayed on its tree by element id.
+      return { ...elementorFieldMap({ html, documents: source.elementor }), builder: source.builder, structure: true };
+    }
     return { ...wordpressFieldMap({ html, source }), builder: source.builder };
   } catch (error) {
     const failure = error instanceof WebsiteError ? error.message : "This page's content could not be read from WordPress.";
@@ -538,9 +604,13 @@ export async function wordpressManagedFields(site: Site, page: SitePage, html: s
  */
 async function uploadPictures(site: Site, connection: WordPressConnection, values: Record<string, FieldValue>): Promise<WordPressMedia> {
   const media: WordPressMedia = new Map();
-  for (const edit of Object.values(values)) {
-    const value = edit.value;
-    if (!value || media.has(value) || value === edit.original) continue;
+  // A swapped picture is a value; a background image is a `url()` in a style.
+  const wanted = Object.values(values).flatMap((edit) => [
+    ...(edit.value && edit.value !== edit.original ? [edit.value] : []),
+    ...[edit.style, ...Object.values(edit.responsive ?? {})].flatMap((style) => [...(style ?? "").matchAll(/url\(\s*['"]?([^'")]+)['"]?\s*\)/gi)].map((match) => match[1]!)),
+  ]);
+  for (const value of wanted) {
+    if (media.has(value)) continue;
     const key = /(assets\/dw\/[A-Za-z0-9._-]+)/.exec(value)?.[1];
     if (!key) continue;
     const asset = await prisma.siteAsset.findFirst({ where: { siteId: site.id, repoPath: key }, select: { filename: true, contentType: true, content: true, repoPath: true, alt: true } });
@@ -578,6 +648,7 @@ async function writeEdits(input: { site: Site; page: SitePage; html: string; val
   if (!post) throw new WebsiteError(409, `${input.page.title} is not a WordPress page.`);
   const connection = await wordpressConnection(input.site.id);
   const source = await wordpressSource(input.site, input.page, input.html, { fresh: true });
+  if (source.builder === "elementor") return writeElementorEdits({ ...input, connection, source });
   if (!builderEditable(source.builder)) {
     throw new WebsiteError(409, applyWordPressEdits({ html: input.html, source, values: input.values }).unmappable[0]!.message);
   }
@@ -599,7 +670,31 @@ async function writeEdits(input: { site: Site; page: SitePage; html: string; val
   return { modified: written.modified_gmt ?? null, link: written.link ?? source.link, changes: applied.changes, changed: applied.changed };
 }
 
-function refuseIfNeeded(result: ReturnType<typeof applyWordPressEdits>) {
+/** The same write for an Elementor page: its tree (and any template's) saved, then Elementor's cache cleared. */
+async function writeElementorEdits(input: { site: Site; page: SitePage; html: string; values: Record<string, FieldValue>; connection: WordPressConnection; source: PageRead }): Promise<WriteResult> {
+  const documents = input.source.elementor;
+  if (!documents?.size) throw new WebsiteError(409, "This page's Elementor data could not be read. Update Elementor, or connect with an account that can edit this page.");
+  const fake = new Map(Object.values(input.values).flatMap((edit) => [edit.value, ...[edit.style, ...Object.values(edit.responsive ?? {})].flatMap((style) => [...(style ?? "").matchAll(/url\(\s*['"]?([^'")]+)['"]?\s*\)/gi)].map((match) => match[1])) ]).filter((value): value is string => !!value).map((value) => [value, { id: 0, url: "https://upload.invalid/" }]));
+  refuseIfNeeded(applyElementorEdits({ html: input.html, documents, values: input.values, media: fake }));
+  const media = await uploadPictures(input.site, input.connection, input.values);
+  const applied = applyElementorEdits({ html: input.html, documents, values: input.values, media });
+  refuseIfNeeded(applied);
+  if (!applied.changedDocuments.length) throw new WebsiteError(400, "Elementor already says all of this. Nothing to publish.");
+  await beforeWebsiteExternalAction();
+  let written: RestPost | null = null;
+  for (const id of applied.changedDocuments) {
+    const document = applied.documents.get(id)!;
+    const route = document.kind === "page" ? `/wp/v2/${input.source.type === "page" ? "pages" : "posts"}/${id}` : `/wp/v2/elementor_library/${id}`;
+    const saved = (await connectedCall<RestPost>(input.connection, route, { method: "POST", json: { meta: { _elementor_data: JSON.stringify(document.data) } } })).data;
+    if (document.kind === "page") written = saved;
+  }
+  await clearElementorCache(input.connection);
+  forgetSource(input.site, input.page);
+  invalidateSource(input.site.id, input.page.filePath);
+  return { modified: written?.modified_gmt ?? null, link: written?.link ?? input.source.link, changes: applied.changes, changed: applied.changed };
+}
+
+function refuseIfNeeded(result: Pick<ReturnType<typeof applyWordPressEdits>, "unmappable" | "problems">) {
   if (result.unmappable.length) {
     throw Object.assign(
       new WebsiteError(400, `Some of these changes can only be made in WordPress, so nothing was published: ${[...new Set(result.unmappable.map((entry) => entry.message))].join(" ")}`),

@@ -44,6 +44,8 @@ import {
   type SiteField,
 } from "./website/index.js";
 import { pageSource, pageUrl, publishPages, siteStylesheets, WebsiteError } from "./website/site.js";
+import { sourceManagedFields } from "./websiteFrameworkView.js";
+import { INTERACTION_PROPERTIES } from "../shared/websiteInteraction.js";
 import { generateSmartPageSeo, registerWebsiteSeoRoutes } from "./websiteSeo.js";
 import {
   SECTION_TEMPLATES,
@@ -964,6 +966,10 @@ const AI_AGENT_SYSTEM_DOCTRINE = `You are the Website Builder Agent for a connec
 - Page copywriting, headings, paragraphs, buttons, rich text content, and labels
 - Layout sections: adding, generating, removing, duplicating, or reordering page blocks and sections
 - Modern styling & theme tokens: colors, backgrounds, background images, typography (font family, font size, weight, line-height, alignment), borders, padding, shadows, opacity
+- Per screen size: a style for tablets (set_tablet_style) or phones (set_mobile_style) only; set_style is every screen
+- Hover: how an element looks while the mouse is over it (set_hover_style) — text colour, background colour, border colour, shadow, opacity, a movement (transform) and underline (text-decoration). Nothing else changes on hover in the editor, so nothing else does here
+- Pictures: replacing an image or a section's background picture (set_image)
+- Fields marked readOnly cannot be changed here (their note says why and where to change them); never plan a change to one, and say so instead
 - Media and asset links: replacing image sources or hero backdrops with user-attached files, and linking buttons to PDFs/documents
 - Cross-page consistency: updating global brand fonts, brand colors, business phone numbers, and contact emails across all pages
 - SEO metadata: page titles, meta descriptions, OpenGraph tags
@@ -997,7 +1003,7 @@ const aiPlanSchema = z.object({
     pageId: z.string(),
     changes: z.array(z.object({
       fieldId: z.string(),
-      operation: z.enum(["replace_text", "set_link", "set_alt", "set_style", "set_variant", "set_new_tab"]),
+      operation: z.enum(["replace_text", "set_link", "set_alt", "set_style", "set_tablet_style", "set_mobile_style", "set_hover_style", "set_image", "set_variant", "set_new_tab"]),
       property: z.string().nullable().default(null),
       value: z.string(),
     })),
@@ -1085,9 +1091,9 @@ export const AI_PLAN_JSON_SCHEMA = {
               required: ["fieldId", "operation", "property", "value"],
               properties: {
                 fieldId: { type: "string" },
-                operation: { type: "string", enum: ["replace_text", "set_link", "set_alt", "set_style", "set_variant", "set_new_tab"] },
-                property: { type: "string", description: "For set_style, the one CSS property, such as font-size. Otherwise an empty string." },
-                value: { type: "string", description: "The new text, address, description, CSS value, variant, or true/false for set_new_tab." },
+                operation: { type: "string", enum: ["replace_text", "set_link", "set_alt", "set_style", "set_tablet_style", "set_mobile_style", "set_hover_style", "set_image", "set_variant", "set_new_tab"] },
+                property: { type: "string", description: "For set_style, set_tablet_style, set_mobile_style and set_hover_style, the one CSS property, such as font-size. Otherwise an empty string." },
+                value: { type: "string", description: "The new text, address, description, CSS value, variant, true/false for set_new_tab, or for set_image the picture's address (an attachment url, a picture already on the site, or an https address)." },
               },
             },
           },
@@ -1127,7 +1133,7 @@ export function planFromModel(raw: unknown): AiPlan {
       .map((page: any) => ({
         pageId: text(page.pageId),
         changes: page.changes
-          .filter((change: any) => change && text(change.fieldId) && ["replace_text", "set_link", "set_alt", "set_style", "set_variant", "set_new_tab"].includes(change.operation))
+          .filter((change: any) => change && text(change.fieldId) && ["replace_text", "set_link", "set_alt", "set_style", "set_tablet_style", "set_mobile_style", "set_hover_style", "set_image", "set_variant", "set_new_tab"].includes(change.operation))
           .map((change: any) => ({ fieldId: text(change.fieldId), operation: change.operation, property: text(change.property) || null, value: text(change.value) })),
       })),
   };
@@ -1361,6 +1367,16 @@ export async function planAgentInstruction(
   // Instant High-Fidelity Section Generation (Testimonials, Pricing, FAQ, Features, CTA, Contact, Team, Hero)
   // --------------------------------------------------------------------------
   const sectionTemplateKey = matchSectionTemplateRequest(lower);
+  if (sectionTemplateKey && currentPage && isWordPressSite(site)) {
+    // The editor cannot write a new section into WordPress either: there is
+    // no block or Elementor element for it to become, so it would vanish on publish.
+    return enrichPlanWithApprovalMetadata({
+      explanation: `A new ${SECTION_TEMPLATES[sectionTemplateKey].label.toLowerCase()} section has to be added in WordPress (or Elementor) itself. Once it is there, I can change its words, pictures, styling and order from here.`,
+      actionKind: "clarify",
+      summary: { totalPages: livePages.length, affectedPages: 0, totalChanges: 0 },
+      pages: [],
+    });
+  }
   if (sectionTemplateKey && currentPage) {
     try {
       const template = SECTION_TEMPLATES[sectionTemplateKey];
@@ -2131,7 +2147,7 @@ export async function planAgentInstruction(
   const overview = await scanSiteOverview(site, pages);
 
   // Include active page fields so the AI model can target any element on the open canvas
-  let currentPageFieldsSummary: Array<{ id: string; label: string; kind: string; tag: string; value: string; href?: string; style?: string; canRemove?: boolean; canDuplicate?: boolean }> = [];
+  let currentPageFieldsSummary: Array<{ id: string; label: string; kind: string; tag: string; value: string; href?: string; style?: string; responsive?: { tablet?: string; mobile?: string }; canRemove?: boolean; canDuplicate?: boolean; readOnly?: string }> = [];
   let pageUnreadable: string | null = null;
   if (currentPage) {
     try {
@@ -2142,7 +2158,10 @@ export async function planAgentInstruction(
       };
       const html = editingSource(source.html, existingDraft);
       const { fields } = discoverFields(html);
-      const controls = structureControls(html);
+      // What the editor locks, the agent may not touch: a WordPress or
+      // Elementor page, or a framework page traced to its source files.
+      const managed = source.sourceFile ? await sourceManagedFields(site, currentPage, source.html).catch(() => null) : null;
+      const controls = managed && !managed.structure ? {} : structureControls(html);
       // The selected element first, then the rest of the page. This was the
       // first eighty fields only, and a homepage has two hundred: select
       // anything below the fold, say "make this bold", and the model was
@@ -2157,8 +2176,10 @@ export async function planAgentInstruction(
         value: (f.value ?? "").slice(0, f.id === selectedId ? 600 : 120),
         ...(f.href !== undefined ? { href: f.href } : {}),
         ...(f.style ? { style: f.style } : {}),
+        ...(f.responsive?.tablet || f.responsive?.mobile ? { responsive: f.responsive } : {}),
         ...(controls[f.id]?.remove ? { canRemove: true } : {}),
         ...(controls[f.id]?.duplicate ? { canDuplicate: true } : {}),
+        ...(managed && !managed.writable.has(f.id) ? { readOnly: managed.notes.get(f.id) ?? "This comes from the site's code, not from text in it." } : {}),
       }));
     } catch (err) {
       // Said in the log: a model shown no fields can only answer with nothing,
@@ -2298,6 +2319,7 @@ export async function planAgentInstruction(
         const html = editingSource(source.html, existingDraft);
         const { fields } = discoverFields(html);
         const byId = new Map(fields.map(f => [f.id, f]));
+        const managed = source.sourceFile ? await sourceManagedFields(site, page, source.html).catch(() => null) : null;
 
         const pageChanges: SiteAgentPagePlan["changes"] = [];
         const pageEdits: Record<string, AgentFieldEdit> = {};
@@ -2305,6 +2327,7 @@ export async function planAgentInstruction(
         for (const ch of aiPage.changes) {
           const field = byId.get(ch.fieldId);
           if (!field) { dropped.push(`${ch.fieldId} is not an element on ${page.title}`); continue; }
+          if (managed && !managed.writable.has(field.id)) { dropped.push(managed.notes.get(field.id) ?? `${field.label} cannot be changed from the editor`); continue; }
           const prevEdit = pageEdits[field.id] ?? (existingDraft[field.id] ? editableValues(existingDraft[field.id]) : {});
           const nextEdit: AgentFieldEdit = { ...prevEdit };
 
@@ -2323,6 +2346,45 @@ export async function planAgentInstruction(
           } else if (ch.operation === "set_new_tab") {
             nextEdit.newTab = ch.value === "true";
             pageChanges.push({ fieldId: field.id, label: field.label, property: "newTab", before: String(Boolean(field.newTab)), after: String(nextEdit.newTab) });
+          } else if (ch.operation === "set_image") {
+            if (field.kind !== "image" && field.kind !== "background" && field.kind !== "container") { dropped.push(`${field.label} is not a picture`); continue; }
+            const address = ch.value.trim();
+            if (!/^(https:\/\/|\/|assets\/dw\/)/.test(address)) { dropped.push(`${address} is not a picture the editor can use`); continue; }
+            if (field.kind === "container") {
+              const decls = parseCssDeclarations(nextEdit.style ?? field.style);
+              const beforeVal = decls["background-image"] ?? "None";
+              decls["background-image"] = `url('${address.replace(/['"\\()]/g, "")}')`;
+              const sanitized = safeStyle(serializeCssDeclarations(decls), field.style);
+              if (!sanitized.includes("background-image")) { dropped.push(`${address} cannot be used as a background`); continue; }
+              nextEdit.style = sanitized;
+              pageChanges.push({ fieldId: field.id, label: field.label, property: "background-image", before: beforeVal, after: address });
+            } else {
+              nextEdit.value = address;
+              pageChanges.push({ fieldId: field.id, label: field.label, property: "image", before: field.value, after: address });
+            }
+          } else if ((ch.operation === "set_tablet_style" || ch.operation === "set_mobile_style") && ch.property) {
+            const size = ch.operation === "set_tablet_style" ? "tablet" : "mobile";
+            const current = (nextEdit.responsive ?? field.responsive ?? {}) as { tablet?: string; mobile?: string };
+            const decls = parseCssDeclarations(current[size]);
+            const beforeVal = decls[ch.property.toLowerCase()] ?? "As on desktop";
+            decls[ch.property.toLowerCase()] = ch.value;
+            const sanitized = safeStyle(serializeCssDeclarations(decls), field.responsive?.[size] ?? "");
+            if (sanitized) {
+              nextEdit.responsive = { ...current, [size]: sanitized };
+              pageChanges.push({ fieldId: field.id, label: field.label, property: `${ch.property} (${size === "tablet" ? "tablets" : "phones"})`, before: beforeVal, after: ch.value });
+            } else {
+              dropped.push(`${ch.property}: ${ch.value} is not a style the editor can set on ${field.label}`);
+            }
+          } else if (ch.operation === "set_hover_style" && ch.property) {
+            const property = ch.property.toLowerCase();
+            if (!(INTERACTION_PROPERTIES as readonly string[]).includes(property)) { dropped.push(`${property} does not change on hover in the editor`); continue; }
+            const decls = parseCssDeclarations(nextEdit.style ?? field.style);
+            const beforeVal = decls[`--dw-hover-${property}`] ?? "As designed";
+            if (ch.value && ch.value !== "none") decls[`--dw-hover-${property}`] = ch.value;
+            else delete decls[`--dw-hover-${property}`];
+            const sanitized = safeStyle(serializeCssDeclarations(decls), field.style);
+            nextEdit.style = sanitized;
+            pageChanges.push({ fieldId: field.id, label: field.label, property: `${property} on hover`, before: beforeVal, after: ch.value || "As designed" });
           } else if (ch.operation === "set_style" && ch.property) {
             const decls = parseCssDeclarations(nextEdit.style ?? field.style);
             const beforeVal = decls[ch.property.toLowerCase()] ?? "Default";
@@ -2382,7 +2444,9 @@ export async function planAgentInstruction(
         ? pageUnreadable
           ? `I couldn't read this page to change it (${pageUnreadable}). Nothing was changed. Try again in a moment, or ask a developer below.`
           : `I worked out a change but couldn't apply it to this page: ${dropped.slice(0, 3).join("; ")}. Nothing was changed. Select the element you mean and ask again, or ask a developer below.`
-        : aiData.explanation || (totalChanges === 0 ? "I couldn't find anything on this page to change for that. Select the element you mean and ask again, or ask a developer below." : "Prepared change plan for your website.");
+        : (aiData.explanation || (totalChanges === 0 ? "I couldn't find anything on this page to change for that. Select the element you mean and ask again, or ask a developer below." : "Prepared change plan for your website.")) +
+          // Part of a plan the editor cannot do is said, not left out of a "Done".
+          (totalChanges > 0 && dropped.length ? ` Not changed: ${[...new Set(dropped.map((reason) => reason.replace(/\.$/, "")))].slice(0, 3).join("; ")}.` : "");
 
     return enrichPlanWithApprovalMetadata({
       explanation,

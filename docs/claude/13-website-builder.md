@@ -1680,7 +1680,8 @@ The customer guide is `website-builder-setup.html#wordpress`.
   this page's own id.** Elementor, Beaver Builder, Bricks, Oxygen, Brizy, Thrive
   and SiteOrigin write a fallback copy into `post_content` that nobody renders,
   so "editing" it would publish a change no visitor ever sees. They open
-  read-only with one sentence saying so. An Elementor *header* on a
+  read-only with one sentence saying so — **except Elementor, which since 22
+  Oct 2026 is edited through its own data (below).** An Elementor *header* on a
   block-editor page does not make the page Elementor's — the marker must carry
   the page's own id. Blocks, the classic editor, Divi, WPBakery and Avada keep
   their words in the content and are editable.
@@ -1726,8 +1727,8 @@ The customer guide is `website-builder-setup.html#wordpress`.
   stale one serves the old picture to every phone. A rollback can restore the
   old address but not the old attachment id, so the id is dropped rather than
   left pointing at the wrong file.
-- **What goes to WordPress instead, with a sentence:** styling (the Style tab
-  says so before the first control), layout and structure, the SEO editor (an
+- **What goes to WordPress instead, with a sentence:** on a block or classic
+  page, styling (the Style tab says so before the first control) and layout; the SEO editor (an
   SEO plugin owns the `<head>`), shared elements (a synced pattern or template
   part is WordPress's), the agent's Publish All, and theme parts — menus,
   footers, widgets.
@@ -1760,10 +1761,84 @@ The customer guide is `website-builder-setup.html#wordpress`.
   Elementor 4.3.5 on SQLite, which is the way to look at one of these again.
 - **Not built yet:** posts (the plumbing takes `wordpress/posts/<id>`; the scan
   lists pages only), drafts and private pages (they have no public page to
-  open), and the meta-storing builders. Elementor 4.3 ships an official MCP
-  that edits Atomic (V4) pages only, with classic widgets promised for Q4 2026;
-  that, or a small companion plugin exposing `_elementor_data`, is the next
-  step for Elementor.
+  open), and the meta-storing builders other than Elementor.
+
+### Elementor pages (22 Oct 2026)
+
+No plugin. Elementor registers `_elementor_data` as REST meta
+(`modules/wp-rest/classes/elementor-post-meta.php`), so the page's tree is read
+and written through `/wp/v2/pages/:id` with the Application Password, and
+templates (header, footer, saved sections, global widgets) through
+`/wp/v2/elementor_library/:id`, which is **Administrator-only** — an Editor
+account gets the page and a sentence on every template field. After a write
+the CSS cache is cleared by toggling `elementor_element_cache_ttl` through
+`/elementor/v1/settings`, also admin-only; without it the old styling is served
+until the cache expires. `services/website/elementor.ts` is the whole mapping
+and needs no network; `checks/websiteElementor.ts` (14) runs it on the HTML and
+trees Elementor 4.3.5 actually produces.
+
+- **Nothing Elementor-specific in the editor.** The live page is the editing
+  surface as for every site; each field is traced to its element by `data-id`
+  (classic) or `data-interaction-id` (V4, Atomic), and to its document by the
+  nearest `data-elementor-id`. A `elementor-global-N` class follows the global
+  widget to its template. Outside every document is the theme: read-only.
+- **Words are found, not assumed.** The shown words must occur exactly once
+  among the element's string settings (configuration keys excluded by
+  `NOT_WORDS`), peeling one balanced wrapper at a time — a button's two spans,
+  a text-editor's `<p>`. A dynamic tag's key is refused with where to change it.
+  V4 values are typed (`{$$type, value}`) and are written inside the type.
+- **Styles map onto Elementor's own controls, not custom CSS.** Classic: a
+  table per element kind (`v3Slots`) — container/section/column box keys,
+  `_`-prefixed widget wrapper keys, heading/button/text/image typography and
+  colour, the button and heading hover keys; `_tablet`/`_mobile` suffixes for
+  screen sizes; a value set here deletes `__globals__[key]` so it stops
+  following the kit colour. V4: typed props in the element's local style
+  variant per `{breakpoint, state}` — **not** `custom_css`, which Elementor
+  strips without Pro. A style with no place in either is refused, whole.
+- **Background pictures and swapped images go into the media library first**,
+  the same `uploadPictures` as a block page; a `url()` in a style is uploaded
+  too and rewritten to WordPress's copy (`withUploadedBackgrounds`).
+- **Layout is replayed by id.** Delete, duplicate and move are the editor's own
+  layout buttons; `applyLayout` compares each parent's child order between the
+  original page and the layout snapshot and splices the tree (a duplicate is a
+  deep clone with fresh ids and its V4 local styles renamed). **A document's top
+  level is keyed `@<post id>`**: keyed `null`, a page that also rendered a header
+  template merged both top levels and refused every layout change as "moving
+  between a template and the page". Cross-document moves are refused.
+- **A layout draft keeps no list of the edits made before it**, so
+  `foldEdits` compares snapshot and original field by field, keyed
+  `elementId#occurrence:group:ordinal`. Occurrence is by element **start
+  offset** — `locator` parses the page separately, and keying by node object
+  made every copy `#0`, so a copy's fields read as new ones. **A field with no
+  original that is not a copy is new content** (a section added by the agent or
+  pasted into the document) and refuses the publish: it has no element to
+  become and would otherwise vanish on publish in silence.
+
+### Hover from the site's own CSS (22 Oct 2026)
+
+`GET /pages/:id/hover-rules` returns every `:hover` rule of the page's inline
+`<style>`s, its same-host stylesheets (`pageStyleTexts`, relative or — as
+WordPress writes them — absolute, up to twelve) and the Tailwind CSS built for
+its `hover:` classes, with `:hover` stripped from the selector
+(`services/website/hover.ts`). The Hover view matches them against the selected
+element with `element.matches` in the frame (it has the element; the frame
+cannot read another origin's `cssRules`), lists what the site already does
+under "On this website already", shows those values as the controls'
+placeholders, and **Edit** copies one into its `--dw-hover-*` control. Elementor
+hover settings arrive this way for free — they are rules in `post-<id>.css` —
+and an edit made there publishes back into Elementor's hover keys.
+
+### The agent does what the editor does (22 Oct 2026)
+
+The planner's operations gained `set_tablet_style`, `set_mobile_style`,
+`set_hover_style` (only `INTERACTION_PROPERTIES`, the Hover view's set) and
+`set_image` (https, site-relative or `assets/dw/`; a container's becomes a
+background). On a source-managed page — WordPress, Elementor, a framework —
+the fields `sourceManagedFields` locks are sent to the model as `readOnly`
+with their note and dropped if planned anyway; layout controls are withheld
+where the editor withholds them; a section template on a WordPress site is
+answered with a sentence instead of a draft. Anything dropped from a plan that
+partly applied is named after the model's own explanation ("Not changed: …").
 
 `checks/websiteWordPress.ts` (27) runs the mapper on strings — half of it
 negatives, each asserting the content came back byte-identical — and then the

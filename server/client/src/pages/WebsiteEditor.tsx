@@ -2125,9 +2125,11 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     ? `This is part of “${pickedShared.name}”, shared across ${pickedShared.linkedPages} pages. Its tag and attributes are changed in the page's code so every copy stays the same; its words, link and style still change here for all of them.`
     // A WordPress page's markup is WordPress's: blocks, the theme and the
     // builder write it, and only the words, links and pictures come back here.
-    : page.data?.builtFrom?.filePath.startsWith("wordpress/")
-      ? "This is a WordPress page, so its layout and markup are changed in WordPress. Its words, links and pictures change here."
-      : undefined;
+    : page.data?.builtFrom?.builder === "elementor"
+      ? "This is an Elementor page: its tag and attributes are set in Elementor. Its words, links, pictures, styling and place in the layout change here."
+      : page.data?.builtFrom?.filePath.startsWith("wordpress/")
+        ? "This is a WordPress page, so its layout and markup are changed in WordPress. Its words, links and pictures change here."
+        : undefined;
   /** What a wider screen hands down to the one being edited: desktop to tablet, both to phone. */
   const inheritedStyle = !picked || device === "desktop"
     ? ""
@@ -3539,7 +3541,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     )}
                     {/* Said before the first control, not at the publish: a
                         WordPress page's styling is its blocks' and its theme's. */}
-                    {page.data?.builtFrom?.filePath.startsWith("wordpress/") && (
+                    {page.data?.builtFrom?.filePath.startsWith("wordpress/") && page.data.builtFrom.builder !== "elementor" && (
                       <p className="dx-note warn">
                         This is a WordPress page, so styling changes made here can't be published to it yet. Change colours, sizes and spacing in WordPress; words, links and pictures publish from here.
                       </p>
@@ -3566,6 +3568,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   )}
                   {inspectorTab === "style" && styleState === "hover" && (
                     <WebsiteHoverPanel
+                      pageId={pageId}
                       element={pickedElement}
                       style={edits[picked.id]?.style ?? picked.style ?? ""}
                       readOnly={readOnly}

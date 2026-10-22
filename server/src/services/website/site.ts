@@ -82,6 +82,23 @@ export type PageSource = {
   detail?: string;
 };
 
+/**
+ * A WordPress page as the editor compares it: the same bytes on every request.
+ *
+ * Plugins print security tokens (nonces) into a page — a form's hidden field,
+ * a script's settings — and they can change between two requests for the same
+ * page. A layout draft is tied to a hash of the page it was made on, so a
+ * fresh token read as "the page changed" and refused every layout publish. The
+ * tokens are blanked in this copy only; nothing published comes from it.
+ */
+export function steadyWordPressHtml(html: string): string {
+  return html
+    .replace(/(["']?[\w-]*nonce["']?\s*[:=]\s*["'])[a-f0-9]{8,12}(["'])/gi, "$1nonce$2")
+    .replace(/(name=["']_wpnonce["'][^>]*value=["'])[a-f0-9]{8,12}/gi, "$1nonce")
+    .replace(/(value=["'])[a-f0-9]{8,12}(["'][^>]*name=["']_wpnonce["'])/gi, "$1nonce$2")
+    .replace(/([?&;](?:amp;)?_wpnonce=)[a-f0-9]{8,12}/gi, "$1nonce");
+}
+
 /** A page row that is a WordPress post rather than a file: `wordpress/pages/42`. */
 const WORDPRESS_PAGE = /^wordpress\/(pages|posts)\/\d{1,12}$/;
 
@@ -169,7 +186,7 @@ async function readPageSource(site: Site, page: SitePage, options: { fresh?: boo
     // A fresh read is the one a publish decides on, so it asks past any page
     // cache in front of the site: a caching plugin or CDN keys on the whole URL.
     const address = options.fresh ? `${pageUrl(site, page)}${pageUrl(site, page).includes("?") ? "&" : "?"}dakyx-fresh=${Date.now().toString(36)}` : pageUrl(site, page);
-    const html = await fetchLive(address);
+    const html = steadyWordPressHtml(await fetchLive(address));
     writeCache(key, { html, from: "live site" }, generation);
     return { html, from: "live site", ...wordpress };
   }
@@ -256,6 +273,41 @@ export async function siteStylesheets(site: Site, page: SitePage, html: string, 
   for (const href of linkedStylesheetHrefs(html, limit)) {
     const css = await readStylesheet(site, page, href).catch(() => null);
     if (css) sheets.push({ href, css });
+  }
+  return sheets;
+}
+
+/**
+ * Every stylesheet that styles the page as a visitor sees it: its `<style>`
+ * blocks, and the files it links from its own host — written relative or, as
+ * WordPress always writes them, absolute. Other hosts (font and icon CDNs) are
+ * not this site's design. For reading what an element does on hover.
+ */
+export async function pageStyleTexts(site: Site, page: SitePage, html: string, limit = 12): Promise<Array<{ href: string; css: string }>> {
+  const sheets: Array<{ href: string; css: string }> = [];
+  for (const match of html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)) sheets.push({ href: "inline", css: match[1]! });
+  const base = new URL(pageUrl(site, page));
+  const hrefs = [...html.matchAll(/<link\b[^>]*>/gi)]
+    .filter((tag) => /rel\s*=\s*["']?stylesheet/i.test(tag[0]))
+    .map((tag) => decodeEntities(/href\s*=\s*["']([^"']+)["']/i.exec(tag[0])?.[1] ?? ""))
+    .filter(Boolean)
+    .slice(0, limit);
+  for (const href of hrefs) {
+    const relative = !/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith("//");
+    let css: string | null = null;
+    if (relative && site.sourceKind !== "wordpress") css = await readStylesheet(site, page, href).catch(() => null);
+    else {
+      const url = (() => { try { return new URL(href, base); } catch { return null; } })();
+      if (!url || url.host !== base.host || !/^https?:$/.test(url.protocol)) continue;
+      const key = sourceKey({ siteId: site.id, repo: null, branch: "", filePath: `live-css:${url.href}` });
+      const generation = sourceGeneration();
+      css = readCache(key)?.html ?? null;
+      if (css === null) {
+        css = await fetchLive(url.href).catch(() => null);
+        if (css !== null) writeCache(key, { html: css, from: "live site" }, generation);
+      }
+    }
+    if (css) sheets.push({ href, css: css.slice(0, 2_000_000) });
   }
   return sheets;
 }

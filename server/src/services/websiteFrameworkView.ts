@@ -134,7 +134,7 @@ export function matchSourceToLive(input: { source: string; filePath: string; liv
  * Saying which on the field itself is the difference between a person being
  * told now and being told at the publish, when they have already done the work.
  */
-export async function sourceManagedFields(site: Site, page: SitePage, html: string): Promise<{ writable: Set<string>; notes: Map<string, string>; nameable?: Set<string>; failure?: string } | null> {
+export async function sourceManagedFields(site: Site, page: SitePage, html: string): Promise<{ writable: Set<string>; notes: Map<string, string>; nameable?: Set<string>; failure?: string; structure?: boolean; builder?: string } | null> {
   // A WordPress page traces its fields to the page's stored content instead of
   // to repository files, and answers the same three things. See websiteWordPress.ts.
   if (isWordPressSite(site)) return wordpressManagedFields(site, page, html);

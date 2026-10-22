@@ -1,5 +1,7 @@
-import { useEffect } from "react";
-import { interactionCss } from "../../../src/shared/websiteInteraction";
+import { useEffect, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../lib/api";
+import { INTERACTION_PROPERTIES, interactionCss } from "../../../src/shared/websiteInteraction";
 import { ColorCodeInput, parseStyle, writeStyle } from "./InspectorControls";
 import { Acc, Field, SHADOW_PRESETS, TILE_ICON, Tiles, Toggle, type TileOption } from "./InspectorDesign";
 
@@ -30,8 +32,47 @@ const SPEEDS: [string, string][] = [
   ["Slow (400 ms)", "all 400ms ease"],
 ];
 
-export function WebsiteHoverPanel({ element, style, readOnly, onChange }: { element: HTMLElement | null; style: string; readOnly: boolean; onChange: (style: string) => void }) {
+type HoverRule = { selector: string; hover: string; self: boolean; media?: string; declarations: Array<[string, string]> };
+
+/** The properties a Hover control writes, and so the site's own values it can show and take over. */
+const EDITABLE: readonly string[] = INTERACTION_PROPERTIES;
+
+/**
+ * What the site's own CSS already does when this element is hovered, nearest
+ * rule last so a later declaration wins as it does in the browser. A rule for
+ * hovering something around the element (`.card:hover .title`) counts too —
+ * it is still this element that changes.
+ */
+function siteHover(element: HTMLElement | null, rules: HoverRule[]): { found: Map<string, { value: string; self: boolean }>; count: number } {
+  const found = new Map<string, { value: string; self: boolean }>();
+  let count = 0;
+  if (!element) return { found, count };
+  const view = element.ownerDocument.defaultView;
+  for (const rule of rules) {
+    if (rule.media && view && !view.matchMedia(rule.media).matches) continue;
+    let matches = false;
+    try { matches = element.matches(rule.selector); } catch { continue; }
+    if (!matches) continue;
+    count += 1;
+    for (const [property, value] of rule.declarations) {
+      const name = property === "background" && !/url\(|gradient/i.test(value) ? "background-color" : property === "text-decoration-line" ? "text-decoration" : property;
+      if (name.startsWith("--") || name === "transition" || name.startsWith("transition-")) continue;
+      found.set(name, { value: value.replace(/\s*!important$/, ""), self: rule.self });
+    }
+  }
+  return { found, count };
+}
+
+export function WebsiteHoverPanel({ pageId, element, style, readOnly, onChange }: { pageId?: string; element: HTMLElement | null; style: string; readOnly: boolean; onChange: (style: string) => void }) {
   const map = parseStyle(style);
+  const rules = useQuery({
+    queryKey: ["website", "hover-rules", pageId],
+    enabled: !!pageId,
+    staleTime: 60_000,
+    queryFn: ({ signal }) => api.get<{ rules: HoverRule[] }>(`/website/pages/${pageId}/hover-rules`, signal),
+  });
+  const site = useMemo(() => siteHover(element, rules.data?.rules ?? []), [element, rules.data]);
+  const designed = (property: string) => site.found.get(property)?.value ?? "As designed";
   const write = (patch: Record<string, string | null>) => {
     const next = { ...map };
     for (const [key, value] of Object.entries(patch)) {
@@ -61,6 +102,22 @@ export function WebsiteHoverPanel({ element, style, readOnly, onChange }: { elem
   return (
     <fieldset disabled={readOnly}>
       <div className="dx-statebar">{TILE_ICON.cursor}<span>Styling <b>hover</b>: every change below shows when the mouse is over it</span></div>
+      {site.found.size > 0 && (
+        <Acc title="On this website already" summary={`${site.found.size} change${site.found.size === 1 ? "" : "s"}`} open>
+          <p className="dx-hint">What the site's own styling does on hover. Change any of it below — your value replaces the site's while the mouse is over it, and the site's file is left as it was.</p>
+          <ul className="grid gap-1.5">
+            {[...site.found].map(([property, { value, self }]) => (
+              <li key={property} className="dx-crow">
+                <span title={self ? "When this element is hovered" : "When something around this element is hovered"}>{property}{self ? "" : " ·"}</span>
+                <code className="dx-mono min-w-0 flex-1 truncate text-right">{value}</code>
+                {EDITABLE.includes(property) && !map[`--dw-hover-${property}`] && (
+                  <button type="button" className="dx-btn dx-ghost" disabled={readOnly} onClick={() => write({ [`--dw-hover-${property}`]: value })}>Edit</button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </Acc>
+      )}
       <Acc title="Hover options" summary={MOVES.find((option) => option.value === move)?.label} open>
         <Field label="Movement">
           <Tiles label="Hover movement" options={MOVES} value={move} onChange={(value) => write({ "--dw-hover-transform": MOVES.find((option) => option.value === value)?.transform ?? null })} />
@@ -73,9 +130,9 @@ export function WebsiteHoverPanel({ element, style, readOnly, onChange }: { elem
         </Field>
       </Acc>
       <Acc title="Colours" summary={map["--dw-hover-color"] || map["--dw-hover-background-color"] || "As designed"} open>
-        <div className="dx-crow"><span>Text colour</span><ColorCodeInput label="Hover text colour" value={map["--dw-hover-color"] ?? ""} placeholder="As designed" disabled={readOnly} onChange={(value) => write({ "--dw-hover-color": value || null })} /></div>
-        <div className="dx-crow"><span>Background</span><ColorCodeInput label="Hover background" value={map["--dw-hover-background-color"] ?? ""} placeholder="As designed" disabled={readOnly} onChange={(value) => write({ "--dw-hover-background-color": value || null })} /></div>
-        <div className="dx-crow"><span>Border</span><ColorCodeInput label="Hover border colour" value={map["--dw-hover-border-color"] ?? ""} placeholder="As designed" disabled={readOnly} onChange={(value) => write({ "--dw-hover-border-color": value || null })} /></div>
+        <div className="dx-crow"><span>Text colour</span><ColorCodeInput label="Hover text colour" value={map["--dw-hover-color"] ?? ""} placeholder={designed("color")} disabled={readOnly} onChange={(value) => write({ "--dw-hover-color": value || null })} /></div>
+        <div className="dx-crow"><span>Background</span><ColorCodeInput label="Hover background" value={map["--dw-hover-background-color"] ?? ""} placeholder={designed("background-color")} disabled={readOnly} onChange={(value) => write({ "--dw-hover-background-color": value || null })} /></div>
+        <div className="dx-crow"><span>Border</span><ColorCodeInput label="Hover border colour" value={map["--dw-hover-border-color"] ?? ""} placeholder={designed("border-color")} disabled={readOnly} onChange={(value) => write({ "--dw-hover-border-color": value || null })} /></div>
       </Acc>
       <Acc title="Effects" summary={SHADOW_PRESETS.find((option) => option.value === shadow)?.label ?? "Custom"} open>
         <Field label="Shadow">

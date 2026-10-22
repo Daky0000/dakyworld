@@ -221,9 +221,10 @@ export function ConnectWordPress({ guide, onConnected }: { guide?: string; onCon
       </div>
 
       <p className="text-xs leading-relaxed text-muted">
-        You can edit words, links and pictures in a page’s content — made with the block editor, the classic editor, Divi,
-        WPBakery or Avada. Menus, footers and widgets belong to your theme and stay in WordPress. Pages built with
-        Elementor, Beaver Builder, Bricks or Oxygen open read-only for now.
+        Elementor pages (classic and V4) can be edited in full — words, links, pictures, styling, hover and layout,
+        headers and footers included with an Administrator account. On pages made with the block editor, the classic
+        editor, Divi, WPBakery or Avada you edit words, links and pictures. Pages built with Beaver Builder, Bricks or
+        Oxygen open read-only for now.
       </p>
     </form>
   );

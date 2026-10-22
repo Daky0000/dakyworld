@@ -241,7 +241,7 @@ await check("checkout reads a WordPress homepage as WordPress, and says what an 
   assert.deepEqual(wordpressSiteHint("<html><body>A static page</body></html>"), { wordpress: false, builder: null });
   assert.match(wordpressPurchaseNote("blocks"), /Application Password/);
   assert.doesNotMatch(wordpressPurchaseNote("blocks"), /read-only/);
-  assert.match(wordpressPurchaseNote("elementor"), /Elementor pages open read-only/);
+  assert.match(wordpressPurchaseNote("elementor"), /Elementor, which is edited in full here/);
 });
 
 await check("REST routes are built for both API root shapes", () => {
@@ -516,11 +516,14 @@ try {
     assert.ok(content.includes(">Our story, since 1998<"), "words the first version already had stay as they are");
   });
 
-  await check("an Elementor page opens read-only with the reason, and its publish is refused", async () => {
+  // The stub stores no `_elementor_data`: what an Editor account, or an
+  // Elementor too old to register the meta, sees. `checks/websiteElementor.ts`
+  // covers the page when the data is there.
+  await check("an Elementor page whose data cannot be read opens read-only with the reason, and its publish is refused", async () => {
     const id = await pageId("/studio");
     const opened = await call("GET", `/pages/${id}`);
     assert.equal(opened.status, 200, opened.body.error);
-    assert.match((opened.body as PageView).builtFrom?.problem ?? "", /built with Elementor/);
+    assert.match((opened.body as PageView).builtFrom?.problem ?? "", /Elementor data could not be read/);
     const heading = viewField(opened.body as PageView, "Studio hours");
     const page = await prisma.sitePage.findUniqueOrThrow({ where: { id } });
     await call("PUT", `/pages/${id}/draft`, { ifRevision: page.draftRevision, values: { [heading.id]: { value: "Studio times" } } });
@@ -564,14 +567,12 @@ try {
     assert.equal(paused.publishing!.state, "blocked");
   });
 
-  await check("the compatibility report does not call an Elementor page editable", async () => {
+  await check("the compatibility report counts an Elementor page as editable now", async () => {
     const site = await prisma.site.findUniqueOrThrow({ where: { id: siteId } });
     const pages = await prisma.sitePage.findMany({ where: { siteId } });
     const report = await siteCompatibility(site, pages);
-    const studio = report.pages.find((entry) => entry.path === "/studio")!;
-    assert.equal(studio.grade, "unsupported");
-    assert.notEqual(report.rating, "Excellent");
-    assert.equal(report.pages.find((entry) => entry.path === "/about")!.grade === "unsupported", false);
+    assert.notEqual(report.pages.find((entry) => entry.path === "/studio")!.grade, "unsupported");
+    assert.notEqual(report.pages.find((entry) => entry.path === "/about")!.grade, "unsupported");
   });
 
   await check("the SEO editor and shared publishing send a WordPress site to WordPress", async () => {
