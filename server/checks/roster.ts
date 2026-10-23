@@ -199,7 +199,9 @@ for (const job of WRITER_JOBS) {
     check(false, `${job.key}: ${job.where} does not exist`);
     continue;
   }
-  const reads = source.includes("writerSystem(") || source.includes("resolveBrief(");
+  // `customerWriterSystem` is `writerSystem` without the workforce's live
+  // state, for a customer's website; it resolves the brief the same way.
+  const reads = source.includes("writerSystem(") || source.includes("customerWriterSystem(") || source.includes("resolveBrief(");
   // Named literally, or dispatched by the registry's own mapping. The four
   // email jobs go through `emailJobFor(purpose)` rather than appearing as
   // literals, which is the registry deciding — exactly what this is checking
