@@ -256,6 +256,38 @@ export function injectSectionIntoHtml(html: string, sectionHtml: string): string
   return `${html.slice(0, at)}${sectionHtml.trim()}\n${html.slice(at)}`;
 }
 
+const SECTIONISH = new Set(["section", "article", "header", "footer", "aside"]);
+
+/**
+ * Puts a new section before or after the section an element is in: "add an
+ * FAQ below the pricing" with `anchor` any element of the pricing section.
+ *
+ * The anchor is climbed to the block that is a section of the page — the
+ * outermost `section`, `article`, `header` or `footer` around it, or, on a
+ * page that never wraps its parts, the child of `main` or `body` it is in — so
+ * a new section never lands inside a card because the model named the card's
+ * heading. Null when the anchor is not on the page, for the caller to say so.
+ */
+export function injectSectionNear(html: string, sectionHtml: string, anchorAttrInsert: number, position: "before" | "after"): string | null {
+  const root = parseHtml(html);
+  const nodes = [...walk(root)];
+  const anchor = nodes.find((node) => node.attrInsert === anchorAttrInsert);
+  if (!anchor) return null;
+  const container = (node: ElementNode) => node.tag === "main" || node.tag === "body" || node === root;
+  let block: ElementNode | null = null;
+  for (let node: ElementNode | null | undefined = anchor; node && !container(node); node = node.parent) {
+    if (SECTIONISH.has(node.tag)) block = node;
+  }
+  if (!block) {
+    let node: ElementNode | null | undefined = anchor;
+    while (node?.parent && !container(node.parent)) node = node.parent;
+    block = node && !container(node) ? node : null;
+  }
+  if (!block || block.end <= block.start) return null;
+  const at = position === "before" ? block.start : block.end;
+  return `${html.slice(0, at)}${position === "after" ? "\n" : ""}${sectionHtml.trim()}${position === "before" ? "\n" : ""}${html.slice(at)}`;
+}
+
 export type StarterTemplateKey = "business" | "saas" | "portfolio" | "local" | "blank";
 
 export interface StarterTemplateInfo {

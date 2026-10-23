@@ -3682,6 +3682,8 @@ export type SiteAgentPageChange = {
   property: string;
   before: string;
   after: string;
+  /** Why, in one sentence: the model gives one for each change it plans. */
+  reason?: string;
 };
 
 export type SiteAgentPagePlan = {
@@ -3717,7 +3719,7 @@ export type SiteAgentPermissionMode = "smart" | "full" | "ask";
 
 export type SiteAgentPlan = {
   explanation: string;
-  actionKind: "font" | "color" | "content" | "instruction" | "structure" | "command" | "attachment" | "escalation" | "escalation_offer" | "clarify";
+  actionKind: "font" | "color" | "content" | "instruction" | "structure" | "command" | "attachment" | "escalation" | "escalation_offer" | "clarify" | "review";
   summary: {
     totalPages: number;
     affectedPages: number;
@@ -3747,6 +3749,12 @@ export type SiteAgentPlan = {
   routing?: { level: "simple" | "standard" | "complex"; effort: string; decidedBy: "rules" | "model" | "legacy"; sentence: string };
   /** What the request cost in AI credits: 1 from a free model, 2/3/5 from a paid one by level, 0 with no model. */
   credits?: number;
+  /** A question's answers to tap, each complete enough to send as the next request. */
+  options?: string[];
+  /** Up to three next requests, written as the person would send them. */
+  suggestions?: string[];
+  /** A review's findings, most important first; its fixes are the plan's changes. */
+  findings?: Array<{ title: string; detail: string; severity: "high" | "medium" | "low"; fieldId: string | null }>;
 };
 
 export type WebsiteEscalationReportItem = {

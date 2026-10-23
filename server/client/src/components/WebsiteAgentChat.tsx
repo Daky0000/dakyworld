@@ -30,6 +30,12 @@ type ChatMessage = {
   plan?: SiteAgentPlan | null;
   /** How the router sized the request and which model answered — one quiet line under the reply. */
   routed?: { level: string; sentence: string; model?: string; credits?: number } | null;
+  /** A question's answers, as buttons that send them. */
+  options?: string[];
+  /** Next requests the agent suggests, as buttons that send them. */
+  suggestions?: string[];
+  /** What a review found, most important first. */
+  findings?: SiteAgentPlan["findings"];
   applied?: boolean;
   autoApplied?: boolean;
   publishedLive?: boolean;
@@ -135,6 +141,9 @@ function shouldPlanRequireApproval(plan: SiteAgentPlan, mode: SiteAgentPermissio
     (plan.structuralActions?.length ?? 0) > 0 ||
     Boolean(plan.editorCommand);
   if (!hasActions) return false;
+
+  // A review's fixes are proposals the person asked to see, in every mode.
+  if (plan.actionKind === "review") return true;
 
   // Undo / Redo execute directly unless in strict "ask" mode
   if (plan.editorCommand === "undo" || plan.editorCommand === "redo") {
@@ -282,7 +291,7 @@ export function WebsiteAgentChat({
   const initialWelcomeMessage: ChatMessage = {
     id: "welcome",
     sender: "agent",
-    text: `Hi! I'm your Website Builder Agent for ${siteName}. I can do almost anything on your website:\n\n• Edit any text, heading, button, link, or styling\n• Change fonts, colors, phone numbers & emails across all pages\n• Upload images or files to replace backgrounds, swap photos, or link buttons to downloads\n• Duplicate, reorder, or delete sections & undo/redo changes\n\nTap the shield/bolt icon above anytime to choose whether I should auto-edit everything or ask permission first!`,
+    text: `Hi! I'm the Builder agent for ${siteName}. I can see the whole page you have open:\n\n• Change words, pictures, links and styling, on the element you select or the one you describe\n• Add a ready-made section where you want it, and animate what is on the page\n• Review a page and propose fixes, and change fonts, colours, phone numbers and emails across the site\n• Duplicate, move or delete parts of the page, and undo or redo\n\nWhen I'm not sure what you mean, I'll ask. The shield icon above sets when I ask before changing anything.`,
     timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
   };
 
@@ -676,12 +685,23 @@ export function WebsiteAgentChat({
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
+    // What each reply did, not only what it said: "make it bigger" after a
+    // change means the element changed, and a tapped answer means the question.
+    const said = (m: ChatMessage) => {
+      const changes = m.plan?.pages.flatMap((p) => p.changes.map((c) => `${c.label} ${c.property} → ${c.after}`.slice(0, 80))) ?? [];
+      const blocks = m.plan?.structuralActions?.map((a) => `${a.kind} ${a.label}`) ?? [];
+      return [
+        m.text.slice(0, 500),
+        changes.length || blocks.length ? `[Changed: ${[...blocks, ...changes].slice(0, 6).join("; ")}${m.applied ? "" : " (not applied yet)"}]` : "",
+        m.options?.length ? `[Offered: ${m.options.join(" | ")}]` : "",
+      ].filter(Boolean).join(" ").slice(0, 1_200);
+    };
     const recentHistory = messages
       .filter((m) => m.id !== "welcome")
       .slice(-8)
       .map((m) => ({
         role: (m.sender === "user" ? "user" : "assistant") as "user" | "assistant",
-        text: m.text.slice(0, 600),
+        text: m.sender === "user" ? m.text.slice(0, 600) : said(m),
         // One page's targets, named with their page, so "make it bigger" never
         // reaches for an element on another page.
         targetPageId: m.plan?.pages[0]?.pageId,
@@ -724,6 +744,9 @@ export function WebsiteAgentChat({
         plan: hasActionableChanges ? plan : null,
         routed: plan.routing ? { level: plan.routing.level, sentence: plan.routing.sentence, model: plan.model, credits: plan.credits } : null,
         requiresApproval: needsApproval,
+        options: plan.options?.length ? plan.options : undefined,
+        suggestions: plan.suggestions?.length ? plan.suggestions : undefined,
+        findings: plan.findings?.length ? plan.findings : undefined,
       };
 
       setMessages((prev) => [...prev, agentMsg]);
@@ -753,28 +776,21 @@ export function WebsiteAgentChat({
   const currentModeInfo =
     PERMISSION_MODES.find((m) => m.id === permissionMode) ?? PERMISSION_MODES[1];
 
-  const defaultQuickPrompts = [
-    "Change every font family to Inter",
-    "Change color #08101F to #1E293B",
-    "Update phone number across all pages",
-    "Duplicate selected section",
-  ];
-
-  const attachmentQuickPrompts =
-    pendingAttachments.length > 0
-      ? pendingAttachments.some((a) => a.kind === "image")
-        ? [
-            "Replace my background with this image",
-            "Set hero background to this image",
-            "Replace selected image with this photo",
-            "Let this button link to this file",
-          ]
-        : [
-            "Let this button link to this file",
-            "Link main CTA button to download this file",
-            "Update selected link to this file",
-          ]
-      : defaultQuickPrompts;
+  const attachmentQuickPrompts = pendingAttachments.some((a) => a.kind === "image")
+    ? [
+        "Replace my background with this image",
+        "Set hero background to this image",
+        "Replace selected image with this photo",
+        "Let this button link to this file",
+      ]
+    : [
+        "Let this button link to this file",
+        "Link main CTA button to download this file",
+        "Update selected link to this file",
+      ];
+  // Answer buttons and suggestions belong to the latest reply only: tapping an
+  // old one would answer a question the page has moved on from.
+  const latestAgentId = [...messages].reverse().find((m) => m.sender === "agent")?.id;
 
   return (
     <>
@@ -956,9 +972,9 @@ export function WebsiteAgentChat({
                 <p>Describe it in plain words. I'll make the edit as a draft you can review.</p>
                 <div className="dx-sugg">
                   {[
-                    ["Make the headline bigger", "Style change"],
-                    ["Add a FAQ section", "New section"],
-                    ["Rewrite the intro", "Copywriting"],
+                    ["Review this page", "What to fix first"],
+                    ["Make the hero more inviting", "Words and style"],
+                    ["Make the headings fade in as I scroll", "Animation"],
                     ["Fix my SEO", "Title, description, alt text"],
                   ].map(([prompt, hint]) => (
                     <button key={prompt} type="button" disabled={isPending || !canEdit} onClick={() => void sendMessage(prompt)}>
@@ -1007,6 +1023,22 @@ export function WebsiteAgentChat({
                   )}
 
                   <p className="whitespace-pre-wrap">{msg.text}</p>
+                  {msg.findings && msg.findings.length > 0 && (
+                    <ul className="dx-findings" aria-label="What the review found">
+                      {msg.findings.map((finding, idx) => (
+                        <li key={idx} className={finding.severity}>
+                          <div><b>{finding.title}</b><span>{finding.detail}</span></div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {msg.options && msg.id === latestAgentId && !isPending && (
+                    <div className="dx-chips ask" role="group" aria-label="Answers">
+                      {msg.options.map((option) => (
+                        <button key={option} type="button" disabled={!canEdit} onClick={() => void sendMessage(option)}>{option}</button>
+                      ))}
+                    </div>
+                  )}
                   {msg.routed && (
                     <p className="mt-1.5 text-[11px] leading-snug text-muted" title={msg.routed.sentence}>
                       {msg.routed.level.charAt(0).toUpperCase() + msg.routed.level.slice(1)} task · free models first{msg.routed.model ? ` · answered by ${msg.routed.model}` : ""}
@@ -1023,7 +1055,9 @@ export function WebsiteAgentChat({
                     <div className="mt-3 overflow-hidden rounded-xl border border-line bg-white p-3 text-ink shadow-xs">
                       <div className="flex items-center justify-between border-b border-line pb-2 mb-2 gap-2">
                         <span className="font-semibold text-xs text-blue">
-                          {msg.plan.structuralActions?.length
+                          {msg.plan.actionKind === "review"
+                            ? `Proposed fixes: ${msg.plan.summary.totalChanges}`
+                            : msg.plan.structuralActions?.length
                             ? `Structure Action (${msg.plan.structuralActions.length})`
                             : msg.plan.editorCommand
                               ? `Editor Command: ${msg.plan.editorCommand.toUpperCase()}`
@@ -1107,8 +1141,8 @@ export function WebsiteAgentChat({
                                     `${p.pageId}:${c.fieldId}`,
                                   );
                                   return (
+                                    <div key={i}>
                                     <label
-                                      key={i}
                                       className="flex items-center justify-between text-muted text-[10px] gap-2 cursor-pointer select-none"
                                     >
                                       <span className="flex items-center gap-1.5 min-w-0 truncate">
@@ -1130,6 +1164,8 @@ export function WebsiteAgentChat({
                                         {c.after || "(cleared)"}
                                       </span>
                                     </label>
+                                    {c.reason && <p className="dx-reason">{c.reason}</p>}
+                                    </div>
                                   );
                                 })}
                                 {p.changes.length > 6 && (
@@ -1274,6 +1310,13 @@ export function WebsiteAgentChat({
                         )}
                       </div>
                     )}
+                  {msg.suggestions && msg.id === latestAgentId && !isPending && (
+                    <div className="dx-chips" role="group" aria-label="Suggested next steps">
+                      {msg.suggestions.map((suggestion) => (
+                        <button key={suggestion} type="button" disabled={!canEdit} onClick={() => void sendMessage(suggestion)}>{suggestion}</button>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
               </div>

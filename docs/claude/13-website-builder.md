@@ -785,7 +785,8 @@ changed is where `pageSource` gets its bytes and what a publish writes.
   changing an agent model in Settings changed nothing in the editor.
   `checks/websiteAgentChain.ts` proves the order against stub vendors.
 - **The selected element is always shown to the model**, first, and the page
-  list goes to 220 fields. It was the first 80, so selecting anything lower on a
+  list goes to 220 fields (since 23 Oct 2026 the whole page, as an outline —
+  see "The Builder agent, upgraded"). It was the first 80, so selecting anything lower on a
   long page and saying "make this bold" asked about an element the model never
   saw. A plan whose changes could not be applied now says why instead of
   showing the model's "Done", and every plan logs one `[website agent]` line:
@@ -1993,3 +1994,91 @@ the refused redirect, the page list, the editor's locks, publish, a stale
 refusal, a media upload, a rollback, an Elementor page and the scan. It needs
 `DEV_NO_AUTH` false at import (real sessions) and true afterwards, because the
 outbound guard allows the stub's `127.0.0.1` over HTTP only in development.
+
+### The Builder agent, upgraded (23 Oct 2026)
+
+A review of the agent found the model was not the weak part; the rules in
+front of it and the view of the page it was given were. Run against the DakyX
+homepage with a stand-in model, eight ordinary sentences all went to a rule
+and none to the model — "remove the word 'external' from this heading"
+deleted the heading, "delete the testimonials section" deleted the logo,
+"clear the background colour" deleted the selected heading, "change font to
+Inter" with one heading selected changed 180 elements, the browser title among
+them. The write-up is the "Builder Agent Upgrade" artifact. What changed, and
+why each rule is there:
+
+- **A rule takes a message only when the whole message is one exact command**
+  (`websiteAgentCommands.ts`): delete, duplicate or move *this* (or "the hero
+  heading" with the hero heading selected — every word before the noun must
+  describe the selection); quoted new words for the selected element; one
+  style property on the selection; a font for the selection, or for the site
+  when it says so or nothing is selected; a quoted replace; a hex-for-hex
+  colour swap; a new phone number or email; undo, redo, discard; "add a pricing
+  section" with no word saying where. Anything else — a second clause, a
+  target named only in words, "below the pricing" — is the model's. Unquoted
+  new words are never a rule: "change the heading to sound friendlier" and
+  "change the heading to red" are not words to write. `checks/websiteAgentRouting.ts`
+  holds the eight sentences and the commands that must still be rules.
+- **The page is read once a request** (`workspaceReader`), and with it the
+  editor's locks (`sourceManagedFields`) and layout controls, withheld exactly
+  where the editor withholds them (block-editor WordPress and framework pages).
+  Each rule used to parse the page for itself, and only the model's path asked
+  about locks.
+- **Every plan is screened before anybody sees it** (`screenEdits`,
+  `screenStructure`, `screenPlan`), rules and the three site-wide actions
+  included: the lock, the style sanitiser (a declaration it would drop is
+  said, not silently lost), `validateFieldChange`, and on WordPress the
+  publish's own dry run, `wordpressPublishRefusals` — the same
+  `applyWordPressEdits` / `applyElementorEdits` call a publish begins with. A
+  title the SEO plugin owns used to be saved under "Updated SEO metadata" and
+  then refuse the page's whole publish; now the reply says where to change it.
+  What was left out follows the plan's own explanation as "Not changed: …",
+  with a publish's "…so this was not published" wording cut (`plainRefusal`).
+  `checks/websiteWordPress.ts` drives it against the stub WordPress.
+- **The model sees the whole page as an outline** (`websiteAgentOutline.ts`):
+  one element a line, nested by indentation, a section's container carrying
+  its heading (`§"Our prices"` — only on `section`/`article`/`header`/`footer`/
+  `aside`: a `main` labelled with its one section's heading was the line a
+  model picked to rewrite), links with their address, pictures with `alt=`
+  (or `alt=missing`), lock notes once in a legend, styles in full for the
+  selection and its containers and short ones elsewhere within a budget. Past
+  700 lines the deepest go first and their container says `(+n more inside)`.
+  The DakyX homepage's 343 elements are 13,170 characters; the old JSON of the
+  first 220 was 34,700. `pageFacts` counts what a model miscounts (pictures
+  without descriptions, h1s, links to nowhere, title and description lengths,
+  `[placeholders]`). A page the request names ("on the About page") is sent as
+  an outline too, up to two (`mentionedPages`); the page list stops at 30. A
+  request is about 5,500 tokens now against 10,175. `checks/websiteAgentOutline.ts`.
+- **The operations live in the fixed contract** (`AGENT_CONTRACT`), and the
+  brief (`AGENT_BRIEF`, editable as `website.editor`) keeps judgement and
+  voice. `resolveBrief` replaces the shipped text whole, so an Owner who
+  reworded the voice used to remove the agent's knowledge of what it could do.
+- **`customerWriterSystem`, not `writerSystem`, for the agent and the design
+  assistant.** `writerSystem` adds the workforce's live state — DakyXTech's
+  payment terms, campaign, prices, Founding Partner slots — and the owning
+  agent's OS process; both rode in every prompt that edited a customer's page.
+- **New operations**: `set_animation` writes exactly what the Interactions tab
+  writes (`websiteAgentMotion.ts`; `checks/websiteAgentMotion.ts` compares
+  every trigger and effect with the client's `writeInteraction`, 200 patches,
+  and refuses the 76 combinations the tab does not offer; Elementor's dry run
+  refuses motion, which it cannot store). `sections` adds one ready-made
+  section before or after the section its anchor is in (`injectSectionNear`
+  climbs to the section, so it never lands in a card), signed like the rule's;
+  that page's other edits wait, because field ids after the insertion move.
+  Intents `clarify` (a question and up to four `options`, sent as the next
+  message when tapped) and `review` (`findings` plus proposed fixes, always
+  shown for approval; "review" adds 2 to the router's score so it is never
+  sized simple). Every change carries a `reason`; up to three `suggestions`.
+  An operation the element cannot take (new words for a container, alt text
+  for a heading) is said rather than dropped by the sanitiser without a word.
+- **One repair pass**: when most of an answer would not apply, the model is
+  asked again with the reasons, and the better answer is kept.
+- **Moves only beside a sibling** — `changeStructure`'s own rule, now checked
+  before the plan is shown rather than when it is applied.
+- **The answer's room follows the level**: 2,500 / 4,000 / 8,000 tokens.
+- **Credits**: requests the rules used to answer wrongly now reach a model, so
+  some that were free cost a credit (1 on a free model); exact commands stay free.
+- **The chat** shows answers and suggestions as buttons on the latest reply,
+  a review's findings with a severity mark, the reason under each change, and
+  sends each earlier reply's changes with the history ("[Changed: Main heading
+  font-weight → 700]"), so "make it bigger" means what changed.

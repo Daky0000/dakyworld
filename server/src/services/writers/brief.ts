@@ -154,6 +154,27 @@ export function composeWriterSystem(
   return [...clean(parts.preamble), brief.text.trim(), ...clean(parts.facts), contract].join("\n\n");
 }
 
+/**
+ * Doctrine and contract alone, for writing done on somebody else's behalf: a
+ * customer's own website, in the Website Builder.
+ *
+ * `writerSystem` adds the workforce's live state, and that state is
+ * DakyXTech's — its payment terms, its campaign, its prices, its open
+ * Founding Partner slots — plus the owning agent's process for the OS's own
+ * work. Until 23 Oct 2026 the Builder agent and the design assistant used it,
+ * so every request to change a customer's page carried DakyXTech's commercial
+ * position in the prompt: material a model could quote into that customer's
+ * page, and none of it about the page. The Owner's own wording for the job
+ * still applies here, through the brief.
+ */
+export async function customerWriterSystem(
+  jobKey: string,
+  shipped: string,
+  parts: { preamble?: string[]; facts?: string[]; contract: string },
+): Promise<string> {
+  return composeWriterSystem(await resolveBrief(jobKey, shipped), parts);
+}
+
 /** Doctrine, facts and contract in one call, for the common case. */
 export async function writerSystem(
   jobKey: string,

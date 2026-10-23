@@ -713,6 +713,36 @@ function refuseIfNeeded(result: Pick<ReturnType<typeof applyWordPressEdits>, "un
   }
 }
 
+/**
+ * What a publish of these draft values would refuse on this WordPress page,
+ * without writing to WordPress or uploading a picture: the dry run
+ * `writeEdits` and `writeElementorEdits` begin with.
+ *
+ * The Builder agent asks it before it shows a plan. A change WordPress or
+ * Elementor cannot store — a browser title the SEO plugin owns, a style on a
+ * block-editor page, an animation on an Elementor one — used to go into the
+ * draft under the agent's "Done", and then refuse the whole page at publish.
+ * `values` are what the draft route would store, stamped with the page's
+ * current words; a refusal names its element, or `*` for the whole page.
+ * A stale edit is the draft's own business, not the plan's, and is left out.
+ */
+export async function wordpressPublishRefusals(site: Site, page: SitePage, html: string, values: Record<string, FieldValue>): Promise<Array<{ fieldId: string; message: string }>> {
+  const source = await wordpressSource(site, page, html);
+  const stand = { id: 0, url: "https://upload.invalid/" };
+  let result: Pick<ReturnType<typeof applyWordPressEdits>, "unmappable" | "problems">;
+  if (source.builder === "elementor") {
+    if (!source.elementor?.size) return [{ fieldId: "*", message: "This page's Elementor data could not be read. Update Elementor, or connect with an account that can edit this page." }];
+    const media = new Map(Object.values(values).flatMap((edit) => [edit.value, ...[edit.style, ...Object.values(edit.responsive ?? {})].flatMap((style) => [...(style ?? "").matchAll(STYLE_ASSET)].map((match) => match[1] ?? match[2]))]).filter((value): value is string => !!value).map((value) => [value, stand]));
+    result = applyElementorEdits({ html, documents: source.elementor, values, media });
+  } else {
+    result = applyWordPressEdits({ html, source, values, media: new Map(Object.values(values).filter((edit) => edit.value).map((edit) => [edit.value!, stand])) });
+  }
+  return [
+    ...result.unmappable.map((entry) => ({ fieldId: entry.htmlFieldId, message: entry.message })),
+    ...result.problems.filter((problem) => problem.code !== "stale").map((problem) => ({ fieldId: problem.fieldId, message: problem.message })),
+  ];
+}
+
 /** A stand-in for a commit id: what WordPress last saved, so two publishes are told apart. */
 function revisionId(write: WriteResult): string {
   return `wp-${createHash("sha1").update(`${write.modified ?? Date.now()}:${write.link}`).digest("hex").slice(0, 12)}`;

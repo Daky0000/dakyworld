@@ -466,6 +466,32 @@ try {
     await prisma.sitePage.update({ where: { id }, data: { draft: Prisma.DbNull, draftRevision: discard.draftRevision + 1 } });
   });
 
+  // The Builder agent's rules once planned changes the editor itself locks:
+  // a title the SEO plugin owns was saved under "Updated SEO metadata", and
+  // then stopped the page publishing. Every plan now asks the page first.
+  await check("the Builder agent plans only what WordPress can store, and says why for the rest", async () => {
+    const { planAgentInstruction } = await import("../src/services/websiteBuilderAgent.js");
+    const site = await prisma.site.findUniqueOrThrow({ where: { id: siteId } });
+    const pages = await prisma.sitePage.findMany({ where: { siteId } });
+    const about = pages.find((page) => page.path === "/about")!;
+    const story = viewField((await call("GET", `/pages/${about.id}`)).body as PageView, "Our story, since 1998");
+    const title = await planAgentInstruction(site, pages, "Set the page title to 'Fresh bread daily'", { pageId: about.id });
+    assert.equal(title.summary.totalChanges, 0, title.explanation);
+    assert.match(title.explanation, /SEO plugin/);
+    const styled = await planAgentInstruction(site, pages, "Make the background #ffeecc", { pageId: about.id, selectedFieldId: story.id });
+    assert.equal(styled.summary.totalChanges, 0, styled.explanation);
+    assert.match(styled.explanation, /Styling a WordPress page is done in WordPress/);
+    assert.doesNotMatch(styled.explanation, /was not published/, "a refusal is said as it stands at planning, not as a publish's");
+    const words = await planAgentInstruction(site, pages, "Change the heading to 'Our bakery story'", { pageId: about.id, selectedFieldId: story.id });
+    assert.equal(words.summary.totalChanges, 1, words.explanation);
+    assert.equal(words.pages[0]?.edits[story.id]?.value, "Our bakery story");
+    const removed = await planAgentInstruction(site, pages, "delete this", { pageId: about.id, selectedFieldId: story.id });
+    assert.equal(removed.summary.totalChanges, 0);
+    assert.match(removed.explanation, /done in WordPress/);
+    const section = await planAgentInstruction(site, pages, "Add a pricing section", { pageId: about.id });
+    assert.equal(section.documentHtmlUpdates, undefined, "a new section has no block to become in WordPress");
+  });
+
   await check("words changed in WordPress after the draft refuse the publish, and write nothing", async () => {
     const id = await pageId("/about");
     const view = (await call("GET", `/pages/${id}`)).body as PageView;

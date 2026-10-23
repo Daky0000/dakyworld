@@ -908,6 +908,21 @@ button:disabled { cursor:not-allowed; }
 .dx-sugg button { text-align:left; border:1px solid var(--editor-line,#e0e4ee); border-radius:12px; padding:10px; font-size:12px; display:flex; flex-direction:column; gap:4px; color:var(--editor-text,#131a2b); }
 .dx-sugg button:hover:not(:disabled) { border-color:var(--editor-accent,#2f5cf0); background:var(--editor-accent-soft,rgba(47,92,240,.09)); }
 .dx-sugg button span { color:var(--editor-muted,#5b6580); font-size:11px; }
+/* The agent's answers to tap, its next steps, and what a review found. */
+.dx-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.dx-chips button { border:1px solid var(--editor-line,#e0e4ee); border-radius:10px; padding:5px 9px; font-size:11.5px; line-height:1.35; text-align:left; color:var(--editor-text,#131a2b); background:var(--editor-panel,#fff); }
+.dx-chips button:hover:not(:disabled) { border-color:var(--editor-accent,#2f5cf0); background:var(--editor-accent-soft,rgba(47,92,240,.09)); }
+.dx-chips button:focus-visible { outline:2px solid var(--editor-accent,#2f5cf0); outline-offset:1px; }
+.dx-chips button:disabled { opacity:.5; }
+.dx-chips.ask button { border-color:var(--editor-accent,#2f5cf0); color:var(--editor-accent,#2f5cf0); font-weight:500; }
+.dx-findings { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-direction:column; gap:7px; }
+.dx-findings li { display:grid; grid-template-columns:8px minmax(0,1fr); gap:8px; font-size:11.5px; line-height:1.45; }
+.dx-findings li::before { content:""; width:7px; height:7px; border-radius:50%; margin-top:5px; background:var(--editor-muted,#5b6580); }
+.dx-findings li.high::before { background:#d33a2c; }
+.dx-findings li.medium::before { background:#c8871b; }
+.dx-findings b { display:block; font-weight:600; }
+.dx-findings span { color:var(--editor-muted,#5b6580); }
+.dx-reason { margin:1px 0 3px 18px; font-size:10px; line-height:1.4; color:var(--editor-muted,#5b6580); }
 .dx-msg { display:flex; gap:8px; align-items:flex-end; max-width:92%; }
 .dx-msg.me { align-self:flex-end; }
 .dx-bub { background:var(--editor-input,#f0f2f8); border-radius:14px 14px 14px 4px; padding:9px 12px; font-size:12.5px; line-height:1.5; min-width:0; color:var(--editor-text,#131a2b); }
