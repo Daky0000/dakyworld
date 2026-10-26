@@ -10,39 +10,21 @@ import type {
   Lead,
   LeadGroup,
   LeadImportRecord,
-  PlanColumn,
-  PlanGrouping,
   PlanTable,
   TablePreview,
   TemplateColumnDef,
   TemplateDef,
 } from "../lib/types";
-import { LeadDrawer } from "../components/LeadDrawer";
 import {
   Badge,
   Button,
   Card,
+  Drawer,
   EmptyState,
   Field,
   Modal,
-  StatusDot,
   StatTile,
 } from "../components/ui";
-
-const STATUSES = ["NEW", "QUALIFYING", "QUALIFIED", "DISQUALIFIED", "CONVERTED", "LOST"];
-const SOURCES = [
-  "REFERRAL",
-  "LINKEDIN",
-  "COLD_EMAIL",
-  "OUTREACH",
-  "CONTENT",
-  "WARM_NETWORK",
-  "GOOGLE_MAPS",
-  "WEB_SCRAPE",
-  "DIRECTORY",
-  "SOCIAL",
-  "OTHER",
-];
 
 const AFRICAN_REGIONS = [
   "Ghana",
@@ -156,39 +138,137 @@ function slugifyName(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "leads";
 }
 
+/** Extracts the cell value for any given column header, checking raw sheet cells first */
+export function getLeadCellValue(lead: Lead, header: string): string {
+  // 1. Check untouched raw cells from the imported Excel sheet
+  const raw = (lead.enrichment as { raw?: Record<string, string> } | null)?.raw;
+  if (raw && typeof raw === "object" && header in raw) {
+    const val = raw[header];
+    return val !== null && val !== undefined ? String(val) : "";
+  }
+
+  // 2. Check custom fields
+  if (lead.customFields && typeof lead.customFields === "object" && header in lead.customFields) {
+    const val = (lead.customFields as Record<string, unknown>)[header];
+    return val !== null && val !== undefined ? String(val) : "";
+  }
+
+  // 3. Check standard scalars matching header name
+  const norm = header.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (norm === "contactname" || norm === "fullname" || norm === "name" || norm === "contactperson" || norm === "person") {
+    return lead.contactName || "";
+  }
+  if (norm === "companyname" || norm === "company" || norm === "organization" || norm === "businessname" || norm === "business") {
+    return lead.companyName || "";
+  }
+  if (norm === "contactemail" || norm === "email" || norm === "officialemail" || norm === "workemail" || norm === "emailaddress") {
+    return lead.contactEmail || "";
+  }
+  if (norm === "contactphone" || norm === "phone" || norm === "directphone" || norm === "telephone" || norm === "whatsapp" || norm === "whatsappphone" || norm === "contactnumber") {
+    return lead.contactPhone || "";
+  }
+  if (norm === "country" || norm === "market" || norm === "countryhq") {
+    return lead.country || "";
+  }
+  if (norm === "city" || norm === "marketcity") {
+    return lead.city || "";
+  }
+  if (norm === "category" || norm === "industry" || norm === "sector" || norm === "industrysector" || norm === "businesscategory" || norm === "techvertical") {
+    return lead.category || "";
+  }
+  if (norm === "website" || norm === "url" || norm === "web") {
+    return lead.website || "";
+  }
+  if (norm === "address" || norm === "physicaladdress" || norm === "location") {
+    return lead.address || "";
+  }
+  if (norm === "notes" || norm === "discoverynotes") {
+    return lead.discoveryNotes || "";
+  }
+
+  return "";
+}
+
+/**
+ * Exports leads to Excel/CSV with ONLY the columns that the particular sheet had.
+ * Strictly excludes score, status, server metadata, and database IDs.
+ */
 export function exportLeadsToCsv(leadsToExport: Lead[], filename: string) {
   if (!leadsToExport.length) return;
-  const headers = [
-    "Contact Person",
-    "Company Name",
-    "Official Email",
-    "Direct Phone",
-    "Country",
-    "City",
-    "Industry Sector",
-    "Status",
-    "Lead Score",
-    "Source",
-    "Website",
-    "Address",
-    "Discovery Notes",
-  ];
-  const rows = leadsToExport.map((l) => [
-    `"${(l.contactName || "").replace(/"/g, '""')}"`,
-    `"${(l.companyName || "").replace(/"/g, '""')}"`,
-    `"${(l.contactEmail || "").replace(/"/g, '""')}"`,
-    `"${(l.contactPhone || "").replace(/"/g, '""')}"`,
-    `"${(l.country || "").replace(/"/g, '""')}"`,
-    `"${(l.city || "").replace(/"/g, '""')}"`,
-    `"${(l.category || "").replace(/"/g, '""')}"`,
-    `"${(l.status || "").replace(/"/g, '""')}"`,
-    l.leadScore ?? 0,
-    `"${(l.source || "").replace(/"/g, '""')}"`,
-    `"${(l.website || "").replace(/"/g, '""')}"`,
-    `"${(l.address || "").replace(/"/g, '""')}"`,
-    `"${(l.discoveryNotes || "").replace(/"/g, '""')}"`,
-  ]);
-  const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+
+  const headerSet = new Set<string>();
+  const headers: string[] = [];
+
+  const addHeader = (h: string) => {
+    if (!h) return;
+    const lower = h.toLowerCase().trim();
+    // Exclude score, status, server metadata, and internal database keys
+    if (
+      lower === "status" ||
+      lower === "score" ||
+      lower === "leadscore" ||
+      lower === "server" ||
+      lower === "source" ||
+      lower === "capturemethod" ||
+      lower === "id" ||
+      lower === "groupid" ||
+      lower === "rehearsal" ||
+      lower === "createdat" ||
+      lower === "updatedat" ||
+      lower === "dedupekey" ||
+      lower === "externalid"
+    ) {
+      return;
+    }
+    if (!headerSet.has(h)) {
+      headerSet.add(h);
+      headers.push(h);
+    }
+  };
+
+  // 1. Gather exact sheet column headers from raw enrichment
+  for (const lead of leadsToExport) {
+    const raw = (lead.enrichment as { raw?: Record<string, string> } | null)?.raw;
+    if (raw && typeof raw === "object") {
+      Object.keys(raw).forEach(addHeader);
+    }
+  }
+
+  // 2. If no raw enrichment present (e.g. manually created lead), collect defined fields
+  if (headers.length === 0) {
+    for (const lead of leadsToExport) {
+      if (lead.contactName) addHeader("Contact Name");
+      if (lead.companyName) addHeader("Company Name");
+      if (lead.contactEmail) addHeader("Official Email");
+      if (lead.contactPhone) addHeader("Direct Phone");
+      if (lead.country) addHeader("Country");
+      if (lead.city) addHeader("City");
+      if (lead.category) addHeader("Industry Sector");
+      if (lead.website) addHeader("Website");
+      if (lead.address) addHeader("Physical Address");
+      if (lead.discoveryNotes) addHeader("Notes");
+      if (lead.customFields && typeof lead.customFields === "object") {
+        Object.keys(lead.customFields).forEach(addHeader);
+      }
+    }
+  }
+
+  // Fallback if still empty
+  if (headers.length === 0) {
+    headers.push("Contact Name", "Company Name", "Official Email", "Direct Phone", "Country", "City");
+  }
+
+  const headerLine = headers.map((h) => `"${h.replace(/"/g, '""')}"`).join(",");
+  const rows = leadsToExport.map((lead) => {
+    return headers
+      .map((header) => {
+        const val = getLeadCellValue(lead, header);
+        return `"${val.replace(/"/g, '""')}"`;
+      })
+      .join(",");
+  });
+
+  const csv = [headerLine, ...rows].join("\n");
   downloadCsv(filename, csv);
 }
 
@@ -207,7 +287,7 @@ export function AfriconLeads() {
   }
 
   return (
-    <div className="space-y-6 pb-16">
+    <div className="space-y-6 pb-20">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-line pb-5">
         <div>
           <div className="flex items-center gap-2">
@@ -221,7 +301,7 @@ export function AfriconLeads() {
             Africon Leads
           </h1>
           <p className="mt-1 text-sm text-muted">
-            Exclusive administrative pipeline, bundle management, and AI template-driven spreadsheet importer.
+            Uploaded Excel sheet groups, full untruncated sheet data, and AI template-driven importer.
           </p>
         </div>
 
@@ -250,7 +330,7 @@ export function AfriconLeads() {
               : "border-transparent text-muted hover:border-line hover:text-ink"
           }`}
         >
-          <span>📋 Leads Pipeline</span>
+          <span>📋 Leads Pipeline &amp; Groups</span>
         </button>
         <button
           type="button"
@@ -261,7 +341,7 @@ export function AfriconLeads() {
               : "border-transparent text-muted hover:border-line hover:text-ink"
           }`}
         >
-          <span>📥 Import Leads &amp; Template</span>
+          <span>📥 Import Excel Sheet &amp; Template</span>
           <span className="rounded-full bg-blue-50 px-1.5 py-0.2 text-[10px] text-blue font-bold">AI</span>
         </button>
         <button
@@ -290,15 +370,13 @@ export function AfriconLeads() {
 function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
-  const [selectedStatus, setSelectedStatus] = useState<string>("ALL");
   const [selectedCountry, setSelectedCountry] = useState<string>("ALL");
-  const [selectedSource, setSelectedSource] = useState<string>("ALL");
   const [selectedBundle, setSelectedBundle] = useState<string>("ALL");
   const [onlyReachable, setOnlyReachable] = useState(false);
-  const [drawerLeadId, setDrawerLeadId] = useState<string | null>(null);
+  const [drawerLead, setDrawerLead] = useState<Lead | null>(null);
   const [addLeadOpen, setAddLeadOpen] = useState(false);
 
-  // Selection state for multi-row operations
+  // Multi-row selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // Confirmations
@@ -321,7 +399,7 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
     },
   });
 
-  // Pure Africon leads array: filters out any non-Africon OS leads and demo leads
+  // Pure Africon leads array: strictly exclude rehearsal/demo leads and non-Africon OS leads
   const leads = useMemo(() => {
     if (!leadsResponse) return [];
     const rawList = Array.isArray(leadsResponse)
@@ -331,15 +409,13 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
       : [];
 
     return rawList.filter((lead) => {
-      // Strictly exclude rehearsal/demo leads
       if (lead.rehearsal) return false;
-      // Strictly require Africon tag
       if (Array.isArray(lead.tags) && lead.tags.includes("africon")) return true;
       return false;
     });
   }, [leadsResponse]);
 
-  // Fetch only Africon Lead Groups / Bundles
+  // Fetch only Africon Lead Groups / Uploaded Sheets
   const { data: rawGroups } = useQuery({
     queryKey: ["leads", "groups", "africon"],
     queryFn: ({ signal }) => api.get<LeadGroup[]>("/leads/groups?tags=africon", signal),
@@ -352,18 +428,20 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
     return groups.find((g) => g.id === selectedBundle) ?? null;
   }, [groups, selectedBundle]);
 
-  // Mutations
+  // Invalidator
   const invalidateLeads = () => {
     qc.invalidateQueries({ queryKey: ["leads"] });
   };
 
+  // Delete mutations
   const deleteSingleMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/leads/${id}`),
     onSuccess: () => {
       invalidateLeads();
+      if (drawerLead) setDrawerLead(null);
       setSelectedIds((prev) => {
         const next = new Set(prev);
-        prev.forEach((id) => next.delete(id));
+        next.delete(drawerLead?.id || "");
         return next;
       });
     },
@@ -375,7 +453,7 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
       invalidateLeads();
       setSelectedIds(new Set());
       setDeleteSelectedConfirmOpen(false);
-      setNoticeMessage(`Deleted ${selectedIds.size} selected leads.`);
+      setNoticeMessage(`Deleted ${selectedIds.size} selected lead(s).`);
       setTimeout(() => setNoticeMessage(null), 4000);
     },
     onError: (err) => {
@@ -418,20 +496,18 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
       invalidateLeads();
       setDeleteBundleConfirm(null);
       setSelectedBundle("ALL");
-      setNoticeMessage("Bundle deleted successfully.");
+      setNoticeMessage("Sheet group deleted successfully.");
       setTimeout(() => setNoticeMessage(null), 4000);
     },
     onError: (err) => {
-      alert(err instanceof Error ? err.message : "Failed to delete bundle.");
+      alert(err instanceof Error ? err.message : "Failed to delete group.");
     },
   });
 
   // Filter leads based on user UI filters
   const filteredLeads = useMemo(() => {
     return leads.filter((lead) => {
-      if (selectedStatus !== "ALL" && lead.status !== selectedStatus) return false;
       if (selectedCountry !== "ALL" && lead.country?.toLowerCase() !== selectedCountry.toLowerCase()) return false;
-      if (selectedSource !== "ALL" && lead.source !== selectedSource) return false;
       if (onlyReachable && !lead.contactEmail && !lead.contactPhone) return false;
 
       if (selectedBundle === "ungrouped") {
@@ -448,22 +524,94 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
         const matchesPhone = lead.contactPhone?.toLowerCase().includes(query);
         const matchesCity = lead.city?.toLowerCase().includes(query);
         const matchesCategory = lead.category?.toLowerCase().includes(query);
-        if (!matchesName && !matchesCompany && !matchesEmail && !matchesPhone && !matchesCity && !matchesCategory) {
+
+        // Also search in raw untouched Excel sheet cells
+        let matchesRaw = false;
+        const raw = (lead.enrichment as { raw?: Record<string, string> } | null)?.raw;
+        if (raw && typeof raw === "object") {
+          matchesRaw = Object.values(raw).some((val) => String(val).toLowerCase().includes(query));
+        }
+
+        if (!matchesName && !matchesCompany && !matchesEmail && !matchesPhone && !matchesCity && !matchesCategory && !matchesRaw) {
           return false;
         }
       }
       return true;
     });
-  }, [leads, search, selectedStatus, selectedCountry, selectedSource, selectedBundle, onlyReachable]);
+  }, [leads, search, selectedCountry, selectedBundle, onlyReachable]);
 
-  // Lead metrics
+  // Dynamically determine the exact columns present in these leads
+  const dynamicColumns = useMemo(() => {
+    const headerSet = new Set<string>();
+    const headers: string[] = [];
+
+    const addHeader = (h: string) => {
+      if (!h) return;
+      const lower = h.toLowerCase().trim();
+      // Exclude internal database/server metadata and score/status
+      if (
+        lower === "status" ||
+        lower === "score" ||
+        lower === "leadscore" ||
+        lower === "server" ||
+        lower === "source" ||
+        lower === "capturemethod" ||
+        lower === "id" ||
+        lower === "groupid" ||
+        lower === "rehearsal" ||
+        lower === "createdat" ||
+        lower === "updatedat"
+      ) {
+        return;
+      }
+      if (!headerSet.has(h)) {
+        headerSet.add(h);
+        headers.push(h);
+      }
+    };
+
+    // Extract headers from raw Excel cells first (preserves original sheet headers!)
+    for (const lead of filteredLeads) {
+      const raw = (lead.enrichment as { raw?: Record<string, string> } | null)?.raw;
+      if (raw && typeof raw === "object") {
+        Object.keys(raw).forEach(addHeader);
+      }
+    }
+
+    // Fallback if no raw enrichment found
+    if (headers.length === 0) {
+      for (const lead of filteredLeads) {
+        if (lead.contactName) addHeader("Contact Name");
+        if (lead.companyName) addHeader("Company Name");
+        if (lead.contactEmail) addHeader("Official Email");
+        if (lead.contactPhone) addHeader("Direct Phone");
+        if (lead.country) addHeader("Country");
+        if (lead.city) addHeader("City");
+        if (lead.category) addHeader("Industry Sector");
+        if (lead.website) addHeader("Website");
+        if (lead.address) addHeader("Physical Address");
+        if (lead.discoveryNotes) addHeader("Notes");
+        if (lead.customFields && typeof lead.customFields === "object") {
+          Object.keys(lead.customFields).forEach(addHeader);
+        }
+      }
+    }
+
+    if (headers.length === 0) {
+      return ["Contact Name", "Company Name", "Official Email", "Direct Phone", "Country", "City"];
+    }
+
+    return headers;
+  }, [filteredLeads]);
+
+  // Pipeline metrics (without score or OS qualification stages)
   const stats = useMemo(() => {
     const total = leads.length;
     const reachable = leads.filter((l) => l.contactEmail || l.contactPhone).length;
-    const qualified = leads.filter((l) => l.status === "QUALIFIED" || l.status === "CONVERTED").length;
-    const highScore = leads.filter((l) => (l.leadScore ?? 0) >= 70).length;
-    return { total, reachable, qualified, highScore };
-  }, [leads]);
+    const sheetsCount = groups.length;
+    const currentShown = filteredLeads.length;
+    return { total, reachable, sheetsCount, currentShown };
+  }, [leads, groups, filteredLeads]);
 
   // Multi-select handlers
   const allVisibleSelected = filteredLeads.length > 0 && filteredLeads.every((l) => selectedIds.has(l.id));
@@ -518,40 +666,123 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
         </div>
       )}
 
-      {/* Metric Tiles */}
+      {/* Metric Tiles (No Score, Clean Sheet Counts) */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <StatTile
-          label="Africon Pipeline Leads"
+          label="Total Imported Leads"
           value={stats.total.toLocaleString()}
-          sub={`${filteredLeads.length} currently shown`}
+          sub={`${stats.currentShown} currently displayed`}
         />
         <StatTile
-          label="Reachable Leads"
+          label="Uploaded Sheets / Groups"
+          value={stats.sheetsCount.toLocaleString()}
+          sub="Separate Excel sheet datasets"
+        />
+        <StatTile
+          label="Reachable Contacts"
           value={stats.reachable.toLocaleString()}
-          sub={stats.total ? `${Math.round((stats.reachable / stats.total) * 100)}% contact rate` : "No leads yet"}
+          sub={stats.total ? `${Math.round((stats.reachable / stats.total) * 100)}% with Email/Phone` : "No leads yet"}
         />
         <StatTile
-          label="High Potential (Score ≥ 70)"
-          value={stats.highScore.toLocaleString()}
-          sub="Ready for priority outreach"
-        />
-        <StatTile
-          label="Qualified & Deals"
-          value={stats.qualified.toLocaleString()}
-          sub="Active conversions"
+          label="Active Sheet / Filter"
+          value={activeBundle ? activeBundle.name : "All Sheets"}
+          sub={`${filteredLeads.length} leads in view`}
         />
       </div>
 
-      {/* Active Bundle Banner (When filtering by a specific list or bundle) */}
+      {/* Uploaded Excel Sheets / Groups Bar */}
+      <Card className="p-4 space-y-3 bg-sunken/30">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="font-sans text-[11px] font-bold uppercase tracking-wider text-ink">
+              Uploaded Excel Sheets &amp; Groups
+            </span>
+            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue">
+              {groups.length} sheet group(s)
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => combineMutation.mutate()}
+              disabled={combineMutation.isPending || leads.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-blue/40 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue hover:bg-blue-100/70 transition shadow-xs disabled:opacity-50"
+              title="Combine all uploaded Excel sheet datasets into one unified list named 'Lead List'"
+            >
+              <span>📋</span> Combine All into 'Lead List'
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <button
+            type="button"
+            onClick={() => setSelectedBundle("ALL")}
+            className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
+              selectedBundle === "ALL"
+                ? "bg-ink text-white shadow-xs"
+                : "border border-line bg-white text-muted hover:text-ink hover:bg-sunken"
+            }`}
+          >
+            All Uploaded Sheets ({leads.length})
+          </button>
+
+          {groups.map((group) => {
+            const countInGroup = leads.filter((l) => l.groupId === group.id).length;
+            const isSelected = selectedBundle === group.id;
+            return (
+              <div
+                key={group.id}
+                className={`inline-flex items-center rounded-xl border transition ${
+                  isSelected
+                    ? "border-blue bg-blue text-white shadow-xs"
+                    : "border-line bg-white text-ink hover:border-ink"
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => setSelectedBundle(group.id)}
+                  className="px-3 py-1.5 text-xs font-semibold flex items-center gap-1.5"
+                >
+                  <span>📁</span>
+                  <span>{group.name}</span>
+                  <span
+                    className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                      isSelected ? "bg-white/20 text-white" : "bg-sunken text-muted"
+                    }`}
+                  >
+                    {countInGroup}
+                  </span>
+                </button>
+              </div>
+            );
+          })}
+
+          <button
+            type="button"
+            onClick={() => setSelectedBundle("ungrouped")}
+            className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
+              selectedBundle === "ungrouped"
+                ? "bg-ink text-white shadow-xs"
+                : "border border-line bg-white text-muted hover:text-ink hover:bg-sunken"
+            }`}
+          >
+            Ungrouped Leads ({leads.filter((l) => !l.groupId).length})
+          </button>
+        </div>
+      </Card>
+
+      {/* Active Sheet / Group Control Card (When a specific sheet group is selected) */}
       {activeBundle && (
-        <Card className="p-4 border-blue/40 bg-gradient-to-r from-blue-50/30 to-transparent flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-xs">
+        <Card className="p-4 border-blue/40 bg-gradient-to-r from-blue-50/40 to-transparent flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-xs">
           <div>
             <div className="flex items-center gap-2">
               <span className="font-sans text-[10px] font-bold uppercase tracking-wider text-blue">
-                Active Lead Bundle / List
+                Active Excel Sheet Proof
               </span>
               <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue">
-                {filteredLeads.length} leads in bundle
+                {filteredLeads.length} leads in this sheet
               </span>
             </div>
             <h3 className="mt-0.5 font-display text-base font-bold text-ink">{activeBundle.name}</h3>
@@ -566,12 +797,12 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
               onClick={() =>
                 exportLeadsToCsv(
                   filteredLeads,
-                  `bundle_${slugifyName(activeBundle.name)}_${new Date().toISOString().slice(0, 10)}.csv`
+                  `${slugifyName(activeBundle.name)}_${new Date().toISOString().slice(0, 10)}.csv`
                 )
               }
               className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:bg-sunken shadow-xs transition"
             >
-              <span>📥</span> Export Bundle CSV
+              <span>📥</span> Export Sheet CSV
             </button>
 
             {activeBundle.name.toLowerCase() !== "lead list" && (
@@ -590,20 +821,20 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
               onClick={() => setDeleteBundleConfirm(activeBundle)}
               className="inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-danger-text hover:bg-danger-surface transition"
             >
-              <span>🗑</span> Delete Bundle
+              <span>🗑</span> Delete Sheet Group
             </button>
           </div>
         </Card>
       )}
 
-      {/* Selection Action Bar (Appears when rows are selected) */}
+      {/* Selection Action Bar (Appears when rows are checked) */}
       {selectedIds.size > 0 && (
         <div className="sticky top-2 z-20 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-ink bg-ink p-3 text-white shadow-xl animate-fadeIn">
           <div className="flex items-center gap-3">
             <span className="rounded-full bg-white/20 px-2.5 py-1 text-xs font-bold text-white">
               {selectedIds.size} selected
             </span>
-            <span className="text-xs text-white/80">Batch operations on chosen leads:</span>
+            <span className="text-xs text-white/80">Batch actions on chosen leads:</span>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
@@ -649,7 +880,7 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
           <div className="relative flex-1">
             <input
               type="text"
-              placeholder="Search leads by name, company, email, phone, city..."
+              placeholder="Search across all fields and uploaded Excel cells..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full rounded-xl border border-line bg-white px-3.5 py-2 text-xs placeholder:text-muted focus:border-ink focus:outline-none"
@@ -668,21 +899,12 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
           <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
-              onClick={() => combineMutation.mutate()}
-              disabled={combineMutation.isPending || filteredLeads.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-blue/30 bg-blue-50/40 px-3 py-2 text-xs font-semibold text-blue hover:bg-blue-50 disabled:opacity-50 transition"
-              title="Combine all separate data sets and leads into one unified list named 'Lead List'"
-            >
-              <span>📋</span> Combine into 'Lead List'
-            </button>
-
-            <button
-              type="button"
               onClick={handleExportFiltered}
               disabled={!filteredLeads.length}
               className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-xs font-semibold text-ink hover:bg-sunken disabled:opacity-50 transition"
+              title="Export only the exact sheet columns without score or status"
             >
-              <span>Export CSV</span>
+              <span>Export Sheet CSV</span>
             </button>
 
             <button
@@ -702,37 +924,6 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-line/60">
-          {/* Bundle / List Filter */}
-          <div className="flex items-center gap-1">
-            <span className="text-[11px] font-semibold text-muted">Bundle:</span>
-            <select
-              value={selectedBundle}
-              onChange={(e) => setSelectedBundle(e.target.value)}
-              className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[11px] font-medium text-ink focus:outline-none"
-            >
-              <option value="ALL">All Lists / Bundles</option>
-              <option value="ungrouped">Ungrouped Leads</option>
-              {groups.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <select
-            value={selectedStatus}
-            onChange={(e) => setSelectedStatus(e.target.value)}
-            className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[11px] text-ink focus:outline-none"
-          >
-            <option value="ALL">All Statuses</option>
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-
           <select
             value={selectedCountry}
             onChange={(e) => setSelectedCountry(e.target.value)}
@@ -746,19 +937,6 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
             ))}
           </select>
 
-          <select
-            value={selectedSource}
-            onChange={(e) => setSelectedSource(e.target.value)}
-            className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[11px] text-ink focus:outline-none"
-          >
-            <option value="ALL">All Sources</option>
-            {SOURCES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-
           <label className="flex items-center gap-1.5 ml-auto text-xs text-muted cursor-pointer">
             <input
               type="checkbox"
@@ -766,18 +944,18 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
               onChange={(e) => setOnlyReachable(e.target.checked)}
               className="rounded border-line"
             />
-            <span>Reachable only</span>
+            <span>Reachable only (Email or Phone)</span>
           </label>
         </div>
       </Card>
 
-      {/* Leads Table */}
+      {/* Untruncated Leads Table with Dynamic Sheet Columns */}
       {isLoading ? (
         <Card className="p-12 text-center text-xs text-muted">Loading Africon Leads...</Card>
       ) : filteredLeads.length === 0 ? (
         <EmptyState
           message={
-            search || selectedStatus !== "ALL" || selectedCountry !== "ALL" || selectedBundle !== "ALL"
+            search || selectedCountry !== "ALL" || selectedBundle !== "ALL"
               ? "No leads matched your current filters. Clear filters or adjust your search query."
               : "Your Africon leads pipeline is currently empty. Use the template-driven import to upload leads."
           }
@@ -802,24 +980,27 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
                       title="Select / Deselect all visible"
                     />
                   </th>
-                  <th className="px-4 py-3">Lead &amp; Company</th>
-                  <th className="px-4 py-3">Bundle / List</th>
-                  <th className="px-4 py-3">Contact Channels</th>
-                  <th className="px-4 py-3">Location &amp; Sector</th>
-                  <th className="px-4 py-3">Score &amp; Status</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
+                  <th className="px-4 py-3 min-w-[140px]">Sheet / Group</th>
+
+                  {/* Render every single column that the sheet has — no fields hidden */}
+                  {dynamicColumns.map((colHeader, idx) => (
+                    <th key={idx} className="px-4 py-3 min-w-[140px] font-semibold text-ink whitespace-nowrap">
+                      {colHeader}
+                    </th>
+                  ))}
+
+                  <th className="px-4 py-3 text-right min-w-[110px]">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
                 {filteredLeads.map((lead) => {
-                  const reachable = Boolean(lead.contactEmail || lead.contactPhone);
                   const isChecked = selectedIds.has(lead.id);
                   const leadGroupName = groups.find((g) => g.id === lead.groupId)?.name;
 
                   return (
                     <tr
                       key={lead.id}
-                      onClick={() => setDrawerLeadId(lead.id)}
+                      onClick={() => setDrawerLead(lead)}
                       className={`group cursor-pointer transition ${
                         isChecked ? "bg-blue-50/40" : "hover:bg-[#F9FAFC]"
                       }`}
@@ -833,19 +1014,7 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
                         />
                       </td>
 
-                      <td className="px-4 py-3.5">
-                        <div className="font-semibold text-ink group-hover:text-blue transition">
-                          {lead.contactName || "Unnamed Lead"}
-                        </div>
-                        {lead.companyName && (
-                          <div className="text-[11px] text-muted flex items-center gap-1">
-                            <span>🏢</span>
-                            <span>{lead.companyName}</span>
-                          </div>
-                        )}
-                      </td>
-
-                      <td className="px-4 py-3.5">
+                      <td className="px-4 py-3.5 whitespace-nowrap">
                         {leadGroupName ? (
                           <span className="inline-flex items-center gap-1 rounded-md bg-sunken px-2 py-0.5 text-[10px] font-semibold text-ink">
                             <span>📁</span> {leadGroupName}
@@ -855,74 +1024,28 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
                         )}
                       </td>
 
-                      <td className="px-4 py-3.5 space-y-0.5">
-                        {lead.contactEmail ? (
-                          <div className="flex items-center gap-1 text-[11px] text-ink">
-                            <span>✉</span>
-                            <span className="truncate max-w-[170px]">{lead.contactEmail}</span>
-                          </div>
-                        ) : null}
-                        {lead.contactPhone ? (
-                          <div className="flex items-center gap-1 text-[11px] text-muted">
-                            <span>📞</span>
-                            <span>{lead.contactPhone}</span>
-                          </div>
-                        ) : null}
-                        {!reachable && <span className="text-[11px] text-warn-text">No direct contact</span>}
-                      </td>
+                      {/* Render untruncated values for every sheet column */}
+                      {dynamicColumns.map((colHeader, idx) => {
+                        const cellVal = getLeadCellValue(lead, colHeader);
+                        return (
+                          <td key={idx} className="px-4 py-3.5 text-[11px] text-ink leading-relaxed">
+                            {cellVal ? (
+                              <span>{cellVal}</span>
+                            ) : (
+                              <span className="text-muted/50">—</span>
+                            )}
+                          </td>
+                        );
+                      })}
 
-                      <td className="px-4 py-3.5">
-                        <div className="text-[11px] text-ink font-medium">
-                          {lead.country ? (
-                            <span className="inline-flex items-center gap-1">
-                              <span>🌍</span> {lead.country}
-                              {lead.city ? `, ${lead.city}` : ""}
-                            </span>
-                          ) : (
-                            <span className="text-muted">—</span>
-                          )}
-                        </div>
-                        {lead.category && (
-                          <div className="text-[10px] text-muted truncate max-w-[150px]">{lead.category}</div>
-                        )}
-                      </td>
-
-                      <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-2">
-                          <StatusDot
-                            tone={
-                              lead.status === "CONVERTED" || lead.status === "QUALIFIED"
-                                ? "ok"
-                                : lead.status === "QUALIFYING"
-                                ? "live"
-                                : lead.status === "DISQUALIFIED" || lead.status === "LOST"
-                                ? "bad"
-                                : "idle"
-                            }
-                          />
-                          <span className="text-[11px] font-medium text-ink">{lead.status}</span>
-                          <span
-                            className={`ml-1 rounded px-1.5 py-0.2 text-[10px] font-bold ${
-                              (lead.leadScore ?? 0) >= 70
-                                ? "bg-green-50 text-green-700"
-                                : (lead.leadScore ?? 0) >= 40
-                                ? "bg-amber-50 text-amber-700"
-                                : "bg-gray-100 text-gray-600"
-                            }`}
-                          >
-                            Score: {lead.leadScore ?? 0}
-                          </span>
-                        </div>
-                      </td>
-
-                      <td className="px-4 py-3.5 text-right">
+                      <td className="px-4 py-3.5 text-right whitespace-nowrap">
                         <div
                           className="flex items-center justify-end gap-1.5"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <button
                             type="button"
-                            title="Export single lead CSV"
+                            title="Export lead with its sheet columns"
                             onClick={() =>
                               exportLeadsToCsv(
                                 [lead],
@@ -938,7 +1061,7 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
                           </button>
                           <button
                             type="button"
-                            onClick={() => setDrawerLeadId(lead.id)}
+                            onClick={() => setDrawerLead(lead)}
                             className="rounded-lg border border-line bg-white px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-sunken transition"
                           >
                             Details
@@ -965,12 +1088,17 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
         </div>
       )}
 
-      {/* Lead Details Drawer */}
-      {drawerLeadId && (
-        <LeadDrawer
-          leadId={drawerLeadId}
-          groups={groups}
-          onClose={() => setDrawerLeadId(null)}
+      {/* Untruncated Africon Lead Detail Drawer */}
+      {drawerLead && (
+        <AfriconLeadDrawer
+          lead={drawerLead}
+          groupName={groups.find((g) => g.id === drawerLead.groupId)?.name}
+          onClose={() => setDrawerLead(null)}
+          onDelete={() => {
+            if (confirm(`Delete lead "${drawerLead.contactName || drawerLead.companyName}"?`)) {
+              deleteSingleMutation.mutate(drawerLead.id);
+            }
+          }}
         />
       )}
 
@@ -1037,12 +1165,12 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
         </Modal>
       )}
 
-      {/* Confirmation Modal: Delete Bundle */}
+      {/* Confirmation Modal: Delete Sheet Group */}
       {deleteBundleConfirm && (
-        <Modal open onClose={() => setDeleteBundleConfirm(null)} title={`Delete Bundle: "${deleteBundleConfirm.name}"`}>
+        <Modal open onClose={() => setDeleteBundleConfirm(null)} title={`Delete Sheet Group: "${deleteBundleConfirm.name}"`}>
           <div className="space-y-4">
             <p className="text-xs text-muted leading-relaxed">
-              How would you like to delete the bundle <strong>{deleteBundleConfirm.name}</strong>?
+              How would you like to delete the sheet group <strong>{deleteBundleConfirm.name}</strong>?
             </p>
             <div className="space-y-2 pt-1">
               <button
@@ -1051,9 +1179,9 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
                 disabled={deleteBundleMutation.isPending}
                 className="w-full text-left rounded-xl border border-danger-line/60 bg-danger-surface/40 p-3 text-xs hover:bg-danger-surface transition"
               >
-                <div className="font-bold text-danger-text">Delete Bundle AND All Leads Inside</div>
+                <div className="font-bold text-danger-text">Delete Sheet Group AND All Leads Inside</div>
                 <div className="text-[11px] text-muted">
-                  Completely removes the bundle and permanently deletes all leads assigned to it.
+                  Completely removes the group and permanently deletes all leads assigned to it.
                 </div>
               </button>
 
@@ -1063,9 +1191,9 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
                 disabled={deleteBundleMutation.isPending}
                 className="w-full text-left rounded-xl border border-line bg-white p-3 text-xs hover:bg-sunken transition"
               >
-                <div className="font-bold text-ink">Delete Bundle Only (Keep Leads)</div>
+                <div className="font-bold text-ink">Delete Sheet Group Only (Keep Leads)</div>
                 <div className="text-[11px] text-muted">
-                  Removes the list definition. Leads inside become "Ungrouped" in the Africon pipeline.
+                  Removes the group definition. Leads inside become "Ungrouped" in the Africon pipeline.
                 </div>
               </button>
             </div>
@@ -1079,6 +1207,113 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
         </Modal>
       )}
     </div>
+  );
+}
+
+// ============================================================================
+// Untruncated Africon Lead Drawer (Displays all sheet fields in full)
+// ============================================================================
+function AfriconLeadDrawer({
+  lead,
+  groupName,
+  onClose,
+  onDelete,
+}: {
+  lead: Lead;
+  groupName?: string;
+  onClose: () => void;
+  onDelete: () => void;
+}) {
+  // Extract all fields present for this lead
+  const rawFields = useMemo(() => {
+    const raw = (lead.enrichment as { raw?: Record<string, string> } | null)?.raw;
+    if (raw && typeof raw === "object") {
+      return Object.entries(raw);
+    }
+
+    const fields: [string, string][] = [];
+    if (lead.contactName) fields.push(["Contact Name", lead.contactName]);
+    if (lead.companyName) fields.push(["Company Name", lead.companyName]);
+    if (lead.contactEmail) fields.push(["Official Email", lead.contactEmail]);
+    if (lead.contactPhone) fields.push(["Direct Phone", lead.contactPhone]);
+    if (lead.country) fields.push(["Country", lead.country]);
+    if (lead.city) fields.push(["City", lead.city]);
+    if (lead.category) fields.push(["Industry Sector", lead.category]);
+    if (lead.website) fields.push(["Website", lead.website]);
+    if (lead.address) fields.push(["Address", lead.address]);
+    if (lead.discoveryNotes) fields.push(["Notes", lead.discoveryNotes]);
+
+    if (lead.customFields && typeof lead.customFields === "object") {
+      Object.entries(lead.customFields).forEach(([k, v]) => {
+        if (v !== null && v !== undefined && v !== "") {
+          fields.push([k, String(v)]);
+        }
+      });
+    }
+    return fields;
+  }, [lead]);
+
+  return (
+    <Drawer open onClose={onClose} title={lead.contactName || lead.companyName || "Lead Details"}>
+      <div className="space-y-6 pb-8">
+        {/* Header Summary */}
+        <div className="border-b border-line pb-4">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-lg text-ink">
+              {lead.contactName || "Unnamed Lead"}
+            </span>
+            {groupName && (
+              <span className="rounded-md bg-sunken px-2 py-0.5 text-[11px] font-semibold text-ink">
+                📁 {groupName}
+              </span>
+            )}
+          </div>
+          {lead.companyName && (
+            <p className="text-xs text-muted mt-0.5">🏢 {lead.companyName}</p>
+          )}
+        </div>
+
+        {/* Untruncated Sheet Data Fields */}
+        <div className="space-y-3">
+          <h4 className="text-xs font-bold uppercase tracking-wider text-muted">
+            Imported Sheet Fields ({rawFields.length})
+          </h4>
+
+          <div className="divide-y divide-line rounded-xl border border-line bg-white overflow-hidden">
+            {rawFields.map(([key, val], idx) => (
+              <div key={idx} className="p-3 hover:bg-sunken/20 transition">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted block mb-0.5">
+                  {key}
+                </span>
+                <div className="text-xs font-medium text-ink break-words whitespace-pre-wrap leading-relaxed">
+                  {val ? val : <span className="text-muted">—</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-2 pt-4 border-t border-line">
+          <button
+            type="button"
+            onClick={() =>
+              exportLeadsToCsv(
+                [lead],
+                `lead_${slugifyName(lead.contactName || lead.companyName || "lead")}.csv`
+              )
+            }
+            className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-xs font-semibold text-ink hover:bg-sunken shadow-xs transition"
+          >
+            <span>📥</span> Export Lead CSV
+          </button>
+
+          <Button variant="danger" className="text-xs" onClick={onDelete}>
+            Delete Lead
+          </Button>
+        </div>
+      </div>
+    </Drawer>
   );
 }
 
@@ -1250,6 +1485,9 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
   const [inspectedTemplate, setInspectedTemplate] = useState<InspectedTemplate | null>(null);
   const [templateLoading, setTemplateLoading] = useState(false);
 
+  // Group name for this imported sheet
+  const [customGroupTitle, setCustomGroupTitle] = useState<string>("");
+
   // Settings
   const [useAi, setUseAi] = useState(true);
 
@@ -1264,6 +1502,7 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
   const [committedResult, setCommittedResult] = useState<{
     leadsCreated: number;
     groupsCreated: number;
+    groupName?: string;
   } | null>(null);
 
   // Inspect template file whenever uploaded
@@ -1274,7 +1513,6 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
       const upload: FileUpload = { name: file.name, size: file.size, dataBase64 };
       setTemplateFile(upload);
 
-      // Call inspect-template endpoint
       const result = await api.post<InspectedTemplate>("/imports/inspect-template", {
         dataBase64,
         fileName: file.name,
@@ -1307,6 +1545,8 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
   const handleLeadsFileUpload = async (file: File) => {
     const dataBase64 = await toBase64(file);
     setLeadsFile({ name: file.name, size: file.size, dataBase64 });
+    const cleanName = file.name.replace(/\.[^/.]+$/, "").trim();
+    setCustomGroupTitle(cleanName);
     setPlan(null);
     setPreviews([]);
     setCommittedResult(null);
@@ -1320,6 +1560,9 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
     setWarnings([]);
 
     try {
+      const cleanFileName = leadsFile.name.replace(/\.[^/.]+$/, "").trim() || "Uploaded Sheet";
+      const targetGroupName = customGroupTitle.trim() || cleanFileName;
+
       // Step 1: Open import on server
       const opened = await api.post<AnalyzeStep>("/imports/analyze", {
         source: "UPLOAD",
@@ -1364,12 +1607,19 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
         gatheredWarnings.push(...step.warnings);
       }
 
-      // Default grouping to "single" so all imported datasets combine into one 'Lead List'
+      // Save as a group named after the uploaded Excel sheet / file
+      const updatedTables = gatheredTables.map((t) => ({
+        ...t,
+        title: remainingSheets.length > 1 && t.sheet.toLowerCase() !== "sheet1"
+          ? `${targetGroupName} - ${t.sheet}`
+          : targetGroupName,
+      }));
+
       setPlan({
-        tables: gatheredTables,
+        tables: updatedTables,
         summary: `Imported from ${leadsFile.name}${templateFile ? ` • Structured using template: ${templateFile.name}` : ""}`,
-        grouping: "single",
-        singleListTitle: "Lead List",
+        grouping: "sheet",
+        singleListTitle: targetGroupName,
         isAfricon: true,
         tags: ["africon"],
         template: inspectedTemplate ? { fileName: inspectedTemplate.fileName, columns: inspectedTemplate.columns } : undefined,
@@ -1390,6 +1640,8 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
     if (!importId || !plan) return;
     setIsCommitting(true);
     try {
+      const targetGroupName = customGroupTitle.trim() || plan.singleListTitle || "Uploaded Sheet";
+
       const response = await api.post<{
         import: LeadImportRecord;
         result: { leadsCreated: number; groupsCreated: number };
@@ -1398,7 +1650,7 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
           ...plan,
           isAfricon: true,
           tags: ["africon"],
-          singleListTitle: plan.grouping === "single" ? "Lead List" : undefined,
+          singleListTitle: targetGroupName,
         },
         dataBase64: leadsFile?.dataBase64,
         fileName: leadsFile?.name,
@@ -1407,6 +1659,7 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
       setCommittedResult({
         leadsCreated: response.result.leadsCreated,
         groupsCreated: response.result.groupsCreated,
+        groupName: targetGroupName,
       });
       qc.invalidateQueries({ queryKey: ["leads"] });
     } catch (err) {
@@ -1426,7 +1679,7 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
             <div>
               <div className="flex items-center justify-between">
                 <span className="font-sans text-[11px] font-bold uppercase tracking-wider text-muted">
-                  Step 1 · Source Data (Required)
+                  Step 1 · Source Excel / CSV (Required)
                 </span>
                 {leadsFile && (
                   <span className="rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-semibold text-green-700">
@@ -1436,7 +1689,8 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
               </div>
               <h2 className="mt-1 font-display text-lg font-semibold text-ink">Upload Leads File</h2>
               <p className="mt-1 text-xs text-muted leading-relaxed">
-                Choose the spreadsheet (.csv, .xlsx, or .tsv) that contains your contacts or raw leads data.
+                Choose the spreadsheet (.csv, .xlsx, or .tsv) that contains your contacts. It will be saved as a group
+                under this sheet's name.
               </p>
 
               <div
@@ -1464,20 +1718,31 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
             </div>
 
             {leadsFile && (
-              <div className="mt-4 flex items-center justify-between pt-3 border-t border-line">
-                <span className="text-xs text-ink font-medium truncate max-w-[200px]">{leadsFile.name}</span>
-                <button
-                  type="button"
-                  onClick={() => setLeadsFile(null)}
-                  className="text-xs text-danger-text hover:underline"
-                >
-                  Remove
-                </button>
+              <div className="mt-4 space-y-2 pt-3 border-t border-line">
+                <Field label="Sheet Group Name (Saves as proof under this name):">
+                  <input
+                    type="text"
+                    value={customGroupTitle}
+                    onChange={(e) => setCustomGroupTitle(e.target.value)}
+                    placeholder="e.g. Ghana_Tech_Startups_2026"
+                    className="w-full rounded-xl border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink focus:border-ink focus:outline-none"
+                  />
+                </Field>
+                <div className="flex items-center justify-between text-xs text-muted">
+                  <span className="truncate max-w-[200px]">{leadsFile.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => setLeadsFile(null)}
+                    className="text-danger-text hover:underline"
+                  >
+                    Remove
+                  </button>
+                </div>
               </div>
             )}
           </Card>
 
-          {/* File 2: Lead Template (Core Feature) */}
+          {/* File 2: Lead Template */}
           <Card className="p-5 flex flex-col justify-between border-blue/30 bg-gradient-to-b from-blue-50/20 to-transparent">
             <div>
               <div className="flex items-center justify-between">
@@ -1642,7 +1907,7 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
               </div>
               <h2 className="mt-1 font-display text-xl font-bold text-ink">Review &amp; Approve Import Plan</h2>
               <p className="text-xs text-muted">
-                Inspect how columns and datasets have been structured. Choose whether to combine them into one 'Lead List'.
+                Inspect how columns are mapped. All data will be saved as a group under the sheet's name.
               </p>
             </div>
 
@@ -1661,74 +1926,29 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
                 disabled={isCommitting}
                 onClick={commitImport}
               >
-                {isCommitting ? "Importing Leads..." : "Commit & Import Leads"}
+                {isCommitting ? "Importing Leads..." : `Save as Group: "${customGroupTitle.trim() || plan.singleListTitle || "Uploaded Sheet"}"`}
               </Button>
             </div>
           </div>
 
-          {/* Grouping / Combining into 'Lead List' Selector */}
-          <Card className="p-4 border-blue/40 bg-blue-50/20 space-y-2">
-            <div className="flex items-center justify-between">
+          {/* Group Name Confirmation */}
+          <Card className="p-4 border-blue/40 bg-blue-50/20 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
               <span className="font-sans text-[11px] font-bold uppercase tracking-wider text-blue">
-                Dataset Grouping &amp; Combination
+                Group / Sheet Proof Name
               </span>
-              <span className="text-[10px] text-muted">
-                {plan.tables.length} table(s) across sheets
-              </span>
+              <p className="text-xs text-muted mt-0.5">
+                This imported file will be saved as an independent group under this name in your pipeline:
+              </p>
             </div>
-            <p className="text-xs text-ink font-medium">
-              How would you like to save these imported data sets in your Africon pipeline?
-            </p>
-
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 pt-1">
-              <label
-                className={`flex items-start gap-2.5 rounded-xl border p-3 cursor-pointer transition ${
-                  plan.grouping === "single"
-                    ? "border-blue bg-white shadow-xs"
-                    : "border-line bg-sunken/40 hover:bg-white"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="planGrouping"
-                  checked={plan.grouping === "single"}
-                  onChange={() => setPlan({ ...plan, grouping: "single", singleListTitle: "Lead List" })}
-                  className="mt-0.5 text-blue"
-                />
-                <div>
-                  <div className="font-bold text-xs text-ink flex items-center gap-1.5">
-                    <span>Combine all into one list: 'Lead List'</span>
-                    <span className="rounded bg-blue-100 px-1.5 py-0.2 text-[9px] font-bold text-blue">
-                      Recommended
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-muted mt-0.5">
-                    Merges all worksheets and data sets into a single unified list named <strong>'Lead List'</strong>.
-                  </div>
-                </div>
-              </label>
-
-              <label
-                className={`flex items-start gap-2.5 rounded-xl border p-3 cursor-pointer transition ${
-                  plan.grouping !== "single"
-                    ? "border-blue bg-white shadow-xs"
-                    : "border-line bg-sunken/40 hover:bg-white"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="planGrouping"
-                  checked={plan.grouping !== "single"}
-                  onChange={() => setPlan({ ...plan, grouping: "sheet" })}
-                  className="mt-0.5 text-blue"
-                />
-                <div>
-                  <div className="font-bold text-xs text-ink">Keep separate lists per sheet / table</div>
-                  <div className="text-[11px] text-muted mt-0.5">
-                    Creates an individual list for each sheet or table found in your file.
-                  </div>
-                </div>
-              </label>
+            <div className="w-full sm:w-72">
+              <input
+                type="text"
+                value={customGroupTitle}
+                onChange={(e) => setCustomGroupTitle(e.target.value)}
+                placeholder="Sheet group name..."
+                className="w-full rounded-xl border border-line bg-white px-3 py-2 text-xs font-bold text-ink focus:border-ink focus:outline-none"
+              />
             </div>
           </Card>
 
@@ -1849,7 +2069,7 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
                               {table.columns
                                 .filter((c) => c.field !== "ignore")
                                 .map((c, i) => (
-                                  <td key={i} className="px-3 py-1.5 truncate max-w-[200px]">
+                                  <td key={i} className="px-3 py-1.5 break-words max-w-[220px]">
                                     {row[c.label] || "—"}
                                   </td>
                                 ))}
@@ -1870,9 +2090,9 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
       {committedResult && (
         <Card className="p-10 text-center space-y-4 max-w-lg mx-auto shadow-sm">
           <div className="text-4xl">🎉</div>
-          <h2 className="font-display text-2xl font-bold text-ink">Import Completed Successfully!</h2>
+          <h2 className="font-display text-2xl font-bold text-ink">Sheet Imported Successfully!</h2>
           <p className="text-xs text-muted leading-relaxed">
-            Your spreadsheet has been imported and structured into the Africon Leads pipeline.
+            Your spreadsheet has been saved as a group under the name <strong>"{committedResult.groupName}"</strong>.
           </p>
 
           <div className="grid grid-cols-2 gap-3 py-2">
@@ -1881,8 +2101,8 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
               <strong className="text-xl text-ink font-bold">{committedResult.leadsCreated}</strong>
             </div>
             <div className="rounded-xl bg-sunken p-3 text-center">
-              <span className="text-xs text-muted block">Lists Created</span>
-              <strong className="text-xl text-ink font-bold">{committedResult.groupsCreated}</strong>
+              <span className="text-xs text-muted block">Group Name</span>
+              <strong className="text-sm text-ink font-bold truncate block">{committedResult.groupName}</strong>
             </div>
           </div>
 
@@ -1988,8 +2208,9 @@ function TemplateLibraryView({ onUseTemplate }: { onUseTemplate: () => void }) {
           1. <strong>Upload Your Leads</strong>: Drop any messy raw leads sheet (Excel or CSV).<br />
           2. <strong>Attach Your Template (Optional)</strong>: Upload your target template with your desired columns and header names.<br />
           3. <strong>Automatic Alignment</strong>: The AI reads both sheets, detects semantic matches (e.g. "Telephone" → "Direct Phone", "Turnover" → "Annual Revenue"), and shapes the output to match your template perfectly.<br />
-          4. <strong>Combine into 'Lead List'</strong>: Multi-tab workbooks or separate datasets can be cleanly combined into a single unified list with the name 'Lead List'.<br />
-          5. <strong>Zero Loss</strong>: Extra columns from your import that aren't in the template are cleanly preserved as custom attributes so no data is dropped.
+          4. <strong>Saved as Group Proof</strong>: Every imported file is automatically grouped under that sheet's name.<br />
+          5. <strong>Combine into 'Lead List'</strong>: After importing multiple datasets, combine them into one unified list named 'Lead List' whenever you're ready.<br />
+          6. <strong>Clean Exports</strong>: Exported spreadsheets contain strictly the sheet's actual columns without server metadata, scores, or statuses.
         </p>
       </Card>
     </div>

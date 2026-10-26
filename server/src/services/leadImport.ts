@@ -554,7 +554,7 @@ export async function commitPlan(
           contactName: String(row.lead.contactName),
           source: (row.lead.source as Prisma.LeadCreateManyInput["source"]) ?? (table.leadSource as Prisma.LeadCreateManyInput["source"]),
           status: (row.lead.status as Prisma.LeadCreateManyInput["status"]) ?? (table.status as Prisma.LeadCreateManyInput["status"]),
-          leadScore: typeof row.lead.leadScore === "number" ? row.lead.leadScore : scoreRow(row.lead),
+          leadScore: allTags.includes("africon") ? 0 : (typeof row.lead.leadScore === "number" ? row.lead.leadScore : scoreRow(row.lead)),
           captureMethod,
           groupId: group.id,
           dedupeKey: row.dedupeKey,

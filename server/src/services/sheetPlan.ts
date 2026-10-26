@@ -917,7 +917,8 @@ export function extractRows(grid: SheetGrid, table: PlanTable): { rows: Extracte
     for (const column of table.columns) {
       const cell = row[column.index] ?? "";
       if (column.field === "ignore") continue;
-      raw[column.label] = cell;
+      const headerKey = column.label || column.header || `Column ${column.index + 1}`;
+      raw[headerKey] = cell;
       if (cell === "") continue;
 
       if (column.field === "custom") {
