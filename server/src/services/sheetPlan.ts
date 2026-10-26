@@ -930,10 +930,15 @@ export function extractRows(grid: SheetGrid, table: PlanTable): { rows: Extracte
       }
     }
 
-    const name = (lead.contactName ?? lead.companyName) as string | undefined;
+    let name = (lead.contactName ?? lead.companyName) as string | undefined;
     if (!name || !String(name).trim()) {
-      skipped += 1;
-      continue;
+      const fallback = (lead.contactEmail || lead.contactPhone || lead.website || Object.values(raw).find((v) => v && String(v).trim())) as string | undefined;
+      if (fallback && String(fallback).trim()) {
+        name = String(fallback).trim();
+      } else {
+        skipped += 1;
+        continue;
+      }
     }
     lead.contactName = String(name).trim();
 

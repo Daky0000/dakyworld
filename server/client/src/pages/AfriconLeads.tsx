@@ -385,16 +385,13 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
   const [deleteBundleConfirm, setDeleteBundleConfirm] = useState<LeadGroup | null>(null);
   const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
 
-  // Fetch only Africon Leads (guaranteed isolation from OS leads & demo leads)
+  // Fetch all Africon Leads (guaranteed isolation from OS leads & demo leads)
   const { data: leadsResponse, isLoading } = useQuery({
-    queryKey: ["leads", "africon", selectedBundle],
+    queryKey: ["leads", "africon"],
     queryFn: ({ signal }) => {
       const queryParams = new URLSearchParams();
       queryParams.set("tags", "africon");
-      queryParams.set("take", "1000");
-      if (selectedBundle && selectedBundle !== "ALL" && selectedBundle !== "ungrouped") {
-        queryParams.set("groupId", selectedBundle);
-      }
+      queryParams.set("take", "5000");
       return api.get<{ items: Lead[]; total: number } | Lead[]>(`/leads?${queryParams.toString()}`, signal);
     },
   });
@@ -475,12 +472,18 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
     },
   });
 
+  // Combine groups modal state
+  const [combineModalOpen, setCombineModalOpen] = useState(false);
+  const [selectedGroupIdsForCombine, setSelectedGroupIdsForCombine] = useState<Set<string>>(new Set());
+  const [combineTargetName, setCombineTargetName] = useState("Lead List");
+
   const combineMutation = useMutation({
-    mutationFn: (ids?: string[]) =>
-      api.post<{ combined: number; group: { id: string; name: string } }>("/leads/combine-to-lead-list", { ids }),
+    mutationFn: (payload?: { ids?: string[]; groupIds?: string[]; name?: string }) =>
+      api.post<{ combined: number; group: { id: string; name: string } }>("/leads/combine-to-lead-list", payload || {}),
     onSuccess: (data) => {
       invalidateLeads();
       setSelectedIds(new Set());
+      setCombineModalOpen(false);
       setNoticeMessage(`Successfully combined ${data.combined} leads into '${data.group.name}'!`);
       setTimeout(() => setNoticeMessage(null), 5000);
     },
@@ -692,7 +695,7 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
 
       {/* Uploaded Excel Sheets / Groups Bar */}
       <Card className="p-4 space-y-3 bg-sunken/30">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
           <div className="flex items-center gap-2">
             <span className="font-sans text-[11px] font-bold uppercase tracking-wider text-ink">
               Uploaded Excel Sheets &amp; Groups
@@ -702,15 +705,33 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
-              onClick={() => combineMutation.mutate()}
-              disabled={combineMutation.isPending || leads.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-blue/40 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue hover:bg-blue-100/70 transition shadow-xs disabled:opacity-50"
-              title="Combine all uploaded Excel sheet datasets into one unified list named 'Lead List'"
+              onClick={() =>
+                exportLeadsToCsv(
+                  leads,
+                  `all_africon_leads_${new Date().toISOString().slice(0, 10)}.csv`
+                )
+              }
+              disabled={leads.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:bg-sunken transition shadow-xs disabled:opacity-50"
+              title="Export all leads from all sheet groups combined into one CSV"
             >
-              <span>📋</span> Combine All into 'Lead List'
+              <span>📥 Export All Combined CSV ({leads.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedGroupIdsForCombine(new Set(groups.map((g) => g.id)));
+                setCombineModalOpen(true);
+              }}
+              disabled={combineMutation.isPending || groups.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-blue/40 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue hover:bg-blue-100/70 transition shadow-xs disabled:opacity-50"
+              title="Combine multiple uploaded sheet groups into one unified list named 'Lead List'"
+            >
+              <span>📋 Combine Groups into 'Lead List'</span>
             </button>
           </div>
         </div>
@@ -755,6 +776,24 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
                     {countInGroup}
                   </span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const leadsOfGroup = leads.filter((l) => l.groupId === group.id);
+                    exportLeadsToCsv(
+                      leadsOfGroup,
+                      `${slugifyName(group.name)}_${new Date().toISOString().slice(0, 10)}.csv`
+                    );
+                  }}
+                  title={`Export ${group.name} CSV individually`}
+                  className={`pr-2.5 pl-1 py-1 text-xs transition ${
+                    isSelected ? "text-white/80 hover:text-white" : "text-muted hover:text-ink"
+                  }`}
+                >
+                  📥
+                </button>
               </div>
             );
           })}
@@ -779,10 +818,10 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
           <div>
             <div className="flex items-center gap-2">
               <span className="font-sans text-[10px] font-bold uppercase tracking-wider text-blue">
-                Active Excel Sheet Proof
+                Active Group Proof
               </span>
               <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue">
-                {filteredLeads.length} leads in this sheet
+                {filteredLeads.length} leads in this group
               </span>
             </div>
             <h3 className="mt-0.5 font-display text-base font-bold text-ink">{activeBundle.name}</h3>
@@ -802,15 +841,17 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
               }
               className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:bg-sunken shadow-xs transition"
             >
-              <span>📥</span> Export Sheet CSV
+              <span>📥</span> Export Group CSV ({filteredLeads.length})
             </button>
 
             {activeBundle.name.toLowerCase() !== "lead list" && (
               <Button
                 variant="secondary"
                 className="text-xs"
-                onClick={() => combineMutation.mutate(filteredLeads.map((l) => l.id))}
-                disabled={combineMutation.isPending}
+                onClick={() => {
+                  setSelectedGroupIdsForCombine(new Set([activeBundle.id]));
+                  setCombineModalOpen(true);
+                }}
               >
                 <span>🔗</span> Combine with 'Lead List'
               </Button>
@@ -848,7 +889,7 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
 
             <button
               type="button"
-              onClick={() => combineMutation.mutate([...selectedIds])}
+              onClick={() => combineMutation.mutate({ ids: [...selectedIds], name: "Lead List" })}
               disabled={combineMutation.isPending}
               className="inline-flex items-center gap-1.5 rounded-xl bg-blue px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue/90 transition"
             >
@@ -1159,6 +1200,110 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
                 onClick={() => deleteSelectedMutation.mutate()}
               >
                 {deleteSelectedMutation.isPending ? "Deleting..." : `Delete ${selectedIds.size} Leads`}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal: Combine Groups into 'Lead List' */}
+      {combineModalOpen && (
+        <Modal
+          open
+          onClose={() => setCombineModalOpen(false)}
+          title="Combine Africon Groups into 'Lead List'"
+        >
+          <div className="space-y-4">
+            <p className="text-xs text-muted leading-relaxed">
+              Select which uploaded sheet groups or datasets to merge into a single unified list. The leads from all chosen groups will be gathered together under 'Lead List'.
+            </p>
+
+            <div className="space-y-2 max-h-64 overflow-y-auto p-1 border border-line rounded-xl">
+              <div className="flex items-center justify-between px-3 py-1.5 border-b border-line bg-sunken/40 text-xs">
+                <span className="font-semibold text-ink">Available Groups ({groups.length}):</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedGroupIdsForCombine.size === groups.length) {
+                      setSelectedGroupIdsForCombine(new Set());
+                    } else {
+                      setSelectedGroupIdsForCombine(new Set(groups.map((g) => g.id)));
+                    }
+                  }}
+                  className="text-xs font-semibold text-blue hover:underline"
+                >
+                  {selectedGroupIdsForCombine.size === groups.length ? "Deselect All" : "Select All"}
+                </button>
+              </div>
+
+              {groups.map((g) => {
+                const count = leads.filter((l) => l.groupId === g.id).length;
+                const isChecked = selectedGroupIdsForCombine.has(g.id);
+                return (
+                  <label
+                    key={g.id}
+                    className={`flex items-center justify-between p-2.5 rounded-lg border cursor-pointer transition ${
+                      isChecked ? "border-blue bg-blue-50/30" : "border-line/60 bg-white hover:bg-sunken/30"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => {
+                          setSelectedGroupIdsForCombine((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(g.id)) next.delete(g.id);
+                            else next.add(g.id);
+                            return next;
+                          });
+                        }}
+                        className="rounded border-line text-blue"
+                      />
+                      <span className="text-xs font-bold text-ink">📁 {g.name}</span>
+                    </div>
+                    <span className="rounded-full bg-sunken px-2 py-0.5 text-[10px] font-bold text-muted">
+                      {count} leads
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-ink block">Target Combined List Name:</label>
+              <input
+                type="text"
+                value={combineTargetName}
+                onChange={(e) => setCombineTargetName(e.target.value)}
+                placeholder="Lead List"
+                className="w-full rounded-xl border border-line bg-white px-3 py-2 text-xs font-bold text-ink focus:border-ink focus:outline-none"
+              />
+            </div>
+
+            <div className="rounded-xl bg-blue-50 p-3 text-xs text-blue">
+              Total leads to combine: <strong>
+                {leads.filter((l) => l.groupId && selectedGroupIdsForCombine.has(l.groupId)).length} leads
+              </strong>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-line">
+              <Button variant="secondary" onClick={() => setCombineModalOpen(false)} type="button">
+                Cancel
+              </Button>
+              <Button
+                variant="accent"
+                disabled={combineMutation.isPending || selectedGroupIdsForCombine.size === 0}
+                onClick={() =>
+                  combineMutation.mutate({
+                    groupIds: Array.from(selectedGroupIdsForCombine),
+                    name: combineTargetName,
+                  })
+                }
+              >
+                {combineMutation.isPending
+                  ? "Combining..."
+                  : `Combine ${selectedGroupIdsForCombine.size} Groups into '${combineTargetName}'`}
               </Button>
             </div>
           </div>
@@ -1485,7 +1630,9 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
   const [inspectedTemplate, setInspectedTemplate] = useState<InspectedTemplate | null>(null);
   const [templateLoading, setTemplateLoading] = useState(false);
 
-  // Group name for this imported sheet
+  // Grouping mode: separate lists per detected section/sheet vs single combined list
+  const [groupingMode, setGroupingMode] = useState<"separate" | "combined">("separate");
+  const [tableTitles, setTableTitles] = useState<Record<string, string>>({});
   const [customGroupTitle, setCustomGroupTitle] = useState<string>("");
 
   // Settings
@@ -1503,6 +1650,7 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
     leadsCreated: number;
     groupsCreated: number;
     groupName?: string;
+    mode?: "separate" | "combined";
   } | null>(null);
 
   // Inspect template file whenever uploaded
@@ -1607,18 +1755,33 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
         gatheredWarnings.push(...step.warnings);
       }
 
-      // Save as a group named after the uploaded Excel sheet / file
-      const updatedTables = gatheredTables.map((t) => ({
-        ...t,
-        title: remainingSheets.length > 1 && t.sheet.toLowerCase() !== "sheet1"
-          ? `${targetGroupName} - ${t.sheet}`
-          : targetGroupName,
-      }));
+      // Preserve each detected section/table with its own sensible default title
+      const updatedTables = gatheredTables.map((t, idx) => {
+        let fallbackTitle = t.title?.trim();
+        if (!fallbackTitle || fallbackTitle === "Imported leads" || fallbackTitle.toLowerCase() === "leads") {
+          fallbackTitle = remainingSheets.length > 1
+            ? `${cleanFileName} - ${t.sheet}`
+            : (gatheredTables.length > 1 ? `${cleanFileName} - Section ${idx + 1}` : cleanFileName);
+        } else if (remainingSheets.length > 1 && !fallbackTitle.includes(t.sheet)) {
+          fallbackTitle = `${t.sheet} - ${fallbackTitle}`;
+        }
+        return {
+          ...t,
+          title: fallbackTitle,
+        };
+      });
+
+      const initialTableTitles: Record<string, string> = {};
+      updatedTables.forEach((t) => {
+        initialTableTitles[t.id] = t.title;
+      });
+      setTableTitles(initialTableTitles);
+      setGroupingMode(updatedTables.length > 1 ? "separate" : "combined");
 
       setPlan({
         tables: updatedTables,
         summary: `Imported from ${leadsFile.name}${templateFile ? ` • Structured using template: ${templateFile.name}` : ""}`,
-        grouping: "sheet",
+        grouping: updatedTables.length > 1 ? "table" : "sheet",
         singleListTitle: targetGroupName,
         isAfricon: true,
         tags: ["africon"],
@@ -1640,7 +1803,15 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
     if (!importId || !plan) return;
     setIsCommitting(true);
     try {
-      const targetGroupName = customGroupTitle.trim() || plan.singleListTitle || "Uploaded Sheet";
+      const cleanFileName = leadsFile?.name.replace(/\.[^/.]+$/, "").trim() || "Uploaded Sheet";
+      const targetCombinedTitle = customGroupTitle.trim() || plan.singleListTitle || cleanFileName;
+      const isMulti = plan.tables.length > 1;
+      const finalGrouping = isMulti ? (groupingMode === "separate" ? "table" : "single") : "sheet";
+
+      const tablesWithTitles = plan.tables.map((t) => ({
+        ...t,
+        title: tableTitles[t.id]?.trim() || t.title,
+      }));
 
       const response = await api.post<{
         import: LeadImportRecord;
@@ -1648,9 +1819,11 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
       }>(`/imports/${importId}/commit`, {
         plan: {
           ...plan,
+          grouping: finalGrouping,
+          tables: tablesWithTitles,
           isAfricon: true,
           tags: ["africon"],
-          singleListTitle: targetGroupName,
+          singleListTitle: targetCombinedTitle,
         },
         dataBase64: leadsFile?.dataBase64,
         fileName: leadsFile?.name,
@@ -1659,7 +1832,8 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
       setCommittedResult({
         leadsCreated: response.result.leadsCreated,
         groupsCreated: response.result.groupsCreated,
-        groupName: targetGroupName,
+        groupName: groupingMode === "separate" && isMulti ? `${response.result.groupsCreated} Separate Groups` : targetCombinedTitle,
+        mode: groupingMode,
       });
       qc.invalidateQueries({ queryKey: ["leads"] });
     } catch (err) {
@@ -1926,31 +2100,151 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
                 disabled={isCommitting}
                 onClick={commitImport}
               >
-                {isCommitting ? "Importing Leads..." : `Save as Group: "${customGroupTitle.trim() || plan.singleListTitle || "Uploaded Sheet"}"`}
+                {isCommitting
+                  ? "Importing Leads..."
+                  : plan.tables.length > 1
+                  ? (groupingMode === "separate"
+                      ? `Save as ${plan.tables.length} Separate Groups (${previews.reduce((s, p) => s + p.rowCount, 0)} Leads)`
+                      : `Save as Combined Group: "${customGroupTitle.trim() || plan.singleListTitle || "Uploaded Sheet"}" (${previews.reduce((s, p) => s + p.rowCount, 0)} Leads)`)
+                  : `Save as Group: "${customGroupTitle.trim() || plan.singleListTitle || "Uploaded Sheet"}" (${previews[0]?.rowCount ?? 0} Leads)`}
               </Button>
             </div>
           </div>
 
-          {/* Group Name Confirmation */}
-          <Card className="p-4 border-blue/40 bg-blue-50/20 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div>
-              <span className="font-sans text-[11px] font-bold uppercase tracking-wider text-blue">
-                Group / Sheet Proof Name
-              </span>
-              <p className="text-xs text-muted mt-0.5">
-                This imported file will be saved as an independent group under this name in your pipeline:
-              </p>
-            </div>
-            <div className="w-full sm:w-72">
-              <input
-                type="text"
-                value={customGroupTitle}
-                onChange={(e) => setCustomGroupTitle(e.target.value)}
-                placeholder="Sheet group name..."
-                className="w-full rounded-xl border border-line bg-white px-3 py-2 text-xs font-bold text-ink focus:border-ink focus:outline-none"
-              />
-            </div>
-          </Card>
+          {/* Grouping Strategy (when multiple tables / sections are detected) */}
+          {plan.tables.length > 1 ? (
+            <Card className="p-5 border-blue/40 bg-gradient-to-r from-blue-50/30 to-transparent space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-sans text-[11px] font-bold uppercase tracking-wider text-blue">
+                    Step 3 · Grouping &amp; Categorization
+                  </span>
+                  <h3 className="font-display text-base font-bold text-ink mt-0.5">
+                    How should these ${plan.tables.length} datasets be categorized?
+                  </h3>
+                </div>
+                <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-bold text-blue">
+                  {plan.tables.length} tables / sections found
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setGroupingMode("separate")}
+                  className={`text-left rounded-2xl border-2 p-4 transition ${
+                    groupingMode === "separate"
+                      ? "border-blue bg-white shadow-xs"
+                      : "border-line bg-white/70 hover:border-ink/40"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      checked={groupingMode === "separate"}
+                      onChange={() => setGroupingMode("separate")}
+                      className="rounded-full border-blue text-blue focus:ring-0"
+                    />
+                    <span className="font-bold text-ink text-sm">Save as Separate Groups ({plan.tables.length} lists)</span>
+                  </div>
+                  <p className="mt-2 text-xs text-muted leading-relaxed pl-6">
+                    Recommended: Each section (or sheet) becomes its own independent list. You can export each list individually, or combine them together into 'Lead List' whenever you want.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setGroupingMode("combined")}
+                  className={`text-left rounded-2xl border-2 p-4 transition ${
+                    groupingMode === "combined"
+                      ? "border-blue bg-white shadow-xs"
+                      : "border-line bg-white/70 hover:border-ink/40"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      checked={groupingMode === "combined"}
+                      onChange={() => setGroupingMode("combined")}
+                      className="rounded-full border-blue text-blue focus:ring-0"
+                    />
+                    <span className="font-bold text-ink text-sm">Merge into One Combined Group (1 list)</span>
+                  </div>
+                  <p className="mt-2 text-xs text-muted leading-relaxed pl-6">
+                    Merges all {plan.tables.length} datasets into a single combined list with all leads together.
+                  </p>
+                </button>
+              </div>
+
+              {/* Group Names Configuration */}
+              {groupingMode === "separate" ? (
+                <div className="mt-3 pt-3 border-t border-line/60 space-y-2">
+                  <span className="text-xs font-bold text-ink block">
+                    Define Group Name for Each Detected Section:
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {plan.tables.map((table, tIdx) => {
+                      const preview = previews.find((p) => p.tableId === table.id);
+                      const count = preview?.rowCount ?? (table.lastDataRow - table.firstDataRow + 1);
+                      return (
+                        <div key={table.id} className="rounded-xl border border-line bg-white p-3 space-y-1.5 shadow-2xs">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-semibold text-blue">Section #{tIdx + 1} ({table.sheet})</span>
+                            <span className="rounded-full bg-sunken px-2 py-0.5 text-[10px] font-bold text-ink">
+                              {count} leads
+                            </span>
+                          </div>
+                          <input
+                            type="text"
+                            value={tableTitles[table.id] ?? table.title}
+                            onChange={(e) => setTableTitles({ ...tableTitles, [table.id]: e.target.value })}
+                            placeholder={`Group name for Section ${tIdx + 1}...`}
+                            className="w-full rounded-lg border border-line bg-white px-2.5 py-1.5 text-xs font-bold text-ink focus:border-blue focus:outline-none"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-3 pt-3 border-t border-line/60 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div>
+                    <span className="text-xs font-bold text-ink block">Combined Group Name:</span>
+                    <p className="text-xs text-muted mt-0.5">All leads will be saved under this unified list name:</p>
+                  </div>
+                  <div className="w-full sm:w-72">
+                    <input
+                      type="text"
+                      value={customGroupTitle}
+                      onChange={(e) => setCustomGroupTitle(e.target.value)}
+                      placeholder="Combined group name..."
+                      className="w-full rounded-xl border border-line bg-white px-3 py-2 text-xs font-bold text-ink focus:border-ink focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+            </Card>
+          ) : (
+            <Card className="p-4 border-blue/40 bg-blue-50/20 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <span className="font-sans text-[11px] font-bold uppercase tracking-wider text-blue">
+                  Group / Sheet Proof Name
+                </span>
+                <p className="text-xs text-muted mt-0.5">
+                  This imported file will be saved as an independent group under this name in your pipeline:
+                </p>
+              </div>
+              <div className="w-full sm:w-72">
+                <input
+                  type="text"
+                  value={customGroupTitle}
+                  onChange={(e) => setCustomGroupTitle(e.target.value)}
+                  placeholder="Sheet group name..."
+                  className="w-full rounded-xl border border-line bg-white px-3 py-2 text-xs font-bold text-ink focus:border-ink focus:outline-none"
+                />
+              </div>
+            </Card>
+          )}
 
           {/* Warnings / Reports */}
           {warnings.length > 0 && (
@@ -2092,7 +2386,9 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
           <div className="text-4xl">🎉</div>
           <h2 className="font-display text-2xl font-bold text-ink">Sheet Imported Successfully!</h2>
           <p className="text-xs text-muted leading-relaxed">
-            Your spreadsheet has been saved as a group under the name <strong>"{committedResult.groupName}"</strong>.
+            {committedResult.mode === "separate"
+              ? `Your spreadsheet has been saved as ${committedResult.groupsCreated} separate lists in your Africon pipeline.`
+              : `Your spreadsheet has been saved as a group under the name "${committedResult.groupName}".`}
           </p>
 
           <div className="grid grid-cols-2 gap-3 py-2">
@@ -2101,7 +2397,7 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
               <strong className="text-xl text-ink font-bold">{committedResult.leadsCreated}</strong>
             </div>
             <div className="rounded-xl bg-sunken p-3 text-center">
-              <span className="text-xs text-muted block">Group Name</span>
+              <span className="text-xs text-muted block">Lists Created</span>
               <strong className="text-sm text-ink font-bold truncate block">{committedResult.groupName}</strong>
             </div>
           </div>

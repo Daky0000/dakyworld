@@ -433,6 +433,7 @@ leadsRouter.post("/combine-to-lead-list", async (req, res, next) => {
     const input = z
       .object({
         ids: z.array(z.string().cuid()).optional(),
+        groupIds: z.array(z.string().cuid()).optional(),
         name: z.string().default("Lead List"),
       })
       .parse(req.body);
@@ -465,7 +466,17 @@ leadsRouter.post("/combine-to-lead-list", async (req, res, next) => {
     }
 
     let leadIds = input.ids;
-    if (!leadIds || leadIds.length === 0) {
+    if (input.groupIds && input.groupIds.length > 0) {
+      const africonLeads = await prisma.lead.findMany({
+        where: {
+          groupId: { in: input.groupIds },
+          tags: { hasSome: ["africon"] },
+          rehearsal: false,
+        },
+        select: { id: true },
+      });
+      leadIds = africonLeads.map((l) => l.id);
+    } else if (!leadIds || leadIds.length === 0) {
       // If no IDs specified, combine all Africon leads
       const africonLeads = await prisma.lead.findMany({
         where: {

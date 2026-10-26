@@ -166,11 +166,11 @@ function scoreRow(lead: Record<string, unknown>): number {
  * sheet refreshes the same leads instead of doubling the pipeline.
  */
 function dedupeKeyFor(lead: Record<string, unknown>): string | null {
-  const email = typeof lead.contactEmail === "string" ? lead.contactEmail : null;
-  if (email) return `email:${email}`;
+  const email = typeof lead.contactEmail === "string" && lead.contactEmail.trim() ? lead.contactEmail.trim().toLowerCase() : null;
+  if (email && email !== "undefined" && email !== "null") return `email:${email}`;
 
-  const website = typeof lead.website === "string" ? lead.website : null;
-  if (website) {
+  const website = typeof lead.website === "string" && lead.website.trim() ? lead.website.trim() : null;
+  if (website && website !== "undefined" && website !== "null") {
     try {
       return `domain:${new URL(website).hostname.replace(/^www\./i, "").toLowerCase()}`;
     } catch {
@@ -181,8 +181,10 @@ function dedupeKeyFor(lead: Record<string, unknown>): string | null {
   const digits = typeof lead.contactPhone === "string" ? lead.contactPhone.replace(/\D/g, "") : "";
   if (digits.length >= 9) return `phone:${digits.slice(-9)}`;
 
-  const name = slug(String(lead.contactName ?? ""));
-  if (!name) return null;
+  const rawName = String(lead.contactName ?? "").trim();
+  if (!rawName || rawName.toLowerCase() === "undefined" || rawName.toLowerCase() === "null") return null;
+  const name = slug(rawName);
+  if (!name || name === "undefined" || name === "null") return null;
   const city = lead.city ? `:${slug(String(lead.city))}` : "";
   return `name:${name}${city}`;
 }
@@ -551,7 +553,7 @@ export async function commitPlan(
         const rowTags = [...new Set([...normaliseTags(row.lead.tags as string[] | undefined), ...allTags])];
         const base = {
           ...scalars,
-          contactName: String(row.lead.contactName),
+          contactName: row.lead.contactName && String(row.lead.contactName).toLowerCase() !== "undefined" ? String(row.lead.contactName) : "Unnamed Lead",
           source: (row.lead.source as Prisma.LeadCreateManyInput["source"]) ?? (table.leadSource as Prisma.LeadCreateManyInput["source"]),
           status: (row.lead.status as Prisma.LeadCreateManyInput["status"]) ?? (table.status as Prisma.LeadCreateManyInput["status"]),
           leadScore: allTags.includes("africon") ? 0 : (typeof row.lead.leadScore === "number" ? row.lead.leadScore : scoreRow(row.lead)),
