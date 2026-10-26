@@ -16,6 +16,7 @@ import type {
   StoredFile,
 } from "../lib/types";
 import { Badge, Button, Drawer, Field, StatusDot } from "./ui";
+import { EmailBodyEditor } from "./EmailBodyEditor";
 
 /**
  * Writing one email.
@@ -519,8 +520,18 @@ export function EmailComposer({ target, open, onClose }: { target: ComposerTarge
           </Field>
 
           <div className="mt-4">
-            <Field label="Message" hint="Blank line between paragraphs. {{first_name}} and the rest fill in from their record." full>
-              <textarea rows={14} className="input font-normal leading-relaxed" value={body} onChange={(event) => setBody(event.target.value)} />
+            <Field label="Message" hint="Supports text formatting, code & HTML tags, plus [highlight], [callout], [button] shortcodes." full>
+              <EmailBodyEditor
+                value={body}
+                onChange={setBody}
+                variables={context?.variables ?? {}}
+                rows={14}
+                quickLinks={[
+                  ...(context?.variables?.["demo_url"] ? [{ label: "Working Demo Link", url: context.variables["demo_url"] }] : []),
+                  ...(context?.variables?.["website"] ? [{ label: "Prospect Website", url: context.variables["website"] }] : []),
+                  ...(context?.variables?.["client_portal_url"] ? [{ label: "Client Portal", url: context.variables["client_portal_url"] }] : []),
+                ]}
+              />
             </Field>
           </div>
 

@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import type { EmailMessage, EmailStatusSummary, EmailSuppression, EmailTemplate } from "../lib/types";
 import { Badge, Button, Card, Drawer, EmptyState, PageHeader, RelativeTime, StatGrid, StatTile, StatusDot } from "../components/ui";
 import { EmailComposer, EmailPreviewPane, PURPOSES, type ComposerTarget } from "../components/EmailComposer";
+import { EmailBodyEditor } from "../components/EmailBodyEditor";
 import { Sequences } from "../components/Sequences";
 
 type Tab = "outbox" | "templates" | "sequences" | "suppression";
@@ -357,12 +358,11 @@ function Templates() {
                 onChange={(event) => setEditing({ ...editing, description: event.target.value })}
               />
               <input className="input" placeholder="Subject" value={editing.subject} onChange={(event) => setEditing({ ...editing, subject: event.target.value })} />
-              <textarea
-                rows={12}
-                className="input leading-relaxed"
-                placeholder="Body — use {{first_name}}, {{company}}, {{city}}…"
+              <EmailBodyEditor
+                rows={10}
+                placeholder="Template body — supports formatting, code, HTML, and shortcodes like [highlight], [callout], [button]"
                 value={editing.bodyHtml}
-                onChange={(event) => setEditing({ ...editing, bodyHtml: event.target.value })}
+                onChange={(value) => setEditing({ ...editing, bodyHtml: value })}
               />
               <textarea
                 rows={2}

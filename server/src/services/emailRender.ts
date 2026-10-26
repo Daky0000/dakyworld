@@ -7,16 +7,15 @@ import { privacyPolicyUrl, sourceNotice, type SourceNotice } from "./dataSourceN
 import { companyProfile, type CompanyProfile } from "./systemProfile.js";
 import type { RecipientContext } from "./emailContext.js";
 import type { LeadSource } from "@prisma/client";
+import { formatEmailBodyToHtml, formatEmailBodyToText } from "./emailBodyParser.js";
 
 /**
  * Turning a written email into the thing that actually leaves the building:
  * placeholders filled, plain text and HTML produced from one source, a
  * signature appended, and an unsubscribe link that works without a login.
  *
- * The body is authored as plain text with blank lines between paragraphs —
- * both by the drafter and by a person typing into the composer — and rendered
- * to HTML here. One source, so the text and HTML alternatives can never drift
- * into saying different things.
+ * Supports formatting, shortcodes ([highlight], [callout], [button], [badge],
+ * [code]), markdown, and safe HTML.
  */
 
 /** `{{first_name}}` and friends. Unknown names are left visible rather than blanked. */
@@ -64,16 +63,11 @@ export function toHtml(
     sourceNoticeHtml?: string | null;
   } = {},
 ): string {
-  const paragraphs = body
-    .split(/\n{2,}/)
-    .map((block) => block.trim())
-    .filter(Boolean)
-    .map((block) => `<p style="margin:0 0 18px">${linkify(escapeHtml(block)).replace(/\n/g, "<br>")}</p>`)
-    .join("");
+  const bodyHtml = formatEmailBodyToHtml(body);
 
   return wrapEmail({
-    bodyHtml: paragraphs,
-    bodyText: body,
+    bodyHtml,
+    bodyText: formatEmailBodyToText(body),
     signature: signature ? linkify(escapeHtml(signature)).replace(/\n/g, "<br>") : null,
     unsubscribeUrl,
     ...shell,
@@ -91,7 +85,8 @@ export function toText(
   profile?: CompanyProfile,
   sourceNoticeText?: string | null,
 ): string {
-  return [body.trim(), signature ? `\n${signature}` : "", `\n${textFooter(unsubscribeUrl, profile, sourceNoticeText ?? null)}`]
+  const textContent = formatEmailBodyToText(body) || body.trim();
+  return [textContent, signature ? `\n${signature}` : "", `\n${textFooter(unsubscribeUrl, profile, sourceNoticeText ?? null)}`]
     .filter(Boolean)
     .join("\n");
 }
