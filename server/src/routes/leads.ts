@@ -56,6 +56,8 @@ leadsRouter.use(
       // Same reasoning: it removes lists. It cannot reach a lead — an empty
       // list has none — but it is a delete and is gated as one.
       { path: /^\/groups\/empty\/delete$/, permission: "leads.delete" },
+      { path: /^\/combine-to-lead-list$/, permission: "leads.edit" },
+      { path: /^\/africon\/delete-all$/, permission: "leads.delete" },
     ],
   }),
 );
@@ -406,13 +408,111 @@ function slugify(value: string) {
   );
 }
 
-leadsRouter.get("/groups", async (_req, res, next) => {
+leadsRouter.get("/groups", async (req, res, next) => {
   try {
+    const tagsParam = typeof req.query.tags === "string" ? req.query.tags : undefined;
+    const tags = normaliseTags(tagsParam?.split(","));
+    const where: Prisma.LeadGroupWhereInput = {};
+    if (tags.length > 0) {
+      where.tags = { hasSome: tags };
+    }
     const groups = await prisma.leadGroup.findMany({
+      where: Object.keys(where).length ? where : undefined,
       orderBy: { createdAt: "desc" },
       include: { _count: { select: { leads: true } } },
     });
     res.json(groups);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/leads/combine-to-lead-list — merges multiple data sets or selected leads into 'Lead List'
+leadsRouter.post("/combine-to-lead-list", async (req, res, next) => {
+  try {
+    const input = z
+      .object({
+        ids: z.array(z.string().cuid()).optional(),
+        name: z.string().default("Lead List"),
+      })
+      .parse(req.body);
+
+    const groupName = input.name.trim() || "Lead List";
+    const groupSlug = slugify(groupName);
+
+    // Find or create the target LeadGroup
+    let group = await prisma.leadGroup.findFirst({
+      where: {
+        OR: [{ slug: groupSlug }, { name: { equals: groupName, mode: "insensitive" } }],
+      },
+    });
+
+    if (!group) {
+      group = await prisma.leadGroup.create({
+        data: {
+          name: groupName,
+          slug: groupSlug,
+          tags: ["africon"],
+          description: "Combined Africon lead list",
+          autoCreated: false,
+        },
+      });
+    } else if (!group.tags.includes("africon")) {
+      group = await prisma.leadGroup.update({
+        where: { id: group.id },
+        data: { tags: { set: [...new Set([...group.tags, "africon"])] } },
+      });
+    }
+
+    let leadIds = input.ids;
+    if (!leadIds || leadIds.length === 0) {
+      // If no IDs specified, combine all Africon leads
+      const africonLeads = await prisma.lead.findMany({
+        where: {
+          tags: { hasSome: ["africon"] },
+          rehearsal: false,
+        },
+        select: { id: true },
+      });
+      leadIds = africonLeads.map((l) => l.id);
+    }
+
+    if (leadIds.length === 0) {
+      return res.json({ combined: 0, group });
+    }
+
+    const updated = await prisma.lead.updateMany({
+      where: { id: { in: leadIds } },
+      data: { groupId: group.id },
+    });
+
+    res.json({
+      combined: updated.count,
+      group: { id: group.id, name: group.name, slug: group.slug },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/leads/africon/delete-all — deletes all Africon leads, strictly preserving regular OS leads
+leadsRouter.delete("/africon/delete-all", async (_req, res, next) => {
+  try {
+    const africonLeads = await prisma.lead.findMany({
+      where: {
+        tags: { hasSome: ["africon"] },
+        rehearsal: false,
+      },
+      select: { id: true },
+    });
+
+    if (!africonLeads.length) {
+      return res.json({ deleted: 0 });
+    }
+
+    const ids = africonLeads.map((l) => l.id);
+    const result = await deleteLeads({ ids });
+    res.json(result);
   } catch (err) {
     next(err);
   }

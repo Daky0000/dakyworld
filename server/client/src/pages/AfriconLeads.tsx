@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { AdminGuard, isAdminUser } from "../components/AdminGuard";
@@ -8,16 +8,15 @@ import type {
   AnalyzeStep,
   ImportPlan,
   Lead,
-  LeadFieldDef,
   LeadGroup,
   LeadImportRecord,
   PlanColumn,
+  PlanGrouping,
   PlanTable,
   TablePreview,
   TemplateColumnDef,
   TemplateDef,
 } from "../lib/types";
-import { FIELD_TYPES, useLeadFields } from "../components/LeadColumns";
 import { LeadDrawer } from "../components/LeadDrawer";
 import {
   Badge,
@@ -26,8 +25,6 @@ import {
   EmptyState,
   Field,
   Modal,
-  PageHeader,
-  RelativeTime,
   StatusDot,
   StatTile,
 } from "../components/ui";
@@ -143,7 +140,8 @@ async function toBase64(file: File): Promise<string> {
 }
 
 function downloadCsv(filename: string, content: string) {
-  const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
+  // UTF-8 BOM ensures seamless rendering across Microsoft Excel, Apple Numbers, and LibreOffice
+  const blob = new Blob(["\uFEFF" + content], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -152,6 +150,46 @@ function downloadCsv(filename: string, content: string) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+function slugifyName(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "leads";
+}
+
+export function exportLeadsToCsv(leadsToExport: Lead[], filename: string) {
+  if (!leadsToExport.length) return;
+  const headers = [
+    "Contact Person",
+    "Company Name",
+    "Official Email",
+    "Direct Phone",
+    "Country",
+    "City",
+    "Industry Sector",
+    "Status",
+    "Lead Score",
+    "Source",
+    "Website",
+    "Address",
+    "Discovery Notes",
+  ];
+  const rows = leadsToExport.map((l) => [
+    `"${(l.contactName || "").replace(/"/g, '""')}"`,
+    `"${(l.companyName || "").replace(/"/g, '""')}"`,
+    `"${(l.contactEmail || "").replace(/"/g, '""')}"`,
+    `"${(l.contactPhone || "").replace(/"/g, '""')}"`,
+    `"${(l.country || "").replace(/"/g, '""')}"`,
+    `"${(l.city || "").replace(/"/g, '""')}"`,
+    `"${(l.category || "").replace(/"/g, '""')}"`,
+    `"${(l.status || "").replace(/"/g, '""')}"`,
+    l.leadScore ?? 0,
+    `"${(l.source || "").replace(/"/g, '""')}"`,
+    `"${(l.website || "").replace(/"/g, '""')}"`,
+    `"${(l.address || "").replace(/"/g, '""')}"`,
+    `"${(l.discoveryNotes || "").replace(/"/g, '""')}"`,
+  ]);
+  const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+  downloadCsv(filename, csv);
 }
 
 export function AfriconLeads() {
@@ -169,7 +207,7 @@ export function AfriconLeads() {
   }
 
   return (
-    <div className="space-y-6 pb-12">
+    <div className="space-y-6 pb-16">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-line pb-5">
         <div>
           <div className="flex items-center gap-2">
@@ -183,7 +221,7 @@ export function AfriconLeads() {
             Africon Leads
           </h1>
           <p className="mt-1 text-sm text-muted">
-            Exclusive administrative lead pipeline and AI-driven template spreadsheet importer.
+            Exclusive administrative pipeline, bundle management, and AI template-driven spreadsheet importer.
           </p>
         </div>
 
@@ -208,7 +246,7 @@ export function AfriconLeads() {
           onClick={() => setTab("leads")}
           className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-xs font-semibold transition ${
             currentTab === "leads"
-              ? "border-ink text-ink"
+              ? "border-ink text-ink font-bold"
               : "border-transparent text-muted hover:border-line hover:text-ink"
           }`}
         >
@@ -224,14 +262,14 @@ export function AfriconLeads() {
           }`}
         >
           <span>📥 Import Leads &amp; Template</span>
-          <span className="rounded-full bg-blue-50 px-1.5 py-0.2 text-[10px] text-blue">AI</span>
+          <span className="rounded-full bg-blue-50 px-1.5 py-0.2 text-[10px] text-blue font-bold">AI</span>
         </button>
         <button
           type="button"
           onClick={() => setTab("templates")}
           className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-xs font-semibold transition ${
             currentTab === "templates"
-              ? "border-ink text-ink"
+              ? "border-ink text-ink font-bold"
               : "border-transparent text-muted hover:border-line hover:text-ink"
           }`}
         >
@@ -255,47 +293,152 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
   const [selectedStatus, setSelectedStatus] = useState<string>("ALL");
   const [selectedCountry, setSelectedCountry] = useState<string>("ALL");
   const [selectedSource, setSelectedSource] = useState<string>("ALL");
+  const [selectedBundle, setSelectedBundle] = useState<string>("ALL");
   const [onlyReachable, setOnlyReachable] = useState(false);
   const [drawerLeadId, setDrawerLeadId] = useState<string | null>(null);
   const [addLeadOpen, setAddLeadOpen] = useState(false);
 
-  // Fetch leads and groups
+  // Selection state for multi-row operations
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Confirmations
+  const [deleteAllConfirmOpen, setDeleteAllConfirmOpen] = useState(false);
+  const [deleteSelectedConfirmOpen, setDeleteSelectedConfirmOpen] = useState(false);
+  const [deleteBundleConfirm, setDeleteBundleConfirm] = useState<LeadGroup | null>(null);
+  const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
+
+  // Fetch only Africon Leads (guaranteed isolation from OS leads & demo leads)
   const { data: leadsResponse, isLoading } = useQuery({
-    queryKey: ["leads", "list"],
-    queryFn: ({ signal }) => api.get<{ items: Lead[]; total: number } | Lead[]>("/leads", signal),
+    queryKey: ["leads", "africon", selectedBundle],
+    queryFn: ({ signal }) => {
+      const queryParams = new URLSearchParams();
+      queryParams.set("tags", "africon");
+      queryParams.set("take", "1000");
+      if (selectedBundle && selectedBundle !== "ALL" && selectedBundle !== "ungrouped") {
+        queryParams.set("groupId", selectedBundle);
+      }
+      return api.get<{ items: Lead[]; total: number } | Lead[]>(`/leads?${queryParams.toString()}`, signal);
+    },
   });
 
+  // Pure Africon leads array: filters out any non-Africon OS leads and demo leads
   const leads = useMemo(() => {
     if (!leadsResponse) return [];
-    if (Array.isArray(leadsResponse)) return leadsResponse;
-    if (Array.isArray((leadsResponse as { items: Lead[] }).items)) {
-      return (leadsResponse as { items: Lead[] }).items;
-    }
-    return [];
+    const rawList = Array.isArray(leadsResponse)
+      ? leadsResponse
+      : Array.isArray((leadsResponse as { items: Lead[] }).items)
+      ? (leadsResponse as { items: Lead[] }).items
+      : [];
+
+    return rawList.filter((lead) => {
+      // Strictly exclude rehearsal/demo leads
+      if (lead.rehearsal) return false;
+      // Strictly require Africon tag
+      if (Array.isArray(lead.tags) && lead.tags.includes("africon")) return true;
+      return false;
+    });
   }, [leadsResponse]);
 
+  // Fetch only Africon Lead Groups / Bundles
   const { data: rawGroups } = useQuery({
-    queryKey: ["leads", "groups"],
-    queryFn: ({ signal }) => api.get<LeadGroup[]>("/leads/groups", signal),
+    queryKey: ["leads", "groups", "africon"],
+    queryFn: ({ signal }) => api.get<LeadGroup[]>("/leads/groups?tags=africon", signal),
   });
 
   const groups = useMemo(() => (Array.isArray(rawGroups) ? rawGroups : []), [rawGroups]);
 
-  // Delete lead mutation
-  const deleteMutation = useMutation({
+  const activeBundle = useMemo(() => {
+    if (selectedBundle === "ALL" || selectedBundle === "ungrouped") return null;
+    return groups.find((g) => g.id === selectedBundle) ?? null;
+  }, [groups, selectedBundle]);
+
+  // Mutations
+  const invalidateLeads = () => {
+    qc.invalidateQueries({ queryKey: ["leads"] });
+  };
+
+  const deleteSingleMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/leads/${id}`),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["leads"] });
+      invalidateLeads();
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        prev.forEach((id) => next.delete(id));
+        return next;
+      });
     },
   });
 
-  // Filter leads
+  const deleteSelectedMutation = useMutation({
+    mutationFn: () => api.post("/leads/bulk/delete", { ids: [...selectedIds] }),
+    onSuccess: () => {
+      invalidateLeads();
+      setSelectedIds(new Set());
+      setDeleteSelectedConfirmOpen(false);
+      setNoticeMessage(`Deleted ${selectedIds.size} selected leads.`);
+      setTimeout(() => setNoticeMessage(null), 4000);
+    },
+    onError: (err) => {
+      alert(err instanceof Error ? err.message : "Failed to delete selected leads.");
+    },
+  });
+
+  const deleteAllAfriconMutation = useMutation({
+    mutationFn: () => api.delete<{ deleted: number }>("/leads/africon/delete-all"),
+    onSuccess: (data) => {
+      invalidateLeads();
+      setSelectedIds(new Set());
+      setDeleteAllConfirmOpen(false);
+      setNoticeMessage(`Deleted all ${data?.deleted ?? leads.length} Africon leads. Regular OS leads remain untouched.`);
+      setTimeout(() => setNoticeMessage(null), 5000);
+    },
+    onError: (err) => {
+      alert(err instanceof Error ? err.message : "Failed to delete Africon leads.");
+    },
+  });
+
+  const combineMutation = useMutation({
+    mutationFn: (ids?: string[]) =>
+      api.post<{ combined: number; group: { id: string; name: string } }>("/leads/combine-to-lead-list", { ids }),
+    onSuccess: (data) => {
+      invalidateLeads();
+      setSelectedIds(new Set());
+      setNoticeMessage(`Successfully combined ${data.combined} leads into '${data.group.name}'!`);
+      setTimeout(() => setNoticeMessage(null), 5000);
+    },
+    onError: (err) => {
+      alert(err instanceof Error ? err.message : "Failed to combine leads.");
+    },
+  });
+
+  const deleteBundleMutation = useMutation({
+    mutationFn: ({ groupId, withLeads }: { groupId: string; withLeads: boolean }) =>
+      api.delete(`/leads/groups/${groupId}?withLeads=${withLeads}`),
+    onSuccess: () => {
+      invalidateLeads();
+      setDeleteBundleConfirm(null);
+      setSelectedBundle("ALL");
+      setNoticeMessage("Bundle deleted successfully.");
+      setTimeout(() => setNoticeMessage(null), 4000);
+    },
+    onError: (err) => {
+      alert(err instanceof Error ? err.message : "Failed to delete bundle.");
+    },
+  });
+
+  // Filter leads based on user UI filters
   const filteredLeads = useMemo(() => {
     return leads.filter((lead) => {
       if (selectedStatus !== "ALL" && lead.status !== selectedStatus) return false;
       if (selectedCountry !== "ALL" && lead.country?.toLowerCase() !== selectedCountry.toLowerCase()) return false;
       if (selectedSource !== "ALL" && lead.source !== selectedSource) return false;
       if (onlyReachable && !lead.contactEmail && !lead.contactPhone) return false;
+
+      if (selectedBundle === "ungrouped") {
+        if (lead.groupId) return false;
+      } else if (selectedBundle !== "ALL") {
+        if (lead.groupId !== selectedBundle) return false;
+      }
 
       if (search.trim()) {
         const query = search.toLowerCase();
@@ -311,7 +454,7 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
       }
       return true;
     });
-  }, [leads, search, selectedStatus, selectedCountry, selectedSource, onlyReachable]);
+  }, [leads, search, selectedStatus, selectedCountry, selectedSource, selectedBundle, onlyReachable]);
 
   // Lead metrics
   const stats = useMemo(() => {
@@ -322,41 +465,186 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
     return { total, reachable, qualified, highScore };
   }, [leads]);
 
-  const handleExportCsv = () => {
+  // Multi-select handlers
+  const allVisibleSelected = filteredLeads.length > 0 && filteredLeads.every((l) => selectedIds.has(l.id));
+
+  const toggleSelectAllVisible = () => {
+    if (allVisibleSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredLeads.map((l) => l.id)));
+    }
+  };
+
+  const toggleSelectRow = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // Export handlers
+  const handleExportFiltered = () => {
     if (!filteredLeads.length) return;
-    const headers = ["Name", "Company", "Email", "Phone", "Country", "City", "Category", "Status", "Score", "Source"];
-    const rows = filteredLeads.map((l) => [
-      `"${(l.contactName || "").replace(/"/g, '""')}"`,
-      `"${(l.companyName || "").replace(/"/g, '""')}"`,
-      `"${(l.contactEmail || "").replace(/"/g, '""')}"`,
-      `"${(l.contactPhone || "").replace(/"/g, '""')}"`,
-      `"${(l.country || "").replace(/"/g, '""')}"`,
-      `"${(l.city || "").replace(/"/g, '""')}"`,
-      `"${(l.category || "").replace(/"/g, '""')}"`,
-      l.status,
-      l.leadScore ?? 0,
-      l.source,
-    ]);
-    const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
-    downloadCsv(`africon_leads_export_${new Date().toISOString().slice(0, 10)}.csv`, csv);
+    const bundleLabel = activeBundle ? `_${slugifyName(activeBundle.name)}` : "";
+    exportLeadsToCsv(filteredLeads, `africon_leads${bundleLabel}_${new Date().toISOString().slice(0, 10)}.csv`);
+  };
+
+  const handleExportSelected = () => {
+    const selectedList = leads.filter((l) => selectedIds.has(l.id));
+    if (!selectedList.length) return;
+    exportLeadsToCsv(selectedList, `africon_selected_${selectedList.length}_leads_${new Date().toISOString().slice(0, 10)}.csv`);
   };
 
   return (
     <div className="space-y-6">
+      {/* Notice Banner */}
+      {noticeMessage && (
+        <div className="rounded-xl border border-blue bg-blue-50/70 p-3.5 text-xs text-ink flex items-center justify-between animate-fadeIn">
+          <div className="flex items-center gap-2">
+            <span className="text-base">ℹ</span>
+            <span className="font-medium">{noticeMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setNoticeMessage(null)}
+            className="text-xs text-muted hover:text-ink font-bold"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Metric Tiles */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <StatTile label="Total Pipeline Leads" value={stats.total.toLocaleString()} sub={`${filteredLeads.length} currently shown`} />
+        <StatTile
+          label="Africon Pipeline Leads"
+          value={stats.total.toLocaleString()}
+          sub={`${filteredLeads.length} currently shown`}
+        />
         <StatTile
           label="Reachable Leads"
           value={stats.reachable.toLocaleString()}
           sub={stats.total ? `${Math.round((stats.reachable / stats.total) * 100)}% contact rate` : "No leads yet"}
         />
-        <StatTile label="High Potential (Score ≥ 70)" value={stats.highScore.toLocaleString()} sub="Ready for priority contact" />
-        <StatTile label="Qualified & Deals" value={stats.qualified.toLocaleString()} sub="Active conversions" />
+        <StatTile
+          label="High Potential (Score ≥ 70)"
+          value={stats.highScore.toLocaleString()}
+          sub="Ready for priority outreach"
+        />
+        <StatTile
+          label="Qualified & Deals"
+          value={stats.qualified.toLocaleString()}
+          sub="Active conversions"
+        />
       </div>
 
+      {/* Active Bundle Banner (When filtering by a specific list or bundle) */}
+      {activeBundle && (
+        <Card className="p-4 border-blue/40 bg-gradient-to-r from-blue-50/30 to-transparent flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-xs">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-sans text-[10px] font-bold uppercase tracking-wider text-blue">
+                Active Lead Bundle / List
+              </span>
+              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue">
+                {filteredLeads.length} leads in bundle
+              </span>
+            </div>
+            <h3 className="mt-0.5 font-display text-base font-bold text-ink">{activeBundle.name}</h3>
+            {activeBundle.description && (
+              <p className="mt-0.5 text-xs text-muted">{activeBundle.description}</p>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() =>
+                exportLeadsToCsv(
+                  filteredLeads,
+                  `bundle_${slugifyName(activeBundle.name)}_${new Date().toISOString().slice(0, 10)}.csv`
+                )
+              }
+              className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:bg-sunken shadow-xs transition"
+            >
+              <span>📥</span> Export Bundle CSV
+            </button>
+
+            {activeBundle.name.toLowerCase() !== "lead list" && (
+              <Button
+                variant="secondary"
+                className="text-xs"
+                onClick={() => combineMutation.mutate(filteredLeads.map((l) => l.id))}
+                disabled={combineMutation.isPending}
+              >
+                <span>🔗</span> Combine with 'Lead List'
+              </Button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setDeleteBundleConfirm(activeBundle)}
+              className="inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-danger-text hover:bg-danger-surface transition"
+            >
+              <span>🗑</span> Delete Bundle
+            </button>
+          </div>
+        </Card>
+      )}
+
+      {/* Selection Action Bar (Appears when rows are selected) */}
+      {selectedIds.size > 0 && (
+        <div className="sticky top-2 z-20 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-ink bg-ink p-3 text-white shadow-xl animate-fadeIn">
+          <div className="flex items-center gap-3">
+            <span className="rounded-full bg-white/20 px-2.5 py-1 text-xs font-bold text-white">
+              {selectedIds.size} selected
+            </span>
+            <span className="text-xs text-white/80">Batch operations on chosen leads:</span>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={handleExportSelected}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:bg-white/90 transition"
+            >
+              <span>📥</span> Export Selected ({selectedIds.size})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => combineMutation.mutate([...selectedIds])}
+              disabled={combineMutation.isPending}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-blue px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue/90 transition"
+            >
+              <span>📋</span> Combine into 'Lead List'
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setDeleteSelectedConfirmOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-danger-surface px-3 py-1.5 text-xs font-semibold text-danger-text hover:bg-danger-surface/80 transition"
+            >
+              <span>🗑</span> Delete Selected ({selectedIds.size})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              className="text-xs text-white/70 hover:text-white underline ml-1"
+            >
+              Deselect All
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Filter & Search Bar */}
-      <Card className="p-4 space-y-3">
+      <Card className="p-4 space-y-3 shadow-xs">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="relative flex-1">
             <input
@@ -377,22 +665,61 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
-              onClick={handleExportCsv}
+              onClick={() => combineMutation.mutate()}
+              disabled={combineMutation.isPending || filteredLeads.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-blue/30 bg-blue-50/40 px-3 py-2 text-xs font-semibold text-blue hover:bg-blue-50 disabled:opacity-50 transition"
+              title="Combine all separate data sets and leads into one unified list named 'Lead List'"
+            >
+              <span>📋</span> Combine into 'Lead List'
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportFiltered}
               disabled={!filteredLeads.length}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-xs font-semibold text-ink hover:bg-sunken disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-xs font-semibold text-ink hover:bg-sunken disabled:opacity-50 transition"
             >
               <span>Export CSV</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => setDeleteAllConfirmOpen(true)}
+              disabled={leads.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-danger-line/60 bg-white px-3 py-2 text-xs font-semibold text-danger-text hover:bg-danger-surface disabled:opacity-50 transition"
+              title="Delete all leads belonging to Africon Leads page"
+            >
+              <span>🗑 Delete All Leads</span>
+            </button>
+
             <Button variant="accent" onClick={() => setAddLeadOpen(true)}>
               + Add Lead
             </Button>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-line/60">
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-line/60">
+          {/* Bundle / List Filter */}
+          <div className="flex items-center gap-1">
+            <span className="text-[11px] font-semibold text-muted">Bundle:</span>
+            <select
+              value={selectedBundle}
+              onChange={(e) => setSelectedBundle(e.target.value)}
+              className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[11px] font-medium text-ink focus:outline-none"
+            >
+              <option value="ALL">All Lists / Bundles</option>
+              <option value="ungrouped">Ungrouped Leads</option>
+              {groups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <select
             value={selectedStatus}
             onChange={(e) => setSelectedStatus(e.target.value)}
@@ -411,7 +738,7 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
             onChange={(e) => setSelectedCountry(e.target.value)}
             className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[11px] text-ink focus:outline-none"
           >
-            <option value="ALL">All African Markets / Countries</option>
+            <option value="ALL">All African Markets</option>
             {AFRICAN_REGIONS.map((c) => (
               <option key={c} value={c}>
                 {c}
@@ -439,7 +766,7 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
               onChange={(e) => setOnlyReachable(e.target.checked)}
               className="rounded border-line"
             />
-            <span>Reachable only (Email/Phone)</span>
+            <span>Reachable only</span>
           </label>
         </div>
       </Card>
@@ -450,7 +777,7 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
       ) : filteredLeads.length === 0 ? (
         <EmptyState
           message={
-            search || selectedStatus !== "ALL" || selectedCountry !== "ALL"
+            search || selectedStatus !== "ALL" || selectedCountry !== "ALL" || selectedBundle !== "ALL"
               ? "No leads matched your current filters. Clear filters or adjust your search query."
               : "Your Africon leads pipeline is currently empty. Use the template-driven import to upload leads."
           }
@@ -466,7 +793,17 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
             <table className="w-full border-collapse text-left text-xs">
               <thead>
                 <tr className="border-b border-line bg-sunken/40 font-semibold text-muted">
+                  <th className="w-8 px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={toggleSelectAllVisible}
+                      className="rounded border-line"
+                      title="Select / Deselect all visible"
+                    />
+                  </th>
                   <th className="px-4 py-3">Lead &amp; Company</th>
+                  <th className="px-4 py-3">Bundle / List</th>
                   <th className="px-4 py-3">Contact Channels</th>
                   <th className="px-4 py-3">Location &amp; Sector</th>
                   <th className="px-4 py-3">Score &amp; Status</th>
@@ -476,12 +813,26 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
               <tbody className="divide-y divide-line">
                 {filteredLeads.map((lead) => {
                   const reachable = Boolean(lead.contactEmail || lead.contactPhone);
+                  const isChecked = selectedIds.has(lead.id);
+                  const leadGroupName = groups.find((g) => g.id === lead.groupId)?.name;
+
                   return (
                     <tr
                       key={lead.id}
                       onClick={() => setDrawerLeadId(lead.id)}
-                      className="group cursor-pointer hover:bg-[#F9FAFC] transition"
+                      className={`group cursor-pointer transition ${
+                        isChecked ? "bg-blue-50/40" : "hover:bg-[#F9FAFC]"
+                      }`}
                     >
+                      <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => toggleSelectRow(lead.id, e as unknown as React.MouseEvent)}
+                          className="rounded border-line cursor-pointer"
+                        />
+                      </td>
+
                       <td className="px-4 py-3.5">
                         <div className="font-semibold text-ink group-hover:text-blue transition">
                           {lead.contactName || "Unnamed Lead"}
@@ -494,11 +845,21 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
                         )}
                       </td>
 
+                      <td className="px-4 py-3.5">
+                        {leadGroupName ? (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-sunken px-2 py-0.5 text-[10px] font-semibold text-ink">
+                            <span>📁</span> {leadGroupName}
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-muted">Ungrouped</span>
+                        )}
+                      </td>
+
                       <td className="px-4 py-3.5 space-y-0.5">
                         {lead.contactEmail ? (
                           <div className="flex items-center gap-1 text-[11px] text-ink">
                             <span>✉</span>
-                            <span className="truncate max-w-[180px]">{lead.contactEmail}</span>
+                            <span className="truncate max-w-[170px]">{lead.contactEmail}</span>
                           </div>
                         ) : null}
                         {lead.contactPhone ? (
@@ -561,8 +922,24 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
                         >
                           <button
                             type="button"
+                            title="Export single lead CSV"
+                            onClick={() =>
+                              exportLeadsToCsv(
+                                [lead],
+                                `lead_${slugifyName(lead.contactName || lead.companyName || "contact")}_${new Date()
+                                  .toISOString()
+                                  .slice(0, 10)}.csv`
+                              )
+                            }
+                            className="rounded-lg border border-line bg-white px-2 py-1 text-[11px] font-semibold text-ink hover:bg-sunken transition flex items-center gap-1"
+                          >
+                            <span>📥</span>
+                            <span className="hidden sm:inline">Export</span>
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => setDrawerLeadId(lead.id)}
-                            className="rounded-lg border border-line bg-white px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-sunken"
+                            className="rounded-lg border border-line bg-white px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-sunken transition"
                           >
                             Details
                           </button>
@@ -570,10 +947,10 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
                             type="button"
                             onClick={() => {
                               if (confirm(`Delete lead "${lead.contactName || lead.companyName}"?`)) {
-                                deleteMutation.mutate(lead.id);
+                                deleteSingleMutation.mutate(lead.id);
                               }
                             }}
-                            className="rounded-lg px-2 py-1 text-[11px] text-danger-text hover:bg-danger-surface"
+                            className="rounded-lg px-2 py-1 text-[11px] text-danger-text hover:bg-danger-surface transition"
                           >
                             ✕
                           </button>
@@ -603,9 +980,103 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
           onClose={() => setAddLeadOpen(false)}
           onSuccess={() => {
             setAddLeadOpen(false);
-            qc.invalidateQueries({ queryKey: ["leads"] });
+            invalidateLeads();
           }}
         />
+      )}
+
+      {/* Confirmation Modal: Delete All Africon Leads */}
+      {deleteAllConfirmOpen && (
+        <Modal open onClose={() => setDeleteAllConfirmOpen(false)} title="Delete All Africon Leads">
+          <div className="space-y-4">
+            <div className="rounded-xl bg-danger-surface p-3.5 text-xs text-danger-text leading-relaxed">
+              <strong>Warning:</strong> This action will permanently remove all <strong>{leads.length}</strong> leads
+              currently in the Africon Leads pipeline.
+            </div>
+            <p className="text-xs text-muted leading-relaxed">
+              Your regular Dakyworld OS leads, clients, and outreach data outside of this section will <strong>NOT</strong>{" "}
+              be affected or deleted.
+            </p>
+            <div className="flex justify-end gap-2 pt-3 border-t border-line">
+              <Button variant="secondary" onClick={() => setDeleteAllConfirmOpen(false)} type="button">
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                disabled={deleteAllAfriconMutation.isPending}
+                onClick={() => deleteAllAfriconMutation.mutate()}
+              >
+                {deleteAllAfriconMutation.isPending ? "Deleting..." : `Yes, Delete All (${leads.length})`}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Confirmation Modal: Delete Selected Leads */}
+      {deleteSelectedConfirmOpen && (
+        <Modal open onClose={() => setDeleteSelectedConfirmOpen(false)} title="Delete Selected Leads">
+          <div className="space-y-4">
+            <p className="text-xs text-muted leading-relaxed">
+              Are you sure you want to delete the <strong>{selectedIds.size}</strong> selected Africon lead(s)? This
+              action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2 pt-3 border-t border-line">
+              <Button variant="secondary" onClick={() => setDeleteSelectedConfirmOpen(false)} type="button">
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                disabled={deleteSelectedMutation.isPending}
+                onClick={() => deleteSelectedMutation.mutate()}
+              >
+                {deleteSelectedMutation.isPending ? "Deleting..." : `Delete ${selectedIds.size} Leads`}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Confirmation Modal: Delete Bundle */}
+      {deleteBundleConfirm && (
+        <Modal open onClose={() => setDeleteBundleConfirm(null)} title={`Delete Bundle: "${deleteBundleConfirm.name}"`}>
+          <div className="space-y-4">
+            <p className="text-xs text-muted leading-relaxed">
+              How would you like to delete the bundle <strong>{deleteBundleConfirm.name}</strong>?
+            </p>
+            <div className="space-y-2 pt-1">
+              <button
+                type="button"
+                onClick={() => deleteBundleMutation.mutate({ groupId: deleteBundleConfirm.id, withLeads: true })}
+                disabled={deleteBundleMutation.isPending}
+                className="w-full text-left rounded-xl border border-danger-line/60 bg-danger-surface/40 p-3 text-xs hover:bg-danger-surface transition"
+              >
+                <div className="font-bold text-danger-text">Delete Bundle AND All Leads Inside</div>
+                <div className="text-[11px] text-muted">
+                  Completely removes the bundle and permanently deletes all leads assigned to it.
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => deleteBundleMutation.mutate({ groupId: deleteBundleConfirm.id, withLeads: false })}
+                disabled={deleteBundleMutation.isPending}
+                className="w-full text-left rounded-xl border border-line bg-white p-3 text-xs hover:bg-sunken transition"
+              >
+                <div className="font-bold text-ink">Delete Bundle Only (Keep Leads)</div>
+                <div className="text-[11px] text-muted">
+                  Removes the list definition. Leads inside become "Ungrouped" in the Africon pipeline.
+                </div>
+              </button>
+            </div>
+
+            <div className="flex justify-end pt-3 border-t border-line">
+              <Button variant="secondary" onClick={() => setDeleteBundleConfirm(null)} type="button">
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );
@@ -637,6 +1108,7 @@ function AddLeadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: 
         discoveryNotes: notes.trim() || undefined,
         source: "OTHER",
         status: "NEW",
+        tags: ["africon"],
       }),
     onSuccess,
   });
@@ -856,6 +1328,8 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
         useAi,
         templateFileName: templateFile?.name,
         templateDataBase64: templateFile?.dataBase64,
+        isAfricon: true,
+        tags: ["africon"],
       });
 
       const currentImportId = opened.import.id;
@@ -881,6 +1355,8 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
           useAi,
           dataBase64: leadsFile.dataBase64,
           fileName: leadsFile.name,
+          isAfricon: true,
+          tags: ["africon"],
         });
 
         gatheredTables.push(...step.tables);
@@ -888,9 +1364,14 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
         gatheredWarnings.push(...step.warnings);
       }
 
+      // Default grouping to "single" so all imported datasets combine into one 'Lead List'
       setPlan({
         tables: gatheredTables,
         summary: `Imported from ${leadsFile.name}${templateFile ? ` • Structured using template: ${templateFile.name}` : ""}`,
+        grouping: "single",
+        singleListTitle: "Lead List",
+        isAfricon: true,
+        tags: ["africon"],
         template: inspectedTemplate ? { fileName: inspectedTemplate.fileName, columns: inspectedTemplate.columns } : undefined,
       });
       setPreviews(gatheredPreviews);
@@ -913,7 +1394,12 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
         import: LeadImportRecord;
         result: { leadsCreated: number; groupsCreated: number };
       }>(`/imports/${importId}/commit`, {
-        plan,
+        plan: {
+          ...plan,
+          isAfricon: true,
+          tags: ["africon"],
+          singleListTitle: plan.grouping === "single" ? "Lead List" : undefined,
+        },
         dataBase64: leadsFile?.dataBase64,
         fileName: leadsFile?.name,
       });
@@ -991,7 +1477,7 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
             )}
           </Card>
 
-          {/* File 2: Lead Template (Core User Feature) */}
+          {/* File 2: Lead Template (Core Feature) */}
           <Card className="p-5 flex flex-col justify-between border-blue/30 bg-gradient-to-b from-blue-50/20 to-transparent">
             <div>
               <div className="flex items-center justify-between">
@@ -1156,7 +1642,7 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
               </div>
               <h2 className="mt-1 font-display text-xl font-bold text-ink">Review &amp; Approve Import Plan</h2>
               <p className="text-xs text-muted">
-                Inspect how columns have been mapped. You can adjust mappings or exclude columns before committing.
+                Inspect how columns and datasets have been structured. Choose whether to combine them into one 'Lead List'.
               </p>
             </div>
 
@@ -1179,6 +1665,72 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
               </Button>
             </div>
           </div>
+
+          {/* Grouping / Combining into 'Lead List' Selector */}
+          <Card className="p-4 border-blue/40 bg-blue-50/20 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-sans text-[11px] font-bold uppercase tracking-wider text-blue">
+                Dataset Grouping &amp; Combination
+              </span>
+              <span className="text-[10px] text-muted">
+                {plan.tables.length} table(s) across sheets
+              </span>
+            </div>
+            <p className="text-xs text-ink font-medium">
+              How would you like to save these imported data sets in your Africon pipeline?
+            </p>
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 pt-1">
+              <label
+                className={`flex items-start gap-2.5 rounded-xl border p-3 cursor-pointer transition ${
+                  plan.grouping === "single"
+                    ? "border-blue bg-white shadow-xs"
+                    : "border-line bg-sunken/40 hover:bg-white"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="planGrouping"
+                  checked={plan.grouping === "single"}
+                  onChange={() => setPlan({ ...plan, grouping: "single", singleListTitle: "Lead List" })}
+                  className="mt-0.5 text-blue"
+                />
+                <div>
+                  <div className="font-bold text-xs text-ink flex items-center gap-1.5">
+                    <span>Combine all into one list: 'Lead List'</span>
+                    <span className="rounded bg-blue-100 px-1.5 py-0.2 text-[9px] font-bold text-blue">
+                      Recommended
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-muted mt-0.5">
+                    Merges all worksheets and data sets into a single unified list named <strong>'Lead List'</strong>.
+                  </div>
+                </div>
+              </label>
+
+              <label
+                className={`flex items-start gap-2.5 rounded-xl border p-3 cursor-pointer transition ${
+                  plan.grouping !== "single"
+                    ? "border-blue bg-white shadow-xs"
+                    : "border-line bg-sunken/40 hover:bg-white"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="planGrouping"
+                  checked={plan.grouping !== "single"}
+                  onChange={() => setPlan({ ...plan, grouping: "sheet" })}
+                  className="mt-0.5 text-blue"
+                />
+                <div>
+                  <div className="font-bold text-xs text-ink">Keep separate lists per sheet / table</div>
+                  <div className="text-[11px] text-muted mt-0.5">
+                    Creates an individual list for each sheet or table found in your file.
+                  </div>
+                </div>
+              </label>
+            </div>
+          </Card>
 
           {/* Warnings / Reports */}
           {warnings.length > 0 && (
@@ -1316,7 +1868,7 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
 
       {/* Step 4: Success Result Screen */}
       {committedResult && (
-        <Card className="p-10 text-center space-y-4 max-w-lg mx-auto">
+        <Card className="p-10 text-center space-y-4 max-w-lg mx-auto shadow-sm">
           <div className="text-4xl">🎉</div>
           <h2 className="font-display text-2xl font-bold text-ink">Import Completed Successfully!</h2>
           <p className="text-xs text-muted leading-relaxed">
@@ -1334,7 +1886,7 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
             </div>
           </div>
 
-          <div className="flex items-center justify-center gap-3 pt-3">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-2 pt-3">
             <Button
               variant="accent"
               onClick={() => {
@@ -1343,6 +1895,7 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
             >
               View in Leads Pipeline
             </Button>
+
             <Button
               variant="secondary"
               onClick={() => {
@@ -1435,7 +1988,8 @@ function TemplateLibraryView({ onUseTemplate }: { onUseTemplate: () => void }) {
           1. <strong>Upload Your Leads</strong>: Drop any messy raw leads sheet (Excel or CSV).<br />
           2. <strong>Attach Your Template (Optional)</strong>: Upload your target template with your desired columns and header names.<br />
           3. <strong>Automatic Alignment</strong>: The AI reads both sheets, detects semantic matches (e.g. "Telephone" → "Direct Phone", "Turnover" → "Annual Revenue"), and shapes the output to match your template perfectly.<br />
-          4. <strong>Zero Loss</strong>: Extra columns from your import that aren't in the template are cleanly mapped as custom attributes so no data is dropped.
+          4. <strong>Combine into 'Lead List'</strong>: Multi-tab workbooks or separate datasets can be cleanly combined into a single unified list with the name 'Lead List'.<br />
+          5. <strong>Zero Loss</strong>: Extra columns from your import that aren't in the template are cleanly preserved as custom attributes so no data is dropped.
         </p>
       </Card>
     </div>

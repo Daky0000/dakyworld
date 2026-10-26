@@ -167,6 +167,7 @@ export interface Lead {
   longitude?: number | null;
   socialLinks?: Record<string, string> | null;
   tags?: string[];
+  rehearsal?: boolean;
   externalId?: string | null;
   enrichment?: Record<string, unknown> | null;
   /** Values for columns that aren't Lead scalars, keyed by LeadFieldDef.key. */
@@ -444,7 +445,7 @@ export interface PlanTable {
  * everything found on one worksheet into one list; `"table"` gives every
  * detected table a list of its own.
  */
-export type PlanGrouping = "sheet" | "table";
+export type PlanGrouping = "sheet" | "table" | "single";
 
 export interface TemplateColumnDef {
   index: number;
@@ -466,6 +467,9 @@ export interface ImportPlan {
   /** Absent means "sheet". */
   grouping?: PlanGrouping;
   template?: TemplateDef;
+  tags?: string[];
+  singleListTitle?: string;
+  isAfricon?: boolean;
 }
 
 export interface TablePreview {

@@ -79,7 +79,7 @@ export interface PlanTable {
  * genuinely different tables wants: a table of people and a table of
  * organisations forced into one column set is the shape that loses data.
  */
-export type PlanGrouping = "sheet" | "table";
+export type PlanGrouping = "sheet" | "table" | "single";
 
 export interface TemplateColumnDef {
   index: number;
@@ -101,6 +101,9 @@ export interface ImportPlan {
   /** Absent means "sheet" — see `groupingOf`. */
   grouping?: PlanGrouping;
   template?: TemplateDef;
+  tags?: string[];
+  singleListTitle?: string;
+  isAfricon?: boolean;
 }
 
 // --- Header synonyms -------------------------------------------------------
@@ -804,6 +807,7 @@ export function renderHints(tables: PlanTable[]): string {
 
 /** The plan's grouping, defaulting to one list per worksheet. */
 export function groupingOf(plan: Pick<ImportPlan, "grouping">): PlanGrouping {
+  if (plan.grouping === "single") return "single";
   return plan.grouping === "table" ? "table" : "sheet";
 }
 
@@ -832,6 +836,17 @@ export interface PlanGroup {
  */
 export function planGroups(plan: ImportPlan, tables: PlanTable[] = plan.tables): PlanGroup[] {
   const grouping = groupingOf(plan);
+  if (grouping === "single") {
+    const title = plan.singleListTitle?.trim() || "Lead List";
+    return [
+      {
+        key: "single:lead-list",
+        title,
+        sheet: tables[0]?.sheet || "All Data Sets",
+        tables: [...tables],
+      },
+    ];
+  }
   const groups: PlanGroup[] = [];
   const byKey = new Map<string, PlanGroup>();
 
@@ -1094,7 +1109,15 @@ export function normalizePlan(plan: ImportPlan, grids: SheetGrid[]): ImportPlan 
     })
     .filter((table): table is PlanTable => table !== null && table.columns.length > 0);
 
-  return { tables, summary: (plan.summary ?? "").slice(0, 2000), grouping: groupingOf(plan) };
+  return {
+    tables,
+    summary: (plan.summary ?? "").slice(0, 2000),
+    grouping: groupingOf(plan),
+    template: plan.template,
+    tags: plan.tags,
+    singleListTitle: plan.singleListTitle,
+    isAfricon: plan.isAfricon,
+  };
 }
 
 // --- Repairing an analyst's plan -------------------------------------------

@@ -364,6 +364,16 @@ function describeGroup(planned: PlanGroup): string | null {
  */
 async function openGroup(importId: string, planned: PlanGroup, tags: string[]): Promise<{ group: LeadGroup; created: boolean }> {
   const name = planned.title.slice(0, 80);
+  if (name.toLowerCase() === "lead list") {
+    const existingLeadList = await prisma.leadGroup.findFirst({ where: { name: { equals: "Lead List", mode: "insensitive" } } });
+    if (existingLeadList) {
+      if (tags.length > 0) {
+        const mergedTags = [...new Set([...existingLeadList.tags, ...tags])];
+        await prisma.leadGroup.update({ where: { id: existingLeadList.id }, data: { tags: { set: mergedTags } } });
+      }
+      return { group: existingLeadList, created: false };
+    }
+  }
   const first = planned.tables[0];
   const last = planned.tables[planned.tables.length - 1];
   const data = {
@@ -462,7 +472,9 @@ export async function commitPlan(
       continue;
     }
 
+    const defaultTags = [...((plan as any).tags ?? []), ...(((plan as any).isAfricon || plan.summary?.toLowerCase().includes("africon")) ? ["africon"] : [])];
     const sheetTags = await tagsForSheet(table.sheet, record?.fileName ?? null);
+    const allTags = [...new Set([...sheetTags, ...defaultTags])];
 
     let group: LeadGroup;
     const knownId = groupIds.get(planned.key);
@@ -470,7 +482,7 @@ export async function commitPlan(
     if (found) {
       group = found;
     } else {
-      const opened = await openGroup(importId, planned, sheetTags);
+      const opened = await openGroup(importId, planned, allTags);
       group = opened.group;
       if (opened.created) result.groupsCreated += 1;
       groupIds.set(planned.key, group.id);
@@ -536,7 +548,7 @@ export async function commitPlan(
 
       for (const row of batch) {
         const scalars = row.lead as Prisma.LeadUncheckedCreateInput & Record<string, unknown>;
-        const rowTags = [...new Set([...normaliseTags(row.lead.tags as string[] | undefined), ...sheetTags])];
+        const rowTags = [...new Set([...normaliseTags(row.lead.tags as string[] | undefined), ...allTags])];
         const base = {
           ...scalars,
           contactName: String(row.lead.contactName),
