@@ -25,6 +25,9 @@ export interface HybridScreenshotOptions {
 export interface ContactExtractionResult {
   domain: string;
   originalStartUrl: string;
+  companyName?: string;
+  title?: string;
+  description?: string;
   emails: string[];
   phones: string[];
   phonesUncertain: string[];

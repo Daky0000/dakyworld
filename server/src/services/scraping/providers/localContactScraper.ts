@@ -56,6 +56,9 @@ export async function scrapeContactsLocally(
   const phones = new Set<string>();
   const phonesUncertain = new Set<string>();
   const socialLinks: ContactExtractionResult["socialLinks"] = {};
+  let siteTitle = "";
+  let companyName = "";
+  let description = "";
 
   const contactLinkPattern = /(contact|about|touch|reach|location|help|support)/i;
 
@@ -77,6 +80,20 @@ export async function scrapeContactsLocally(
       const html = await resp.text();
       const $ = cheerio.load(html);
 
+      // Extract site title, company name and description (usually on first/home page)
+      if (!siteTitle) {
+        const ogSiteName = $('meta[property="og:site_name"]').attr("content")?.trim();
+        const ogTitle = $('meta[property="og:title"]').attr("content")?.trim();
+        const pageTitle = $("title").text().trim();
+        siteTitle = ogSiteName || ogTitle || pageTitle || "";
+        if (!companyName) {
+          companyName = ogSiteName || (siteTitle ? siteTitle.split(/[|\-•–—]/)[0].trim() : "");
+        }
+      }
+      if (!description) {
+        description = $('meta[name="description"]').attr("content")?.trim() || $('meta[property="og:description"]').attr("content")?.trim() || "";
+      }
+
       // 1. Parse text for emails
       const bodyText = $("body").text();
       const matchedEmails = bodyText.match(EMAIL_REGEX) || [];
@@ -97,21 +114,25 @@ export async function scrapeContactsLocally(
         }
       });
 
-      // 2. Parse text for phone numbers
-      const matchedPhones = bodyText.match(PHONE_REGEX) || [];
-      for (const phone of matchedPhones) {
-        const cleaned = phone.replace(/[^\d+]/g, "");
-        if (cleaned.length >= 8 && cleaned.length <= 16) {
-          phones.add(phone.trim());
-        }
-      }
-
-      // Also check tel: links
+      // 2. Parse phone numbers: tel: links first (highest fidelity)
       $('a[href^="tel:"]').each((_, el) => {
         const href = $(el).attr("href") || "";
         const tel = href.replace(/^tel:/i, "").split("?")[0]?.trim();
-        if (tel) phones.add(tel);
+        const digits = tel.replace(/\D/g, "");
+        if (digits.length >= 7 && digits.length <= 15) {
+          phones.add(tel);
+        }
       });
+
+      // Also parse formatted phones in body text (require formatting or + prefix to avoid numeric IDs)
+      const matchedPhones = bodyText.match(PHONE_REGEX) || [];
+      for (const phone of matchedPhones) {
+        const cleaned = phone.replace(/[^\d+]/g, "");
+        const hasFormatting = /[\s().-]/.test(phone) || phone.startsWith("+");
+        if (hasFormatting && cleaned.length >= 8 && cleaned.length <= 15 && !/^(\d)\1+$/.test(cleaned)) {
+          phones.add(phone.trim());
+        }
+      }
 
       // 3. Extract social media links
       $("a[href]").each((_, el) => {
@@ -153,6 +174,9 @@ export async function scrapeContactsLocally(
   return {
     domain,
     originalStartUrl: startUrl,
+    companyName: companyName || domain,
+    title: siteTitle,
+    description,
     emails: Array.from(emails),
     phones: Array.from(phones),
     phonesUncertain: Array.from(phonesUncertain),

@@ -16,6 +16,10 @@ import { readCaptureConfig } from "../services/captureConfig.js";
 import { estimateCost } from "../services/captureCost.js";
 import { getActorSchema } from "../lib/apify.js";
 import { gateBy } from "../middleware/permissionGate.js";
+import type { Prisma } from "@prisma/client";
+import { scrapeContactsLocally } from "../services/scraping/providers/localContactScraper.js";
+import { buildDedupeKey, mapRow, scoreLead } from "../services/leadMapping.js";
+import { registerTags } from "../services/leadTags.js";
 
 /**
  * Quick capture: paste a link or say what you want, then confirm.
@@ -34,6 +38,108 @@ captureRouter.post("/interpret", async (req, res, next) => {
   try {
     const { text } = z.object({ text: z.string().max(4000) }).parse(req.body);
     res.json(await interpret(text));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Fast direct website capture: crawls the site immediately, extracts contact
+ * info (emails, phones, social links, meta title) in ~1-2 seconds, and upserts
+ * the lead directly into the CRM pipeline without waiting for an Apify worker.
+ */
+captureRouter.post("/instant", async (req, res, next) => {
+  try {
+    const { url } = z
+      .object({
+        url: z.string().min(1).max(1000),
+        label: z.string().max(120).optional(),
+      })
+      .parse(req.body);
+
+    let cleanUrl = url.trim();
+    if (!/^https?:\/\//i.test(cleanUrl)) {
+      cleanUrl = `https://${cleanUrl.replace(/^\/+/, "")}`;
+    }
+
+    // Crawl homepage & contact pages locally
+    const extracted = await scrapeContactsLocally(cleanUrl, { maxPages: 4, timeoutMs: 12000 });
+
+    const rawItem = {
+      domain: extracted.domain,
+      originalStartUrl: extracted.originalStartUrl || cleanUrl,
+      emails: extracted.emails,
+      phones: extracted.phones,
+      socialLinks: extracted.socialLinks,
+      title: extracted.title || extracted.companyName,
+      companyName: extracted.companyName,
+      description: extracted.description,
+    };
+
+    const { lead: mapped } = mapRow(rawItem, { preset: "GENERIC_CONTACT" });
+    const company = mapped?.companyName || extracted.companyName || extracted.domain;
+    const dedupeKey = mapped ? buildDedupeKey(mapped) : `domain:${extracted.domain.toLowerCase()}`;
+    const score = mapped ? scoreLead(mapped) : 40;
+
+    const notes = [
+      extracted.description ? `Description: ${extracted.description}` : "",
+      extracted.emails.length > 1 ? `All emails: ${extracted.emails.join(", ")}` : "",
+      extracted.phones.length > 1 ? `All phones: ${extracted.phones.join(", ")}` : "",
+      `Instant capture (${extracted.provenance.provider}) in ${extracted.provenance.durationMs ?? 0}ms`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const baseData = {
+      contactName: mapped?.contactName || company,
+      companyName: company,
+      contactEmail: mapped?.contactEmail || extracted.emails[0] || null,
+      contactPhone: mapped?.contactPhone || extracted.phones[0] || null,
+      website: mapped?.website || cleanUrl,
+      socialLinks: (extracted.socialLinks ?? undefined) as Prisma.InputJsonValue | undefined,
+      discoveryNotes: notes,
+      tags: await registerTags(["quick-capture"]),
+      source: "WEB_SCRAPE" as const,
+      captureMethod: "MANUAL" as const,
+      leadScore: score,
+      status: "NEW" as const,
+      enrichment: rawItem as Prisma.InputJsonValue,
+    };
+
+    let lead;
+    if (dedupeKey) {
+      lead = await prisma.lead.upsert({
+        where: { dedupeKey },
+        update: {
+          ...baseData,
+          contactEmail: baseData.contactEmail || undefined,
+          contactPhone: baseData.contactPhone || undefined,
+        },
+        create: {
+          ...baseData,
+          dedupeKey,
+        },
+      });
+    } else {
+      lead = await prisma.lead.create({
+        data: baseData,
+      });
+    }
+
+    res.json({
+      success: true,
+      lead,
+      extracted: {
+        companyName: company,
+        domain: extracted.domain,
+        website: cleanUrl,
+        emails: extracted.emails,
+        phones: extracted.phones,
+        socialLinks: extracted.socialLinks,
+        description: extracted.description,
+        durationMs: extracted.provenance.durationMs,
+      },
+    });
   } catch (err) {
     next(err);
   }

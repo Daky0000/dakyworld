@@ -328,6 +328,7 @@ export interface ScraperSource {
   createdAt: string;
   _count?: { leads: number };
   runs?: ScraperRun[];
+  adhoc?: boolean;
 }
 
 export interface ScraperTemplate {
@@ -2587,6 +2588,32 @@ export interface CaptureIntent {
   summary: string;
   /** True when the classifier resolved it without a model call — i.e. it cost nothing. */
   free: boolean;
+}
+
+export interface InstantCaptureResult {
+  success: boolean;
+  lead: {
+    id: string;
+    contactName: string;
+    companyName: string | null;
+    contactEmail: string | null;
+    contactPhone: string | null;
+    website: string | null;
+    socialLinks?: Record<string, string> | null;
+    leadScore: number;
+    status: string;
+    discoveryNotes?: string | null;
+  };
+  extracted: {
+    companyName: string;
+    domain: string;
+    website: string;
+    emails: string[];
+    phones: string[];
+    socialLinks: Record<string, string>;
+    description?: string;
+    durationMs?: number;
+  };
 }
 
 export interface CaptureRunResult {
