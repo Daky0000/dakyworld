@@ -38,19 +38,16 @@ import { runActor, type ActorRunCode } from "./actorRun.js";
 /**
  * DakyXTech's own actor.
  *
- * **`daky_world`, with the underscore.** That is the Apify account this
- * company's token belongs to, and it was not a guess: the first automatic
- * deploy shipped as `dakyworld`, Apify created the actor under the account the
- * token actually names, and the mismatch guard in `screenshotActorDeploy.ts`
- * stopped and said so rather than leaving a working actor under a name nothing
- * would ever call. The username half of an actor id is not ours to choose.
+ * **`dakyworld`, without the underscore.** That is the Apify account this
+ * company's token belongs to. Apify creates the actor under the account the
+ * token actually names.
  *
  * A different deployment on a different account sets `capture.screenshotActor`
  * (Settings → Lead Sources) to `<account>/website-screenshot` rather than
  * editing this — the setting exists precisely so pointing at another copy is
  * not a deploy.
  */
-export const DEFAULT_SCREENSHOT_ACTOR = "daky_world/website-screenshot";
+export const DEFAULT_SCREENSHOT_ACTOR = "dakyworld/website-screenshot";
 
 /**
  * Which version of the actor's source this app expects Apify to be running.

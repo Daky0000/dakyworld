@@ -53,7 +53,7 @@ const TOKEN = "stub-token-never-print-me";
 
 /** What the fake Apify does next. Set per scenario. */
 let actorExists = false;
-let createdUsername = "daky_world";
+let createdUsername = "dakyworld";
 let buildStatus = "SUCCEEDED";
 let buildMessage: string | null = null;
 /** Set when a build has succeeded, so the actor becomes runnable. */
@@ -71,7 +71,7 @@ app.get("/v2/acts/:actor", (req, res) => {
   // A tagged build only once one has actually succeeded — which is the whole
   // point: an actor that exists and has never built is not a runnable actor.
   res.json({
-    data: { id: "act-1", name: "website-screenshot", username: "daky_world", taggedBuilds: builtOk ? { latest: { buildId: "build-1" } } : {} },
+    data: { id: "act-1", name: "website-screenshot", username: "dakyworld", taggedBuilds: builtOk ? { latest: { buildId: "build-1" } } : {} },
   });
 });
 
@@ -144,7 +144,7 @@ async function reset() {
   clearApifyCaches();
   calls = [];
   actorExists = false;
-  createdUsername = "daky_world";
+  createdUsername = "dakyworld";
   buildStatus = "SUCCEEDED";
   buildMessage = null;
   builtOk = false;
@@ -275,7 +275,7 @@ console.log("\nSwitching the actor after a failed attempt");
 
   // Deliberately not the shipped default: the point is that switching to a
   // *different* actor is not "already tried today".
-  await settings.setSetting(SETTING.SCREENSHOT_ACTOR, "daky_world/website-screenshot-staging");
+  await settings.setSetting(SETTING.SCREENSHOT_ACTOR, "dakyworld/website-screenshot-staging");
   settings.clearSettingsCache();
   clearApifyCaches();
   actorExists = false;
@@ -309,23 +309,23 @@ console.log("\nAn actor running an older version of its source");
   check("and nothing was built", !calls.some((c) => c.path.endsWith("/builds")));
 
   // Now the source moves on, as it does whenever the actor is edited.
-  await settings.setSetting(SETTING.SCREENSHOT_ACTOR_BUILT, `${ACTOR_SOURCE_VERSION - 1}:daky_world/website-screenshot`);
+  await settings.setSetting(SETTING.SCREENSHOT_ACTOR_BUILT, `${ACTOR_SOURCE_VERSION - 1}:dakyworld/website-screenshot`);
   settings.clearSettingsCache();
   process.env.RAILWAY_DEPLOYMENT_ID = "deploy-src-3";
   calls = [];
   const stale = await deployScreenshotActorIfMissing();
   check("an out-of-date actor is rebuilt", stale?.ok === true, stale?.message ?? "nothing happened");
   check("and really did build it", calls.some((c) => c.method === "POST" && c.path.endsWith("/builds")));
-  check("the recorded version moves with it", (await settings.getSetting(SETTING.SCREENSHOT_ACTOR_BUILT)) === `${ACTOR_SOURCE_VERSION}:daky_world/website-screenshot`);
+  check("the recorded version moves with it", (await settings.getSetting(SETTING.SCREENSHOT_ACTOR_BUILT)) === `${ACTOR_SOURCE_VERSION}:dakyworld/website-screenshot`);
 
   // A build that fails must not record a version it never produced, or a broken
   // actor looks current for ever.
-  await settings.setSetting(SETTING.SCREENSHOT_ACTOR_BUILT, `${ACTOR_SOURCE_VERSION - 1}:daky_world/website-screenshot`);
+  await settings.setSetting(SETTING.SCREENSHOT_ACTOR_BUILT, `${ACTOR_SOURCE_VERSION - 1}:dakyworld/website-screenshot`);
   settings.clearSettingsCache();
   buildStatus = "FAILED";
   process.env.RAILWAY_DEPLOYMENT_ID = "deploy-src-4";
   await deployScreenshotActorIfMissing();
-  check("a failed build records nothing", (await settings.getSetting(SETTING.SCREENSHOT_ACTOR_BUILT)) === `${ACTOR_SOURCE_VERSION - 1}:daky_world/website-screenshot`);
+  check("a failed build records nothing", (await settings.getSetting(SETTING.SCREENSHOT_ACTOR_BUILT)) === `${ACTOR_SOURCE_VERSION - 1}:dakyworld/website-screenshot`);
   delete process.env.RAILWAY_DEPLOYMENT_ID;
 }
 
