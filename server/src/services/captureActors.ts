@@ -192,7 +192,12 @@ const withScheme = (value: string) => (/^https?:\/\//i.test(value) ? value : `ht
  * a Facebook actor run on an Instagram URL costs money and returns nothing.
  */
 export function checkForTask(kind: CaptureTask, raw: string): Checked {
-  const value = raw.trim();
+  const value = raw
+    .trim()
+    .replace(/^[<("'[]+/, "")
+    .replace(/[>)"'\]]+$/, "")
+    .replace(/[,;:!?]+$/, "")
+    .trim();
   if (!value) return { value, problem: "Nothing to capture.", suggestion: null };
   const actually = looksLike(value);
 

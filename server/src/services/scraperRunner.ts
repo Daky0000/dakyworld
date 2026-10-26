@@ -20,6 +20,7 @@ import { enrolNewLeads } from "./emailSequences.js";
 import { captureTokens, proxyInput, readCaptureConfig, runOptions, type CaptureConfig } from "./captureConfig.js";
 import { reportRun } from "./captureNotify.js";
 import { registerTags } from "./leadTags.js";
+import { scrapeContactsLocally } from "./scraping/providers/localContactScraper.js";
 
 /**
  * Runs a configured Apify actor and turns its dataset into leads.
@@ -562,7 +563,29 @@ export async function ingestItems(
       continue;
     }
 
-    const score = scoreLead(mapped);
+    let score = scoreLead(mapped);
+    // If the actor found no emails or phones and dropped below the threshold,
+    // run a fast local sweep on the website to rescue the lead (e.g. when an actor misses emails)
+    if (score < source.minScore && (mapped.website || (item.domain as string) || (item.originalStartUrl as string))) {
+      const targetUrl = (mapped.website || (item.originalStartUrl as string) || (item.domain as string)) as string;
+      try {
+        const local = await scrapeContactsLocally(targetUrl, { maxPages: 2, timeoutMs: 5000 });
+        if (local.emails.length > 0 || local.phones.length > 0) {
+          if (!mapped.contactEmail && local.emails[0]) mapped.contactEmail = local.emails[0];
+          if (!mapped.contactPhone && local.phones[0]) mapped.contactPhone = local.phones[0];
+          if (!mapped.companyName || mapped.companyName.toLowerCase() === targetUrl.toLowerCase()) {
+            mapped.companyName = local.companyName || local.title || mapped.companyName;
+          }
+          if (local.socialLinks && Object.keys(local.socialLinks).length > 0) {
+            mapped.socialLinks = { ...(mapped.socialLinks ?? {}), ...local.socialLinks };
+          }
+          score = scoreLead(mapped);
+        }
+      } catch {
+        // Fall through to normal score check
+      }
+    }
+
     if (score < source.minScore) {
       stats.filtered += 1;
       noteDrop(

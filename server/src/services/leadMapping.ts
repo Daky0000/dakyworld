@@ -240,8 +240,11 @@ const SHAPE_PATHS: Record<Shape, Partial<Record<keyof NormalizedLead, string[]>>
   // the row's only label, which `nameFromDomain` turns into one.
   CONTACT_SWEEP: {
     website: ["domain", "originalStartUrl"],
+    contactName: ["companyName", "title", "siteTitle"],
+    companyName: ["companyName", "title", "siteTitle"],
     contactEmail: ["emails"],
     contactPhone: ["phones", "phonesUncertain"],
+    discoveryNotes: ["description"],
     externalId: ["domain", "originalStartUrl"],
   },
 

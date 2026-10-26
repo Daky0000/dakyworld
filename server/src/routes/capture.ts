@@ -57,13 +57,19 @@ captureRouter.post("/instant", async (req, res, next) => {
       })
       .parse(req.body);
 
-    let cleanUrl = url.trim();
+    let cleanUrl = url
+      .trim()
+      .replace(/^[<("'[]+/, "")
+      .replace(/[>)"'\]]+$/, "")
+      .replace(/[,;:!?]+$/, "")
+      .trim();
+
     if (!/^https?:\/\//i.test(cleanUrl)) {
       cleanUrl = `https://${cleanUrl.replace(/^\/+/, "")}`;
     }
 
-    // Crawl homepage & contact pages locally
-    const extracted = await scrapeContactsLocally(cleanUrl, { maxPages: 4, timeoutMs: 12000 });
+    // Crawl homepage & contact pages locally with resilient retry
+    const extracted = await scrapeContactsLocally(cleanUrl, { maxPages: 4, timeoutMs: 8000 });
 
     const rawItem = {
       domain: extracted.domain,

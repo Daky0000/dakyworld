@@ -37,7 +37,14 @@ function detectInputType(raw: string): {
   isUrl: boolean;
   cleanUrl: string | null;
 } {
-  const trimmed = raw.trim();
+  let trimmed = raw.trim();
+  // Strip enclosing quotes, brackets, and trailing commas/periods
+  trimmed = trimmed
+    .replace(/^[<("'[]+/, "")
+    .replace(/[>)"'\]]+$/, "")
+    .replace(/[,;:!?]+$/, "")
+    .trim();
+
   if (!trimmed) return { kind: null, label: "", isUrl: false, cleanUrl: null };
 
   const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
@@ -45,6 +52,7 @@ function detectInputType(raw: string): {
   try {
     if (/^(https?:\/\/)?([a-z0-9-]+\.)+[a-z]{2,}(\/|$|\?|#)/i.test(trimmed)) {
       url = new URL(withScheme);
+      url.hostname = url.hostname.replace(/[,.:;!?'"<>]+$/, "");
     }
   } catch {
     url = null;
@@ -144,13 +152,22 @@ export function QuickCapture() {
   });
 
   const handlePrimaryAction = () => {
-    if (!text.trim()) return;
+    const rawVal = text.trim();
+    if (!rawVal) return;
+
+    const cleaned =
+      detected.cleanUrl ||
+      rawVal
+        .replace(/^[<("'[]+/, "")
+        .replace(/[>)"'\]]+$/, "")
+        .replace(/[,;:!?]+$/, "")
+        .trim();
 
     // Direct Website URL: run instant local extraction for ~1s results with $0 cost
     if (detected.kind === "WEBSITE" && !useAdvanced) {
-      instantCapture.mutate(detected.cleanUrl || text.trim());
+      instantCapture.mutate(cleaned);
     } else {
-      read.mutate(text);
+      read.mutate(cleaned);
     }
   };
 

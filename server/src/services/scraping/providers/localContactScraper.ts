@@ -11,8 +11,9 @@ import type { ContactExtractionResult } from "../types.js";
 
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 
-// Standard international & local phone regex patterns
-const PHONE_REGEX = /(?:\+?233|0)[235][0-9]{8}|\+?[1-9]\d{1,14}(?:[\s.-]?\d{2,4}){2,4}/g;
+// Standard international & local phone regex patterns (including US area codes with brackets/dots/dashes)
+const PHONE_REGEX =
+  /(?:\+?1[-.\s]?)?\(?[2-9]\d{2}\)?[-.\s]?\d{3}[-.\s]?\d{4}|(?:\+?233|0)[235][0-9]{8}|\+?[1-9]\d{1,14}(?:[\s.-]?\d{2,4}){2,4}/g;
 
 const DISALLOWED_EMAIL_DOMAINS = new Set([
   "example.com",
@@ -28,17 +29,75 @@ const DISALLOWED_EMAIL_DOMAINS = new Set([
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
+/**
+ * Resilient fetch with automatic fallback:
+ * - Attempts the given URL with a bounded timeout.
+ * - If http fails (e.g. connection timeout or refused), falls back to https.
+ * - If non-www fails, falls back to www.
+ */
+async function fetchPageWithFallback(url: string, timeoutMs: number): Promise<Response | null> {
+  const tryFetch = async (target: string): Promise<Response | null> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const resp = await fetch(target, {
+        headers: { "User-Agent": USER_AGENT, Accept: "text/html,application/xhtml+xml" },
+        signal: controller.signal,
+        redirect: "follow",
+      });
+      if (resp.ok) return resp;
+      return null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  // 1. Try the exact requested URL
+  let resp = await tryFetch(url);
+  if (resp) return resp;
+
+  // 2. If http failed or timed out, try https
+  if (/^http:\/\//i.test(url)) {
+    const httpsUrl = url.replace(/^http:\/\//i, "https://");
+    resp = await tryFetch(httpsUrl);
+    if (resp) return resp;
+  }
+
+  // 3. If non-www failed or timed out, try with www.
+  try {
+    const u = new URL(url);
+    if (!u.hostname.startsWith("www.")) {
+      u.hostname = `www.${u.hostname}`;
+      resp = await tryFetch(u.href);
+      if (resp) return resp;
+    }
+  } catch {
+    // Ignore URL formatting errors
+  }
+
+  return null;
+}
+
 export async function scrapeContactsLocally(
   rawStartUrl: string,
   options: { maxPages?: number; timeoutMs?: number } = {},
 ): Promise<ContactExtractionResult> {
   const startedAt = Date.now();
-  const maxPages = Math.min(options.maxPages ?? 5, 10);
-  const timeoutMs = options.timeoutMs ?? 15_000;
+  const maxPages = Math.min(options.maxPages ?? 4, 10);
+  const timeoutMs = options.timeoutMs ?? 7_000;
 
-  let startUrl = rawStartUrl.trim();
+  // Clean enclosing quotes, brackets, and trailing commas/periods
+  let startUrl = rawStartUrl
+    .trim()
+    .replace(/^[<("'[]+/, "")
+    .replace(/[>)"'\]]+$/, "")
+    .replace(/[,;:!?]+$/, "")
+    .trim();
+
   if (!/^https?:\/\//i.test(startUrl)) {
-    startUrl = `https://${startUrl}`;
+    startUrl = `https://${startUrl.replace(/^\/+/, "")}`;
   }
 
   const safety = isSafeUrl(startUrl);
@@ -46,8 +105,7 @@ export async function scrapeContactsLocally(
     throw new Error(`Unsafe or invalid target URL: ${safety.reason}`);
   }
 
-  const origin = safety.url.origin;
-  const domain = safety.url.hostname.replace(/^www\./i, "");
+  const domain = safety.url.hostname.replace(/^www\./i, "").toLowerCase();
 
   const visited = new Set<string>();
   const queue: string[] = [safety.url.href];
@@ -68,15 +126,10 @@ export async function scrapeContactsLocally(
     visited.add(currentUrl);
 
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const resp = await fetchPageWithFallback(currentUrl, timeoutMs);
+      if (!resp) continue;
 
-      const resp = await fetch(currentUrl, {
-        headers: { "User-Agent": USER_AGENT, Accept: "text/html,application/xhtml+xml" },
-        signal: controller.signal,
-      }).finally(() => clearTimeout(timer));
-
-      if (!resp.ok) continue;
+      const finalUrl = resp.url || currentUrl;
       const html = await resp.text();
       const $ = cheerio.load(html);
 
@@ -149,11 +202,12 @@ export async function scrapeContactsLocally(
           socialLinks.youtube = href;
         }
 
-        // Queue internal contact/about links
+        // Queue internal contact/about links (domain matching across scheme/redirects)
         try {
-          const resolved = new URL(href, currentUrl);
+          const resolved = new URL(href, finalUrl);
+          const resolvedDomain = resolved.hostname.replace(/^www\./i, "").toLowerCase();
           if (
-            resolved.origin === origin &&
+            resolvedDomain === domain &&
             !visited.has(resolved.href) &&
             contactLinkPattern.test(resolved.pathname) &&
             !/\.(png|jpg|jpeg|gif|svg|pdf|zip|css|js)$/i.test(resolved.pathname)
@@ -166,6 +220,11 @@ export async function scrapeContactsLocally(
           // Ignore invalid link URLs
         }
       });
+
+      // Early exit if primary contact details (email and phone) are already found on homepage
+      if (emails.size > 0 && phones.size > 0) {
+        break;
+      }
     } catch {
       // Continue to next page if one fails
     }
