@@ -260,15 +260,26 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
   const [addLeadOpen, setAddLeadOpen] = useState(false);
 
   // Fetch leads and groups
-  const { data: leads = [], isLoading } = useQuery({
+  const { data: leadsResponse, isLoading } = useQuery({
     queryKey: ["leads", "list"],
-    queryFn: ({ signal }) => api.get<Lead[]>("/leads", signal),
+    queryFn: ({ signal }) => api.get<{ items: Lead[]; total: number } | Lead[]>("/leads", signal),
   });
 
-  const { data: groups = [] } = useQuery({
+  const leads = useMemo(() => {
+    if (!leadsResponse) return [];
+    if (Array.isArray(leadsResponse)) return leadsResponse;
+    if (Array.isArray((leadsResponse as { items: Lead[] }).items)) {
+      return (leadsResponse as { items: Lead[] }).items;
+    }
+    return [];
+  }, [leadsResponse]);
+
+  const { data: rawGroups } = useQuery({
     queryKey: ["leads", "groups"],
     queryFn: ({ signal }) => api.get<LeadGroup[]>("/leads/groups", signal),
   });
+
+  const groups = useMemo(() => (Array.isArray(rawGroups) ? rawGroups : []), [rawGroups]);
 
   // Delete lead mutation
   const deleteMutation = useMutation({
