@@ -652,7 +652,7 @@ function providerFromProfile(profile: CompanyProfile): ContractParty {
     addressLines: profile.addressLines?.length ? profile.addressLines : [profile.location],
     email: profile.email,
     phone: profile.phone,
-    signatory: { name: "Dan Kwame Ayipah", title: "Founder" },
+    signatory: { name: profile.displayName, title: "Provider" },
   };
 }
 

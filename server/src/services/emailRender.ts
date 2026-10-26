@@ -95,13 +95,35 @@ export function toText(
  * Who signed it, and nothing else. The address, the phone number and the
  * website are in the footer band the letterhead draws — a signature that
  * repeats them makes the bottom of every email say the same thing twice.
+ *
+ * Defaults to the company name and website without any personal name.
  */
 export async function signature(): Promise<string | null> {
-  const stored = await getSetting(SETTING.MAIL_SIGNATURE);
-  if (stored !== null) return stored.trim() || null;
-  const name = (await getSetting(SETTING.MAIL_FROM_NAME)) ?? "Dan Kwame Ayipah";
-  return `${name}
-Founder, ${(await companyProfile()).displayName}`;
+  let stored: string | null = null;
+  try {
+    stored = await getSetting(SETTING.MAIL_SIGNATURE);
+  } catch {
+    // A letter renderer must not fail if database is offline or in unit tests
+  }
+  const profile = await companyProfile();
+
+  if (stored !== null && stored.trim()) {
+    let clean = stored.trim();
+    // If an existing stored signature includes personal name or legacy domain,
+    // sanitize it so it only displays the company name and website.
+    if (/Dan Kwame Ayipah|Dan Kwame|dakyworld/i.test(clean)) {
+      clean = clean
+        .replace(/Dan Kwame Ayipah\s*(?:[,\n-]?\s*(?:Founder|Owner|CEO)?[,\s-]*(?:DakyXTech|Dakyworld)?)?/gi, `${profile.displayName}\n${profile.web}`)
+        .replace(/Dan Kwame/gi, profile.displayName)
+        .replace(/dakyworld\.com/gi, "dakyx.com")
+        .replace(/dakyworld/gi, "dakyx")
+        .trim();
+    }
+    return clean || `${profile.displayName}\n${profile.web}`;
+  }
+
+  // Default signature: company name and website only
+  return `${profile.displayName}\n${profile.web}`;
 }
 
 /**

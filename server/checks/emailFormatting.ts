@@ -6,7 +6,9 @@
  *   npx tsx checks/emailFormatting.ts
  */
 import { formatEmailBodyToHtml, formatEmailBodyToText, parseShortcodeAttrs } from "../src/services/emailBodyParser.js";
-import { toHtml, toText } from "../src/services/emailRender.js";
+import { signature, toHtml, toText } from "../src/services/emailRender.js";
+import { STARTER_TEMPLATES } from "../src/services/whatsappTemplates.js";
+import { BUILTIN_TEMPLATES } from "../src/services/emailTemplates.js";
 
 const failures: string[] = [];
 let passed = 0;
@@ -108,14 +110,30 @@ async function main() {
   check("code block rendered as <pre><code>", codeHtml.includes("<pre style=\"background-color:#0F172A;") && codeHtml.includes("npm run start"));
 
   // 11. Full toHtml / toText integration with letterhead
-  const renderedHtml = toHtml("Hello\n\n[highlight]Notice[/highlight]\n\n[button href=\"https://dakyx.com\"]Visit[/button]", "Dan Kwame Ayipah", null);
+  const renderedHtml = toHtml("Hello\n\n[highlight]Notice[/highlight]\n\n[button href=\"https://dakyx.com\"]Visit[/button]", "DakyXTech\ndakyx.com", null);
   check("toHtml wraps inside full email letterhead table", renderedHtml.includes("<table role=\"presentation\""));
   check("toHtml retains highlight", renderedHtml.includes("<mark style=\"background-color:#FEF08A;"));
   check("toHtml retains button", renderedHtml.includes("Visit"));
 
-  const renderedText = toText("Hello\n\n[highlight]Notice[/highlight]\n\n[button href=\"https://dakyx.com\"]Visit[/button]", "Dan Kwame Ayipah", null);
+  const renderedText = toText("Hello\n\n[highlight]Notice[/highlight]\n\n[button href=\"https://dakyx.com\"]Visit[/button]", "DakyXTech\ndakyx.com", null);
   check("toText produces plain text without markup", renderedText.includes("Notice") && !renderedText.includes("[highlight]"));
   check("toText produces button link", renderedText.includes("Visit (https://dakyx.com)"));
+
+  // 12. Signature and template brand consistency
+  const sig = await signature();
+  check("default signature includes company name DakyXTech", sig?.includes("DakyXTech") ?? false);
+  check("default signature includes dakyx.com", sig?.includes("dakyx.com") ?? false);
+  check("default signature does not include Dan Kwame Ayipah", !(sig?.includes("Dan Kwame Ayipah") ?? false));
+  check("default signature does not include dakyworld", !(sig?.toLowerCase().includes("dakyworld") ?? false));
+
+  const allBuiltinBodies = BUILTIN_TEMPLATES.map((t) => `${t.subject} ${t.body} ${t.description}`).join(" ");
+  check("BUILTIN_TEMPLATES contain no dakyworld", !/dakyworld/i.test(allBuiltinBodies));
+  check("BUILTIN_TEMPLATES contain no Dan Kwame Ayipah", !/Dan Kwame Ayipah/i.test(allBuiltinBodies));
+
+  const allStarterBodies = STARTER_TEMPLATES.map((t) => `${t.body} ${t.footer} ${t.examples.join(" ")}`).join(" ");
+  check("STARTER_TEMPLATES contain no dakyworld or DW- prefix", !/dakyworld|\bDW-/i.test(allStarterBodies));
+  check("STARTER_TEMPLATES contain no personal Dan Kwame Ayipah", !/Dan Kwame Ayipah/i.test(allStarterBodies));
+  check("STARTER_TEMPLATES reference dakyx.com", allStarterBodies.includes("dakyx.com"));
 
   console.log(`\n  ${passed} passed, ${failures.length} failed\n`);
   if (failures.length > 0) process.exit(1);

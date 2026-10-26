@@ -54,7 +54,7 @@ export const VOICE = `How DakyXTech writes:
 - Calm and specific, never breathless. No exclamation marks. No emoji.
 - Say the useful thing first. The reader decides in one line whether to keep reading.
 - British spelling. Currency as "GHS 12,500".
-- Sign off as Dan, not as a company.`;
+- Sign off with the company name and website (DakyXTech / dakyx.com), not with an individual personal name.`;
 
 // --- What can actually be sold ---------------------------------------------
 
@@ -140,7 +140,7 @@ export interface BusinessOffer {
 export const SHIPPED_OFFER: BusinessOffer = {
   positioning: COMPANY.positioning,
   summary: [
-    "An external technology team for individuals, small and growing businesses and larger organisations. Based in Kumasi, Ghana, working remotely with clients in Ghana and internationally. The founder is Dan Kwame Ayipah, who writes and signs these himself.",
+    "An external technology team for individuals, small and growing businesses and larger organisations. Based in Kumasi, Ghana, working remotely with clients in Ghana and internationally.",
     "The offer, in one line: one partner for the website, the workflows, the connections between the tools you already pay for, and the people who have to use them.",
     "Five service families, sold as one coordinated team rather than as five specialisms: websites and digital platforms, software and business systems, business automation and AI, systems integration, technology consulting and training.",
     "Entirely remote, worked through structured communication, calls and screen sharing.",

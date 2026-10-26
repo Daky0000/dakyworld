@@ -1,5 +1,7 @@
 import type { EmailPurpose } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
+import { SETTING, getSetting, setSetting } from "../lib/settings.js";
+import { COMPANY } from "./dakyworld.js";
 
 /**
  * The letters DakyXTech sends often enough to be worth having written down.
@@ -229,11 +231,112 @@ It made a difference, and I wanted to say so properly rather than in passing.`,
 ];
 
 /**
- * Copies anything new into the database and returns the live set. Existing
- * rows are left exactly as they are: `builtin` marks where a template came
- * from, not who owns it now.
+ * Ensures all existing templates and outreach settings replace legacy "dakyworld"
+ * references with "dakyx", enforce "dakyx.com" for website URLs, and remove
+ * personal names (Dan Kwame Ayipah) in favor of the company name and website.
+ */
+export async function reconcileTemplates(): Promise<void> {
+  try {
+    const templates = await prisma.emailTemplate.findMany();
+    for (const t of templates) {
+      let changed = false;
+      let name = t.name;
+      let subject = t.subject;
+      let description = t.description;
+      let bodyHtml = t.bodyHtml;
+
+      // 1. Replace dakyworld.com with dakyx.com
+      if (/dakyworld\.com/i.test(bodyHtml) || /dakyworld\.com/i.test(subject) || (description && /dakyworld\.com/i.test(description)) || /dakyworld\.com/i.test(name)) {
+        bodyHtml = bodyHtml.replace(/dakyworld\.com/gi, "dakyx.com");
+        subject = subject.replace(/dakyworld\.com/gi, "dakyx.com");
+        if (description) description = description.replace(/dakyworld\.com/gi, "dakyx.com");
+        name = name.replace(/dakyworld\.com/gi, "dakyx.com");
+        changed = true;
+      }
+
+      // 2. Replace dakyworld with dakyx
+      if (/dakyworld/i.test(bodyHtml) || /dakyworld/i.test(subject) || (description && /dakyworld/i.test(description)) || /dakyworld/i.test(name)) {
+        bodyHtml = bodyHtml.replace(/dakyworld/gi, "dakyx");
+        subject = subject.replace(/dakyworld/gi, "dakyx");
+        if (description) description = description.replace(/dakyworld/gi, "dakyx");
+        name = name.replace(/dakyworld/gi, "dakyx");
+        changed = true;
+      }
+
+      // 3. Remove personal name Dan Kwame Ayipah - replace with company name and website
+      if (/Dan Kwame Ayipah/i.test(bodyHtml) || /Dan Kwame/i.test(bodyHtml) || (description && /Dan Kwame Ayipah/i.test(description)) || /Dan Kwame Ayipah/i.test(name)) {
+        bodyHtml = bodyHtml
+          .replace(/Dan Kwame Ayipah\s*(?:[,\n-]?\s*(?:Founder|Owner|CEO)?[,\s-]*(?:DakyXTech|Dakyworld)?)?/gi, `${COMPANY.displayName}\n${COMPANY.web}`)
+          .replace(/Dan Kwame Ayipah/gi, COMPANY.displayName)
+          .replace(/Dan Kwame/gi, COMPANY.displayName);
+        name = name.replace(/Dan Kwame Ayipah/gi, COMPANY.displayName).replace(/Dan Kwame/gi, COMPANY.displayName);
+        if (description) description = description.replace(/Dan Kwame Ayipah/gi, COMPANY.displayName).replace(/Dan Kwame/gi, COMPANY.displayName);
+        changed = true;
+      }
+
+      if (changed) {
+        await prisma.emailTemplate.update({
+          where: { id: t.id },
+          data: { name, subject, description, bodyHtml },
+        });
+      }
+    }
+
+    // Also reconcile WhatsApp templates if any exist in the database
+    const waTemplates = await prisma.whatsAppTemplate.findMany();
+    for (const wt of waTemplates) {
+      let waChanged = false;
+      let body = wt.body;
+      let footer = wt.footer ?? "";
+
+      if (/dakyworld\.com/i.test(body) || /dakyworld\.com/i.test(footer)) {
+        body = body.replace(/dakyworld\.com/gi, "dakyx.com");
+        footer = footer.replace(/dakyworld\.com/gi, "dakyx.com");
+        waChanged = true;
+      }
+      if (/dakyworld/i.test(body) || /dakyworld/i.test(footer)) {
+        body = body.replace(/dakyworld/gi, "dakyx");
+        footer = footer.replace(/dakyworld/gi, "dakyx");
+        waChanged = true;
+      }
+      if (/Dan Kwame Ayipah|Dan Kwame/i.test(body) || /Dan Kwame Ayipah|Dan Kwame/i.test(footer)) {
+        body = body.replace(/Dan Kwame Ayipah/gi, COMPANY.displayName).replace(/Dan Kwame/gi, COMPANY.displayName);
+        footer = footer.replace(/Dan Kwame Ayipah/gi, COMPANY.displayName).replace(/Dan Kwame/gi, COMPANY.displayName);
+        waChanged = true;
+      }
+
+      if (waChanged) {
+        await prisma.whatsAppTemplate.update({
+          where: { id: wt.id },
+          data: { body, footer: footer || null },
+        });
+      }
+    }
+
+    // Clean up stored MAIL_FROM_NAME if it was set to personal name
+    const storedFromName = await getSetting(SETTING.MAIL_FROM_NAME);
+    if (storedFromName === "Dan Kwame Ayipah" || storedFromName === "Dan Kwame") {
+      await setSetting(SETTING.MAIL_FROM_NAME, COMPANY.displayName);
+    }
+
+    // Clean up stored MAIL_SIGNATURE if it contains personal name or legacy domain
+    const storedSig = await getSetting(SETTING.MAIL_SIGNATURE);
+    if (storedSig && /Dan Kwame Ayipah|Dan Kwame|dakyworld/i.test(storedSig)) {
+      await setSetting(SETTING.MAIL_SIGNATURE, `${COMPANY.displayName}\n${COMPANY.web}`);
+    }
+  } catch (err) {
+    console.warn("[email] Template reconciliation skipped:", err);
+  }
+}
+
+/**
+ * Copies anything new into the database and returns the live set.
+ * Also runs template reconciliation to keep all templates and outreach settings
+ * aligned with DakyXTech and dakyx.com.
  */
 export async function ensureBuiltinTemplates() {
+  await reconcileTemplates();
+
   const existing = await prisma.emailTemplate.findMany({ select: { slug: true } });
   const known = new Set(existing.map((row) => row.slug));
   const missing = BUILTIN_TEMPLATES.filter((template) => !known.has(template.slug));

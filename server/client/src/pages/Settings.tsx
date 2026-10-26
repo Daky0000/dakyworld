@@ -670,7 +670,7 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
   const [port, setPort] = useState(email.port || 587);
   const [user, setUser] = useState(email.user ?? "");
   const [password, setPassword] = useState("");
-  const [fromName, setFromName] = useState(email.fromName ?? "Dan Kwame Ayipah");
+  const [fromName, setFromName] = useState(email.fromName ?? "DakyXTech");
   const [fromEmail, setFromEmail] = useState(email.fromEmail ?? "");
   const [replyTo, setReplyTo] = useState(email.replyTo ?? "");
   const [sign, setSign] = useState(email.signature ?? "");
@@ -1138,7 +1138,7 @@ function HostingerForm({ settings }: { settings: AppSettings }) {
   const hostinger = email.hostinger;
   const save = useSaveSettings();
   const [token, setToken] = useState("");
-  const [fromName, setFromName] = useState(email.fromName ?? "Dan Kwame Ayipah");
+  const [fromName, setFromName] = useState(email.fromName ?? "DakyXTech");
   const [sign, setSign] = useState(email.signature ?? "");
 
   const connect = useMutation({

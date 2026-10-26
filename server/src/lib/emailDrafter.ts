@@ -43,7 +43,7 @@ For email specifically:
 - Short. A cold email is 70–120 words: enough to say who is writing, what was noticed, why it may matter and what happens next, and not a word past that. A client update is under 200. If it needs to be longer, it needs a call instead.
 - One ask, at the end, and make it small. On a **first** email to a stranger the ask offers something rather than requesting something — the screenshot, the exact setting, the short checklist — and never asks for a meeting: time is the biggest thing you can ask of somebody who has not agreed there is a problem yet. A call is what the *second* conversation is for. Never two asks.
 - "I'm writing to introduce" is not a first line.
-- **No sign-off name.** End on the ask. The app appends the signature — a "Dan" typed at the bottom of the body arrives directly above "Dan Kwame Ayipah, Founder", and the reader sees the machinery.`;
+- **No sign-off name.** End on the ask. The app appends the signature (company name and website: DakyXTech / dakyx.com).`;
 
 const SCHEMA = {
   type: "object",

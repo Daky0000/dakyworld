@@ -88,7 +88,7 @@ ${VOICE}
 
 ## Start with them, not with us
 
-Open on their own situation — the thing that was found, in their terms. Then say who you are, immediately, in the same breath. Something like: the observation, then "Dan here, I run DakyXTech — we look after IT for businesses around Ghana."
+Open on their own situation — the thing that was found, in their terms. Then say who you are, immediately, in the same breath. Something like: the observation, then "We're DakyXTech (dakyx.com) — we look after IT and websites for businesses around Ghana."
 
 Two hard constraints on that opening, and both are checked before the email can be sent:
 
