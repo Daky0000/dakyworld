@@ -2,8 +2,10 @@ import { lazy } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { Guard, Landing } from "./components/Guard";
+import { AdminGuard } from "./components/AdminGuard";
 const Dashboard = lazy(() => import("./pages/Dashboard").then((module) => ({ default: module.Dashboard })));
 const Leads = lazy(() => import("./pages/Leads").then((module) => ({ default: module.Leads })));
+const AfriconLeads = lazy(() => import("./pages/AfriconLeads").then((module) => ({ default: module.AfriconLeads })));
 const LeadImport = lazy(() => import("./pages/LeadImport").then((module) => ({ default: module.LeadImport })));
 const LeadSources = lazy(() => import("./pages/LeadSources").then((module) => ({ default: module.LeadSources })));
 const Hunts = lazy(() => import("./pages/Hunts").then((module) => ({ default: module.Hunts })));
@@ -142,6 +144,7 @@ export default function App() {
           }
         />
         <Route path="/freelancer-workspace" element={<Guard needs="clients.view"><FreelancerWorkspace /></Guard>} />
+        <Route path="/africon-leads" element={<AdminGuard><AfriconLeads /></AdminGuard>} />
         <Route path="/leads" element={<Guard needs="leads.view"><Leads /></Guard>} />
         <Route path="/leads/import" element={<Guard needs="leads.import"><LeadImport /></Guard>} />
         <Route path="/lead-sources" element={<Guard needs="leads.sources"><LeadSources /></Guard>} />

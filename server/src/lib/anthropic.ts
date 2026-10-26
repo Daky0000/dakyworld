@@ -27,7 +27,7 @@
 import { callModel } from "./models/call.js";
 import { BUILTIN_FIELDS, LEAD_SOURCES, LEAD_STATUSES } from "../services/leadFields.js";
 import { LEAD_FIELD_TYPES } from "../services/leadFields.js";
-import type { ImportPlan } from "../services/sheetPlan.js";
+import type { ImportPlan, TemplateDef } from "../services/sheetPlan.js";
 import type { SheetGrid } from "../services/spreadsheet.js";
 import { renderGrid, renderHints } from "../services/sheetPlan.js";
 import type { PlanTable } from "../services/sheetPlan.js";
@@ -147,17 +147,21 @@ What matters:
 9. **No two tables may claim the same row.** Ranges never overlap, and a row belongs to exactly one table. Reporting one table twice, or reporting a whole table and then part of it again, writes the same business into two groups — it is scored twice and written to twice.
 10. If a block is clearly not leads — a legend, a summary, a pivot of counts — leave it out and say so in the summary.`;
 
-function userPrompt(grids: SheetGrid[], hints: PlanTable[]): string {
+function userPrompt(grids: SheetGrid[], hints: PlanTable[], template?: TemplateDef): string {
   const sheets = grids.map(renderGrid).join("\n\n");
-  return `Here is the file.
-
-${sheets}
-
-A simple pattern-matcher read it as follows. It is often wrong about where tables start and stop, and it cannot read banners or unlabelled columns — correct it where it is wrong, and use it only as a starting point:
-
-${renderHints(hints)}
-
-Return the plan.`;
+  let prompt = `Here is the file.\n\n${sheets}\n\n`;
+  if (template?.columns?.length) {
+    prompt += `=== TARGET LEAD TEMPLATE: "${template.fileName}" ===\n` +
+      `The user provided an explicit Target Lead Template. You MUST structure the detected lead tables to match this template's schema:\n` +
+      template.columns.map((c, i) => `  ${i + 1}. Column "${c.header || c.label}" (Field: ${c.field}, Type: ${c.type})`).join("\n") +
+      `\n\nCRITICAL INSTRUCTION FOR TEMPLATE STRUCTURING:\n` +
+      `- Map source columns in the spreadsheet to the corresponding template columns by name, synonyms, and data type.\n` +
+      `- Use the template's column header as the 'label' for each mapped column.\n` +
+      `- Match built-in CRM fields (contactName, companyName, contactEmail, contactPhone, website, city, country, etc.) where they fit; use 'custom' with the template's header label for custom template fields.\n` +
+      `- Prioritize aligning to this template's column order and schema.\n\n`;
+  }
+  prompt += `A simple pattern-matcher read it as follows. It is often wrong about where tables start and stop, and it cannot read banners or unlabelled columns — correct it where it is wrong, and use it only as a starting point:\n\n${renderHints(hints)}\n\nReturn the plan.`;
+  return prompt;
 }
 
 // --- Call ------------------------------------------------------------------
@@ -180,12 +184,12 @@ export interface AnalysisResult {
  * fall back to the pattern rules with an explanation rather than failing
  * outright.
  */
-export async function analyzeGrids(grids: SheetGrid[], hints: PlanTable[]): Promise<AnalysisResult> {
+export async function analyzeGrids(grids: SheetGrid[], hints: PlanTable[], template?: TemplateDef): Promise<AnalysisResult> {
   const result = await callModel<ImportPlan>({
     purpose: "sheet.analyse",
     job: "spreadsheet",
     system: SYSTEM_PROMPT,
-    prompt: () => userPrompt(grids, hints),
+    prompt: () => userPrompt(grids, hints, template),
     schema: PLAN_SCHEMA as unknown as Record<string, unknown>,
     // A sheet is read once, not per row, and a wrong table boundary costs an
     // afternoon of cleanup — this is not the place to save thinking.

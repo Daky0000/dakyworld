@@ -7,7 +7,7 @@ import { AnalystError, analystConfigured, analyzeGrids } from "../lib/anthropic.
 import { GoogleError, getDriveFile, listSpreadsheets, listTabs, readGrids } from "../lib/google.js";
 import { gateBy } from "../middleware/permissionGate.js";
 import { handleGoogleCallback } from "../services/googleCallback.js";
-import { detectTables, normalizePlan, repairPlan, type ImportPlan, type PlanTable } from "../services/sheetPlan.js";
+import { applyTemplateToTables, detectTables, guessField, guessType, normalizePlan, repairPlan, type ImportPlan, type PlanTable, type TemplateDef, type TemplateColumnDef } from "../services/sheetPlan.js";
 import {
   MAX_ROWS_PER_SHEET,
   SpreadsheetError,
@@ -64,6 +64,57 @@ function cacheFile(importId: string, buffer: Buffer, fileName: string) {
     if (held <= FILE_CACHE_MAX_BYTES || key === importId) continue;
     fileCache.delete(key);
     held -= entry.buffer.length;
+  }
+}
+
+/**
+ * Cache for uploaded lead templates, kept for the length of an analysis.
+ */
+const templateCache = new Map<string, { buffer: Buffer; fileName: string; template: TemplateDef; at: number }>();
+
+function cacheTemplateFile(importId: string, buffer: Buffer, fileName: string, template: TemplateDef) {
+  templateCache.set(importId, { buffer, fileName, template, at: Date.now() });
+  for (const [key, entry] of templateCache) {
+    if (Date.now() - entry.at > FILE_CACHE_TTL_MS) templateCache.delete(key);
+  }
+}
+
+async function parseTemplateUpload(dataBase64: string, fileName: string): Promise<TemplateDef> {
+  const buffer = decodeUpload(dataBase64, fileName);
+  const source = sourceFromUpload(buffer, fileName);
+  try {
+    const sheets = await source.names();
+    if (!sheets.length) throw new SpreadsheetError("The template file has no readable sheets.");
+    const grid = await source.get(sheets[0]);
+    if (!grid || !grid.rows.length) throw new SpreadsheetError("The template file contains no readable rows.");
+    let headerRowIndex = 0;
+    while (headerRowIndex < grid.rows.length && !grid.rows[headerRowIndex].some((cell) => cell.trim().length > 0)) {
+      headerRowIndex++;
+    }
+    if (headerRowIndex >= grid.rows.length) throw new SpreadsheetError("The template file has no header row.");
+    const headers = grid.rows[headerRowIndex];
+    const columns: TemplateColumnDef[] = [];
+    for (let colIdx = 0; colIdx < headers.length; colIdx++) {
+      const header = headers[colIdx]?.trim() || "";
+      if (!header) continue;
+      const field = guessField(header);
+      const samples = grid.rows.slice(headerRowIndex + 1, headerRowIndex + 10).map((r) => r[colIdx] ?? "");
+      const type = guessType(header, samples);
+      columns.push({
+        index: colIdx,
+        header,
+        label: header,
+        field,
+        type,
+      });
+    }
+    return {
+      fileName,
+      columns,
+      rawHeaders: columns.map((c) => c.header),
+    };
+  } finally {
+    source.release();
   }
 }
 
@@ -173,6 +224,9 @@ const analyzeInput = z.object({
    */
   importId: z.string().optional(),
   sheet: z.string().optional(),
+  /** Optional lead template to structure the imported leads against */
+  templateFileName: z.string().optional(),
+  templateDataBase64: z.string().optional(),
 });
 
 type AnalyzeInput = z.infer<typeof analyzeInput>;
@@ -243,6 +297,17 @@ importsRouter.post("/analyze", async (req, res, next) => {
       const fileName = await opening.fileName();
       opening.release();
 
+      let templateInfo: TemplateDef | undefined;
+      if (input.templateDataBase64 && input.templateFileName) {
+        try {
+          templateInfo = await parseTemplateUpload(input.templateDataBase64, input.templateFileName);
+        } catch (err) {
+          throw new SpreadsheetError(
+            err instanceof Error ? `Template error: ${err.message}` : "Failed to parse the uploaded template file."
+          );
+        }
+      }
+
       const opened = await prisma.leadImport.create({
         data: {
           source: input.driveFileId ? "GOOGLE_SHEET" : "UPLOAD",
@@ -250,11 +315,15 @@ importsRouter.post("/analyze", async (req, res, next) => {
           fileName,
           driveFileId: input.driveFileId ?? null,
           sheetNames: chosen,
-          plan: { tables: [], summary: "" } as unknown as Prisma.InputJsonValue,
+          plan: { tables: [], summary: "", ...(templateInfo ? { template: templateInfo } : {}) } as unknown as Prisma.InputJsonValue,
         },
       });
       record = opened;
       if (buffer) cacheFile(opened.id, buffer, fileName);
+      if (templateInfo && input.templateDataBase64 && input.templateFileName) {
+        const tBuffer = decodeUpload(input.templateDataBase64, input.templateFileName);
+        cacheTemplateFile(opened.id, tBuffer, input.templateFileName, templateInfo);
+      }
 
       return res.status(201).json({
         import: opened,
@@ -294,6 +363,9 @@ importsRouter.post("/analyze", async (req, res, next) => {
     let analyzedBy = "rules";
     let repairs: string[] = [];
 
+    const heldPlan = (existing.plan ?? { tables: [], summary: "" }) as unknown as ImportPlan;
+    const activeTemplate = heldPlan?.template ?? templateCache.get(existing.id)?.template;
+
     if (!grid || !grid.rows.length) {
       warnings.push(`"${sheet}" has no readable rows, so nothing was taken from it.`);
     } else {
@@ -302,7 +374,7 @@ importsRouter.post("/analyze", async (req, res, next) => {
 
       if (input.useAi && (await analystConfigured())) {
         try {
-          const analysis = await analyzeGrids([grid], hints);
+          const analysis = await analyzeGrids([grid], hints, activeTemplate);
           plan = analysis.plan;
           analyzedBy = analysis.model;
         } catch (err) {
@@ -347,15 +419,26 @@ importsRouter.post("/analyze", async (req, res, next) => {
       const repaired = repairPlan(plan, [grid], hints);
       tables = repaired.plan.tables;
       repairs = repaired.repairs;
-      previews = buildPreviews([grid], repaired.plan);
+
+      if (activeTemplate) {
+        const templateResult = applyTemplateToTables(tables, activeTemplate, [grid]);
+        tables = templateResult.tables;
+        repairs.push(...templateResult.templateReports);
+        warnings.push(`Structured via Lead Template: ${activeTemplate.fileName} (${activeTemplate.columns.length} columns defined).`);
+      }
+
+      previews = buildPreviews([grid], { ...repaired.plan, tables });
     }
 
     // Replacing this tab's tables rather than appending them keeps a re-read of
     // the same tab from doubling it — which a retry after a dropped connection
     // would otherwise do, silently, and only to that one tab.
-    const heldPlan = (existing.plan ?? { tables: [], summary: "" }) as unknown as ImportPlan;
     const mergedTables = [...(heldPlan.tables ?? []).filter((table) => table.sheet !== sheet), ...tables];
-    const mergedPlan: ImportPlan = { ...heldPlan, tables: mergedTables };
+    const mergedPlan: ImportPlan = {
+      ...heldPlan,
+      tables: mergedTables,
+      ...(activeTemplate ? { template: activeTemplate } : {}),
+    };
 
     const after = progressOf({ sheetNames: existing.sheetNames, plan: mergedPlan });
     const readers = [...new Set([...(existing.analyzedBy ?? "").split(", ").filter(Boolean), analyzedBy])];
@@ -536,6 +619,20 @@ importsRouter.delete("/:id", async (req, res, next) => {
     await prisma.leadImport.delete({ where: { id: req.params.id } });
     res.status(204).send();
   } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/imports/inspect-template — checks an uploaded template file and returns its detected columns and structure.
+ */
+importsRouter.post("/inspect-template", async (req, res, next) => {
+  try {
+    const input = z.object({ dataBase64: z.string(), fileName: z.string() }).parse(req.body);
+    const template = await parseTemplateUpload(input.dataBase64, input.fileName);
+    res.json(template);
+  } catch (err) {
+    if (err instanceof SpreadsheetError) return res.status(err.status).json({ error: err.message });
     next(err);
   }
 });

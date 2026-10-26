@@ -81,11 +81,26 @@ export interface PlanTable {
  */
 export type PlanGrouping = "sheet" | "table";
 
+export interface TemplateColumnDef {
+  index: number;
+  header: string;
+  label: string;
+  field: string;
+  type: string;
+}
+
+export interface TemplateDef {
+  fileName: string;
+  columns: TemplateColumnDef[];
+  rawHeaders?: string[];
+}
+
 export interface ImportPlan {
   tables: PlanTable[];
   summary: string;
   /** Absent means "sheet" — see `groupingOf`. */
   grouping?: PlanGrouping;
+  template?: TemplateDef;
 }
 
 // --- Header synonyms -------------------------------------------------------
@@ -118,7 +133,7 @@ const HEADER_RULES: { pattern: RegExp; field: string }[] = [
   { pattern: /(contact\s*person|contact\s*name|full\s*name|person|client|customer|^name$|^contact$)/i, field: "contactName" },
 ];
 
-function guessField(header: string): string {
+export function guessField(header: string): string {
   const text = header.trim();
   if (!text) return "custom";
   for (const rule of HEADER_RULES) {
@@ -138,7 +153,7 @@ const TYPE_RULES: { pattern: RegExp; type: LeadFieldType }[] = [
 ];
 
 /** A column's type from its header first, then from what the cells look like. */
-function guessType(header: string, samples: string[]): LeadFieldType {
+export function guessType(header: string, samples: string[]): LeadFieldType {
   for (const rule of TYPE_RULES) {
     if (rule.pattern.test(header)) return rule.type;
   }
@@ -1621,4 +1636,111 @@ export function repairPlan(plan: ImportPlan, grids: SheetGrid[], hints: PlanTabl
     ? `${normalized.summary}\n\nCorrected before review: ${repairs.join(" ")}`.trim()
     : normalized.summary;
   return { plan: normalizePlan({ tables: kept, summary, grouping: normalized.grouping }, grids), repairs };
+}
+
+/**
+ * Structures import tables according to an optional target Lead Template.
+ *
+ * When an Owner or Admin uploads a template spreadsheet alongside the leads,
+ * the imported tables and columns are restructured to mirror the template's
+ * column order, field mappings, and custom labels.
+ */
+export function applyTemplateToTables(
+  tables: PlanTable[],
+  template: TemplateDef,
+  _grids: SheetGrid[] = []
+): { tables: PlanTable[]; matchedCount: number; templateReports: string[] } {
+  if (!template || !template.columns || !template.columns.length) {
+    return { tables, matchedCount: 0, templateReports: [] };
+  }
+
+  let totalMatched = 0;
+  const reports: string[] = [];
+
+  const clean = (s: string) => (s ?? "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  for (const table of tables) {
+    const existingCols = [...table.columns];
+    const matchedSourceIndices = new Set<number>();
+    const newColumns: PlanColumn[] = [];
+
+    // For each template column in order, find the best matching source column
+    for (const tmplCol of template.columns) {
+      const tmplCleanHeader = clean(tmplCol.header);
+      const tmplCleanLabel = clean(tmplCol.label);
+      const tmplField = tmplCol.field;
+
+      let bestScore = -1;
+      let bestSourceIndex = -1;
+
+      for (let i = 0; i < existingCols.length; i++) {
+        if (matchedSourceIndices.has(i)) continue;
+        const src = existingCols[i];
+        const srcCleanHeader = clean(src.header);
+        const srcCleanLabel = clean(src.label);
+        const srcField = src.field;
+
+        let score = 0;
+        if (srcCleanHeader && srcCleanHeader === tmplCleanHeader) {
+          score = 100;
+        } else if (srcCleanLabel && srcCleanLabel === tmplCleanLabel) {
+          score = 95;
+        } else if (tmplField !== "custom" && tmplField !== "ignore" && srcField === tmplField) {
+          score = 90;
+        } else if (tmplField !== "custom" && tmplField !== "ignore" && guessField(src.header) === tmplField) {
+          score = 85;
+        } else if (
+          (tmplCleanHeader && srcCleanHeader.includes(tmplCleanHeader)) ||
+          (srcCleanHeader && tmplCleanHeader.includes(srcCleanHeader)) ||
+          (tmplCleanLabel && srcCleanLabel.includes(tmplCleanLabel))
+        ) {
+          score = 75;
+        }
+
+        if (score > bestScore && score >= 70) {
+          bestScore = score;
+          bestSourceIndex = i;
+        }
+      }
+
+      if (bestSourceIndex >= 0) {
+        matchedSourceIndices.add(bestSourceIndex);
+        const matchedSrc = existingCols[bestSourceIndex];
+        totalMatched++;
+
+        // Format to match the template exactly
+        newColumns.push({
+          ...matchedSrc,
+          label: tmplCol.label || tmplCol.header || matchedSrc.label,
+          field: tmplCol.field || matchedSrc.field,
+          type: (tmplCol.type as LeadFieldType) || matchedSrc.type,
+          key: tmplCol.field === "custom" ? slugifyKey(tmplCol.label || tmplCol.header) : undefined,
+        });
+      }
+    }
+
+    // Append any remaining source columns that weren't matched in the template
+    for (let i = 0; i < existingCols.length; i++) {
+      if (!matchedSourceIndices.has(i)) {
+        newColumns.push(existingCols[i]);
+      }
+    }
+
+    // Ensure table has contactName mapped
+    const hasName = newColumns.some((col) => col.field === "contactName" || col.field === "companyName");
+    if (!hasName) {
+      const candidate = newColumns.find((col) => col.field === "custom" && col.type === "TEXT");
+      if (candidate) {
+        candidate.field = "contactName";
+        candidate.label = "Name";
+      }
+    }
+
+    table.columns = newColumns;
+    const matchSummary = `Structured according to template "${template.fileName}" (${matchedSourceIndices.size}/${template.columns.length} columns aligned)`;
+    table.notes = table.notes ? `${table.notes} • ${matchSummary}` : matchSummary;
+    reports.push(matchSummary);
+  }
+
+  return { tables, matchedCount: totalMatched, templateReports: reports };
 }

@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-do
 import { TourHost } from "./TourHost";
 import { HelpDialog } from "./HelpDialog";
 import { useAuth } from "../lib/auth";
+import { isAdminUser } from "./AdminGuard";
 import { useWebsiteSites } from "./WebsiteGuard";
 import { CLIENT_NAV, useWorkspaceMode } from "../lib/clientWorkspace";
 import { Loading } from "./ui";
@@ -10,13 +11,14 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { currentSurface, setPageTitle } from "../lib/surface";
 
-type NavEntry = { to: string; label: string; end?: boolean; needs?: string };
+type NavEntry = { to: string; label: string; end?: boolean; needs?: string; adminOnly?: boolean };
 
 /**
  * Names for the screens no menu item covers, so the bar and the tab title never
  * fall back to "Detail" — which is what every website screen said before.
  */
 const SCREEN_NAMES: Array<[RegExp, string]> = [
+  [/^\/africon-leads/, "Africon Leads"],
   [/^\/website\/?$/, "Overview"],
   [/^\/website\/sites/, "Pages"],
   [/^\/website\/assets/, "Assets"],
@@ -53,6 +55,7 @@ const navGroups: NavGroup[] = [
   {
     title: "Pipeline",
     items: [
+      { to: "/africon-leads", label: "Africon Leads", adminOnly: true },
       { to: "/leads", label: "Leads", end: true, needs: "leads.view" },
       { to: "/hunts", label: "Global Hunts", needs: "leads.sources" },
       { to: "/lead-sources", label: "Lead Capture", needs: "leads.sources" },
@@ -172,10 +175,14 @@ export function Layout() {
     retry: false,
   });
   const marketing = products.data?.marketing;
+  const isAdmin = isAdminUser(user, can);
 
-  const allowed = (item: NavEntry) => (item.to === "/website" || item.to === "/website/sites")
-    ? Boolean(client || can("website.view") || websites.data?.length)
-    : !client && (!item.needs || can(item.needs));
+  const allowed = (item: NavEntry) => {
+    if (item.adminOnly && !isAdmin) return false;
+    return (item.to === "/website" || item.to === "/website/sites")
+      ? Boolean(client || can("website.view") || websites.data?.length)
+      : !client && (!item.needs || can(item.needs));
+  };
   const groups: NavGroup[] = client
     ? [{ title: "Your workspace", items: [...CLIENT_NAV.filter(item => item.needs !== "manage" || websites.data?.some(site => site.capabilities?.manage)).map(item => ({ to: item.to, label: item.label })), ...(editorSurface && can("demos.view") ? [{ to: "/demos", label: "Demos" }] : [])] }]
     : navGroups.map(group => ({ ...group, items: group.items.filter(allowed) })).filter(group => group.items.length);

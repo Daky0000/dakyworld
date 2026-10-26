@@ -446,11 +446,26 @@ export interface PlanTable {
  */
 export type PlanGrouping = "sheet" | "table";
 
+export interface TemplateColumnDef {
+  index: number;
+  header: string;
+  label: string;
+  field: string;
+  type: string;
+}
+
+export interface TemplateDef {
+  fileName: string;
+  columns: TemplateColumnDef[];
+  rawHeaders?: string[];
+}
+
 export interface ImportPlan {
   tables: PlanTable[];
   summary: string;
   /** Absent means "sheet". */
   grouping?: PlanGrouping;
+  template?: TemplateDef;
 }
 
 export interface TablePreview {
