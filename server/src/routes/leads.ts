@@ -1,6 +1,7 @@
 import { mapConcurrent } from "../lib/concurrency.js";
 import { Router } from "express";
 import { z } from "zod";
+import ExcelJS from "exceljs";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import {
@@ -58,6 +59,7 @@ leadsRouter.use(
       { path: /^\/groups\/empty\/delete$/, permission: "leads.delete" },
       { path: /^\/combine-to-lead-list$/, permission: "leads.edit" },
       { path: /^\/africon\/delete-all$/, permission: "leads.delete" },
+      { path: /^\/africon\/export-workbook$/, permission: "leads.view" },
     ],
   }),
 );
@@ -524,6 +526,224 @@ leadsRouter.delete("/africon/delete-all", async (_req, res, next) => {
     const ids = africonLeads.map((l) => l.id);
     const result = await deleteLeads({ ids });
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+function extractLeadCell(lead: Record<string, unknown>, header: string): string {
+  const raw = (lead.enrichment as { raw?: Record<string, string> } | null)?.raw;
+  if (raw && typeof raw === "object" && header in raw) {
+    const val = raw[header];
+    return val !== null && val !== undefined ? String(val) : "";
+  }
+  if (lead.customFields && typeof lead.customFields === "object" && header in (lead.customFields as Record<string, unknown>)) {
+    const val = (lead.customFields as Record<string, unknown>)[header];
+    return val !== null && val !== undefined ? String(val) : "";
+  }
+  const norm = header.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (norm === "contactname" || norm === "fullname" || norm === "name" || norm === "contactperson" || norm === "person") {
+    return String(lead.contactName || "");
+  }
+  if (norm === "companyname" || norm === "company" || norm === "organization" || norm === "businessname" || norm === "business") {
+    return String(lead.companyName || "");
+  }
+  if (norm === "contactemail" || norm === "email" || norm === "officialemail" || norm === "workemail" || norm === "emailaddress") {
+    return String(lead.contactEmail || "");
+  }
+  if (norm === "contactphone" || norm === "phone" || norm === "directphone" || norm === "telephone" || norm === "whatsapp" || norm === "whatsappphone" || norm === "contactnumber") {
+    return String(lead.contactPhone || "");
+  }
+  if (norm === "country" || norm === "market" || norm === "countryhq") {
+    return String(lead.country || "");
+  }
+  if (norm === "city" || norm === "marketcity") {
+    return String(lead.city || "");
+  }
+  if (norm === "category" || norm === "industry" || norm === "sector" || norm === "industrysector" || norm === "businesscategory" || norm === "techvertical") {
+    return String(lead.category || "");
+  }
+  if (norm === "website" || norm === "url" || norm === "web") {
+    return String(lead.website || "");
+  }
+  if (norm === "address" || norm === "physicaladdress" || norm === "location") {
+    return String(lead.address || "");
+  }
+  if (norm === "notes" || norm === "discoverynotes") {
+    return String(lead.discoveryNotes || "");
+  }
+  return "";
+}
+
+// POST /api/leads/africon/export-workbook — exports selected cards/groups as a multi-sheet Excel workbook (.xlsx)
+leadsRouter.post("/africon/export-workbook", async (req, res, next) => {
+  try {
+    const input = z
+      .object({
+        groupIds: z.array(z.string().cuid()).optional(),
+        ids: z.array(z.string().cuid()).optional(),
+        all: z.boolean().optional(),
+        filename: z.string().optional(),
+      })
+      .parse(req.body);
+
+    let targetGroups: { id: string; name: string }[] = [];
+
+    if (input.groupIds && input.groupIds.length > 0) {
+      const found = await prisma.leadGroup.findMany({
+        where: { id: { in: input.groupIds }, tags: { hasSome: ["africon"] } },
+        select: { id: true, name: true },
+      });
+      const byId = new Map(found.map((g) => [g.id, g]));
+      targetGroups = input.groupIds.map((id) => byId.get(id)).filter((g): g is { id: string; name: string } => Boolean(g));
+    } else {
+      targetGroups = await prisma.leadGroup.findMany({
+        where: { tags: { hasSome: ["africon"] } },
+        select: { id: true, name: true },
+        orderBy: { createdAt: "asc" },
+      });
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "Africon Leads Engine";
+    workbook.created = new Date();
+
+    const usedSheetNames = new Set<string>();
+
+    for (const group of targetGroups) {
+      const whereClause: Prisma.LeadWhereInput = {
+        groupId: group.id,
+        tags: { hasSome: ["africon"] },
+        rehearsal: false,
+      };
+      if (input.ids && input.ids.length > 0) {
+        whereClause.id = { in: input.ids };
+      }
+
+      const leads = await prisma.lead.findMany({
+        where: whereClause,
+        orderBy: { createdAt: "asc" },
+      });
+
+      // Clean sheet name: max 31 chars, no [] : * ? / \
+      let sheetName = (group.name || "Leads").replace(/[[\]:*?/\\]/g, " ").slice(0, 28).trim() || "Leads";
+      let suffix = 2;
+      const root = sheetName;
+      while (usedSheetNames.has(sheetName.toLowerCase())) {
+        sheetName = `${root.slice(0, 25)} ${suffix++}`;
+      }
+      usedSheetNames.add(sheetName.toLowerCase());
+
+      const sheet = workbook.addWorksheet(sheetName, {
+        views: [{ state: "frozen", ySplit: 1 }],
+      });
+
+      // Extract sheet column headers for this group
+      const headerSet = new Set<string>();
+      const headers: string[] = [];
+      const addHeader = (h: string) => {
+        if (!h) return;
+        const lower = h.toLowerCase().trim();
+        if (
+          lower === "status" ||
+          lower === "score" ||
+          lower === "leadscore" ||
+          lower === "server" ||
+          lower === "source" ||
+          lower === "capturemethod" ||
+          lower === "id" ||
+          lower === "groupid" ||
+          lower === "rehearsal" ||
+          lower === "createdat" ||
+          lower === "updatedat" ||
+          lower === "dedupekey" ||
+          lower === "externalid"
+        ) {
+          return;
+        }
+        if (!headerSet.has(h)) {
+          headerSet.add(h);
+          headers.push(h);
+        }
+      };
+
+      for (const lead of leads) {
+        const raw = (lead.enrichment as { raw?: Record<string, string> } | null)?.raw;
+        if (raw && typeof raw === "object") {
+          Object.keys(raw).forEach(addHeader);
+        }
+      }
+
+      if (headers.length === 0) {
+        for (const lead of leads) {
+          if (lead.contactName) addHeader("Contact Name");
+          if (lead.companyName) addHeader("Company Name");
+          if (lead.contactEmail) addHeader("Official Email");
+          if (lead.contactPhone) addHeader("Direct Phone");
+          if (lead.country) addHeader("Country");
+          if (lead.city) addHeader("City");
+          if (lead.category) addHeader("Industry Sector");
+          if (lead.website) addHeader("Website");
+          if (lead.address) addHeader("Physical Address");
+          if (lead.discoveryNotes) addHeader("Notes");
+          if (lead.customFields && typeof lead.customFields === "object") {
+            Object.keys(lead.customFields as Record<string, unknown>).forEach(addHeader);
+          }
+        }
+      }
+
+      if (headers.length === 0) {
+        headers.push("Contact Name", "Company Name", "Official Email", "Direct Phone", "Country", "City");
+      }
+
+      sheet.columns = headers.map((header) => ({
+        header,
+        key: header,
+        width: Math.max(16, Math.min(45, header.length + 6)),
+      }));
+
+      // Styling header row: Dark slate/navy background with white bold text
+      const headerRow = sheet.getRow(1);
+      headerRow.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 10, name: "Calibri" };
+      headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0D1526" } };
+      headerRow.alignment = { vertical: "middle", horizontal: "left" };
+      headerRow.height = 24;
+
+      // Add data rows
+      for (const lead of leads) {
+        const rowData: Record<string, string> = {};
+        for (const h of headers) {
+          rowData[h] = extractLeadCell(lead as unknown as Record<string, unknown>, h);
+        }
+        const row = sheet.addRow(rowData);
+        row.font = { size: 10, name: "Calibri" };
+        row.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
+      }
+
+      if (headers.length > 0) {
+        sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: headers.length } };
+      }
+    }
+
+    if (!targetGroups.length) {
+      workbook.addWorksheet("Africon Leads");
+    }
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const defaultFilename =
+      targetGroups.length === 1
+        ? `${targetGroups[0].name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_${dateStr}.xlsx`
+        : `africon_workbook_${targetGroups.length}_sheets_${dateStr}.xlsx`;
+
+    const outFilename = input.filename?.trim()
+      ? (input.filename.endsWith(".xlsx") ? input.filename : `${input.filename}.xlsx`)
+      : defaultFilename;
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${outFilename}"`);
+    res.send(Buffer.from(buffer));
   } catch (err) {
     next(err);
   }

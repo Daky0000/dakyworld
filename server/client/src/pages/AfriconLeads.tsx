@@ -1,7 +1,7 @@
 import { useState, useRef, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { api } from "../lib/api";
+import { api, postForBlob } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { AdminGuard, isAdminUser } from "../components/AdminGuard";
 import type {
@@ -124,6 +124,17 @@ async function toBase64(file: File): Promise<string> {
 function downloadCsv(filename: string, content: string) {
   // UTF-8 BOM ensures seamless rendering across Microsoft Excel, Apple Numbers, and LibreOffice
   const blob = new Blob(["\uFEFF" + content], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -376,6 +387,9 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
   const [drawerLead, setDrawerLead] = useState<Lead | null>(null);
   const [addLeadOpen, setAddLeadOpen] = useState(false);
 
+  // Multi-card (group) selection state for multi-sheet workbook export
+  const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(new Set());
+
   // Multi-row selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -483,12 +497,35 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
     onSuccess: (data) => {
       invalidateLeads();
       setSelectedIds(new Set());
+      setSelectedCardIds(new Set());
       setCombineModalOpen(false);
       setNoticeMessage(`Successfully combined ${data.combined} leads into '${data.group.name}'!`);
       setTimeout(() => setNoticeMessage(null), 5000);
     },
     onError: (err) => {
       alert(err instanceof Error ? err.message : "Failed to combine leads.");
+    },
+  });
+
+  // Multi-sheet Excel workbook export mutation
+  const exportWorkbookMutation = useMutation({
+    mutationFn: async ({ groupIds, filename }: { groupIds?: string[]; filename?: string }) => {
+      const blob = await postForBlob("/leads/africon/export-workbook", { groupIds, filename });
+      const count = groupIds?.length ?? groups.length;
+      const defaultName =
+        count === 1 && groupIds?.[0]
+          ? `${slugifyName(groups.find((g) => g.id === groupIds[0])?.name || "sheet")}.xlsx`
+          : `africon_workbook_${count}_sheets_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const outName = filename || defaultName;
+      downloadBlob(blob, outName);
+      return outName;
+    },
+    onSuccess: (fname) => {
+      setNoticeMessage(`Workbook '${fname}' exported successfully!`);
+      setTimeout(() => setNoticeMessage(null), 4000);
+    },
+    onError: (err) => {
+      alert(err instanceof Error ? err.message : "Failed to export Excel workbook.");
     },
   });
 
@@ -693,179 +730,293 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
         />
       </div>
 
-      {/* Uploaded Excel Sheets / Groups Bar */}
-      <Card className="p-4 space-y-3 bg-sunken/30">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
-          <div className="flex items-center gap-2">
-            <span className="font-sans text-[11px] font-bold uppercase tracking-wider text-ink">
-              Uploaded Excel Sheets &amp; Groups
+      {/* Multi-Card Sticky Action Bar (Appears when 1 or more group cards are selected) */}
+      {selectedCardIds.size > 0 && (
+        <div className="sticky top-2 z-30 flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-blue-600 bg-gradient-to-r from-[#0F1E36] to-[#0A1220] p-3.5 text-white shadow-2xl animate-fadeIn">
+          <div className="flex items-center gap-3">
+            <span className="rounded-full bg-blue-500/30 border border-blue-400 px-3 py-1 text-xs font-bold text-blue-200">
+              {selectedCardIds.size} {selectedCardIds.size === 1 ? "Card" : "Cards"} Selected
             </span>
-            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue">
-              {groups.length} sheet group(s)
+            <span className="text-xs text-white/90">
+              {leads.filter((l) => l.groupId && selectedCardIds.has(l.groupId)).length} total leads
             </span>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
-              onClick={() =>
-                exportLeadsToCsv(
-                  leads,
-                  `all_africon_leads_${new Date().toISOString().slice(0, 10)}.csv`
-                )
-              }
-              disabled={leads.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:bg-sunken transition shadow-xs disabled:opacity-50"
-              title="Export all leads from all sheet groups combined into one CSV"
+              disabled={exportWorkbookMutation.isPending}
+              onClick={() => exportWorkbookMutation.mutate({ groupIds: Array.from(selectedCardIds) })}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-white px-3.5 py-1.5 text-xs font-bold text-ink hover:bg-cream transition shadow-md disabled:opacity-50"
+              title="Export all selected cards as a single multi-sheet Excel workbook (.xlsx)"
             >
-              <span>📥 Export All Combined CSV ({leads.length})</span>
+              <span>📑</span>
+              <span>
+                {exportWorkbookMutation.isPending
+                  ? "Building Workbook..."
+                  : `Export as Multi-Sheet Workbook (.xlsx) (${selectedCardIds.size} ${selectedCardIds.size === 1 ? "sheet" : "sheets"})`}
+              </span>
             </button>
 
             <button
               type="button"
               onClick={() => {
-                setSelectedGroupIdsForCombine(new Set(groups.map((g) => g.id)));
+                setSelectedGroupIdsForCombine(new Set(selectedCardIds));
                 setCombineModalOpen(true);
               }}
-              disabled={combineMutation.isPending || groups.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-blue/40 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue hover:bg-blue-100/70 transition shadow-xs disabled:opacity-50"
-              title="Combine multiple uploaded sheet groups into one unified list named 'Lead List'"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 border border-blue-400 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 transition shadow-sm"
             >
-              <span>📋 Combine Groups into 'Lead List'</span>
+              <span>📋</span> Combine into 'Lead List'
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedCardIds(new Set())}
+              className="rounded-xl px-2.5 py-1.5 text-xs text-white/70 hover:text-white transition"
+            >
+              ✕ Clear Selection
             </button>
           </div>
         </div>
+      )}
 
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          <button
-            type="button"
-            onClick={() => setSelectedBundle("ALL")}
-            className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
-              selectedBundle === "ALL"
-                ? "bg-ink text-white shadow-xs"
-                : "border border-line bg-white text-muted hover:text-ink hover:bg-sunken"
-            }`}
-          >
-            All Uploaded Sheets ({leads.length})
-          </button>
-
-          {groups.map((group) => {
-            const countInGroup = leads.filter((l) => l.groupId === group.id).length;
-            const isSelected = selectedBundle === group.id;
-            return (
-              <div
-                key={group.id}
-                className={`inline-flex items-center rounded-xl border transition ${
-                  isSelected
-                    ? "border-blue bg-blue text-white shadow-xs"
-                    : "border-line bg-white text-ink hover:border-ink"
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() => setSelectedBundle(group.id)}
-                  className="px-3 py-1.5 text-xs font-semibold flex items-center gap-1.5"
-                >
-                  <span>📁</span>
-                  <span>{group.name}</span>
-                  <span
-                    className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                      isSelected ? "bg-white/20 text-white" : "bg-sunken text-muted"
-                    }`}
-                  >
-                    {countInGroup}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const leadsOfGroup = leads.filter((l) => l.groupId === group.id);
-                    exportLeadsToCsv(
-                      leadsOfGroup,
-                      `${slugifyName(group.name)}_${new Date().toISOString().slice(0, 10)}.csv`
-                    );
-                  }}
-                  title={`Export ${group.name} CSV individually`}
-                  className={`pr-2.5 pl-1 py-1 text-xs transition ${
-                    isSelected ? "text-white/80 hover:text-white" : "text-muted hover:text-ink"
-                  }`}
-                >
-                  📥
-                </button>
-              </div>
-            );
-          })}
-
-          <button
-            type="button"
-            onClick={() => setSelectedBundle("ungrouped")}
-            className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
-              selectedBundle === "ungrouped"
-                ? "bg-ink text-white shadow-xs"
-                : "border border-line bg-white text-muted hover:text-ink hover:bg-sunken"
-            }`}
-          >
-            Ungrouped Leads ({leads.filter((l) => !l.groupId).length})
-          </button>
-        </div>
-      </Card>
-
-      {/* Active Sheet / Group Control Card (When a specific sheet group is selected) */}
-      {activeBundle && (
-        <Card className="p-4 border-blue/40 bg-gradient-to-r from-blue-50/40 to-transparent flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-xs">
+      {/* Group Cards Section: Every group has its own card with lead count & instant sheet export */}
+      <div className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-sans text-[10px] font-bold uppercase tracking-wider text-blue">
-                Active Group Proof
+              <span className="font-sans text-[11px] font-bold uppercase tracking-wider text-blue">
+                Lead Groupings &amp; Workbooks
               </span>
-              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue">
-                {filteredLeads.length} leads in this group
+              <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue">
+                {groups.length} Groups
               </span>
             </div>
-            <h3 className="mt-0.5 font-display text-base font-bold text-ink">{activeBundle.name}</h3>
-            {activeBundle.description && (
-              <p className="mt-0.5 text-xs text-muted">{activeBundle.description}</p>
-            )}
+            <h2 className="font-display text-lg font-bold text-ink mt-0.5">
+              Group Cards ({groups.length})
+            </h2>
+            <p className="text-xs text-muted">
+              Select multiple cards to export as a multi-sheet Excel workbook (.xlsx), or export any card individually as its own sheet.
+            </p>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
-              onClick={() =>
-                exportLeadsToCsv(
-                  filteredLeads,
-                  `${slugifyName(activeBundle.name)}_${new Date().toISOString().slice(0, 10)}.csv`
-                )
-              }
-              className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:bg-sunken shadow-xs transition"
+              onClick={() => {
+                if (groups.length > 0 && groups.every((g) => selectedCardIds.has(g.id))) {
+                  setSelectedCardIds(new Set());
+                } else {
+                  setSelectedCardIds(new Set(groups.map((g) => g.id)));
+                }
+              }}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:bg-sunken transition shadow-xs"
             >
-              <span>📥</span> Export Group CSV ({filteredLeads.length})
+              <span>{groups.length > 0 && groups.every((g) => selectedCardIds.has(g.id)) ? "Deselect All Cards" : "Select All Cards"}</span>
             </button>
-
-            {activeBundle.name.toLowerCase() !== "lead list" && (
-              <Button
-                variant="secondary"
-                className="text-xs"
-                onClick={() => {
-                  setSelectedGroupIdsForCombine(new Set([activeBundle.id]));
-                  setCombineModalOpen(true);
-                }}
-              >
-                <span>🔗</span> Combine with 'Lead List'
-              </Button>
-            )}
 
             <button
               type="button"
-              onClick={() => setDeleteBundleConfirm(activeBundle)}
-              className="inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-danger-text hover:bg-danger-surface transition"
+              disabled={exportWorkbookMutation.isPending || groups.length === 0}
+              onClick={() => exportWorkbookMutation.mutate({ groupIds: groups.map((g) => g.id) })}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-blue/40 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue hover:bg-blue-100/70 transition shadow-xs disabled:opacity-50"
+              title="Export all groups as a single workbook with a worksheet for each group"
             >
-              <span>🗑</span> Delete Sheet Group
+              <span>📑 Export All Groups as Workbook (.xlsx)</span>
             </button>
           </div>
-        </Card>
+        </div>
+
+        {/* Group Cards Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {groups.map((group) => {
+            const groupLeads = leads.filter((l) => l.groupId === group.id);
+            const countInGroup = groupLeads.length;
+            const reachableCount = groupLeads.filter((l) => l.contactEmail || l.contactPhone).length;
+            const isCardChecked = selectedCardIds.has(group.id);
+            const isActiveFilter = selectedBundle === group.id;
+
+            return (
+              <Card
+                key={group.id}
+                className={`relative p-5 flex flex-col justify-between transition border-2 ${
+                  isCardChecked
+                    ? "border-blue bg-blue-50/20 shadow-md ring-1 ring-blue/20"
+                    : isActiveFilter
+                    ? "border-ink bg-white shadow-xs ring-1 ring-ink/10"
+                    : "border-line bg-white hover:border-ink/40 shadow-xs"
+                }`}
+              >
+                <div>
+                  {/* Top Row: Checkbox, Name, Count */}
+                  <div className="flex items-start justify-between gap-2">
+                    <label
+                      className="flex items-start gap-2.5 cursor-pointer flex-1"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isCardChecked}
+                        onChange={() => {
+                          setSelectedCardIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(group.id)) next.delete(group.id);
+                            else next.add(group.id);
+                            return next;
+                          });
+                        }}
+                        className="mt-0.5 rounded border-line text-blue focus:ring-0 cursor-pointer h-4 w-4"
+                      />
+                      <div>
+                        <h3 className="font-display text-sm font-bold text-ink leading-snug">
+                          {group.name}
+                        </h3>
+                        {group.description && (
+                          <p className="mt-0.5 text-[11px] text-muted line-clamp-2">{group.description}</p>
+                        )}
+                      </div>
+                    </label>
+
+                    <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-bold text-blue shrink-0">
+                      {countInGroup} {countInGroup === 1 ? "lead" : "leads"}
+                    </span>
+                  </div>
+
+                  {/* Middle Meta: Reachable, Status */}
+                  <div className="mt-3.5 pt-3 border-t border-line/60 flex items-center justify-between text-[11px] text-muted">
+                    <span>Reachable: <strong className="text-ink font-semibold">{reachableCount}</strong></span>
+                    <span>Format: <strong className="text-ink font-semibold">Sheet Tab</strong></span>
+                  </div>
+                </div>
+
+                {/* Bottom Actions: Export as Sheet, View Leads, Delete */}
+                <div className="mt-4 pt-3 border-t border-line flex items-center justify-between gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      exportWorkbookMutation.mutate({
+                        groupIds: [group.id],
+                        filename: `${slugifyName(group.name)}_${new Date().toISOString().slice(0, 10)}.xlsx`,
+                      })
+                    }
+                    className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-sunken transition shadow-2xs"
+                    title="Export this particular group as a single-sheet Excel file (.xlsx)"
+                  >
+                    <span>📥 Export Sheet (.xlsx)</span>
+                  </button>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedBundle(isActiveFilter ? "ALL" : group.id)}
+                      className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold transition ${
+                        isActiveFilter
+                          ? "bg-ink text-white"
+                          : "border border-line bg-white text-muted hover:text-ink hover:bg-sunken"
+                      }`}
+                    >
+                      {isActiveFilter ? "Viewing in Table ✓" : "View in Table"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setDeleteBundleConfirm(group)}
+                      className="rounded-lg p-1 text-muted hover:text-danger-text transition"
+                      title="Delete this sheet group"
+                    >
+                      🗑
+                    </button>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+
+          {/* Ungrouped Leads Card if any exist */}
+          {leads.filter((l) => !l.groupId).length > 0 && (
+            <Card
+              className={`p-5 flex flex-col justify-between transition border-2 ${
+                selectedBundle === "ungrouped"
+                  ? "border-ink bg-white shadow-xs"
+                  : "border-line bg-white hover:border-ink/40 shadow-xs"
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-display text-sm font-bold text-ink">Ungrouped Leads</h3>
+                  <span className="rounded-full bg-sunken px-2.5 py-0.5 text-xs font-bold text-muted">
+                    {leads.filter((l) => !l.groupId).length} leads
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] text-muted">Leads not yet assigned to any uploaded sheet group.</p>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-line flex items-center justify-between gap-1.5">
+                <button
+                  type="button"
+                  onClick={() =>
+                    exportLeadsToCsv(
+                      leads.filter((l) => !l.groupId),
+                      `ungrouped_leads_${new Date().toISOString().slice(0, 10)}.csv`
+                    )
+                  }
+                  className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-sunken transition shadow-2xs"
+                >
+                  <span>📥 Export CSV</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedBundle(selectedBundle === "ungrouped" ? "ALL" : "ungrouped")}
+                  className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold transition ${
+                    selectedBundle === "ungrouped"
+                      ? "bg-ink text-white"
+                      : "border border-line bg-white text-muted hover:text-ink hover:bg-sunken"
+                  }`}
+                >
+                  {selectedBundle === "ungrouped" ? "Viewing in Table ✓" : "View in Table"}
+                </button>
+              </div>
+            </Card>
+          )}
+        </div>
+      </div>
+
+      {/* Active Group Filter Banner (When filtered by card) */}
+      {activeBundle && (
+        <div className="rounded-2xl border border-blue-200 bg-blue-50/40 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-3">
+            <span className="text-xl">📁</span>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue">Filtered by Card</span>
+                <span className="rounded-full bg-blue-100 px-2 py-0.2 text-[10px] font-bold text-blue">
+                  {filteredLeads.length} leads
+                </span>
+              </div>
+              <h3 className="font-display text-base font-bold text-ink mt-0.5">{activeBundle.name}</h3>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                exportWorkbookMutation.mutate({
+                  groupIds: [activeBundle.id],
+                  filename: `${slugifyName(activeBundle.name)}_${new Date().toISOString().slice(0, 10)}.xlsx`,
+                })
+              }
+              className="inline-flex items-center gap-1 rounded-xl bg-white border border-line px-3 py-1.5 text-xs font-semibold text-ink hover:bg-sunken shadow-xs transition"
+            >
+              <span>📥 Export Sheet (.xlsx)</span>
+            </button>
+
+            <Button variant="secondary" className="text-xs" onClick={() => setSelectedBundle("ALL")}>
+              Show All Leads ({leads.length})
+            </Button>
+          </div>
+        </div>
       )}
 
       {/* Selection Action Bar (Appears when rows are checked) */}
