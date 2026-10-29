@@ -1782,7 +1782,7 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
   const [templateLoading, setTemplateLoading] = useState(false);
 
   // Grouping mode: separate lists per detected section/sheet vs single combined list
-  const [groupingMode, setGroupingMode] = useState<"separate" | "combined">("separate");
+  const [groupingMode, setGroupingMode] = useState<"separate" | "combined">("combined");
   const [tableTitles, setTableTitles] = useState<Record<string, string>>({});
   const [customGroupTitle, setCustomGroupTitle] = useState<string>("");
 
@@ -1927,12 +1927,13 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
         initialTableTitles[t.id] = t.title;
       });
       setTableTitles(initialTableTitles);
-      setGroupingMode(updatedTables.length > 1 ? "separate" : "combined");
+      const isMultiSheet = remainingSheets.length > 1;
+      setGroupingMode(isMultiSheet ? "separate" : "combined");
 
       setPlan({
         tables: updatedTables,
         summary: `Imported from ${leadsFile.name}${templateFile ? ` • Structured using template: ${templateFile.name}` : ""}`,
-        grouping: updatedTables.length > 1 ? "table" : "sheet",
+        grouping: isMultiSheet ? "table" : "sheet",
         singleListTitle: targetGroupName,
         isAfricon: true,
         tags: ["africon"],

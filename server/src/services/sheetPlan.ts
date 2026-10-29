@@ -113,12 +113,14 @@ export interface ImportPlan {
  * phone" must not be read as "phone" — the second number belongs in its own
  * column, not on top of the first.
  */
-const HEADER_RULES: { pattern: RegExp; field: string }[] = [
-  { pattern: /^(s\/?n|sn|no\.?|#|序|index|serial|row)$/i, field: "ignore" },
+const HEADER_RULES: { pattern: RegExp; field: string; exclude?: RegExp }[] = [
+  { pattern: /^(s\/?n|sn|no\.|#|序|index|serial|row)$/i, field: "ignore" },
+  { pattern: /^(timestamp|submission\s*time|submitted\s*at)$/i, field: "ignore" },
   { pattern: /\b(alt|alternate|other|second|secondary|2nd|backup)\b/i, field: "custom" },
+  { pattern: /(job\s*title|designation|occupation|position|^role$)/i, field: "custom" },
   { pattern: /(company|organisation|organization|business\s*name|firm|employer|establishment)/i, field: "companyName" },
   { pattern: /(e-?mail)/i, field: "contactEmail" },
-  { pattern: /(phone|tel|telephone|mobile|cell|whats\s*app|contact\s*(no|number))/i, field: "contactPhone" },
+  { pattern: /(phone|tel|telephone|mobile|cell|whats\s*app|contact\s*(no|number)|^(phone\s*)?number\s*$)/i, field: "contactPhone" },
   { pattern: /(web\s*site|website|url|domain|web\b)/i, field: "website" },
   { pattern: /(address|street|premises)/i, field: "address" },
   { pattern: /^(city|town|locality)$/i, field: "city" },
@@ -128,7 +130,7 @@ const HEADER_RULES: { pattern: RegExp; field: string }[] = [
   { pattern: /(lead\s*source|source|channel|referr)/i, field: "source" },
   { pattern: /(status|stage|pipeline|progress)/i, field: "status" },
   { pattern: /(lead\s*score|score|rank)/i, field: "leadScore" },
-  { pattern: /(deal|budget|amount|value|price|revenue|contract)/i, field: "estimatedDealSize" },
+  { pattern: /\b(deal\s*size|budget(?!ing)|amount|price|revenue|contract\s*value|deal\s*value)\b/i, field: "estimatedDealSize", exclude: /years|experience|worked|reporting|\?/i },
   { pattern: /(rating|stars)/i, field: "rating" },
   { pattern: /(reviews?)/i, field: "reviewsCount" },
   { pattern: /(tags?|labels?)/i, field: "tags" },
@@ -140,7 +142,7 @@ export function guessField(header: string): string {
   const text = header.trim();
   if (!text) return "custom";
   for (const rule of HEADER_RULES) {
-    if (rule.pattern.test(text)) return rule.field;
+    if (rule.pattern.test(text) && (!rule.exclude || !rule.exclude.test(text))) return rule.field;
   }
   return "custom";
 }
@@ -428,11 +430,12 @@ function findBlocks(grid: SheetGrid): Block[] {
   return merged;
 }
 
-/** Header rows are short, wordy and non-numeric — data rows usually aren't. */
+/** Header rows are short or question-length, wordy and non-numeric — data rows usually aren't. */
 function looksLikeHeader(row: string[]): boolean {
   const cells = row.filter((cell) => cell !== "");
   if (cells.length < 2) return false;
-  const wordy = cells.filter((cell) => cell.length <= 40 && /[a-z]/i.test(cell) && !/^\d[\d\s,.\-/]*$/.test(cell));
+  // Support modern survey/form questions in header rows (up to 200 chars)
+  const wordy = cells.filter((cell) => cell.length <= 200 && /[a-z]/i.test(cell) && !/^\d[\d\s,.\-/]*$/.test(cell));
   return wordy.length / cells.length >= 0.8;
 }
 
@@ -454,6 +457,7 @@ function cellKind(value: string): string {
   if (value === "") return "";
   if (/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value)) return "email";
   if (/^(https?:\/\/|www\.)/i.test(value)) return "url";
+  if (!Number.isNaN(Date.parse(value)) && /\d{4}|\/|-/.test(value) && !/^-?[\d,. ]+$/.test(value)) return "date";
   if (/^[+(]?\d[\d\s()\-.]{7,}$/.test(value) && !DATE_SHAPE.test(value)) return "phone";
   if (/^-?[\d,. ]+$/.test(value)) return "number";
   return "text";
@@ -608,7 +612,7 @@ function pickHeader(grid: SheetGrid, start: number, end: number): { headerRow: n
     cursor += 1;
   }
 
-  if (cursor <= end && looksLikeHeader(grid.rows[cursor] ?? [])) {
+  if (cursor <= end && (namesColumns(grid.rows[cursor] ?? []) || looksLikeHeader(grid.rows[cursor] ?? []))) {
     return { headerRow: cursor, firstDataRow: cursor + 1, banner };
   }
   return { headerRow: null, firstDataRow: cursor, banner };
@@ -633,9 +637,10 @@ export function detectTables(grids: SheetGrid[]): PlanTable[] {
       const opening = pickHeader(grid, block.start, block.end);
       const anchor = opening.headerRow ?? opening.firstDataRow;
       const boundaries: number[] = [block.start];
-      const firstShape = shapeOf(grid.rows[anchor] ?? []);
       for (let row = anchor + 2; row <= block.end; row += 1) {
-        if (looksLikeHeader(grid.rows[row]) && shapeOf(grid.rows[row]) !== firstShape && !looksLikeHeader(grid.rows[row - 1])) {
+        // A second table inside the same continuous block MUST be an actual header row
+        // that names columns and does not contain lead data values (dates, phones, emails, etc.)
+        if (namesColumns(grid.rows[row]) && !namesColumns(grid.rows[row - 1])) {
           boundaries.push(row);
         }
       }
