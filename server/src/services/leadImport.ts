@@ -509,9 +509,15 @@ export async function commitPlan(
       }
     }
 
+    const isAfriconImport = allTags.includes("africon") || (plan as any).isAfricon;
     const seen = new Set<string>();
     const prepared = rows
-      .map((row) => ({ ...row, dedupeKey: dedupeKeyFor(row.lead) }))
+      .map((row) => ({
+        ...row,
+        dedupeKey: isAfriconImport
+          ? `africon:${importId}:${table.sheet}:${row.rowIndex}`
+          : dedupeKeyFor(row.lead),
+      }))
       .filter((row) => {
         if (!row.dedupeKey) return true;
         if (seen.has(row.dedupeKey)) {

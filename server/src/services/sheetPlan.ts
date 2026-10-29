@@ -941,8 +941,7 @@ export function extractRows(grid: SheetGrid, table: PlanTable): { rows: Extracte
       if (fallback && String(fallback).trim()) {
         name = String(fallback).trim();
       } else {
-        skipped += 1;
-        continue;
+        name = `Lead ${rowIndex + 1}`;
       }
     }
     lead.contactName = String(name).trim();

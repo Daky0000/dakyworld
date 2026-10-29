@@ -719,9 +719,9 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
           sub="Separate Excel sheet datasets"
         />
         <StatTile
-          label="Reachable Contacts"
-          value={stats.reachable.toLocaleString()}
-          sub={stats.total ? `${Math.round((stats.reachable / stats.total) * 100)}% with Email/Phone` : "No leads yet"}
+          label="Captured Records"
+          value={stats.total.toLocaleString()}
+          sub="100% of imported data captured"
         />
         <StatTile
           label="Active Sheet / Filter"
@@ -884,7 +884,7 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
 
                   {/* Middle Meta: Reachable, Status */}
                   <div className="mt-3.5 pt-3 border-t border-line/60 flex items-center justify-between text-[11px] text-muted">
-                    <span>Reachable: <strong className="text-ink font-semibold">{reachableCount}</strong></span>
+                    <span>Captured: <strong className="text-ink font-semibold">{countInGroup} leads</strong></span>
                     <span>Format: <strong className="text-ink font-semibold">Sheet Tab</strong></span>
                   </div>
                 </div>
@@ -1136,7 +1136,7 @@ function LeadsPipelineView({ onGoToImport }: { onGoToImport: () => void }) {
               onChange={(e) => setOnlyReachable(e.target.checked)}
               className="rounded border-line"
             />
-            <span>Reachable only (Email or Phone)</span>
+            <span>Filter: Has direct Email/Phone only</span>
           </label>
         </div>
       </Card>
@@ -2426,8 +2426,8 @@ function TemplateImportView({ onImportSuccess }: { onImportSuccess: () => void }
                   </div>
                   {preview && (
                     <div className="flex items-center gap-3 text-xs">
-                      <span className="text-muted">Reachable: <strong className="text-ink">{preview.reachable}</strong></span>
-                      <span className="text-muted">Rows: <strong className="text-ink">{preview.rowCount}</strong></span>
+                      <span className="text-muted">Captured Leads: <strong className="text-ink">{preview.rowCount}</strong></span>
+                      <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-medium text-[11px]">100% Captured</span>
                     </div>
                   )}
                 </div>
