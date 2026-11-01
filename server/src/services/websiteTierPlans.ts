@@ -321,8 +321,8 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
     promoMonths: 3,
     storageQuotaBytes: 5 * GB,
     storageQuotaLabel: "5 GB",
-    maxUploadBytes: 10 * MB,
-    maxUploadLabel: "10 MB",
+    maxUploadBytes: GB,
+    maxUploadLabel: "1 GB",
     importsLimit: 999999,
     importsLimitLabel: "Unlimited imports",
     editsLimit: 999999,
@@ -352,7 +352,7 @@ export const WEBSITE_TIER_PLANS: Record<WebsitePlanTier, TierPlanDefinition> = {
       brandPresets: true,
     },
     featureHighlights: [
-      "5 GB Media Library storage (up to 10 MB/file)",
+      "5 GB Media Library storage (up to 1 GB/file)",
       "Unlimited HTML page imports & unlimited edits",
       "Global Theme System, Brand Presets & SEO Inspector",
       `Autonomous AI Builder Agent & Copy Assistant (300 credits/mo, up to ${dailyAiLimit("MANAGED")} requests a day)`,
@@ -647,7 +647,7 @@ export async function computeUserStorageAndUsage(req: WebsiteActor, siteId?: str
 /**
  * Enforces Media Library storage quota and max upload file size for the user's tier plan.
  */
-export async function assertMediaStorageAllowance(req: WebsiteActor, incomingBytes: number, siteId?: string, kind: "image" | "video" = "image"): Promise<void> {
+export async function assertMediaStorageAllowance(req: WebsiteActor, incomingBytes: number, siteId?: string, kind: "image" | "video" | "quota-only" = "image"): Promise<void> {
   const status = await computeUserStorageAndUsage(req, siteId);
   const { plan, storage } = status;
 

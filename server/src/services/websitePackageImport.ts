@@ -27,10 +27,10 @@ import {
 } from "./websiteTierPlans.js";
 import type { WebsiteActor } from "./websiteActor.js";
 
-export const MAX_PACKAGE_SIZE = 25 * 1024 * 1024; // 25 MB compressed limit
-export const MAX_UNCOMPRESSED_SIZE = 60 * 1024 * 1024; // 60 MB uncompressed limit (zip bomb defense)
+export const MAX_PACKAGE_SIZE = 1024 * 1024 * 1024; // 1 GB compressed limit
+export const MAX_UNCOMPRESSED_SIZE = 2 * 1024 * 1024 * 1024; // 2 GB uncompressed limit (zip bomb defense)
 export const MAX_FILE_COUNT = 500; // max entries in zip
-export const MAX_SINGLE_FILE_SIZE = 15 * 1024 * 1024; // 15 MB per single asset
+export const MAX_SINGLE_FILE_SIZE = 1024 * 1024 * 1024; // 1 GB per single asset
 
 export type DiscoveredPage = {
   filePath: string;
@@ -727,9 +727,12 @@ export async function commitPackageToSite(input: {
 
   // Verify quotas and allowances
   await assertImportAllowance(req, siteId);
+  for (const asset of analysis.assets) {
+    await assertMediaStorageAllowance(req, asset.size, siteId, "image");
+  }
   const totalAssetBytes = analysis.assets.reduce((sum, a) => sum + a.size, 0);
   if (totalAssetBytes > 0) {
-    await assertMediaStorageAllowance(req, totalAssetBytes, siteId);
+    await assertMediaStorageAllowance(req, totalAssetBytes, siteId, "quota-only");
   }
 
   // Pre-rewrite HTML references for each page

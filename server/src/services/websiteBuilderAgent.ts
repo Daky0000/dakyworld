@@ -3124,8 +3124,8 @@ const ALLOWED_DOC_EXTENSIONS: Record<string, string> = {
 const uploadAttachmentSchema = z
   .object({
     filename: z.string().min(1).max(200),
-    data: z.string().max(14_000_000).optional(), // up to ~10 MB binary
-    dataUrl: z.string().max(14_000_000).optional(),
+    data: z.string().optional(),
+    dataUrl: z.string().optional(),
     alt: z.string().max(500).optional().default(""),
   })
   .refine((val) => Boolean(val.data || val.dataUrl), {
@@ -3244,8 +3244,8 @@ export function registerWebsiteBuilderAgent(
         throw new WebsiteError(400, "The uploaded file data is not valid base64.");
       }
       const content = Buffer.from(rawBase64, "base64");
-      if (!content.length || content.length > 10_000_000) {
-        throw new WebsiteError(400, "Choose a file smaller than 10 MB.");
+      if (!content.length) {
+        throw new WebsiteError(400, "Choose a non-empty file.");
       }
       await assertMediaStorageAllowance(req, content.length, site.id);
 

@@ -531,8 +531,12 @@ async function nothingRehearsedEntersASequence() {
 async function itStaysOutOfThePipeline() {
   console.log("\nThe pipeline");
 
-  const normal = buildLeadWhere({}) as { rehearsal?: boolean };
+  const normal = buildLeadWhere({}) as { rehearsal?: boolean; NOT?: any };
   check("the leads list hides rehearsals by default", normal.rehearsal === false, JSON.stringify(normal.rehearsal));
+  check(
+    "the leads list hides africon leads by default",
+    Array.isArray(normal.NOT) && normal.NOT.some((cond: any) => cond?.tags?.hasSome?.includes("africon")),
+  );
 
   const asked = buildLeadWhere({ rehearsal: "only" }) as { rehearsal?: boolean };
   check("and can be asked for them", asked.rehearsal === true);

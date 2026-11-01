@@ -97,9 +97,15 @@ export async function enrol(args: { sequenceId: string; leadId?: string; clientI
   // starting against it. Refused here rather than at each caller: this is the
   // only door into a sequence, for the tool, the trigger and a person alike.
   if (args.leadId) {
-    const lead = await prisma.lead.findUnique({ where: { id: args.leadId }, select: { rehearsal: true } });
+    const lead = await prisma.lead.findUnique({
+      where: { id: args.leadId },
+      select: { rehearsal: true, tags: true, group: { select: { tags: true } } },
+    });
     if (lead?.rehearsal) {
       return { enrolled: false, reason: "That lead belongs to a rehearsal. Nothing in a rehearsal is ever written to." };
+    }
+    if (lead?.tags?.includes("africon") || lead?.group?.tags?.includes("africon")) {
+      return { enrolled: false, reason: "That lead belongs to Africon Leads. Africon leads are separate from OS email sequences." };
     }
   }
 

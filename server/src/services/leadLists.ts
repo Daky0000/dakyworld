@@ -61,6 +61,7 @@ export async function findEmptyLists(options: EmptyListOptions = {}): Promise<Em
   const groups = await prisma.leadGroup.findMany({
     where: {
       leads: { none: {} },
+      NOT: { tags: { hasSome: ["africon"] } },
       ...(options.autoOnly ? { autoCreated: true } : {}),
       ...(options.olderThanMs ? { createdAt: { lt: new Date(Date.now() - options.olderThanMs) } } : {}),
     },

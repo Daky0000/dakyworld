@@ -88,8 +88,8 @@ websiteRouter.use((req, res, next) => {
   next();
 });
 
-// Business allows 10 MB binary assets; base64 in JSON needs about 13.4 MB.
-websiteRouter.use(json({ limit: "16mb" }));
+// Business allows up to 1 GB uploads.
+websiteRouter.use(json({ limit: "1gb" }));
 
 // Plan features, ahead of every route. The table is `websiteTierFeature`;
 // registering this before any route means no route's position in this file

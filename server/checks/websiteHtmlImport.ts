@@ -228,14 +228,15 @@ async function runChecks() {
 
   const honestBomb = new JSZip();
   honestBomb.file("index.html", page);
-  honestBomb.file("assets/blank.bin", Buffer.alloc(MAX_SINGLE_FILE_SIZE + 1024 * 1024));
-  const honestBombBuffer = await honestBomb.generateAsync(deflate);
+  honestBomb.file("assets/blank.bin", "x");
+  let honestBombBuffer = await honestBomb.generateAsync(deflate);
+  honestBombBuffer = declareSize(honestBombBuffer, "assets/blank.bin", MAX_SINGLE_FILE_SIZE + 1024 * 1024);
 
   const manyParts = new JSZip();
   manyParts.file("index.html", page);
   for (let i = 1; i <= 5; i += 1) manyParts.file(`assets/part-${i}.bin`, "x");
   let manyPartsBuffer = await manyParts.generateAsync(deflate);
-  const eachClaims = 14 * 1024 * 1024;
+  const eachClaims = Math.floor(MAX_UNCOMPRESSED_SIZE / 4);
   assert.ok(eachClaims <= MAX_SINGLE_FILE_SIZE && eachClaims * 5 > MAX_UNCOMPRESSED_SIZE, "the parts must be allowed alone and too big together");
   for (let i = 1; i <= 5; i += 1) manyPartsBuffer = declareSize(manyPartsBuffer, `assets/part-${i}.bin`, eachClaims);
 

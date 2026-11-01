@@ -252,7 +252,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
   }));
   router.post("/sites/:siteId/assets", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
-    const input = z.object({ filename: z.string().min(1).max(200), data: z.string().max(15_000_000), alt: z.string().max(500).default(""), kind: z.enum(["video"]).optional() }).parse(req.body);
+    const input = z.object({ filename: z.string().min(1).max(200), data: z.string().min(1), alt: z.string().max(500).default(""), kind: z.enum(["video"]).optional() }).parse(req.body);
     if (!/^[A-Za-z0-9+/]*={0,2}$/.test(input.data)) throw new WebsiteError(400, "The file data is not valid base64.");
     const content = Buffer.from(input.data, "base64");
     // A video is stored as it came: there is nothing to optimise in the browser's
@@ -675,7 +675,7 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     await assertImportAllowance(req, site.id);
     const input = z.object({
       filename: z.string().max(200).default("package.zip"),
-      data: z.string().min(1).max(35_000_000), // base64 package
+      data: z.string().min(1), // base64 package
     }).parse(req.body);
     const buffer = Buffer.from(input.data, "base64");
     const analysis = await analyzeImportPackage({ buffer, filename: input.filename });

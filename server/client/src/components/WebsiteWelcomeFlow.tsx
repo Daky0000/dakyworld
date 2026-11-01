@@ -60,7 +60,7 @@ const HEARD: { key: HeardFrom; label: string }[] = [
   { key: "other", label: "Other" },
 ];
 
-const MAX_UPLOAD = 10_000_000;
+const MAX_UPLOAD = 1024 * 1024 * 1024; // 1 GB
 
 type Created = { id: string; pageId: string | null };
 type Task = { label: string; state: "waiting" | "working" | "done" | "failed" };
@@ -230,7 +230,7 @@ export function WebsiteWelcomeFlow() {
   const readFile = async (file: File) => {
     setUpload(null);
     setUploadError(null);
-    if (file.size > MAX_UPLOAD) return setUploadError("That file is over 10 MB. Try the .html page on its own, or a smaller .zip.");
+    if (file.size > MAX_UPLOAD) return setUploadError("That file is over 1 GB. Try the .html page on its own, or a smaller .zip.");
     try {
       if (/\.zip$/i.test(file.name)) {
         const bytes = new Uint8Array(await file.arrayBuffer());

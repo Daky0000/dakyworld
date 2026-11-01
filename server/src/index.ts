@@ -606,9 +606,21 @@ ensureSystemRoles()
           // them without a login and four screens. A count is cheap and a boot
           // is rare.
           const [leadCount, listCount, emptyListCount, activeAgents, schedules] = await Promise.all([
-            prisma.lead.count({ where: { rehearsal: false } }),
-            prisma.leadGroup.count(),
-            prisma.leadGroup.count({ where: { leads: { none: {} } } }),
+            prisma.lead.count({
+              where: {
+                rehearsal: false,
+                NOT: [
+                  { tags: { hasSome: ["africon"] } },
+                  { group: { tags: { hasSome: ["africon"] } } },
+                ],
+              },
+            }),
+            prisma.leadGroup.count({
+              where: { NOT: { tags: { hasSome: ["africon"] } } },
+            }),
+            prisma.leadGroup.count({
+              where: { leads: { none: {} }, NOT: { tags: { hasSome: ["africon"] } } },
+            }),
             prisma.agent.count({ where: { status: "ACTIVE" } }),
             prisma.agentSchedule.count({ where: { enabled: true } }),
           ]);

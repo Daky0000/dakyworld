@@ -159,7 +159,12 @@ messagesRouter.get("/phone-only", async (req, res, next) => {
     const leads = await prisma.lead.findMany({
       where: {
         OR: [{ contactEmail: null }, { contactEmail: "" }],
-        NOT: [{ contactPhone: null }, { contactPhone: "" }],
+        NOT: [
+          { contactPhone: null },
+          { contactPhone: "" },
+          { tags: { hasSome: ["africon"] } },
+          { group: { tags: { hasSome: ["africon"] } } },
+        ],
         // A rehearsal lead starts with no number at all, and then `leadPrep`
         // reads one off the business's own homepage — which is exactly how it
         // would arrive on this list and be texted.

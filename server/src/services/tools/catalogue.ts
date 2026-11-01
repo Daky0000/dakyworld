@@ -324,6 +324,10 @@ export const TOOLS: ToolDefinition<any, any>[] = [
           // rehearsal's own agents already carry the id on the task and never
           // need to discover it by listing.
           rehearsal: false,
+          NOT: [
+            { tags: { hasSome: ["africon"] } },
+            { group: { tags: { hasSome: ["africon"] } } },
+          ],
           ...(input.status ? { status: input.status } : {}),
           ...(input.minScore != null ? { leadScore: { gte: input.minScore } } : {}),
           ...(input.search
@@ -840,7 +844,17 @@ export const TOOLS: ToolDefinition<any, any>[] = [
     input: z.object({}),
     run: async () => {
       const [leads, proposals, projects, clients] = await Promise.all([
-        prisma.lead.groupBy({ by: ["status"], where: { rehearsal: false }, _count: true }),
+        prisma.lead.groupBy({
+          by: ["status"],
+          where: {
+            rehearsal: false,
+            NOT: [
+              { tags: { hasSome: ["africon"] } },
+              { group: { tags: { hasSome: ["africon"] } } },
+            ],
+          },
+          _count: true,
+        }),
         prisma.proposal.groupBy({ by: ["status"], _count: true }),
         prisma.project.groupBy({ by: ["status"], _count: true }),
         prisma.client.count(),
@@ -1012,7 +1026,16 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         prisma.invoice.aggregate({ _sum: { amountTotal: true }, where: { issueDate: { gte: since } } }),
         prisma.invoice.aggregate({ _sum: { amountTotal: true }, where: { status: "PAID", paidAt: { gte: since } } }),
         prisma.carePlan.aggregate({ _sum: { monthlyFee: true }, where: { status: "ACTIVE" } }),
-        prisma.lead.count({ where: { createdAt: { gte: since }, rehearsal: false } }),
+        prisma.lead.count({
+          where: {
+            createdAt: { gte: since },
+            rehearsal: false,
+            NOT: [
+              { tags: { hasSome: ["africon"] } },
+              { group: { tags: { hasSome: ["africon"] } } },
+            ],
+          },
+        }),
         prisma.llmCall.aggregate({ _sum: { costUsd: true }, where: { createdAt: { gte: since } } }),
         prisma.toolCall.aggregate({ _sum: { costUsd: true }, where: { createdAt: { gte: since } } }),
       ]);

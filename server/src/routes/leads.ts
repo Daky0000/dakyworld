@@ -164,6 +164,16 @@ export function buildWhere(query: Record<string, unknown>, customIds: string[] =
   const tags = normaliseTags(str("tags")?.split(","));
   if (tags.length > 0) where.tags = str("tagMatch") === "all" ? { hasEvery: tags } : { hasSome: tags };
 
+  // Africon directory leads are strictly separated from OS pipeline and OS workspace.
+  // They are only included when explicitly requested (e.g. ?tags=africon or ?scope=africon or ?isAfricon=true).
+  const isAfriconQuery = tags.includes("africon") || str("scope") === "africon" || str("isAfricon") === "true";
+  if (!isAfriconQuery && str("includeAfricon") !== "true") {
+    where.NOT = [
+      { tags: { hasSome: ["africon"] } },
+      { group: { tags: { hasSome: ["africon"] } } },
+    ];
+  }
+
   // Searching reaches every list, and inside each list every column it has of
   // its own — see services/leadSearch.ts. `customIds` is the one arm that
   // needs a round trip, so it is resolved by `leadWhere` and passed in.
@@ -244,6 +254,9 @@ leadsRouter.get("/stats", async (req, res, next) => {
       }),
       prisma.lead.count({ where: { ...where, createdAt: { gte: weekAgo } } }),
       prisma.leadGroup.findMany({
+        where: typeof req.query.tags === "string" && req.query.tags.includes("africon")
+          ? { tags: { hasSome: ["africon"] } }
+          : { NOT: { tags: { hasSome: ["africon"] } } },
         orderBy: { createdAt: "desc" },
         include: { _count: { select: { leads: true } } },
       }),
@@ -321,12 +334,16 @@ leadsRouter.get("/grouped", async (req, res, next) => {
     // Lists the Owner can see but that nothing matches. Shown only when
     // nothing is filtered — an empty list is furniture worth keeping in view,
     // but under a search it is noise standing between you and the answer.
-    const filtering = Object.keys(where).some((key) => key !== "rehearsal");
+    const isAfriconQuery = typeof query.tags === "string" && query.tags.includes("africon");
+    const filtering = Object.keys(where).some((key) => key !== "rehearsal" && key !== "NOT");
     const countedIds = new Set(counted.map(row => row.groupId));
     const reachableById = new Map(reachable.map(row => [row.groupId, row._count._all]));
     const empties = filtering
       ? []
-      : (await prisma.leadGroup.findMany({ select: { id: true } }))
+      : (await prisma.leadGroup.findMany({
+          where: isAfriconQuery ? { tags: { hasSome: ["africon"] } } : { NOT: { tags: { hasSome: ["africon"] } } },
+          select: { id: true },
+        }))
           .filter((group) => !countedIds.has(group.id))
           .map((group) => ({ groupId: group.id, _count: { _all: 0 }, _max: { createdAt: null } }));
 
@@ -414,9 +431,13 @@ leadsRouter.get("/groups", async (req, res, next) => {
   try {
     const tagsParam = typeof req.query.tags === "string" ? req.query.tags : undefined;
     const tags = normaliseTags(tagsParam?.split(","));
+    const isAfriconQuery = tags.includes("africon") || req.query.scope === "africon" || req.query.isAfricon === "true";
     const where: Prisma.LeadGroupWhereInput = {};
     if (tags.length > 0) {
       where.tags = { hasSome: tags };
+    }
+    if (!isAfriconQuery && req.query.includeAfricon !== "true") {
+      where.NOT = { tags: { hasSome: ["africon"] } };
     }
     const groups = await prisma.leadGroup.findMany({
       where: Object.keys(where).length ? where : undefined,

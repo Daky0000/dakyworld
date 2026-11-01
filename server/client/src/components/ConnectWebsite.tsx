@@ -347,12 +347,12 @@ export function ConnectWebsite() {
                       setFilename("");
                       if (!file) return;
                       const isZip = file.name.toLowerCase().endsWith(".zip") || file.type === "application/zip";
-                      if (isZip && file.size > 25_000_000) {
-                        setFileError("Choose a ZIP package smaller than 25 MB.");
+                      if (isZip && file.size > 1024 * 1024 * 1024) {
+                        setFileError("Choose a ZIP package smaller than 1 GB.");
                         return;
                       }
-                      if (!isZip && file.size > 15_000_000) {
-                        setFileError("Choose an HTML file smaller than 15 MB.");
+                      if (!isZip && file.size > 1024 * 1024 * 1024) {
+                        setFileError("Choose an HTML file smaller than 1 GB.");
                         return;
                       }
                       try {

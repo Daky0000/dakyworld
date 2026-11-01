@@ -445,7 +445,17 @@ export async function costPerOutcome(window: Window, totalUsd: number): Promise<
   const [qualified, proposalsSent, proposalsWon, invoicesPaid, emailsSent, audits, demos] = await Promise.all([
     // Past NEW, which is where a scrape drops one. Getting a row out of the
     // first sift is the first thing in this pipeline that took judgement.
-    prisma.lead.count({ where: { createdAt: range, rehearsal: false, status: { notIn: ["NEW", "DISQUALIFIED"] } } }),
+    prisma.lead.count({
+      where: {
+        createdAt: range,
+        rehearsal: false,
+        status: { notIn: ["NEW", "DISQUALIFIED"] },
+        NOT: [
+          { tags: { hasSome: ["africon"] } },
+          { group: { tags: { hasSome: ["africon"] } } },
+        ],
+      },
+    }),
     prisma.proposal.count({ where: { sentAt: range } }),
     prisma.proposal.count({ where: { sentAt: range, status: "ACCEPTED" } }),
     prisma.invoice.count({ where: { paidAt: range, status: "PAID" } }),
