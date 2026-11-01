@@ -23,6 +23,42 @@ export async function loadPage(req: WebsiteActor, pageId: string): Promise<{
         throw new WebsiteError(404, "That page is not in the editor. It may have been removed — rescan the site.");
     const { site, ...rest } = page;
     await assertWebsiteSiteAccess(req, site.id);
+
+    // Auto-heal homepage route if an index.html was imported with a container directory prefix and the site has no root "/" page
+    if (rest.path !== "/" && /(?:^|\/)index\.html?$/i.test(rest.filePath)) {
+        try {
+            const hasRoot = await prisma.sitePage.findFirst({
+                where: { siteId: site.id, path: "/" },
+                select: { id: true },
+            });
+            if (!hasRoot) {
+                const oldPrefix = rest.path.replace(/^\/+/, "");
+                await prisma.sitePage.update({
+                    where: { id: rest.id },
+                    data: { path: "/" },
+                });
+                rest.path = "/";
+                if (oldPrefix) {
+                    const siblings = await prisma.sitePage.findMany({
+                        where: { siteId: site.id, path: { startsWith: `/${oldPrefix}/` } },
+                        select: { id: true, path: true },
+                    });
+                    for (const sib of siblings) {
+                        const nextPath = sib.path.replace(`/${oldPrefix}`, "");
+                        try {
+                            await prisma.sitePage.update({
+                                where: { id: sib.id },
+                                data: { path: nextPath },
+                            });
+                        } catch {}
+                    }
+                }
+            }
+        } catch {
+            // Non-fatal if healing encounters a race condition
+        }
+    }
+
     return { page: rest as SitePage, site };
 }
 /**

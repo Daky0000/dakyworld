@@ -3264,6 +3264,16 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                     <IconSave size={15} /><span>Save draft only</span><small>Ctrl+S</small>
                   </button>
                 )}
+                <a
+                  role="menuitem"
+                  className="dx-row"
+                  href={apiUrl(`/website/pages/${pageId}/preview`)}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => setMenu(null)}
+                >
+                  <IconEye size={15} /><span>Preview in new tab</span>
+                </a>
                 {liveDemoHref && (isDemo || hostedHere) && (
                   <a role="menuitem" className="dx-row" href={liveDemoHref} target="_blank" rel="noreferrer" onClick={() => setMenu(null)}>
                     <IconExternalLink size={15} /><span>{isDemo ? "Open live demo" : "View live website"}</span>
@@ -3271,7 +3281,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                 )}
                 {!isDemo && !hostedHere && page.data.page.url && (
                   <a role="menuitem" className="dx-row" href={page.data.page.url} target="_blank" rel="noreferrer" onClick={() => setMenu(null)}>
-                    <IconExternalLink size={15} /><span>Open the live page</span>
+                    <IconExternalLink size={15} /><span>Open published site</span>
                   </a>
                 )}
                 <a

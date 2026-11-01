@@ -367,10 +367,22 @@ websiteRouter.patch("/sites/:siteId", async (req, res, next) => {
 
 websiteRouter.patch("/pages/:pageId", async (req, res, next) => {
   try {
-    const body = z.object({ title: z.string().min(1).max(120).optional(), status: z.enum(["LIVE", "HIDDEN"]).optional() }).parse(req.body);
-    await loadPage(req, req.params.pageId);
-    const page = await prisma.sitePage.update({ where: { id: req.params.pageId }, data: body });
-    res.json({ id: page.id, title: page.title, status: page.status });
+    const body = z.object({
+      title: z.string().min(1).max(120).optional(),
+      status: z.enum(["LIVE", "HIDDEN"]).optional(),
+      path: z.string().min(1).max(200).regex(/^\/[a-zA-Z0-9_\-\/]*$/).optional(),
+    }).parse(req.body);
+    const { page } = await loadPage(req, req.params.pageId);
+    if (body.path && body.path !== page.path) {
+      const collision = await prisma.sitePage.findFirst({
+        where: { siteId: page.siteId, path: body.path, id: { not: page.id } },
+      });
+      if (collision) {
+        throw new WebsiteError(409, `A page with path "${body.path}" already exists on this site.`);
+      }
+    }
+    const updated = await prisma.sitePage.update({ where: { id: req.params.pageId }, data: body });
+    res.json({ id: updated.id, title: updated.title, status: updated.status, path: updated.path });
   } catch (err) {
     next(err);
   }

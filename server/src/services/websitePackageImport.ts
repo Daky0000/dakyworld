@@ -203,10 +203,43 @@ export function isIgnoredPackageEntry(normalizedPath: string): boolean {
 export const HTML_CONTAINER_DIRS = ["html-source", "dist", "out", "build", "pages", "templates", "public", "src/pages"];
 
 /**
+ * Finds a single common directory prefix shared by all provided HTML paths, if any.
+ */
+export function findCommonHtmlDirectory(filePaths: string[]): string {
+  if (filePaths.length === 0) return "";
+  const dirs = filePaths.map((p) => {
+    const norm = p.replace(/\\/g, "/").replace(/^\/+/, "");
+    const d = path.posix.dirname(norm);
+    return d === "." ? "" : d;
+  });
+  if (dirs.length === 0 || dirs.some((d) => d === "")) return "";
+
+  const splitDirs = dirs.map((d) => d.split("/"));
+  const first = splitDirs[0];
+  let common = "";
+  for (let i = 0; i < first.length; i++) {
+    const seg = first[i];
+    if (splitDirs.every((parts) => parts[i] === seg)) {
+      common = common ? `${common}/${seg}` : seg;
+    } else {
+      break;
+    }
+  }
+  return common;
+}
+
+/**
  * Derives a clean route path for an HTML file.
  */
-export function routePathForFile(filePath: string, hasRootIndex = true): string {
+export function routePathForFile(filePath: string, hasRootIndex = true, baseDir?: string): string {
   let norm = filePath.replace(/\\/g, "/").replace(/^\/+/, "");
+
+  if (baseDir) {
+    const cleanBase = baseDir.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    if (cleanBase && norm.startsWith(`${cleanBase}/`)) {
+      norm = norm.slice(cleanBase.length + 1);
+    }
+  }
 
   // Strip container directory prefix if HTML lives inside html-source/, dist/, out/, etc.
   for (const dir of HTML_CONTAINER_DIRS) {
@@ -214,6 +247,16 @@ export function routePathForFile(filePath: string, hasRootIndex = true): string 
       norm = norm.slice(dir.length + 1);
       break;
     }
+  }
+
+  // Strip generic build/export directory prefix (e.g. "ghacem-static-html", "static-html", "site-export")
+  const firstDir = norm.split("/")[0];
+  if (
+    firstDir &&
+    norm.includes("/") &&
+    /^(?:[a-zA-Z0-9_\-]+-)?(?:static-html|static|html|site|website|export|dist|build)$/i.test(firstDir)
+  ) {
+    norm = norm.slice(firstDir.length + 1);
   }
 
   // Exact index.html / index.htm always maps to /
@@ -486,8 +529,12 @@ export async function analyzeImportPackage(input: {
   let totalBytes = 0;
 
   const htmlEntries = rawEntries.filter((e) => /\.(html|htm)$/i.test(e.path));
+  const commonHtmlDir = findCommonHtmlDirectory(htmlEntries.map((e) => e.path));
   const hasRootIndex = htmlEntries.some((e) => {
     let norm = e.path.replace(/\\/g, "/").replace(/^\/+/, "");
+    if (commonHtmlDir && norm.startsWith(`${commonHtmlDir}/`)) {
+      norm = norm.slice(commonHtmlDir.length + 1);
+    }
     for (const dir of HTML_CONTAINER_DIRS) {
       if (norm.startsWith(`${dir}/`)) {
         norm = norm.slice(dir.length + 1);
@@ -503,7 +550,7 @@ export async function analyzeImportPackage(input: {
     if (isHtml) {
       const htmlText = entry.content.toString("utf8");
       const title = extractPageTitle(htmlText, entry.path);
-      const routePath = routePathForFile(entry.path, hasRootIndex);
+      const routePath = routePathForFile(entry.path, hasRootIndex, commonHtmlDir);
       const fields = discoverFields(htmlText).fields;
       const editableCount = fields.filter((f) => f.kind !== "container" && f.tag !== "title" && f.tag !== "meta").length;
 
@@ -538,13 +585,28 @@ export async function analyzeImportPackage(input: {
   // Ensure root / index page exists or designate home/main/first as root
   let hasRoot = pages.some((p) => p.path === "/");
   if (!hasRoot) {
-    const homeCandidate = pages.find((p) => /^\/(?:home|main|default)$/i.test(p.path));
-    if (homeCandidate) {
-      homeCandidate.path = "/";
+    const indexCandidate = pages.find((p) => /^index\.html?$/i.test(path.basename(p.filePath)));
+    if (indexCandidate) {
+      const rootDir = path.dirname(indexCandidate.filePath).replace(/\\/g, "/");
+      indexCandidate.path = "/";
       hasRoot = true;
-    } else if (pages.length === 1) {
-      pages[0].path = "/";
-      hasRoot = true;
+      if (rootDir && rootDir !== ".") {
+        for (const p of pages) {
+          if (p !== indexCandidate && p.filePath.startsWith(`${rootDir}/`)) {
+            const subNorm = p.filePath.slice(rootDir.length + 1);
+            p.path = routePathForFile(subNorm, true);
+          }
+        }
+      }
+    } else {
+      const homeCandidate = pages.find((p) => /^\/(?:home|main|default)$/i.test(p.path));
+      if (homeCandidate) {
+        homeCandidate.path = "/";
+        hasRoot = true;
+      } else if (pages.length === 1) {
+        pages[0].path = "/";
+        hasRoot = true;
+      }
     }
   }
 
