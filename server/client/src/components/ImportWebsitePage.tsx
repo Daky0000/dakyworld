@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api, fileToBase64 } from "../lib/api";
+import { getFilesFromDataTransfer, zipFilesToBase64 } from "../lib/folderZip";
 import { Button } from "./ui";
 import { WebsiteTierStatusBanner, notifyTierStatusChanged, useWebsiteTierStatus } from "./WebsiteTierStatusBanner";
 
@@ -17,6 +18,9 @@ export function ImportWebsitePage({ siteId }: { siteId: string }) {
   const [open, setOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [isZip, setIsZip] = useState(false);
+  const [folderPackage, setFolderPackage] = useState<{ filename: string; data: string; count: number } | null>(null);
+  const [isPackaging, setIsPackaging] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [title, setTitle] = useState("");
   const [path, setPath] = useState("/new-page");
   const [filePath, setFilePath] = useState("new-page.html");
@@ -28,7 +32,16 @@ export function ImportWebsitePage({ siteId }: { siteId: string }) {
 
   const upload = useMutation({
     mutationFn: async () => {
-      if (!file) throw new Error("Choose an HTML file or ZIP package.");
+      if (folderPackage) {
+        const result = await api.post<PackageImportResult>(`/website/sites/${siteId}/import-package`, {
+          filename: folderPackage.filename,
+          data: folderPackage.data,
+        });
+        if (!result.pages.length) throw new Error("No HTML pages found in package archive.");
+        return { id: result.pages[0].id, packageResult: result };
+      }
+
+      if (!file) throw new Error("Choose an HTML file, ZIP package, or project folder.");
       if (isZip) {
         if (file.size > 1024 * 1024 * 1024) throw new Error("Choose a ZIP package smaller than 1 GB.");
         const data = await fileToBase64(file);
@@ -96,42 +109,166 @@ export function ImportWebsitePage({ siteId }: { siteId: string }) {
                 {tierStatus.tierName} {tierStatus.pricing.priceDisplay}/mo). Upgrade your tier plan or switch test user above to continue importing.
               </p>
             )}
-            <label className="block text-xs text-muted">
-              HTML file or ZIP package (.html, .htm, .zip)
-              <input
-                autoFocus
-                disabled={upload.isPending || importsExhausted}
-                required
-                type="file"
-                accept=".html,.htm,.zip,application/zip,text/html"
-                className="mt-2 block w-full text-sm"
-                onChange={(event) => {
-                  const selected = event.target.files?.[0] ?? null;
-                  setFile(selected);
-                  upload.reset();
-                  if (selected) {
-                    const zipMode = selected.name.toLowerCase().endsWith(".zip") || selected.type === "application/zip";
+            <div
+              className={`rounded-xl border border-dashed p-4 text-xs transition-colors ${
+                isDragging
+                  ? "border-primary bg-primary/5"
+                  : "border-line-strong bg-sunken"
+              }`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setIsDragging(true);
+              }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={async (e) => {
+                e.preventDefault();
+                setIsDragging(false);
+                setFile(null);
+                setFolderPackage(null);
+                setIsZip(false);
+                upload.reset();
+
+                try {
+                  const items = e.dataTransfer.items;
+                  if (!items || items.length === 0) return;
+
+                  if (items.length === 1 && !items[0].webkitGetAsEntry()?.isDirectory) {
+                    const droppedFile = items[0].getAsFile();
+                    if (!droppedFile) return;
+                    setFile(droppedFile);
+                    const zipMode = droppedFile.name.toLowerCase().endsWith(".zip") || droppedFile.type === "application/zip";
                     setIsZip(zipMode);
                     if (!zipMode) {
-                      const slug = selected.name.replace(/\.html?$/i, "").replace(/[^a-zA-Z0-9_-]/g, "-") || "new-page";
+                      const slug = droppedFile.name.replace(/\.html?$/i, "").replace(/[^a-zA-Z0-9_-]/g, "-") || "new-page";
                       setTitle(slug.replace(/[-_]/g, " "));
                       setFilePath(`${slug}.html`);
                       setPath(slug === "index" ? "/" : `/${slug}`);
                     }
-                  } else {
-                    setIsZip(false);
+                    return;
                   }
-                }}
-              />
-            </label>
 
-            {isZip ? (
+                  setIsPackaging(true);
+                  const extracted = await getFilesFromDataTransfer(items);
+                  if (extracted.length === 0) {
+                    setIsPackaging(false);
+                    return;
+                  }
+
+                  const folderName = items[0].webkitGetAsEntry()?.name || "package";
+                  const zipped = await zipFilesToBase64(extracted, `${folderName}.zip`);
+                  setFolderPackage({ filename: zipped.filename, data: zipped.base64, count: zipped.fileCount });
+                  setIsZip(true);
+                } catch {
+                } finally {
+                  setIsPackaging(false);
+                }
+              }}
+            >
+              <span className="block font-medium text-ink">
+                HTML file, ZIP package, or project folder
+              </span>
+              <span className="mt-0.5 block text-muted">
+                Drop your ZIP package or project folder here, or choose an option:
+              </span>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <label className="cursor-pointer rounded-lg border border-line bg-surface px-3 py-1.5 font-medium text-ink shadow-sm hover:bg-surface-hover">
+                  Choose file or ZIP
+                  <input
+                    disabled={upload.isPending || importsExhausted}
+                    type="file"
+                    accept=".html,.htm,.zip,application/zip,text/html"
+                    className="hidden"
+                    onChange={(event) => {
+                      const selected = event.target.files?.[0] ?? null;
+                      setFile(selected);
+                      setFolderPackage(null);
+                      upload.reset();
+                      if (selected) {
+                        const zipMode = selected.name.toLowerCase().endsWith(".zip") || selected.type === "application/zip";
+                        setIsZip(zipMode);
+                        if (!zipMode) {
+                          const slug = selected.name.replace(/\.html?$/i, "").replace(/[^a-zA-Z0-9_-]/g, "-") || "new-page";
+                          setTitle(slug.replace(/[-_]/g, " "));
+                          setFilePath(`${slug}.html`);
+                          setPath(slug === "index" ? "/" : `/${slug}`);
+                        }
+                      } else {
+                        setIsZip(false);
+                      }
+                    }}
+                  />
+                </label>
+
+                <label className="cursor-pointer rounded-lg border border-line bg-surface px-3 py-1.5 font-medium text-ink shadow-sm hover:bg-surface-hover">
+                  Choose project folder
+                  <input
+                    disabled={upload.isPending || importsExhausted}
+                    type="file"
+                    {...({ webkitdirectory: "", directory: "", multiple: true } as any)}
+                    className="hidden"
+                    onChange={async (event) => {
+                      const files = event.target.files;
+                      setFile(null);
+                      setFolderPackage(null);
+                      upload.reset();
+                      if (!files || files.length === 0) return;
+
+                      setIsPackaging(true);
+                      try {
+                        const fileEntries = Array.from(files).map((f) => ({
+                          file: f,
+                          path: f.webkitRelativePath || f.name,
+                        }));
+                        const firstPart = fileEntries[0]?.path.split("/")[0] || "package";
+                        const zipped = await zipFilesToBase64(fileEntries, `${firstPart}.zip`);
+                        setFolderPackage({ filename: zipped.filename, data: zipped.base64, count: zipped.fileCount });
+                        setIsZip(true);
+                      } catch {
+                      } finally {
+                        setIsPackaging(false);
+                      }
+                    }}
+                  />
+                </label>
+
+                {(file || folderPackage) && (
+                  <button
+                    type="button"
+                    className="rounded-lg px-2 py-1 text-muted hover:text-ink"
+                    onClick={() => {
+                      setFile(null);
+                      setFolderPackage(null);
+                      setIsZip(false);
+                      upload.reset();
+                    }}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {isPackaging && (
+                <span className="mt-2 block text-primary animate-pulse">
+                  Packaging folder into archive…
+                </span>
+              )}
+
+              {(file || folderPackage) && !isPackaging && (
+                <span className="mt-2 block font-medium text-emerald-600">
+                  ✓ {folderPackage
+                    ? `Folder package ${folderPackage.filename} (${folderPackage.count} files) ready to import.`
+                    : `${file?.name} ready to import.`}
+                </span>
+              )}
+            </div>
+
+            {isZip || folderPackage ? (
               <div className="rounded-xl border border-line bg-sunken/60 p-4 text-xs text-muted space-y-1.5">
-                <p className="font-semibold text-ink">ZIP Archive Package Detected</p>
+                <p className="font-semibold text-ink">Package Import Detected</p>
                 <p>
                   Pages and relative assets (CSS, JS, fonts, images) will be automatically discovered and imported as a site operation.
                 </p>
-                <p>Page URLs and routes will be mapped from the archive file structure (e.g. index.html → /).</p>
+                <p>Page URLs and routes will be mapped from the archive file structure (e.g. index.html or home.html → /).</p>
               </div>
             ) : (
               ([

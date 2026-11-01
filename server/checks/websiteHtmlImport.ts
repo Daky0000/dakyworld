@@ -474,7 +474,57 @@ async function runChecks() {
   assert.equal(reportAcknowledged.requiresAcknowledgment, false, "No further acknowledgment required");
   console.log("   ✓ Prepublish report generated; publication allowed with acknowledged limits\n");
 
-  console.log("All websiteHtmlImport checks passed successfully (8/8).");
+  // ────────────────────────────────────────────────────────────────────────────
+  // 9. Next.js Project Structure Import (html-source/, public/ assets, home.html -> /)
+  // ────────────────────────────────────────────────────────────────────────────
+  console.log("9. Next.js / hybrid framework ZIP package import (public/ assets, html-source/ pages)");
+  const nextjsZip = new JSZip();
+  const ghacemHomeHtml = `<!doctype html>
+<html lang="en">
+<head>
+  <title>GHACEM — The Nation Builder</title>
+  <style>html.w-mod-js:not(.w-mod-ix3) :is(.h1, p, section) { visibility: hidden !important; }</style>
+</head>
+<body>
+  <header><h1>GHACEM Limited</h1></header>
+  <section>
+    <img src="/images/hero/hero-1.jpg" alt="Coastal Plant">
+    <p>Building Ghana since 1967.</p>
+  </section>
+</body>
+</html>`;
+
+  const ghacemDienstenHtml = `<!doctype html>
+<html lang="en"><head><title>Diensten</title></head><body><h1>Products</h1></body></html>`;
+
+  nextjsZip.file("html-source/home.html", ghacemHomeHtml);
+  nextjsZip.file("html-source/diensten.html", ghacemDienstenHtml);
+  nextjsZip.file("public/images/hero/hero-1.jpg", dummyPng);
+  nextjsZip.file("next.config.ts", "export default {};");
+  nextjsZip.file("package.json", '{"name":"ghacem-nextjs"}');
+
+  const nextBuffer = await nextjsZip.generateAsync({ type: "nodebuffer" });
+  const nextAnalysis = await analyzeImportPackage({ buffer: nextBuffer, filename: "ghacem-nextjs.zip" });
+
+  assert.equal(nextAnalysis.pages.length, 2, "Discovered exactly 2 HTML pages from html-source/");
+  assert.equal(nextAnalysis.pages[0].path, "/", "home.html designated as root '/' page and placed first");
+  assert.equal(nextAnalysis.pages[0].filePath, "html-source/home.html");
+  assert.equal(nextAnalysis.pages[1].path, "/diensten", "diensten.html mapped cleanly to '/diensten'");
+  assert.equal(nextAnalysis.missingAssets.length, 0, "Public assets resolved cleanly with 0 missing assets");
+  assert.ok(nextAnalysis.assets.some((a) => a.repoPath === "public/images/hero/hero-1.jpg"), "Discovered public/ hero image");
+
+  // Verify asset rewriting
+  const rewrittenNextHtml = rewritePageAssetReferences(ghacemHomeHtml, "html-source/home.html", mockSite, nextAnalysis.assets);
+  const hostedNextHero = assetUrl(mockSite, "public/images/hero/hero-1.jpg");
+  assert.ok(rewrittenNextHtml.includes(`src="${hostedNextHero}"`), "Rewrote /images/... to hosted asset path");
+
+  // Verify editor preview renders visibly without Webflow FOUC lockup
+  const nextPreview = buildPreview(rewrittenNextHtml, "https://mock-site.dakyx.com/", discoverFields(rewrittenNextHtml).fields, true);
+  assert.ok(nextPreview.html.includes("html.w-mod-js:not(.w-mod-ix3)"), "Anti-FOUC style injected for Webflow compatibility");
+  assert.ok(nextPreview.html.includes("w-mod-ix3"), "w-mod-ix3 class applied to documentElement in preview");
+  console.log("   ✓ Next.js project structure imported cleanly: home.html mapped to '/', public/ assets resolved, Webflow FOUC neutralized\n");
+
+  console.log("All websiteHtmlImport checks passed successfully (9/9).");
 }
 
 void runChecks().catch((error) => {

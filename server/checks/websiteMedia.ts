@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { rewriteWebsiteMediaStyle, websiteMediaPreviewUrl, websiteMediaSourceUrl } from "../client/src/lib/websiteMedia.js";
+import { matchesWebsiteMediaUrl, rewriteWebsiteMediaStyle, websiteMediaPreviewUrl, websiteMediaSourceUrl } from "../client/src/lib/websiteMedia.js";
 
 const upload = "/shop/assets/dw/photo.png";
 const preview = "/api/website/sites/site/assets/photo/content";
@@ -31,5 +31,12 @@ assert.equal(rewriteWebsiteMediaStyle(inlineImage, resolve), inlineImage, "data 
 const escapedImage = String.raw`background-image: url("images/photo\"name.png")`;
 assert.equal(rewriteWebsiteMediaStyle(escapedImage, resolve), escapedImage, "escaped CSS URLs remain under browser parsing");
 assert.equal(rewriteWebsiteMediaStyle(`background-image: url("https://editor.test${preview}")`, value => websiteMediaSourceUrl(value, context)), `background-image: url("${upload}")`, "preview CSS can be saved without editor URLs");
+
+// matchesWebsiteMediaUrl checks (for replacing parallax backgrounds and images across the page)
+assert.ok(matchesWebsiteMediaUrl("/images/hero/hero-1.jpg", "public/images/hero/hero-1.jpg"), "matches root-relative URL against public container path");
+assert.ok(matchesWebsiteMediaUrl("images/hero/hero-1.jpg", "/images/hero/hero-1.jpg"), "matches relative URL against root URL");
+assert.ok(matchesWebsiteMediaUrl("https://example.com/public/images/hero/hero-1.jpg", "/images/hero/hero-1.jpg"), "matches absolute host URL against root path");
+assert.ok(matchesWebsiteMediaUrl("https://editor.test/api/website/sites/site1/assets/asset1/content", "assets/dw/asset1.png", "https://editor.test/api/website/sites/site1/assets/asset1/content"), "matches preview API URL with preview param");
+assert.ok(!matchesWebsiteMediaUrl("/images/hero/hero-2.jpg", "/images/hero/hero-1.jpg"), "rejects different image filenames");
 
 console.log("websiteMedia: unpublished uploads, page-relative images, origin isolation, canonical source paths and CSS URL preservation passed");

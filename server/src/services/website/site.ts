@@ -1056,7 +1056,8 @@ export function previewDocument(html: string, baseUrl: string, editable?: SiteFi
   out = head ? out.slice(0, head.innerStart) + base + out.slice(head.innerStart) : base + out;
   const interactionHead = [...walk(parseHtml(out))].find(node => node.tag === "head");
   const interactionAt = interactionHead?.innerEnd ?? out.length;
-  out = out.slice(0, interactionAt) + (builtCss ? `<style data-dw-built-css>${builtCss}</style>` : "") + `<style data-dw-interaction-preview>${interactionCss(true)}</style>` + out.slice(interactionAt);
+  const antiFoucCss = "html.w-mod-js:not(.w-mod-ix3),html.w-mod-js:not(.w-mod-ix3) *,html.w-mod-js:not(.w-mod-ix3) :is(*, .h1, .h2, .h3, .h4, .h5, .h6, p, section, .nav__component){visibility: visible !important;}";
+  out = out.slice(0, interactionAt) + (builtCss ? `<style data-dw-built-css>${builtCss}</style>` : "") + `<style data-dw-interaction-preview>${interactionCss(true)}</style>` + `<style data-dw-preview-fouc>${antiFoucCss}</style>` + out.slice(interactionAt);
   if (!editing) return { html: out, csp: ISOLATED_PREVIEW_POLICY, isolated: true };
   const nonce = randomBytes(16).toString("base64");
   // Parsed closing offsets avoid matching a fake </body> inside a script/string.
@@ -1129,6 +1130,8 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
     animation-play-state: paused !important;
   }
   [data-dw-overlay-hidden] { display: none !important; }
+  /* Ensure Webflow / JS interaction hidden styles do not hide preview elements */
+  html.w-mod-js:not(.w-mod-ix3), html.w-mod-js:not(.w-mod-ix3) *, html.w-mod-js:not(.w-mod-ix3) :is(*, .h1, .h2, .h3, .h4, .h5, .h6, p, section, .nav__component) { visibility: visible !important; }
   /* Words being picked out for formatting. Translucent on purpose: a page's own
      ::selection can be nearly invisible, and an opaque one hides the highlight
      colour that was just applied underneath it. */
@@ -1136,6 +1139,9 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
 </style>
 <script nonce="${nonce}">
 (function () {
+  if (document.documentElement) {
+    document.documentElement.classList.add("w-mod-ix3");
+  }
   var selected = null;
   var editing = null;
   var timer = null;

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api, fileToBase64 } from "../lib/api";
+import { getFilesFromDataTransfer, zipFilesToBase64 } from "../lib/folderZip";
 import { Button } from "./ui";
 import { ConnectWordPress, WORDPRESS_GUIDE } from "./ConnectWordPress";
 
@@ -48,6 +49,8 @@ export function ConnectWebsite() {
   const [filename, setFilename] = useState("");
   const [templateKey, setTemplateKey] = useState("business");
   const [fileError, setFileError] = useState<string | null>(null);
+  const [isPackaging, setIsPackaging] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [helpNotes, setHelpNotes] = useState("");
   const [helpAsked, setHelpAsked] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -332,30 +335,39 @@ export function ConnectWebsite() {
                   </>
                 )}
 
-                <label className="block rounded-xl border border-dashed border-line-strong bg-sunken p-4 text-sm">
-                  Import an HTML page or ZIP package (optional)
-                  <input
-                    type="file"
-                    accept=".html,.htm,.zip,application/zip,text/html"
-                    className="mt-2 block w-full text-xs"
-                    onChange={async (event) => {
-                      const file = event.target.files?.[0];
-                      setFileError(null);
-                      setHtml(undefined);
-                      setPackageData(undefined);
-                      setPackageFilename(undefined);
-                      setFilename("");
-                      if (!file) return;
-                      const isZip = file.name.toLowerCase().endsWith(".zip") || file.type === "application/zip";
-                      if (isZip && file.size > 1024 * 1024 * 1024) {
-                        setFileError("Choose a ZIP package smaller than 1 GB.");
-                        return;
-                      }
-                      if (!isZip && file.size > 1024 * 1024 * 1024) {
-                        setFileError("Choose an HTML file smaller than 1 GB.");
-                        return;
-                      }
-                      try {
+                <div
+                  className={`relative rounded-xl border border-dashed p-4 text-sm transition-colors ${
+                    isDragging
+                      ? "border-primary bg-primary/5"
+                      : "border-line-strong bg-sunken"
+                  }`}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                  }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={async (e) => {
+                    e.preventDefault();
+                    setIsDragging(false);
+                    setFileError(null);
+                    setHtml(undefined);
+                    setPackageData(undefined);
+                    setPackageFilename(undefined);
+                    setFilename("");
+
+                    try {
+                      const items = e.dataTransfer.items;
+                      if (!items || items.length === 0) return;
+
+                      // Check if it's a single dropped file
+                      if (items.length === 1 && !items[0].webkitGetAsEntry()?.isDirectory) {
+                        const file = items[0].getAsFile();
+                        if (!file) return;
+                        const isZip = file.name.toLowerCase().endsWith(".zip") || file.type === "application/zip";
+                        if (isZip && file.size > 1024 * 1024 * 1024) {
+                          setFileError("Choose a ZIP package smaller than 1 GB.");
+                          return;
+                        }
                         if (isZip) {
                           const base64 = await fileToBase64(file);
                           setPackageData(base64);
@@ -365,27 +377,171 @@ export function ConnectWebsite() {
                             const siteName = file.name.replace(/\.zip$/i, "").replace(/[-_]/g, " ");
                             setName(siteName.charAt(0).toUpperCase() + siteName.slice(1));
                           }
-                        } else {
+                          return;
+                        }
+                        if (file.name.toLowerCase().endsWith(".html") || file.name.toLowerCase().endsWith(".htm")) {
                           setHtml(await file.text());
                           setFilename(file.name);
                           if (!name) {
                             const siteName = file.name.replace(/\.html?$/i, "").replace(/[-_]/g, " ");
                             setName(siteName.charAt(0).toUpperCase() + siteName.slice(1));
                           }
+                          return;
                         }
-                      } catch {
-                        setFileError("That file could not be read.");
                       }
-                    }}
-                  />
-                  {filename && (
-                    <span className="mt-2 block text-xs text-muted">
-                      {packageData
-                        ? `ZIP package ${filename} ready to import (discovers pages, CSS, fonts, and images).`
-                        : `${filename} is ready to import.`}
+
+                      // Directory or multiple files dropped: extract and zip
+                      setIsPackaging(true);
+                      const extracted = await getFilesFromDataTransfer(items);
+                      if (extracted.length === 0) {
+                        setFileError("No readable files found in the dropped item.");
+                        setIsPackaging(false);
+                        return;
+                      }
+
+                      const folderName = items[0].webkitGetAsEntry()?.name || "website-package";
+                      const zipped = await zipFilesToBase64(extracted, `${folderName}.zip`);
+                      setPackageData(zipped.base64);
+                      setPackageFilename(zipped.filename);
+                      setFilename(`${folderName} (${zipped.fileCount} files)`);
+                      if (!name) {
+                        const siteName = folderName.replace(/\.zip$/i, "").replace(/[-_]/g, " ");
+                        setName(siteName.charAt(0).toUpperCase() + siteName.slice(1));
+                      }
+                    } catch (err: any) {
+                      setFileError(err?.message || "Failed to process dropped files.");
+                    } finally {
+                      setIsPackaging(false);
+                    }
+                  }}
+                >
+                  <div className="flex flex-col gap-2">
+                    <span className="font-medium text-ink">
+                      Import an HTML page, ZIP package, or project folder
                     </span>
-                  )}
-                </label>
+                    <span className="text-xs text-muted">
+                      Drag and drop your project folder or ZIP archive here, or choose an option:
+                    </span>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      <label className="cursor-pointer rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink shadow-sm hover:bg-surface-hover">
+                        Choose file or ZIP
+                        <input
+                          type="file"
+                          accept=".html,.htm,.zip,application/zip,text/html"
+                          className="hidden"
+                          onChange={async (event) => {
+                            const file = event.target.files?.[0];
+                            setFileError(null);
+                            setHtml(undefined);
+                            setPackageData(undefined);
+                            setPackageFilename(undefined);
+                            setFilename("");
+                            if (!file) return;
+                            const isZip = file.name.toLowerCase().endsWith(".zip") || file.type === "application/zip";
+                            if (isZip && file.size > 1024 * 1024 * 1024) {
+                              setFileError("Choose a ZIP package smaller than 1 GB.");
+                              return;
+                            }
+                            if (!isZip && file.size > 1024 * 1024 * 1024) {
+                              setFileError("Choose an HTML file smaller than 1 GB.");
+                              return;
+                            }
+                            try {
+                              if (isZip) {
+                                const base64 = await fileToBase64(file);
+                                setPackageData(base64);
+                                setPackageFilename(file.name);
+                                setFilename(file.name);
+                                if (!name) {
+                                  const siteName = file.name.replace(/\.zip$/i, "").replace(/[-_]/g, " ");
+                                  setName(siteName.charAt(0).toUpperCase() + siteName.slice(1));
+                                }
+                              } else {
+                                setHtml(await file.text());
+                                setFilename(file.name);
+                                if (!name) {
+                                  const siteName = file.name.replace(/\.html?$/i, "").replace(/[-_]/g, " ");
+                                  setName(siteName.charAt(0).toUpperCase() + siteName.slice(1));
+                                }
+                              }
+                            } catch {
+                              setFileError("That file could not be read.");
+                            }
+                          }}
+                        />
+                      </label>
+
+                      <label className="cursor-pointer rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink shadow-sm hover:bg-surface-hover">
+                        Choose project folder
+                        <input
+                          type="file"
+                          {...({ webkitdirectory: "", directory: "", multiple: true } as any)}
+                          className="hidden"
+                          onChange={async (event) => {
+                            const files = event.target.files;
+                            setFileError(null);
+                            setHtml(undefined);
+                            setPackageData(undefined);
+                            setPackageFilename(undefined);
+                            setFilename("");
+                            if (!files || files.length === 0) return;
+
+                            setIsPackaging(true);
+                            try {
+                              const fileEntries = Array.from(files).map((f) => ({
+                                file: f,
+                                path: f.webkitRelativePath || f.name,
+                              }));
+                              const firstPart = fileEntries[0]?.path.split("/")[0] || "project";
+                              const zipped = await zipFilesToBase64(fileEntries, `${firstPart}.zip`);
+                              setPackageData(zipped.base64);
+                              setPackageFilename(zipped.filename);
+                              setFilename(`${firstPart} (${zipped.fileCount} files)`);
+                              if (!name) {
+                                const siteName = firstPart.replace(/[-_]/g, " ");
+                                setName(siteName.charAt(0).toUpperCase() + siteName.slice(1));
+                              }
+                            } catch (err: any) {
+                              setFileError(err?.message || "Failed to package folder.");
+                            } finally {
+                              setIsPackaging(false);
+                            }
+                          }}
+                        />
+                      </label>
+
+                      {(filename || isPackaging) && (
+                        <button
+                          type="button"
+                          className="rounded-lg px-2 py-1 text-xs text-muted hover:text-ink"
+                          onClick={() => {
+                            setHtml(undefined);
+                            setPackageData(undefined);
+                            setPackageFilename(undefined);
+                            setFilename("");
+                            setFileError(null);
+                          }}
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+
+                    {isPackaging && (
+                      <span className="mt-2 block text-xs text-primary animate-pulse">
+                        Packaging project folder into archive…
+                      </span>
+                    )}
+
+                    {filename && !isPackaging && (
+                      <span className="mt-2 block text-xs font-medium text-emerald-600">
+                        ✓ {packageData
+                          ? `Package ${filename} ready to import (pages, CSS, fonts, and images).`
+                          : `${filename} ready to import.`}
+                      </span>
+                    )}
+                  </div>
+                </div>
 
                 <p className="text-xs leading-relaxed text-muted">
                   A website address supplies relative images and styles. Package ZIPs discover local CSS, images, and fonts automatically.

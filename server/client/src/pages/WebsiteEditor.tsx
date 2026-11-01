@@ -97,7 +97,7 @@ import {
 } from "../components/WebsiteIcons";
 import { useWebsiteAccess } from "../components/WebsiteMembers";
 import { responsivePreviewCss, safeResponsiveStyle, writeResponsivePreview } from "../lib/websiteResponsive";
-import { rewriteWebsiteMediaStyle, websiteMediaPreviewUrl, websiteMediaSourceUrl, type WebsiteMediaAsset } from "../lib/websiteMedia";
+import { matchesWebsiteMediaUrl, rewriteWebsiteMediaStyle, websiteMediaPreviewUrl, websiteMediaSourceUrl, type WebsiteMediaAsset } from "../lib/websiteMedia";
 import { WebsiteIconPicker } from "../components/WebsiteIconPicker";
 import { iconPreviewSrc } from "../lib/websiteIconPreview";
 import { libraryIcon, libraryIconMarkup } from "../../../src/shared/websiteIcons";
@@ -1885,7 +1885,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           const bg = doc.defaultView!.getComputedStyle(el).backgroundImage;
           let bgMatch: RegExpExecArray | null;
           while ((bgMatch = cssUrlRegex.exec(bg || "")) !== null) {
-            pushImg(bgMatch[1]!, el.getAttribute("data-dw-field") || "Container Background", "CSS Background");
+            const isParallax = /parallax/i.test(el.className || "") || el.hasAttribute("data-parallax") || /parallax/i.test(el.getAttribute("data-w-id") || "");
+            pushImg(
+              bgMatch[1]!,
+              el.getAttribute("data-dw-field") || (isParallax ? "Parallax Background" : "Container Background"),
+              isParallax ? "Parallax Background" : "CSS Background",
+            );
           }
         });
       }
@@ -2499,6 +2504,185 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     }
   };
 
+  /**
+   * Replace a media asset across the current page (including parallax animations, CSS background containers,
+   * picture sources, and <img> elements) without having to find or click the element on the canvas.
+   */
+  const handleReplacePageMedia = useCallback(
+    (
+      oldImage: { url: string; preview?: string; alt?: string; source?: string },
+      newAsset: { url: string; alt?: string; preview?: string },
+    ) => {
+      const targetUrl = oldImage.url;
+      const previewUrl = oldImage.preview;
+      const nextUrl = newAsset.url;
+      const nextPreview = newAsset.preview || resolveImagePreview(nextUrl);
+      const nextAlt = newAsset.alt || oldImage.alt || "";
+
+      let replacedCount = 0;
+      const updatedEdits = { ...latestEdits.current };
+
+      // 1. Update all known fields in allFields whose value or style references the old image
+      for (const field of allFields) {
+        let fieldChanged = false;
+        const currentEdit: FieldEdit = { ...(updatedEdits[field.id] ?? {}) };
+
+        // Image fields
+        if (field.kind === "image") {
+          const val = currentEdit.value ?? field.value ?? "";
+          if (matchesWebsiteMediaUrl(val, targetUrl, previewUrl)) {
+            currentEdit.value = resolveImageSource(nextUrl);
+            if (nextAlt) currentEdit.alt = nextAlt;
+            fieldChanged = true;
+          }
+        }
+
+        // Background / container styles
+        const currentStyle = currentEdit.style ?? field.style ?? "";
+        if (currentStyle && /url\(/i.test(currentStyle)) {
+          let styleReplaced = false;
+          const newStyle = currentStyle.replace(
+            /url\(\s*(?:"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|([^'"()\s][^()]*?))\s*\)/gi,
+            (match, dq, sq, uq) => {
+              const raw = (dq ?? sq ?? uq ?? "").trim();
+              if (matchesWebsiteMediaUrl(raw, targetUrl, previewUrl)) {
+                styleReplaced = true;
+                return `url('${nextUrl.replace(/['"\\]/g, "")}')`;
+              }
+              return match;
+            },
+          );
+          if (styleReplaced) {
+            currentEdit.style = newStyle;
+            fieldChanged = true;
+          }
+        }
+
+        // Background field values
+        if (field.kind === "background") {
+          const val = currentEdit.value ?? field.value ?? "";
+          if (matchesWebsiteMediaUrl(val, targetUrl, previewUrl)) {
+            currentEdit.value = nextUrl;
+            fieldChanged = true;
+          }
+        }
+
+        if (fieldChanged) {
+          updatedEdits[field.id] = currentEdit;
+          replacedCount++;
+          if (currentEdit.style !== undefined) push("style", field.id, currentEdit.style);
+          if (currentEdit.value !== undefined) push(field.kind === "image" ? "image" : "text", field.id, currentEdit.value);
+        }
+      }
+
+      // 2. Direct DOM & Style updates in the live preview iframe (for parallax layers, background divs, <style> tags)
+      try {
+        const doc = frame.current?.contentDocument;
+        if (doc) {
+          // Update <img> tags
+          doc.querySelectorAll<HTMLImageElement>("img").forEach((img) => {
+            const src = img.getAttribute("src") || img.src;
+            if (matchesWebsiteMediaUrl(src, targetUrl, previewUrl)) {
+              img.src = nextPreview;
+              img.setAttribute("src", nextPreview);
+              if (nextAlt) img.alt = nextAlt;
+              replacedCount++;
+            }
+          });
+
+          // Update <picture> <source> tags
+          doc.querySelectorAll<HTMLSourceElement>("picture source").forEach((source) => {
+            const srcset = source.getAttribute("srcset") || source.srcset;
+            if (matchesWebsiteMediaUrl(srcset, targetUrl, previewUrl)) {
+              source.setAttribute("srcset", nextPreview);
+              source.srcset = nextPreview;
+              replacedCount++;
+            }
+          });
+
+          // Update inline styles with background-image
+          doc.querySelectorAll<HTMLElement>("[style]").forEach((el) => {
+            const inline = el.getAttribute("style") || "";
+            if (/url\(/i.test(inline)) {
+              let replacedInline = false;
+              const nextInline = inline.replace(
+                /url\(\s*(?:"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|([^'"()\s][^()]*?))\s*\)/gi,
+                (match, dq, sq, uq) => {
+                  const raw = (dq ?? sq ?? uq ?? "").trim();
+                  if (matchesWebsiteMediaUrl(raw, targetUrl, previewUrl)) {
+                    replacedInline = true;
+                    return `url('${nextPreview.replace(/['"\\]/g, "")}')`;
+                  }
+                  return match;
+                },
+              );
+              if (replacedInline) {
+                el.setAttribute("style", nextInline);
+                el.style.backgroundImage = `url('${nextPreview.replace(/['"\\]/g, "")}')`;
+                replacedCount++;
+              }
+            }
+          });
+
+          // Update <style> blocks (e.g. parallax CSS rules, Webflow animation styles)
+          doc.querySelectorAll<HTMLStyleElement>("style:not([data-dw-interaction-preview])").forEach((styleEl) => {
+            const css = styleEl.textContent || "";
+            if (/url\(/i.test(css)) {
+              let replacedCss = false;
+              const nextCss = css.replace(
+                /url\(\s*(?:"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|([^'"()\s][^()]*?))\s*\)/gi,
+                (match, dq, sq, uq) => {
+                  const raw = (dq ?? sq ?? uq ?? "").trim();
+                  if (matchesWebsiteMediaUrl(raw, targetUrl, previewUrl)) {
+                    replacedCss = true;
+                    return `url('${nextPreview.replace(/['"\\]/g, "")}')`;
+                  }
+                  return match;
+                },
+              );
+              if (replacedCss) {
+                styleEl.textContent = nextCss;
+                replacedCount++;
+              }
+            }
+          });
+
+          // Also update elements with computed background-image (parallax layers / containers)
+          if (doc.defaultView) {
+            doc.querySelectorAll<HTMLElement>("section, header, footer, div, main, article, aside, [data-dw-field]").forEach((el) => {
+              const bg = doc.defaultView!.getComputedStyle(el).backgroundImage;
+              if (bg && bg !== "none" && /url\(/i.test(bg)) {
+                if (matchesWebsiteMediaUrl(bg, targetUrl, previewUrl)) {
+                  el.style.backgroundImage = `url('${nextPreview.replace(/['"\\]/g, "")}')`;
+                  replacedCount++;
+                }
+              }
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("Could not update preview DOM directly", err);
+      }
+
+      // 3. Commit state
+      latestEdits.current = updatedEdits;
+      setEdits(updatedEdits);
+      dirty.current = true;
+      commitHistory(updatedEdits);
+
+      if (newAsset.preview) {
+        selectedMedia.current.set(nextUrl, { url: nextUrl, preview: newAsset.preview });
+      }
+
+      showQuickToast(
+        replacedCount > 0
+          ? `Replaced image across ${replacedCount} location${replacedCount === 1 ? "" : "s"} on this page`
+          : "Image replaced on page",
+      );
+    },
+    [allFields, frame, latestEdits, commitHistory, push, resolveImagePreview, resolveImageSource, showQuickToast],
+  );
+
   /** Versions are read against the saved draft, so the draft is saved first. */
   const openVersions = async () => {
     try {
@@ -2811,6 +2995,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         <WebsiteAssetPickerModal
           siteId={site.id}
           capturedImages={capturedHtmlImages}
+          onReplacePageImage={handleReplacePageMedia}
           onSelect={asset => {
             applyAsset(asset, assetTargetMode);
             setAssetModalOpen(false);
@@ -3299,9 +3484,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                   <WebsiteAssetLibrary
                     siteId={site.id}
                     capturedImages={capturedHtmlImages}
+                    onReplacePageImage={handleReplacePageMedia}
                     onSelect={(asset) => {
                       if (!picked || readOnly || !(picked.kind === "image" || picked.kind === "icon" || picked.kind === "container")) {
-                        showQuickToast("Select a picture on the page first, then choose it here.");
+                        showQuickToast("Select a picture on the page first, or click 'Replace' on an image in the media library.");
                         return;
                       }
                       applyAsset(asset, picked.kind === "container" ? "background" : "image");

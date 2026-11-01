@@ -199,14 +199,32 @@ export function isIgnoredPackageEntry(normalizedPath: string): boolean {
   return false;
 }
 
+export const HTML_CONTAINER_DIRS = ["html-source", "dist", "out", "build", "pages", "templates", "public", "src/pages"];
+
 /**
  * Derives a clean route path for an HTML file.
  */
-export function routePathForFile(filePath: string): string {
-  const norm = filePath.replace(/\\/g, "/").replace(/^\/+/, "");
+export function routePathForFile(filePath: string, hasRootIndex = true): string {
+  let norm = filePath.replace(/\\/g, "/").replace(/^\/+/, "");
+
+  // Strip container directory prefix if HTML lives inside html-source/, dist/, out/, etc.
+  for (const dir of HTML_CONTAINER_DIRS) {
+    if (norm.startsWith(`${dir}/`)) {
+      norm = norm.slice(dir.length + 1);
+      break;
+    }
+  }
+
+  // Exact index.html / index.htm always maps to /
   if (norm.toLowerCase() === "index.html" || norm.toLowerCase() === "index.htm") {
     return "/";
   }
+
+  // If there is no index.html in the package, home.html or home.htm acts as the root page /
+  if (!hasRootIndex && (norm.toLowerCase() === "home.html" || norm.toLowerCase() === "home.htm")) {
+    return "/";
+  }
+
   if (/^index\.html?$/i.test(path.basename(norm))) {
     const dir = path.dirname(norm);
     return `/${dir}`.replace(/\/+/g, "/");
@@ -238,15 +256,63 @@ export function extractPageTitle(html: string, fallbackFilename: string): string
 
 /**
  * Resolves a relative URL reference from a source file into a normalized package asset path.
+ * Supports root-relative URLs, framework public/ static/ folders, and relative paths.
  */
-export function resolvePackagePath(relativeUrl: string, sourceFilePath: string): string | null {
+export function resolvePackagePath(
+  relativeUrl: string,
+  sourceFilePath: string,
+  knownAssetPaths?: Set<string>,
+): string | null {
   const cleanUrl = relativeUrl.split(/[?#]/)[0].trim();
   if (!cleanUrl) return null;
   if (/^(?:https?:|\/\/|data:|mailto:|tel:|javascript:)/i.test(cleanUrl)) return null;
 
-  const sourceDir = path.dirname(sourceFilePath);
-  const combined = sourceDir === "." || sourceDir === "" ? cleanUrl : path.posix.join(sourceDir, cleanUrl);
+  const isRootRelative = cleanUrl.startsWith("/");
+  const unslashed = cleanUrl.replace(/^\/+/, "");
+
   try {
+    const sourceDir = path.dirname(sourceFilePath).replace(/\\/g, "/");
+    const docRelative = sourceDir === "." || sourceDir === "" ? unslashed : path.posix.join(sourceDir, unslashed);
+
+    if (knownAssetPaths) {
+      const candidates: string[] = [];
+      if (isRootRelative) {
+        candidates.push(unslashed);
+        candidates.push(`public/${unslashed}`);
+        candidates.push(`static/${unslashed}`);
+        candidates.push(`assets/${unslashed}`);
+        candidates.push(docRelative);
+        candidates.push(`public/${docRelative}`);
+      } else {
+        candidates.push(docRelative);
+        candidates.push(`public/${docRelative}`);
+        candidates.push(unslashed);
+        candidates.push(`public/${unslashed}`);
+        candidates.push(`static/${unslashed}`);
+        candidates.push(`assets/${unslashed}`);
+      }
+
+      for (const dir of HTML_CONTAINER_DIRS) {
+        if (sourceDir.startsWith(dir)) {
+          const strippedDir = sourceDir.slice(dir.length).replace(/^\/+/, "");
+          const strippedRelative = strippedDir === "" ? unslashed : path.posix.join(strippedDir, unslashed);
+          candidates.push(strippedRelative);
+          candidates.push(`public/${strippedRelative}`);
+          candidates.push(`static/${strippedRelative}`);
+        }
+      }
+
+      for (const cand of candidates) {
+        try {
+          const sanitized = sanitizePackagePath(cand);
+          if (knownAssetPaths.has(sanitized)) {
+            return sanitized;
+          }
+        } catch {}
+      }
+    }
+
+    const combined = isRootRelative ? unslashed : docRelative;
     return sanitizePackagePath(combined);
   } catch {
     return null;
@@ -378,6 +444,16 @@ export async function analyzeImportPackage(input: {
       wanted.push({ entry, path: sanitized });
     }
 
+    // Strip single common top-level directory if present (e.g. zip created of parent folder)
+    if (wanted.length > 0 && wanted.every((w) => w.path.includes("/"))) {
+      const firstSegment = wanted[0].path.split("/")[0];
+      if (wanted.every((w) => w.path.startsWith(`${firstSegment}/`))) {
+        for (const item of wanted) {
+          item.path = item.path.slice(firstSegment.length + 1);
+        }
+      }
+    }
+
     // Sizes are judged before anything is inflated. This used to inflate each
     // entry and then measure it, so a single entry of a few kilobytes that
     // inflates to gigabytes had taken the memory before the check could run.
@@ -408,13 +484,25 @@ export async function analyzeImportPackage(input: {
   const assets: DiscoveredAsset[] = [];
   let totalBytes = 0;
 
+  const htmlEntries = rawEntries.filter((e) => /\.(html|htm)$/i.test(e.path));
+  const hasRootIndex = htmlEntries.some((e) => {
+    let norm = e.path.replace(/\\/g, "/").replace(/^\/+/, "");
+    for (const dir of HTML_CONTAINER_DIRS) {
+      if (norm.startsWith(`${dir}/`)) {
+        norm = norm.slice(dir.length + 1);
+        break;
+      }
+    }
+    return norm.toLowerCase() === "index.html" || norm.toLowerCase() === "index.htm";
+  });
+
   for (const entry of rawEntries) {
     totalBytes += entry.content.length;
     const isHtml = /\.(html|htm)$/i.test(entry.path);
     if (isHtml) {
       const htmlText = entry.content.toString("utf8");
       const title = extractPageTitle(htmlText, entry.path);
-      const routePath = routePathForFile(entry.path);
+      const routePath = routePathForFile(entry.path, hasRootIndex);
       const fields = discoverFields(htmlText).fields;
       const editableCount = fields.filter((f) => f.kind !== "container" && f.tag !== "title" && f.tag !== "meta").length;
 
@@ -446,11 +534,21 @@ export async function analyzeImportPackage(input: {
     throw new WebsiteError(400, "No HTML pages were found in the imported package. Provide at least one .html or .htm file.");
   }
 
-  // Ensure root / index page exists or designate first page as root if only 1 page
-  const hasRoot = pages.some((p) => p.path === "/");
-  if (!hasRoot && pages.length === 1) {
-    pages[0].path = "/";
+  // Ensure root / index page exists or designate home/main/first as root
+  let hasRoot = pages.some((p) => p.path === "/");
+  if (!hasRoot) {
+    const homeCandidate = pages.find((p) => /^\/(?:home|main|default)$/i.test(p.path));
+    if (homeCandidate) {
+      homeCandidate.path = "/";
+      hasRoot = true;
+    } else if (pages.length === 1) {
+      pages[0].path = "/";
+      hasRoot = true;
+    }
   }
+
+  // Always sort root "/" page first so editor opens the homepage
+  pages.sort((a, b) => (a.path === "/" ? -1 : b.path === "/" ? 1 : 0));
 
   // Create lookup for local assets
   const assetPaths = new Set(assets.map((a) => a.repoPath));
@@ -478,8 +576,8 @@ export async function analyzeImportPackage(input: {
                 kind: rel.includes("stylesheet") ? "stylesheet" : rel.includes("font") ? "font" : "other",
               });
             } catch {}
-          } else if (!href.startsWith("data:") && !href.startsWith("#") && !href.startsWith("mailto:")) {
-            const resolved = resolvePackagePath(href, page.filePath);
+          } else if (!href.startsWith("data:") && !href.startsWith("#") && !href.startsWith("mailto:") && !href.startsWith("tel:") && !href.startsWith("javascript:")) {
+            const resolved = resolvePackagePath(href, page.filePath, assetPaths);
             if (resolved && !assetPaths.has(resolved) && !pages.some((p) => p.filePath === resolved)) {
               missingAssets.push({
                 url: href,
@@ -509,7 +607,7 @@ export async function analyzeImportPackage(input: {
               });
             } catch {}
           } else if (!src.startsWith("data:")) {
-            const resolved = resolvePackagePath(src, page.filePath);
+            const resolved = resolvePackagePath(src, page.filePath, assetPaths);
             if (resolved && !assetPaths.has(resolved)) {
               missingAssets.push({
                 url: src,
@@ -539,7 +637,7 @@ export async function analyzeImportPackage(input: {
               });
             } catch {}
           } else if (!src.startsWith("data:")) {
-            const resolved = resolvePackagePath(src, page.filePath);
+            const resolved = resolvePackagePath(src, page.filePath, assetPaths);
             if (resolved && !assetPaths.has(resolved)) {
               missingAssets.push({
                 url: src,
@@ -568,7 +666,7 @@ export async function analyzeImportPackage(input: {
                 });
               } catch {}
             } else if (!cand.startsWith("data:")) {
-              const resolved = resolvePackagePath(cand, page.filePath);
+              const resolved = resolvePackagePath(cand, page.filePath, assetPaths);
               if (resolved && !assetPaths.has(resolved)) {
                 missingAssets.push({
                   url: cand,
@@ -602,7 +700,7 @@ export async function analyzeImportPackage(input: {
               });
             } catch {}
           } else if (!bgUrl.startsWith("data:")) {
-            const resolved = resolvePackagePath(bgUrl, page.filePath);
+            const resolved = resolvePackagePath(bgUrl, page.filePath, assetPaths);
             if (resolved && !assetPaths.has(resolved)) {
               missingAssets.push({
                 url: bgUrl,
@@ -638,7 +736,7 @@ export async function analyzeImportPackage(input: {
           });
         } catch {}
       } else {
-        const resolved = resolvePackagePath(targetUrl, asset.repoPath);
+        const resolved = resolvePackagePath(targetUrl, asset.repoPath, assetPaths);
         if (resolved && !assetPaths.has(resolved)) {
           missingAssets.push({
             url: targetUrl,
@@ -677,27 +775,43 @@ export function rewritePageAssetReferences(
   knownAssets: DiscoveredAsset[],
 ): string {
   let updated = html;
-  const assetMap = new Map(knownAssets.map((a) => [a.repoPath, a]));
+  const pageDir = path.dirname(pageFilePath).replace(/\\/g, "/");
 
   for (const asset of knownAssets) {
     const hosted = assetUrl(site, asset.repoPath);
 
     // Matches relative references to this asset
     const exactPath = asset.repoPath;
-    const relativeVariants = [
+    const webPath = exactPath.replace(/^(?:public|static)\//, "");
+
+    const relativeVariants = new Set<string>([
       `"${exactPath}"`,
       `'${exactPath}'`,
       `"./${exactPath}"`,
       `'./${exactPath}'`,
       `"/${exactPath}"`,
       `'/${exactPath}'`,
-    ];
+    ]);
+
+    if (webPath !== exactPath) {
+      relativeVariants.add(`"${webPath}"`);
+      relativeVariants.add(`'${webPath}'`);
+      relativeVariants.add(`"./${webPath}"`);
+      relativeVariants.add(`'./${webPath}'`);
+      relativeVariants.add(`"/${webPath}"`);
+      relativeVariants.add(`'/${webPath}'`);
+    }
 
     // Relative from page directory
-    const pageDir = path.dirname(pageFilePath);
     if (pageDir !== "." && pageDir !== "") {
       const relFromPage = path.posix.relative(pageDir, exactPath);
-      relativeVariants.push(`"${relFromPage}"`, `'${relFromPage}'`);
+      relativeVariants.add(`"${relFromPage}"`);
+      relativeVariants.add(`'${relFromPage}'`);
+      if (webPath !== exactPath) {
+        const relWeb = path.posix.relative(pageDir, webPath);
+        relativeVariants.add(`"${relWeb}"`);
+        relativeVariants.add(`'${relWeb}'`);
+      }
     }
 
     for (const variant of relativeVariants) {

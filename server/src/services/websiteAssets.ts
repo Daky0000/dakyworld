@@ -29,11 +29,15 @@ async function referencedAssets(site: Pick<Site, "id" | "publicUrl">, html: stri
   const assets = await prisma.siteAsset.findMany({ where: { siteId: site.id }, select: REF });
   return assets.filter((asset) => {
     const hosted = assetUrl(site, asset.repoPath);
+    const webPath = asset.repoPath.replace(/^(?:public|static)\//, "");
     return (
       html.includes(hosted) ||
       html.includes(asset.repoPath) ||
       html.includes(`/${asset.repoPath}`) ||
-      html.includes(`./${asset.repoPath}`)
+      html.includes(`./${asset.repoPath}`) ||
+      html.includes(webPath) ||
+      html.includes(`/${webPath}`) ||
+      html.includes(`./${webPath}`)
     );
   });
 }
@@ -90,6 +94,7 @@ export async function embedWebsiteAssets(site: Site, html: string): Promise<stri
     }
 
     // Also match relative attributes and CSS url references
+    const webPath = asset.repoPath.replace(/^(?:public|static)\//, "");
     const variants = [
       `"${asset.repoPath}"`,
       `'${asset.repoPath}'`,
@@ -104,6 +109,23 @@ export async function embedWebsiteAssets(site: Site, html: string): Promise<stri
       `url("/${asset.repoPath}")`,
       `url('/${asset.repoPath}')`,
     ];
+
+    if (webPath !== asset.repoPath) {
+      variants.push(
+        `"${webPath}"`,
+        `'${webPath}'`,
+        `"./${webPath}"`,
+        `'./${webPath}'`,
+        `"/${webPath}"`,
+        `'/${webPath}'`,
+        `url(${webPath})`,
+        `url("${webPath}")`,
+        `url('${webPath}')`,
+        `url(/${webPath})`,
+        `url("/${webPath}")`,
+        `url('/${webPath}')`,
+      );
+    }
 
     for (const v of variants) {
       if (out.includes(v)) {

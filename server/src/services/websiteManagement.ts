@@ -335,6 +335,101 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     recordMediaStorageAdded(req, optimized.content.length);
     res.status(201).json({ id: asset.id, url: r2Url || assetUrl(site, asset.repoPath), alt: asset.alt, size: optimized.content.length });
   }));
+
+  const handleAssetReplace = async (req: Request, res: Response) => {
+    const site = await access.loadSite(req, req.params.siteId);
+    const asset = await prisma.siteAsset.findFirst({
+      where: { id: req.params.assetId, siteId: site.id },
+    });
+    if (!asset) throw new WebsiteError(404, "That image is not part of this site.");
+
+    const input = z
+      .object({
+        filename: z.string().min(1).max(200).optional(),
+        data: z.string().min(1),
+        alt: z.string().max(500).optional(),
+      })
+      .parse(req.body);
+
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(input.data)) throw new WebsiteError(400, "The file data is not valid base64.");
+    const content = Buffer.from(input.data, "base64");
+    if (!content.length) throw new WebsiteError(400, "Choose a non-empty image file.");
+
+    const mime = sniff(content);
+    const formats: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" };
+    const svg = !mime && looksLikeSvg(content);
+    if (!svg && (!mime || !formats[mime])) throw new WebsiteError(400, "Upload a PNG, JPEG, WebP, GIF or SVG image.");
+
+    let optimized: Awaited<ReturnType<typeof optimizeImageBuffer>>;
+    try {
+      optimized = await optimizeImageBuffer(content);
+    } catch (error) {
+      if (error instanceof SvgRejected) throw new WebsiteError(400, error.message);
+      throw error;
+    }
+
+    const byteDiff = optimized.content.length - asset.size;
+    if (byteDiff > 0) {
+      await assertMediaStorageAllowance(req, byteDiff, site.id);
+    }
+
+    let r2Url: string | null = null;
+    if (isR2Configured()) {
+      const uploadedToR2 = await uploadToR2(optimized.content, {
+        mimeType: optimized.contentType,
+        key: asset.repoPath,
+      });
+      r2Url = uploadedToR2.url;
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const saved = await tx.siteAsset.update({
+        where: { id: asset.id },
+        data: {
+          content: isR2Configured() ? null : optimized.content,
+          contentType: optimized.contentType,
+          size: optimized.content.length,
+          alt: input.alt !== undefined ? input.alt : asset.alt,
+          filename: input.filename || asset.filename,
+          publishedAt: null,
+        },
+      });
+      await tx.siteAuditEvent.create({
+        data: {
+          siteId: site.id,
+          kind: "ASSET_REPLACE",
+          summary: `Replaced image ${asset.filename}`,
+          ...actor(req),
+          detail: {
+            assetId: asset.id,
+            previousBytes: asset.size,
+            newBytes: optimized.content.length,
+            contentType: optimized.contentType,
+            storage: isR2Configured() ? "cloudflare_r2" : "postgres",
+          },
+        },
+      });
+      return saved;
+    });
+
+    if (byteDiff > 0) {
+      recordMediaStorageAdded(req, byteDiff);
+    }
+
+    res.json({
+      id: updated.id,
+      filename: updated.filename,
+      repoPath: updated.repoPath,
+      url: r2Url || assetUrl(site, updated.repoPath),
+      preview: `/api/website/sites/${site.id}/assets/${updated.id}/content?v=${Date.now()}`,
+      alt: updated.alt,
+      size: updated.size,
+      contentType: updated.contentType,
+    });
+  };
+
+  router.put("/sites/:siteId/assets/:assetId", handler(handleAssetReplace));
+  router.post("/sites/:siteId/assets/:assetId/replace", handler(handleAssetReplace));
   /**
    * Removing an uploaded image.
    *

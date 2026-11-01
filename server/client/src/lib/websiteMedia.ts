@@ -39,3 +39,48 @@ export function rewriteWebsiteMediaStyle(style: string, resolveUrl: (value: stri
     return resolved === raw ? token : `url("${resolved.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\r\n\f]/g, "")}")`;
   });
 }
+
+/**
+ * Check whether a candidate media URL (from an img src, srcset, CSS background-image, or computed style)
+ * refers to the same target media asset. Handles:
+ * - Direct equality
+ * - Quotes and spaces
+ * - Root-relative vs relative paths (e.g. "/images/hero.jpg" vs "images/hero.jpg")
+ * - Framework container prefixes ("public/images/hero.jpg" vs "images/hero.jpg" or "/images/hero.jpg")
+ * - Editor preview API paths (/api/website/sites/.../assets/.../content)
+ */
+export function matchesWebsiteMediaUrl(candidate: string, target: string, previewUrl?: string): boolean {
+  if (!candidate || !target) return false;
+  const clean = (u: string) => u.trim().replace(/^['"]|['"]$/g, "");
+  const c = clean(candidate);
+  const t = clean(target);
+  if (c === t) return true;
+  if (previewUrl) {
+    const p = clean(previewUrl);
+    if (c === p || c.includes(p) || p.includes(c)) return true;
+  }
+
+  const getPath = (u: string) => {
+    try {
+      if (/^[a-z]+:\/\//i.test(u)) return new URL(u).pathname;
+    } catch {}
+    return u.split("?")[0].split("#")[0];
+  };
+
+  const cPath = getPath(c).replace(/^\/+/, "");
+  const tPath = getPath(t).replace(/^\/+/, "");
+  if (cPath && tPath && cPath === tPath) return true;
+
+  const stripContainer = (p: string) => p.replace(/^(?:public|static|assets)\//, "");
+  if (cPath && tPath && stripContainer(cPath) === stripContainer(tPath)) return true;
+
+  const cFile = cPath.split("/").pop();
+  const tFile = tPath.split("/").pop();
+  if (cFile && tFile && cFile === tFile) {
+    if (cPath.endsWith(tPath) || tPath.endsWith(cPath)) return true;
+    if (stripContainer(cPath).endsWith(stripContainer(tPath)) || stripContainer(tPath).endsWith(stripContainer(cPath))) return true;
+  }
+
+  return false;
+}
+

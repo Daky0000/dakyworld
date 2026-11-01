@@ -5,7 +5,7 @@ import type { SiteSummary } from "../lib/types";
 import { Button, PageHeader } from "./ui";
 import { useWebsiteAccess } from "./WebsiteMembers";
 import { WebsiteTierStatusBanner, notifyTierStatusChanged, useWebsiteTierStatus } from "./WebsiteTierStatusBanner";
-import { IconXCircle } from "./WebsiteIcons";
+import { IconCheck, IconUploadCloud, IconXCircle } from "./WebsiteIcons";
 
 export type CapturedHtmlImage = {
   url: string;
@@ -20,19 +20,337 @@ type Asset = { id: string; filename: string; alt: string; url: string; preview: 
 /** Videos share the library with pictures (uploaded from a video's own settings) but never fill a picture's place. */
 const isVideo = (asset: { contentType?: string }) => Boolean(asset.contentType?.startsWith("video/"));
 
+export type ReplaceTarget = {
+  url: string;
+  preview?: string;
+  alt?: string;
+  source?: string;
+  assetId?: string;
+  filename?: string;
+};
+
+export function WebsiteMediaReplaceModal({
+  siteId,
+  target,
+  onClose,
+  onReplace,
+  existingAssets = [],
+}: {
+  siteId: string;
+  target: ReplaceTarget;
+  onClose: () => void;
+  onReplace: (replacement: WebsiteAssetSelection) => Promise<void> | void;
+  existingAssets?: Asset[];
+}) {
+  const { status: tierStatus } = useWebsiteTierStatus(siteId);
+  const [tab, setTab] = useState<"upload" | "library">("upload");
+  const [file, setFile] = useState<File | null>(null);
+  const [filePreview, setFilePreview] = useState<string | null>(null);
+  const [alt, setAlt] = useState(target.alt || target.filename || "");
+  const [selectedLibraryAsset, setSelectedLibraryAsset] = useState<Asset | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const qc = useQueryClient();
+
+  const maxUploadBytes = tierStatus?.storage.maxSingleAssetBytes ?? 5_000_000;
+  const maxUploadLabel = tierStatus?.storage.maxSingleAssetFormatted ?? "5 MB";
+
+  const handleFileChange = (selectedFile: File | null) => {
+    setError(null);
+    setFile(selectedFile);
+    if (selectedFile) {
+      if (selectedFile.size > maxUploadBytes) {
+        setError(`File size (${(selectedFile.size / (1024 * 1024)).toFixed(2)} MB) exceeds ${maxUploadLabel}.`);
+        setFile(null);
+        setFilePreview(null);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => setFilePreview(String(reader.result));
+      reader.readAsDataURL(selectedFile);
+      if (!alt) {
+        setAlt(selectedFile.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " "));
+      }
+    } else {
+      setFilePreview(null);
+    }
+  };
+
+  const executeReplace = async () => {
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      if (tab === "upload") {
+        if (!file) throw new Error("Please select an image file to upload.");
+        const isSvg = file.type === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg");
+        if (!isSvg) {
+          const bitmap = await createImageBitmap(file).catch(() => {
+            throw new Error("That file could not be opened as an image.");
+          });
+          if (bitmap.width * bitmap.height > 40_000_000) {
+            bitmap.close();
+            throw new Error("Use an image smaller than 40 megapixels.");
+          }
+          bitmap.close();
+        }
+
+        const data = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result).split(",")[1]);
+          reader.onerror = () => reject(new Error("The image could not be read."));
+          reader.readAsDataURL(file);
+        });
+
+        if (target.assetId) {
+          const res = await api.put<{ id: string; url: string; alt: string; preview: string }>(
+            `/website/sites/${siteId}/assets/${target.assetId}`,
+            { filename: file.name, alt, data }
+          );
+          await qc.invalidateQueries({ queryKey: ["website", "assets", siteId] });
+          await qc.invalidateQueries({ queryKey: ["website", "assets", "all"] });
+          notifyTierStatusChanged();
+          await onReplace({ url: res.url, alt: res.alt || alt, preview: res.preview });
+        } else {
+          const res = await api.post<{ id: string; url: string; alt: string }>(
+            `/website/sites/${siteId}/assets`,
+            { filename: file.name, alt, data }
+          );
+          await qc.invalidateQueries({ queryKey: ["website", "assets", siteId] });
+          await qc.invalidateQueries({ queryKey: ["website", "assets", "all"] });
+          notifyTierStatusChanged();
+          await onReplace({
+            url: res.url,
+            alt: res.alt || alt,
+            preview: `/api/website/sites/${siteId}/assets/${res.id}/content?v=${Date.now()}`,
+          });
+        }
+      } else {
+        if (!selectedLibraryAsset) throw new Error("Please select an image from the library.");
+        if (target.assetId && target.assetId !== selectedLibraryAsset.id) {
+          const contentRes = await fetch(selectedLibraryAsset.preview);
+          const blob = await contentRes.blob();
+          const data = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result).split(",")[1]);
+            reader.onerror = () => reject(new Error("Could not read asset blob."));
+            reader.readAsDataURL(blob);
+          });
+          const res = await api.put<{ id: string; url: string; alt: string; preview: string }>(
+            `/website/sites/${siteId}/assets/${target.assetId}`,
+            { filename: selectedLibraryAsset.filename, alt: selectedLibraryAsset.alt, data }
+          );
+          await qc.invalidateQueries({ queryKey: ["website", "assets", siteId] });
+          await qc.invalidateQueries({ queryKey: ["website", "assets", "all"] });
+          notifyTierStatusChanged();
+          await onReplace({ url: res.url, alt: res.alt, preview: res.preview });
+        } else {
+          await onReplace({
+            url: selectedLibraryAsset.url,
+            alt: selectedLibraryAsset.alt,
+            preview: selectedLibraryAsset.preview,
+          });
+        }
+      }
+      onClose();
+    } catch (err) {
+      setError((err as Error).message || "Replacement failed.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="replace-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-4 backdrop-blur-xs"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-2xl border border-line bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-line px-5 py-4">
+          <div>
+            <h2 id="replace-modal-title" className="font-display text-base font-semibold text-ink">
+              Replace Image
+            </h2>
+            <p className="text-xs text-muted">
+              {target.assetId
+                ? "Replaces this asset across your website library and anywhere it is referenced."
+                : "Replaces this image across the page (including parallax animations and backgrounds) without having to find or click the element on the canvas."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded-[10px] text-muted hover:bg-sunken hover:text-ink"
+            aria-label="Close"
+          >
+            <IconXCircle size={18} />
+          </button>
+        </div>
+
+        <div className="flex-1 space-y-4 overflow-y-auto p-5">
+          <div className="flex items-center gap-3 rounded-xl border border-line bg-sunken p-3">
+            <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-line bg-white">
+              <img
+                src={target.preview || target.url}
+                alt={target.alt || "Current image"}
+                className="h-full w-full object-cover"
+              />
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+                Current Image {target.source ? `• ${target.source}` : ""}
+              </span>
+              <p className="truncate text-xs font-semibold text-ink" title={target.url}>
+                {target.filename || target.alt || target.url.split("/").pop() || "Image"}
+              </p>
+              <p className="truncate text-[10px] text-muted" title={target.url}>
+                {target.url}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1 rounded-xl border border-line bg-sunken p-1">
+            <button
+              type="button"
+              onClick={() => { setTab("upload"); setError(null); }}
+              className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                tab === "upload" ? "bg-white text-ink shadow-xs" : "text-muted hover:text-ink"
+              }`}
+            >
+              Upload New File
+            </button>
+            <button
+              type="button"
+              onClick={() => { setTab("library"); setError(null); }}
+              className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                tab === "library" ? "bg-white text-ink shadow-xs" : "text-muted hover:text-ink"
+              }`}
+            >
+              Choose from Site Library ({existingAssets.length})
+            </button>
+          </div>
+
+          {tab === "upload" ? (
+            <div className="space-y-3">
+              <label className="block rounded-xl border-2 border-dashed border-line bg-sunken/50 p-4 text-center cursor-pointer hover:border-blue hover:bg-blue/5 transition">
+                <input
+                  type="file"
+                  className="hidden"
+                  accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,.svg"
+                  onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
+                />
+                {filePreview ? (
+                  <div className="space-y-2">
+                    <img src={filePreview} alt="Selected preview" className="mx-auto h-28 max-w-full rounded-lg object-contain shadow-xs" />
+                    <p className="text-xs font-medium text-ink">{file?.name} ({(file?.size ? file.size / 1024 : 0).toFixed(0)} KB)</p>
+                    <span className="inline-block text-[11px] text-blue font-semibold">Click to choose another file</span>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 py-2">
+                    <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-full bg-blue/10 text-blue">
+                      <IconUploadCloud size={20} />
+                    </div>
+                    <p className="text-xs font-medium text-ink">Choose a new file to replace this image</p>
+                    <p className="text-[11px] text-muted">PNG, JPEG, WebP, GIF or SVG up to {maxUploadLabel}</p>
+                  </div>
+                )}
+              </label>
+
+              <label className="block text-xs font-medium text-ink">
+                Alt text / Description
+                <input
+                  className="mt-1 h-9 w-full rounded-xl border border-line bg-white px-3 text-xs text-ink"
+                  value={alt}
+                  onChange={(e) => setAlt(e.target.value)}
+                  placeholder="Describe what the replacement image shows"
+                />
+              </label>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-muted">Select an existing image from your site library to replace this one:</p>
+              <div className="grid max-h-56 grid-cols-3 gap-2 overflow-y-auto rounded-xl border border-line p-2">
+                {existingAssets.map((asset) => (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    onClick={() => setSelectedLibraryAsset(asset)}
+                    className={`group relative flex flex-col overflow-hidden rounded-lg border text-left transition ${
+                      selectedLibraryAsset?.id === asset.id ? "border-blue ring-2 ring-blue/20 bg-blue/5" : "border-line bg-white hover:border-blue/50"
+                    }`}
+                  >
+                    <div className="h-20 w-full bg-sunken overflow-hidden">
+                      <img src={asset.preview} alt={asset.alt} className="h-full w-full object-cover" />
+                    </div>
+                    <div className="p-1.5">
+                      <p className="truncate text-[10px] font-medium text-ink" title={asset.filename}>{asset.filename}</p>
+                    </div>
+                    {selectedLibraryAsset?.id === asset.id && (
+                      <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-blue text-white">
+                        <IconCheck size={10} />
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+              {existingAssets.length === 0 && (
+                <p className="py-4 text-center text-xs text-muted">No images in your site library yet. Use the Upload tab to add one.</p>
+              )}
+            </div>
+          )}
+
+          {error && (
+            <p role="alert" className="text-xs text-danger-text">
+              {error}
+            </p>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-line px-5 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-line px-4 py-2 text-xs font-semibold text-muted hover:bg-sunken hover:text-ink transition"
+          >
+            Cancel
+          </button>
+          <Button
+            size="sm"
+            disabled={isSubmitting || (tab === "upload" ? !file : !selectedLibraryAsset)}
+            onClick={() => void executeReplace()}
+          >
+            {isSubmitting ? "Replacing…" : "Replace Image"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function WebsiteAssetLibrary({
   siteId,
   onSelect,
   capturedImages = [],
+  onReplacePageImage,
 }: {
   siteId: string;
   onSelect?: (asset: WebsiteAssetSelection) => void;
   capturedImages?: CapturedHtmlImage[];
+  onReplacePageImage?: (
+    target: { url: string; preview?: string; alt?: string; source?: string },
+    replacement: WebsiteAssetSelection,
+  ) => Promise<void> | void;
 }) {
   const access = useWebsiteAccess(siteId);
   const { status: tierStatus } = useWebsiteTierStatus(siteId);
   const [activeTab, setActiveTab] = useState<"page" | "library">(capturedImages.length > 0 ? "page" : "library");
   const [candidate, setCandidate] = useState<{ url: string; alt: string; preview: string } | null>(null);
+  const [replacingTarget, setReplacingTarget] = useState<CapturedHtmlImage | null>(null);
+  const [replacingAsset, setReplacingAsset] = useState<Asset | null>(null);
   const [uploadKey, setUploadKey] = useState(0);
   const [previewFailed, setPreviewFailed] = useState(false);
   const [alt, setAlt] = useState("");
@@ -240,14 +558,15 @@ export function WebsiteAssetLibrary({
                 >
                   <button
                     type="button"
-                    disabled={!onSelect}
                     onClick={() => {
                       if (onSelect) {
                         onSelect({ url: img.url, alt: img.alt, preview: img.preview });
+                      } else {
+                        setReplacingTarget(img);
                       }
                     }}
                     className="relative h-28 w-full overflow-hidden bg-sunken text-left"
-                    title={`Click to select ${name}`}
+                    title={`Click to select or replace ${name}`}
                   >
                     <img
                       src={img.preview ?? img.url}
@@ -260,24 +579,39 @@ export function WebsiteAssetLibrary({
                       </span>
                     )}
                     <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/80 via-ink/40 to-transparent px-2 py-1.5 text-center text-[11px] font-semibold text-white opacity-0 transition group-hover:opacity-100">
-                      Use Image
+                      {onSelect ? "Use Image" : "Replace Image"}
                     </span>
                   </button>
                   <div className="flex items-center justify-between gap-1 border-t border-line px-2 py-1.5">
                     <span className="truncate text-[11px] font-medium text-ink" title={img.url}>
                       {name}
                     </span>
-                    {access.data?.capabilities.edit && (
-                      <button
-                        type="button"
-                        disabled={savingUrl === img.url}
-                        onClick={() => void saveCapturedToLibrary(img)}
-                        className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] font-medium text-muted hover:border-blue hover:text-blue"
-                        title="Save a copy into the persistent Site Library"
-                      >
-                        {savingUrl === img.url ? "…" : "Save"}
-                      </button>
-                    )}
+                    <div className="flex items-center gap-1 shrink-0">
+                      {access.data?.capabilities.edit && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setReplacingTarget(img);
+                          }}
+                          className="rounded border border-line bg-white px-1.5 py-0.5 text-[10px] font-semibold text-ink shadow-2xs hover:border-blue hover:text-blue"
+                          title="Replace this image across the page (including parallax animations and backgrounds)"
+                        >
+                          Replace
+                        </button>
+                      )}
+                      {access.data?.capabilities.edit && (
+                        <button
+                          type="button"
+                          disabled={savingUrl === img.url}
+                          onClick={() => void saveCapturedToLibrary(img)}
+                          className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] font-medium text-muted hover:border-blue hover:text-blue"
+                          title="Save a copy into the persistent Site Library"
+                        >
+                          {savingUrl === img.url ? "…" : "Save"}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
@@ -383,22 +717,75 @@ export function WebsiteAssetLibrary({
                   <span className="truncate text-[11px] font-medium text-ink" title={asset.filename}>
                     {asset.filename}
                   </span>
-                  {access.data?.capabilities.edit && (
-                    <button
-                      type="button"
-                      onClick={() => deleteAsset.mutate(asset.id)}
-                      className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-muted hover:bg-danger/10 hover:text-danger-text"
-                      title="Delete from Media Library and free storage"
-                    >
-                      Delete
-                    </button>
-                  )}
+                  <div className="flex items-center gap-1 shrink-0">
+                    {access.data?.capabilities.edit && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setReplacingAsset(asset);
+                        }}
+                        className="rounded border border-line bg-white px-1.5 py-0.5 text-[10px] font-semibold text-ink shadow-2xs hover:border-blue hover:text-blue"
+                        title="Replace this image file with a new upload"
+                      >
+                        Replace
+                      </button>
+                    )}
+                    {access.data?.capabilities.edit && (
+                      <button
+                        type="button"
+                        onClick={() => deleteAsset.mutate(asset.id)}
+                        className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-muted hover:bg-danger/10 hover:text-danger-text"
+                        title="Delete from Media Library and free storage"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
           </div>
           {assets.data?.length === 0 && <p className="text-xs text-muted">Upload your first image to this website.</p>}
         </div>
+      )}
+
+      {replacingTarget && (
+        <WebsiteMediaReplaceModal
+          siteId={siteId}
+          target={replacingTarget}
+          existingAssets={assets.data ?? []}
+          onClose={() => setReplacingTarget(null)}
+          onReplace={async (replacement) => {
+            if (onReplacePageImage) {
+              await onReplacePageImage(replacingTarget, replacement);
+            }
+          }}
+        />
+      )}
+
+      {replacingAsset && (
+        <WebsiteMediaReplaceModal
+          siteId={siteId}
+          target={{
+            url: replacingAsset.url,
+            preview: replacingAsset.preview,
+            filename: replacingAsset.filename,
+            alt: replacingAsset.alt,
+            assetId: replacingAsset.id,
+            source: "Site Asset",
+          }}
+          existingAssets={assets.data ?? []}
+          onClose={() => setReplacingAsset(null)}
+          onReplace={async (replacement) => {
+            if (onReplacePageImage) {
+              await onReplacePageImage(
+                { url: replacingAsset.url, preview: replacingAsset.preview, alt: replacingAsset.alt },
+                replacement
+              );
+            }
+          }}
+        />
       )}
     </div>
   );
@@ -407,6 +794,7 @@ export function WebsiteAssetLibrary({
 export function WebsiteAssets() {
   const [selected, setSelected] = useState("");
   const [search, setSearch] = useState("");
+  const [replacingAsset, setReplacingAsset] = useState<(Asset & { siteId: string }) | null>(null);
   const sites = useQuery({ queryKey: ["website", "sites"], queryFn: ({ signal }) => api.get<SiteSummary[]>("/website/sites", signal) });
   // Paged on the server (for staff it is every customer's library), so the
   // pages are joined here and the filters below run over what has arrived.
@@ -442,7 +830,17 @@ export function WebsiteAssets() {
           <div className="space-y-1 p-3 text-xs">
             <p className="truncate font-semibold text-ink" title={asset.filename}>{asset.filename}</p>
             <p className="truncate text-muted">{asset.siteName}</p>
-            <p className="text-muted">{(asset.size / 1024).toFixed(0)} KB</p>
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-muted">{(asset.size / 1024).toFixed(0)} KB</span>
+              <button
+                type="button"
+                onClick={() => setReplacingAsset(asset)}
+                className="rounded border border-line bg-white px-2 py-0.5 text-[11px] font-semibold text-ink shadow-2xs hover:border-blue hover:text-blue"
+                title="Replace this image with a new upload"
+              >
+                Replace
+              </button>
+            </div>
           </div>
         </article>)}
       </div>
@@ -459,6 +857,23 @@ export function WebsiteAssets() {
         </select>
         <WebsiteAssetLibrary key={selected || sites.data[0].id} siteId={selected || sites.data[0].id} />
       </div> : <p className="text-sm text-muted">Connect a website to upload images.</p>}
+
+      {replacingAsset && (
+        <WebsiteMediaReplaceModal
+          siteId={replacingAsset.siteId}
+          target={{
+            url: replacingAsset.url,
+            preview: replacingAsset.preview,
+            filename: replacingAsset.filename,
+            alt: replacingAsset.alt,
+            assetId: replacingAsset.id,
+            source: "Site Asset",
+          }}
+          existingAssets={[]}
+          onClose={() => setReplacingAsset(null)}
+          onReplace={() => {}}
+        />
+      )}
     </div>
   );
 }
@@ -468,11 +883,16 @@ export function WebsiteAssetPickerModal({
   capturedImages = [],
   onSelect,
   onClose,
+  onReplacePageImage,
 }: {
   siteId: string;
   capturedImages?: CapturedHtmlImage[];
   onSelect: (asset: WebsiteAssetSelection) => void;
   onClose: () => void;
+  onReplacePageImage?: (
+    target: { url: string; preview?: string; alt?: string; source?: string },
+    replacement: WebsiteAssetSelection,
+  ) => Promise<void> | void;
 }) {
   return (
     <div
@@ -504,7 +924,12 @@ export function WebsiteAssetPickerModal({
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-5">
-          <WebsiteAssetLibrary siteId={siteId} capturedImages={capturedImages} onSelect={onSelect} />
+          <WebsiteAssetLibrary
+            siteId={siteId}
+            capturedImages={capturedImages}
+            onSelect={onSelect}
+            onReplacePageImage={onReplacePageImage}
+          />
         </div>
       </div>
     </div>
