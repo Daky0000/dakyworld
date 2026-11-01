@@ -1130,6 +1130,17 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
     animation-play-state: paused !important;
   }
   [data-dw-overlay-hidden] { display: none !important; }
+  /* Don't let invisible slides/overlays with opacity:0 block selection clicks on visible elements underneath */
+  [style*="opacity: 0;"], [style*="opacity:0;"],
+  [style*="opacity: 0 "], [style*="opacity:0 "],
+  [style$="opacity: 0"], [style$="opacity:0"],
+  .ghacem-slide:not(.is-active) {
+    pointer-events: none !important;
+  }
+  .ghacem-slide.is-active,
+  [data-dw-selected], [data-dw-editing] {
+    pointer-events: auto !important;
+  }
   /* Ensure Webflow / JS interaction hidden styles do not hide preview elements */
   html.w-mod-js:not(.w-mod-ix3), html.w-mod-js:not(.w-mod-ix3) *, html.w-mod-js:not(.w-mod-ix3) :is(*, .h1, .h2, .h3, .h4, .h5, .h6, p, section, .nav__component) { visibility: visible !important; }
   /* Words being picked out for formatting. Translucent on purpose: a page's own

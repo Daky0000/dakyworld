@@ -22,8 +22,8 @@ function extractComparableSegments(value: string): string[] {
   p = p.split("?")[0].split("#")[0];
   try { p = decodeURIComponent(p); } catch {}
   const segments = p.split("/").filter(Boolean);
-  // Filter out build/package container folders wherever they occur
-  return segments.filter((s) => !/^(?:public|static|dist|out)$/i.test(s));
+  // Filter out build/package container folders and relative dot segments wherever they occur
+  return segments.filter((s) => !/^(?:public|static|dist|out|\.|\.\.)$/i.test(s));
 }
 
 /** Keep publish paths in drafts, but load unpublished uploads from the editor. */
@@ -95,26 +95,12 @@ export function rewriteWebsiteMediaStyle(style: string, resolveUrl: (value: stri
   });
 }
 
-/**
- * Check whether a candidate media URL (from an img src, srcset, CSS background-image, or computed style)
- * refers to the same target media asset. Handles:
- * - Direct equality
- * - Quotes and spaces
- * - Root-relative vs relative paths (e.g. "/images/hero.jpg" vs "images/hero.jpg")
- * - Framework container prefixes ("public/images/hero.jpg" vs "images/hero.jpg" or "/images/hero.jpg")
- * - Subpath deployment prefixes ("/africon-app/public/images/hero.jpg" vs "images/hero.jpg")
- * - Editor preview API paths (/api/website/sites/.../assets/.../content)
- */
-export function matchesWebsiteMediaUrl(candidate: string, target: string, previewUrl?: string): boolean {
+function matchesSingleMediaUrl(candidate: string, target: string): boolean {
   if (!candidate || !target) return false;
   const clean = (u: string) => u.trim().replace(/^['"]|['"]$/g, "");
   const c = clean(candidate);
   const t = clean(target);
   if (c === t) return true;
-  if (previewUrl) {
-    const p = clean(previewUrl);
-    if (c === p || c.includes(p) || p.includes(c)) return true;
-  }
 
   const cSegs = extractComparableSegments(c);
   const tSegs = extractComparableSegments(t);
@@ -124,10 +110,9 @@ export function matchesWebsiteMediaUrl(candidate: string, target: string, previe
   const tFile = tSegs[tSegs.length - 1]!.toLowerCase();
   if (cFile !== tFile) return false;
 
-  // Single segment matches (e.g. filename only)
+  // Single segment matches (e.g. filename only like "photo.jpg")
   if (cSegs.length === 1 || tSegs.length === 1) return true;
 
-  // If one segment list ends with the other (e.g. [africon-app, images, hero, photo.jpg] ends with [images, hero, photo.jpg])
   const cStr = cSegs.map((s) => s.toLowerCase()).join("/");
   const tStr = tSegs.map((s) => s.toLowerCase()).join("/");
   if (cStr === tStr) return true;
@@ -140,6 +125,32 @@ export function matchesWebsiteMediaUrl(candidate: string, target: string, previe
     if (cTail === tTail) return true;
   }
 
+  return false;
+}
+
+/**
+ * Check whether a candidate media URL (from an img src, srcset, CSS background-image, or computed style)
+ * refers to the same target media asset. Handles:
+ * - Direct equality
+ * - Quotes and spaces
+ * - Root-relative vs relative paths (e.g. "/images/hero.jpg" vs "images/hero.jpg" or "./images/hero.jpg")
+ * - Framework container prefixes ("public/images/hero.jpg" vs "images/hero.jpg" or "/images/hero.jpg")
+ * - Subpath deployment prefixes ("/africon-app/public/images/hero.jpg" vs "images/hero.jpg")
+ * - Editor preview API paths (/api/website/sites/.../assets/.../content)
+ *
+ * Distinct files with different filenames (such as hero-1.jpg vs hero-3.jpg) are strictly never matched,
+ * even when sharing an origin, folder, or subpath.
+ */
+export function matchesWebsiteMediaUrl(candidate: string, target: string, previewUrl?: string): boolean {
+  if (!candidate || !target) return false;
+  if (matchesSingleMediaUrl(candidate, target)) return true;
+  if (previewUrl && previewUrl !== target) {
+    const clean = (u: string) => u.trim().replace(/^['"]|['"]$/g, "");
+    const c = clean(candidate);
+    const p = clean(previewUrl);
+    if (c === p) return true;
+    if (matchesSingleMediaUrl(candidate, previewUrl)) return true;
+  }
   return false;
 }
 

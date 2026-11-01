@@ -2548,7 +2548,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         // Image fields
         if (field.kind === "image") {
           const val = currentEdit.value ?? field.value ?? "";
-          if (matchesWebsiteMediaUrl(val, targetUrl, previewUrl)) {
+          if (matchesWebsiteMediaUrl(val, targetUrl, previewUrl) || (field.value && matchesWebsiteMediaUrl(field.value, targetUrl, previewUrl))) {
             currentEdit.value = resolveImageSource(nextUrl);
             if (nextAlt) currentEdit.alt = nextAlt;
             fieldChanged = true;
@@ -2599,8 +2599,9 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         if (doc) {
           // Update <img> tags
           doc.querySelectorAll<HTMLImageElement>("img").forEach((img) => {
-            const src = img.getAttribute("src") || img.src;
-            if (matchesWebsiteMediaUrl(src, targetUrl, previewUrl)) {
+            const attrSrc = img.getAttribute("src") || "";
+            const propSrc = img.src || "";
+            if (matchesWebsiteMediaUrl(attrSrc, targetUrl, previewUrl) || matchesWebsiteMediaUrl(propSrc, targetUrl, previewUrl)) {
               img.src = nextPreview;
               img.setAttribute("src", nextPreview);
               if (nextAlt) img.alt = nextAlt;
@@ -3906,6 +3907,23 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
                                     <button type="button" className="dx-btn dx-ghost" onClick={openLibrary}>Upload</button>
                                   </div>
                                   <button type="button" className="dx-btn dx-soft dx-full" onClick={openLibrary}>Media library ({capturedHtmlImages.length})</button>
+                                  {edits[picked.id]?.value !== undefined && edits[picked.id]?.value !== picked.value && (
+                                    <button
+                                      type="button"
+                                      className="dx-btn dx-ghost dx-full text-xs text-muted hover:text-ink flex items-center justify-center gap-1.5"
+                                      onClick={() => {
+                                        const nextEdits = { ...edits[picked.id] };
+                                        delete nextEdits.value;
+                                        delete nextEdits.alt;
+                                        change(picked.id, nextEdits, { commit: true });
+                                        showQuickToast("Reverted image to original from page source");
+                                        setPreviewToken((token) => token + 1);
+                                      }}
+                                    >
+                                      <IconRefresh size={13} />
+                                      <span>Revert to original image</span>
+                                    </button>
+                                  )}
                                 </>
                               )}
                               <div className="dx-f">
