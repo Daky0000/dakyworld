@@ -30,8 +30,18 @@ async function referencedAssets(site: Pick<Site, "id" | "publicUrl">, html: stri
   return assets.filter((asset) => {
     const hosted = assetUrl(site, asset.repoPath);
     const webPath = asset.repoPath.replace(/^(?:public|static)\//, "");
+    const webHosted = assetUrl(site, webPath);
+    let absHosted = "";
+    let absWebHosted = "";
+    try {
+      absHosted = new URL(hosted, site.publicUrl).href;
+      absWebHosted = new URL(webHosted, site.publicUrl).href;
+    } catch {}
     return (
       html.includes(hosted) ||
+      html.includes(webHosted) ||
+      (absHosted && html.includes(absHosted)) ||
+      (absWebHosted && html.includes(absWebHosted)) ||
       html.includes(asset.repoPath) ||
       html.includes(`/${asset.repoPath}`) ||
       html.includes(`./${asset.repoPath}`) ||
@@ -89,12 +99,29 @@ export async function embedWebsiteAssets(site: Site, html: string): Promise<stri
         : `/api/website/sites/${site.id}/assets/${asset.id}/content`;
 
     const hosted = assetUrl(site, asset.repoPath);
+    const webPath = asset.repoPath.replace(/^(?:public|static)\//, "");
+    const webHosted = assetUrl(site, webPath);
+    let absHosted = "";
+    let absWebHosted = "";
+    try {
+      absHosted = new URL(hosted, site.publicUrl).href;
+      absWebHosted = new URL(webHosted, site.publicUrl).href;
+    } catch {}
+
     if (out.includes(hosted)) {
       out = out.split(hosted).join(replacement);
     }
+    if (webHosted !== hosted && out.includes(webHosted)) {
+      out = out.split(webHosted).join(replacement);
+    }
+    if (absHosted && out.includes(absHosted)) {
+      out = out.split(absHosted).join(replacement);
+    }
+    if (absWebHosted && out.includes(absWebHosted)) {
+      out = out.split(absWebHosted).join(replacement);
+    }
 
     // Also match relative attributes and CSS url references
-    const webPath = asset.repoPath.replace(/^(?:public|static)\//, "");
     const variants = [
       `"${asset.repoPath}"`,
       `'${asset.repoPath}'`,

@@ -39,6 +39,22 @@ export type PreviewMediaItem = {
   byteSize?: number;
 };
 
+export function getRawAssetFallbackUrl(siteId: string, url: string): string {
+  if (!url || !siteId) return "";
+  let p = url.trim().replace(/^['"]|['"]$/g, "");
+  try {
+    if (/^[a-z]+:\/\//i.test(p)) {
+      p = new URL(p).pathname;
+    }
+  } catch {}
+  p = p.split("?")[0].split("#")[0].replace(/^\/+|\/+$/g, "");
+  try { p = decodeURIComponent(p); } catch {}
+  const segments = p.split("/").filter(Boolean);
+  const mediaIndex = segments.findIndex((s) => /^(?:images|img|assets|media|photos|pictures|uploads)$/i.test(s));
+  const cleanPath = mediaIndex >= 0 ? segments.slice(mediaIndex).join("/") : segments.filter((s) => !/^(?:public|static)$/i.test(s)).join("/");
+  return `/api/website/sites/${siteId}/raw/${cleanPath}`;
+}
+
 export function SafeImage({
   src,
   fallbackSrc,
@@ -101,9 +117,18 @@ export function WebsiteMediaPreviewModal({
 }) {
   const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null);
   const displayTitle = item.filename || item.alt || item.url.split("/").pop()?.split("?")[0] || "Image Preview";
-  const cleanUrlPath = item.url.replace(/^\/+/, "").replace(/\?.*$/, "");
-  const rawFallback = `/api/website/sites/${siteId}/raw/${cleanUrlPath}`;
-  const primarySrc = item.preview || item.url;
+  const rawFallback = getRawAssetFallbackUrl(siteId, item.url);
+  const isLocalOrData = (src?: string) => Boolean(src && (/^\/api\//i.test(src) || src.startsWith("data:") || src.startsWith("blob:")));
+  const primarySrc = item.assetId
+    ? `/api/website/sites/${siteId}/assets/${item.assetId}/content`
+    : isLocalOrData(item.preview)
+    ? item.preview!
+    : (item.preview || rawFallback || item.url);
+  const [activeSrc, setActiveSrc] = useState(primarySrc);
+
+  useEffect(() => {
+    setActiveSrc(primarySrc);
+  }, [primarySrc]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -154,15 +179,15 @@ export function WebsiteMediaPreviewModal({
         {/* Image Display */}
         <div className="relative flex min-h-[300px] max-h-[64vh] flex-1 items-center justify-center bg-sunken/40 p-4 overflow-auto">
           <img
-            src={primarySrc}
+            src={activeSrc}
             alt={item.alt || displayTitle}
             onLoad={(e) => {
               const target = e.currentTarget;
               setDimensions({ width: target.naturalWidth, height: target.naturalHeight });
             }}
-            onError={(e) => {
-              if (e.currentTarget.src !== rawFallback && !item.url.startsWith("http")) {
-                e.currentTarget.src = rawFallback;
+            onError={() => {
+              if (activeSrc !== rawFallback && rawFallback) {
+                setActiveSrc(rawFallback);
               }
             }}
             className="max-h-[60vh] max-w-full rounded-lg object-contain shadow-md"
@@ -191,7 +216,7 @@ export function WebsiteMediaPreviewModal({
 
           <div className="flex items-center gap-2 shrink-0">
             <a
-              href={primarySrc}
+              href={activeSrc}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 rounded-xl border border-line px-3 py-1.5 text-xs font-semibold text-muted hover:bg-sunken hover:text-ink transition"
@@ -753,9 +778,9 @@ export function WebsiteAssetLibrary({
           <div className="grid grid-cols-2 gap-3">
             {capturedImages.map((img, idx) => {
               const name = img.alt || img.url.split("/").pop()?.split("?")[0] || `Image ${idx + 1}`;
-              const cleanUrlPath = img.url.replace(/^\/+/, "").replace(/\?.*$/, "");
-              const rawFallback = `/api/website/sites/${siteId}/raw/${cleanUrlPath}`;
-              const primarySrc = img.preview || img.url;
+              const rawFallback = getRawAssetFallbackUrl(siteId, img.url);
+              const isApiPreview = Boolean(img.preview && (/^\/api\//i.test(img.preview) || img.preview.startsWith("data:")));
+              const primarySrc = isApiPreview ? img.preview! : (img.preview || rawFallback || img.url);
 
               return (
                 <div

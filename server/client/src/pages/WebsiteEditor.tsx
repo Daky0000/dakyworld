@@ -565,14 +565,16 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
   const selectedMedia = useRef(new Map<string, WebsiteMediaAsset>());
   const resolveImagePreview = useCallback((value: string) => websiteMediaPreviewUrl(value, {
     pageUrl: page.data?.page.url ?? (typeof window !== "undefined" ? window.location.href : ""),
+    siteUrl: page.data?.site?.publicUrl,
     editorUrl: typeof window !== "undefined" ? window.location.href : "",
     assets: [...selectedMedia.current.values(), ...(mediaAssets.data ?? [])],
-  }), [page.data?.page.url, mediaAssets.data]);
+  }), [page.data?.page.url, page.data?.site?.publicUrl, mediaAssets.data]);
   const resolveImageSource = useCallback((value: string) => websiteMediaSourceUrl(value, {
     pageUrl: page.data?.page.url ?? (typeof window !== "undefined" ? window.location.href : ""),
+    siteUrl: page.data?.site?.publicUrl,
     editorUrl: typeof window !== "undefined" ? window.location.href : "",
     assets: [...selectedMedia.current.values(), ...(mediaAssets.data ?? [])],
-  }), [page.data?.page.url, mediaAssets.data]);
+  }), [page.data?.page.url, page.data?.site?.publicUrl, mediaAssets.data]);
   const previewStyle = useCallback((value: string) => rewriteWebsiteMediaStyle(value, resolveImagePreview), [resolveImagePreview]);
 
   const access = useWebsiteAccess(page.data?.site.id);
@@ -1853,7 +1855,8 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       doc.querySelectorAll<HTMLImageElement>("img[src]").forEach((imgEl) => {
         const rawSrc = imgEl.getAttribute("src") || imgEl.src;
         const liveSrc = imgEl.currentSrc || imgEl.src;
-        const previewUrl = liveSrc && (liveSrc.startsWith("data:") || liveSrc.startsWith("blob:") || liveSrc.startsWith("http")) ? liveSrc : undefined;
+        const hasLoaded = imgEl.complete && imgEl.naturalWidth > 0;
+        const previewUrl = liveSrc && (liveSrc.startsWith("data:") || liveSrc.startsWith("blob:") || hasLoaded) ? liveSrc : undefined;
         pushImg(rawSrc, imgEl.getAttribute("alt") || "", "HTML <img>", previewUrl);
       });
 
@@ -1923,9 +1926,15 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     const add = (rawUrl: string, alt: string, source: string, previewUrl?: string) => {
       const url = resolveUrl(rawUrl);
       if (!url) return;
+      const calculatedPreview = resolveImagePreview(url);
+      const isCalculatedLocal = calculatedPreview && (/^\/api\//i.test(calculatedPreview) || calculatedPreview.startsWith("data:"));
+      const chosenPreview = isCalculatedLocal ? calculatedPreview : (previewUrl ?? calculatedPreview);
+
       const existing = list.find((item) => matchesWebsiteMediaUrl(item.url, url));
       if (existing) {
-        if (previewUrl && (!existing.preview || existing.preview === existing.url || existing.preview.includes("mock-site"))) {
+        if (isCalculatedLocal) {
+          existing.preview = calculatedPreview;
+        } else if (previewUrl && (!existing.preview || existing.preview === existing.url || existing.preview.includes("mock-site"))) {
           existing.preview = previewUrl;
         }
         return;
@@ -1934,7 +1943,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       list.push({
         url,
         alt: alt || url.split("/").pop()?.split("?")[0] || "Page Image",
-        preview: previewUrl ?? resolveImagePreview(url),
+        preview: chosenPreview,
         source,
       });
     };

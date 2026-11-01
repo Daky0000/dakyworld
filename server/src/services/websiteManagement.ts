@@ -13,7 +13,7 @@ import { optimizeImageBuffer } from "../lib/imageOptimization.js";
 import { looksLikeSvg, SvgRejected, SVG_CONTENT_SECURITY_POLICY } from "../lib/svgSanitize.js";
 import { assetUrl, embedWebsiteAssets, pagesUsingAsset, storedObjectStillNeeded, unpublishedUsesOf } from "./websiteAssets.js";
 import { listPage } from "../lib/pagination.js";
-import { isR2Configured, uploadToR2, deleteFromR2, getR2PublicUrl, getR2Client } from "../lib/r2.js";
+import { isR2Configured, uploadToR2, deleteFromR2, downloadFromR2, getR2PublicUrl, getR2Client } from "../lib/r2.js";
 import { PART_BYTES, partCount, partLength, readTicket, signTicket, type VideoUploadTicket } from "./websiteVideoUpload.js";
 import { runPublishGuardChecks } from "./websitePublishGuard.js";
 import { runVisualRegression } from "./websiteVisualRegression.js";
@@ -159,21 +159,65 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     const rawPath = (req.params as Record<string, string>)[0];
     if (!rawPath) throw new WebsiteError(400, "Missing asset path.");
     const cleanPath = rawPath.replace(/^\/+/, "");
+    const siteSubpath = (() => {
+      try {
+        return new URL(site.publicUrl).pathname.replace(/^\/+|\/+$/g, "");
+      } catch {
+        return "";
+      }
+    })();
+    const subpathStripped = siteSubpath && cleanPath.startsWith(`${siteSubpath}/`)
+      ? cleanPath.slice(siteSubpath.length + 1)
+      : cleanPath;
+
+    const candidatePaths = new Set<string>([
+      cleanPath,
+      `public/${cleanPath}`,
+      `static/${cleanPath}`,
+      `assets/${cleanPath}`,
+      subpathStripped,
+      `public/${subpathStripped}`,
+      `static/${subpathStripped}`,
+      `assets/${subpathStripped}`,
+    ]);
+
     const asset = await prisma.siteAsset.findFirst({
       where: {
         siteId: site.id,
-        repoPath: {
-          in: [cleanPath, `public/${cleanPath}`, `static/${cleanPath}`, `assets/${cleanPath}`],
-        },
+        OR: [
+          { repoPath: { in: Array.from(candidatePaths) } },
+          { repoPath: { endsWith: subpathStripped } },
+          { filename: subpathStripped.split("/").pop() || "" },
+        ],
       },
+      orderBy: { createdAt: "desc" },
     });
-    if (!asset || !asset.content) {
+    if (!asset) {
       throw new WebsiteError(404, `Asset '${rawPath}' not found on this site.`);
     }
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("Cache-Control", "private, no-store");
-    if (asset.contentType === "image/svg+xml") res.setHeader("Content-Security-Policy", SVG_CONTENT_SECURITY_POLICY);
-    res.type(asset.contentType).send(asset.content);
+
+    if (asset.content) {
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Cache-Control", "private, no-store");
+      if (asset.contentType === "image/svg+xml") res.setHeader("Content-Security-Policy", SVG_CONTENT_SECURITY_POLICY);
+      res.type(asset.contentType).send(asset.content);
+      return;
+    }
+
+    if (isR2Configured()) {
+      const buffer = await downloadFromR2(asset.repoPath).catch(() => null);
+      if (buffer) {
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        res.setHeader("Cache-Control", "private, no-store");
+        if (asset.contentType === "image/svg+xml") res.setHeader("Content-Security-Policy", SVG_CONTENT_SECURITY_POLICY);
+        res.type(asset.contentType).send(buffer);
+        return;
+      }
+      res.redirect(getR2PublicUrl(asset.repoPath));
+      return;
+    }
+
+    throw new WebsiteError(404, `Asset content for '${rawPath}' not available.`);
   }));
   /**
    * A video up to 1 GB, in pieces (`websiteVideoUpload.ts` says why). Start

@@ -3,11 +3,27 @@ export type WebsiteMediaAsset = { url: string; preview: string };
 export type WebsiteMediaContext = {
   pageUrl: string;
   editorUrl: string;
+  siteUrl?: string;
   assets: readonly WebsiteMediaAsset[];
 };
 
 function absoluteUrl(value: string, base: string): string {
   try { return new URL(value, base).href; } catch { return value; }
+}
+
+function extractComparableSegments(value: string): string[] {
+  if (!value) return [];
+  let p = value.trim().replace(/^['"]|['"]$/g, "");
+  try {
+    if (/^[a-z]+:\/\//i.test(p)) {
+      p = new URL(p).pathname;
+    }
+  } catch {}
+  p = p.split("?")[0].split("#")[0];
+  try { p = decodeURIComponent(p); } catch {}
+  const segments = p.split("/").filter(Boolean);
+  // Filter out build/package container folders wherever they occur
+  return segments.filter((s) => !/^(?:public|static|dist|out)$/i.test(s));
 }
 
 /** Keep publish paths in drafts, but load unpublished uploads from the editor. */
@@ -23,7 +39,8 @@ export function websiteMediaPreviewUrl(value: string, context: WebsiteMediaConte
   const rawHost = getHost(raw);
   const pageHost = getHost(context.pageUrl);
   const editorHost = getHost(context.editorUrl);
-  const isForeignHost = rawHost && rawHost !== pageHost && rawHost !== editorHost;
+  const siteHost = context.siteUrl ? getHost(context.siteUrl) : null;
+  const isForeignHost = rawHost && rawHost !== pageHost && rawHost !== editorHost && rawHost !== siteHost;
 
   if (!isForeignHost) {
     const asset = context.assets.find(
@@ -50,7 +67,8 @@ export function websiteMediaSourceUrl(value: string, context: WebsiteMediaContex
   const valHost = getHost(value);
   const pageHost = getHost(context.pageUrl);
   const editorHost = getHost(context.editorUrl);
-  const isForeignHost = valHost && valHost !== pageHost && valHost !== editorHost;
+  const siteHost = context.siteUrl ? getHost(context.siteUrl) : null;
+  const isForeignHost = valHost && valHost !== pageHost && valHost !== editorHost && valHost !== siteHost;
 
   if (isForeignHost) return value;
 
@@ -84,6 +102,7 @@ export function rewriteWebsiteMediaStyle(style: string, resolveUrl: (value: stri
  * - Quotes and spaces
  * - Root-relative vs relative paths (e.g. "/images/hero.jpg" vs "images/hero.jpg")
  * - Framework container prefixes ("public/images/hero.jpg" vs "images/hero.jpg" or "/images/hero.jpg")
+ * - Subpath deployment prefixes ("/africon-app/public/images/hero.jpg" vs "images/hero.jpg")
  * - Editor preview API paths (/api/website/sites/.../assets/.../content)
  */
 export function matchesWebsiteMediaUrl(candidate: string, target: string, previewUrl?: string): boolean {
@@ -97,25 +116,28 @@ export function matchesWebsiteMediaUrl(candidate: string, target: string, previe
     if (c === p || c.includes(p) || p.includes(c)) return true;
   }
 
-  const getPath = (u: string) => {
-    try {
-      if (/^[a-z]+:\/\//i.test(u)) return new URL(u).pathname;
-    } catch {}
-    return u.split("?")[0].split("#")[0];
-  };
+  const cSegs = extractComparableSegments(c);
+  const tSegs = extractComparableSegments(t);
+  if (!cSegs.length || !tSegs.length) return false;
 
-  const cPath = getPath(c).replace(/^\/+/, "");
-  const tPath = getPath(t).replace(/^\/+/, "");
-  if (cPath && tPath && cPath === tPath) return true;
+  const cFile = cSegs[cSegs.length - 1]!.toLowerCase();
+  const tFile = tSegs[tSegs.length - 1]!.toLowerCase();
+  if (cFile !== tFile) return false;
 
-  const stripContainer = (p: string) => p.replace(/^(?:public|static|assets)\//, "");
-  if (cPath && tPath && stripContainer(cPath) === stripContainer(tPath)) return true;
+  // Single segment matches (e.g. filename only)
+  if (cSegs.length === 1 || tSegs.length === 1) return true;
 
-  const cFile = cPath.split("/").pop();
-  const tFile = tPath.split("/").pop();
-  if (cFile && tFile && cFile === tFile) {
-    if (cPath.endsWith(tPath) || tPath.endsWith(cPath)) return true;
-    if (stripContainer(cPath).endsWith(stripContainer(tPath)) || stripContainer(tPath).endsWith(stripContainer(cPath))) return true;
+  // If one segment list ends with the other (e.g. [africon-app, images, hero, photo.jpg] ends with [images, hero, photo.jpg])
+  const cStr = cSegs.map((s) => s.toLowerCase()).join("/");
+  const tStr = tSegs.map((s) => s.toLowerCase()).join("/");
+  if (cStr === tStr) return true;
+  if (cStr.endsWith(`/${tStr}`) || tStr.endsWith(`/${cStr}`)) return true;
+
+  // Also match if both end with the same directory + filename (e.g. hero/photo.jpg)
+  if (cSegs.length >= 2 && tSegs.length >= 2) {
+    const cTail = `${cSegs[cSegs.length - 2]!.toLowerCase()}/${cFile}`;
+    const tTail = `${tSegs[tSegs.length - 2]!.toLowerCase()}/${tFile}`;
+    if (cTail === tTail) return true;
   }
 
   return false;
