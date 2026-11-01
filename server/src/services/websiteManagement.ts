@@ -131,7 +131,11 @@ export function registerWebsiteManagement(router: Router, access: Access) {
   router.get("/sites/:siteId/assets", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);
     const assets = await prisma.siteAsset.findMany({ where: { siteId: site.id }, orderBy: { createdAt: "desc" }, select: { id: true, filename: true, repoPath: true, alt: true, contentType: true, createdAt: true } });
-    res.json(assets.map(asset => ({ ...asset, url: assetUrl(site, asset.repoPath), preview: `/api/website/sites/${site.id}/assets/${asset.id}/content` })));
+    res.json(assets.map(asset => ({
+      ...asset,
+      url: isR2Configured() ? getR2PublicUrl(asset.repoPath) : assetUrl(site, asset.repoPath),
+      preview: isR2Configured() ? getR2PublicUrl(asset.repoPath) : `/api/website/sites/${site.id}/assets/${asset.id}/content`,
+    })));
   }));
   router.get("/sites/:siteId/assets/:assetId/content", handler(async (req, res) => {
     const site = await access.loadSite(req, req.params.siteId);

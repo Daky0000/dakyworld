@@ -19,6 +19,7 @@ import { WebsiteError } from "./website/site.js";
 import { parseHtml, walk, attr, type ElementNode } from "./website/parse.js";
 import { discoverFields } from "./website/index.js";
 import { assetUrl } from "./websiteAssets.js";
+import { isR2Configured, getR2PublicUrl, uploadToR2 } from "../lib/r2.js";
 import {
   assertImportAllowance,
   assertMediaStorageAllowance,
@@ -778,7 +779,7 @@ export function rewritePageAssetReferences(
   const pageDir = path.dirname(pageFilePath).replace(/\\/g, "/");
 
   for (const asset of knownAssets) {
-    const hosted = assetUrl(site, asset.repoPath);
+    const hosted = isR2Configured() ? getR2PublicUrl(asset.repoPath) : assetUrl(site, asset.repoPath);
 
     // Matches relative references to this asset
     const exactPath = asset.repoPath;
@@ -857,6 +858,20 @@ export async function commitPackageToSite(input: {
       rewrittenHtml,
     };
   });
+
+  // Upload assets to Cloudflare R2 if configured
+  if (isR2Configured()) {
+    for (const asset of analysis.assets) {
+      if (asset.content) {
+        await uploadToR2(asset.content, {
+          mimeType: asset.contentType,
+          key: asset.repoPath,
+        }).catch((err) => {
+          console.warn(`[packageImport] Failed to upload ${asset.repoPath} to Cloudflare R2:`, err);
+        });
+      }
+    }
+  }
 
   // Database transaction: persist pages and assets
   const { createdPages, createdAssets } = await prisma.$transaction(async (tx) => {
