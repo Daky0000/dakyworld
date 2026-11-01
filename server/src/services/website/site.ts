@@ -1057,7 +1057,7 @@ export function previewDocument(html: string, baseUrl: string, editable?: SiteFi
   const interactionHead = [...walk(parseHtml(out))].find(node => node.tag === "head");
   const interactionAt = interactionHead?.innerEnd ?? out.length;
   const antiFoucCss = "html.w-mod-js:not(.w-mod-ix3),html.w-mod-js:not(.w-mod-ix3) *,html.w-mod-js:not(.w-mod-ix3) :is(*, .h1, .h2, .h3, .h4, .h5, .h6, p, section, .nav__component){visibility: visible !important;}";
-  out = out.slice(0, interactionAt) + (builtCss ? `<style data-dw-built-css>${builtCss}</style>` : "") + `<style data-dw-interaction-preview>${interactionCss(true)}</style>` + `<style data-dw-preview-fouc>${antiFoucCss}</style>` + out.slice(interactionAt);
+  out = out.slice(0, interactionAt) + (builtCss ? `<style data-dw-built-css>${builtCss}</style>` : "") + `<style data-dw-interaction-preview>${interactionCss(true)}</style>` + `<style data-dw-preview-fouc>${antiFoucCss}</style><script data-dw-preview-fouc>if(typeof document!=="undefined"&&document.documentElement)document.documentElement.classList.add("w-mod-ix3");</script>` + out.slice(interactionAt);
   if (!editing) return { html: out, csp: ISOLATED_PREVIEW_POLICY, isolated: true };
   const nonce = randomBytes(16).toString("base64");
   // Parsed closing offsets avoid matching a fake </body> inside a script/string.

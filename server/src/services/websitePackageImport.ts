@@ -885,6 +885,17 @@ export function rewritePageAssetReferences(
     }
   }
 
+  // Neutralize Webflow FOUC lockup if present so subsequent sections remain visible outside Webflow
+  if (updated.includes("w-mod-ix3") && !updated.includes("data-dw-wmod-heal")) {
+    const healScript = '<script data-dw-wmod-heal>if(typeof document!=="undefined"&&document.documentElement)document.documentElement.classList.add("w-mod-ix3");</script>';
+    const headClose = updated.indexOf("</head>");
+    if (headClose !== -1) {
+      updated = updated.slice(0, headClose) + healScript + updated.slice(headClose);
+    } else {
+      updated = healScript + updated;
+    }
+  }
+
   return updated;
 }
 
