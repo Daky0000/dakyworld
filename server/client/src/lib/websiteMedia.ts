@@ -15,8 +15,26 @@ export function websiteMediaPreviewUrl(value: string, context: WebsiteMediaConte
   const raw = value.trim();
   if (!raw) return "";
   const source = absoluteUrl(raw, context.pageUrl);
-  const asset = context.assets.find(candidate => candidate.url === raw || absoluteUrl(candidate.url, context.pageUrl) === source);
-  if (asset) return absoluteUrl(asset.preview, context.editorUrl);
+
+  const getHost = (u: string) => {
+    try { if (/^[a-z]+:\/\//i.test(u)) return new URL(u).host; } catch {}
+    return null;
+  };
+  const rawHost = getHost(raw);
+  const pageHost = getHost(context.pageUrl);
+  const editorHost = getHost(context.editorUrl);
+  const isForeignHost = rawHost && rawHost !== pageHost && rawHost !== editorHost;
+
+  if (!isForeignHost) {
+    const asset = context.assets.find(
+      candidate =>
+        candidate.url === raw ||
+        absoluteUrl(candidate.url, context.pageUrl) === source ||
+        matchesWebsiteMediaUrl(candidate.url, raw) ||
+        (candidate.preview && matchesWebsiteMediaUrl(candidate.preview, raw))
+    );
+    if (asset) return absoluteUrl(asset.preview, context.editorUrl);
+  }
   // The preview document has the published site's <base>, so API paths and local demo/dw assets must
   // explicitly retain the editor origin even when written into that document.
   const preferEditor = /^\/(?:api|demos|assets)\//i.test(raw);
@@ -25,8 +43,27 @@ export function websiteMediaPreviewUrl(value: string, context: WebsiteMediaConte
 
 /** Recover the publish path from a captured preview or absolute site URL. */
 export function websiteMediaSourceUrl(value: string, context: WebsiteMediaContext): string {
+  const getHost = (u: string) => {
+    try { if (/^[a-z]+:\/\//i.test(u)) return new URL(u).host; } catch {}
+    return null;
+  };
+  const valHost = getHost(value);
+  const pageHost = getHost(context.pageUrl);
+  const editorHost = getHost(context.editorUrl);
+  const isForeignHost = valHost && valHost !== pageHost && valHost !== editorHost;
+
+  if (isForeignHost) return value;
+
   const source = absoluteUrl(value, /^\/api\//i.test(value) ? context.editorUrl : context.pageUrl);
-  return context.assets.find(asset => absoluteUrl(asset.preview, context.editorUrl) === source || absoluteUrl(asset.url, context.pageUrl) === source)?.url ?? value;
+  return (
+    context.assets.find(
+      asset =>
+        absoluteUrl(asset.preview, context.editorUrl) === source ||
+        absoluteUrl(asset.url, context.pageUrl) === source ||
+        matchesWebsiteMediaUrl(asset.url, value) ||
+        (asset.preview && matchesWebsiteMediaUrl(asset.preview, value))
+    )?.url ?? value
+  );
 }
 
 /** Rewrite only URL tokens; saved CSS and all other declarations stay intact. */

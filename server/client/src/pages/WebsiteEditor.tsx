@@ -1851,7 +1851,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       };
 
       doc.querySelectorAll<HTMLImageElement>("img[src]").forEach((imgEl) => {
-        pushImg(imgEl.getAttribute("src") || imgEl.src, imgEl.getAttribute("alt") || "", "HTML <img>");
+        const rawSrc = imgEl.getAttribute("src") || imgEl.src;
+        const liveSrc = imgEl.currentSrc || imgEl.src;
+        const previewUrl = liveSrc && (liveSrc.startsWith("data:") || liveSrc.startsWith("blob:") || liveSrc.startsWith("http")) ? liveSrc : undefined;
+        pushImg(rawSrc, imgEl.getAttribute("alt") || "", "HTML <img>", previewUrl);
       });
 
       doc.querySelectorAll<SVGElement>("svg").forEach((svgEl, idx) => {
@@ -1919,7 +1922,14 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     const seen = new Set<string>();
     const add = (rawUrl: string, alt: string, source: string, previewUrl?: string) => {
       const url = resolveUrl(rawUrl);
-      if (!url || seen.has(url)) return;
+      if (!url) return;
+      const existing = list.find((item) => matchesWebsiteMediaUrl(item.url, url));
+      if (existing) {
+        if (previewUrl && (!existing.preview || existing.preview === existing.url || existing.preview.includes("mock-site"))) {
+          existing.preview = previewUrl;
+        }
+        return;
+      }
       seen.add(url);
       list.push({
         url,

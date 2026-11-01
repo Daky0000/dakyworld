@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { SiteSummary } from "../lib/types";
 import { Button, PageHeader } from "./ui";
 import { useWebsiteAccess } from "./WebsiteMembers";
 import { WebsiteTierStatusBanner, notifyTierStatusChanged, useWebsiteTierStatus } from "./WebsiteTierStatusBanner";
-import { IconCheck, IconUploadCloud, IconXCircle } from "./WebsiteIcons";
+import { IconCheck, IconExternalLink, IconEye, IconImage, IconUploadCloud, IconXCircle } from "./WebsiteIcons";
 
 export type CapturedHtmlImage = {
   url: string;
@@ -28,6 +28,206 @@ export type ReplaceTarget = {
   assetId?: string;
   filename?: string;
 };
+
+export type PreviewMediaItem = {
+  url: string;
+  preview?: string;
+  alt?: string;
+  source?: string;
+  assetId?: string;
+  filename?: string;
+  byteSize?: number;
+};
+
+export function SafeImage({
+  src,
+  fallbackSrc,
+  alt,
+  className,
+}: {
+  src: string;
+  fallbackSrc?: string;
+  alt?: string;
+  className?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const [triedFallback, setTriedFallback] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+    setTriedFallback(false);
+  }, [src, fallbackSrc]);
+
+  if (failed) {
+    return (
+      <div className={`flex flex-col items-center justify-center bg-sunken/80 text-muted p-2 text-center select-none ${className || "h-full w-full"}`}>
+        <IconImage size={24} className="mb-1 opacity-40" />
+        <span className="line-clamp-2 text-[10px] leading-tight font-medium opacity-75">{alt || "Image preview unavailable"}</span>
+      </div>
+    );
+  }
+
+  const activeSrc = triedFallback && fallbackSrc ? fallbackSrc : src;
+
+  return (
+    <img
+      src={activeSrc}
+      alt={alt || ""}
+      loading="lazy"
+      className={className}
+      onError={() => {
+        if (!triedFallback && fallbackSrc && fallbackSrc !== src) {
+          setTriedFallback(true);
+        } else {
+          setFailed(true);
+        }
+      }}
+    />
+  );
+}
+
+export function WebsiteMediaPreviewModal({
+  item,
+  siteId,
+  onClose,
+  onReplace,
+  onSelect,
+}: {
+  item: PreviewMediaItem;
+  siteId: string;
+  onClose: () => void;
+  onReplace?: () => void;
+  onSelect?: (selection: WebsiteAssetSelection) => void;
+}) {
+  const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null);
+  const displayTitle = item.filename || item.alt || item.url.split("/").pop()?.split("?")[0] || "Image Preview";
+  const cleanUrlPath = item.url.replace(/^\/+/, "").replace(/\?.*$/, "");
+  const rawFallback = `/api/website/sites/${siteId}/raw/${cleanUrlPath}`;
+  const primarySrc = item.preview || item.url;
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Image Preview"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/75 p-4 backdrop-blur-xs transition-opacity"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="flex max-h-[92vh] w-full max-w-4xl flex-col rounded-2xl border border-line bg-white shadow-2xl overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-line px-5 py-3.5 bg-white">
+          <div className="min-w-0 pr-4">
+            <div className="flex items-center gap-2">
+              <h2 className="truncate font-display text-base font-semibold text-ink" title={displayTitle}>
+                {displayTitle}
+              </h2>
+              {item.source && (
+                <span className="shrink-0 rounded bg-sunken px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted border border-line">
+                  {item.source}
+                </span>
+              )}
+            </div>
+            <p className="truncate text-xs font-mono text-muted mt-0.5" title={item.url}>
+              {item.url}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] text-muted hover:bg-sunken hover:text-ink transition"
+            aria-label="Close"
+          >
+            <IconXCircle size={20} />
+          </button>
+        </div>
+
+        {/* Image Display */}
+        <div className="relative flex min-h-[300px] max-h-[64vh] flex-1 items-center justify-center bg-sunken/40 p-4 overflow-auto">
+          <img
+            src={primarySrc}
+            alt={item.alt || displayTitle}
+            onLoad={(e) => {
+              const target = e.currentTarget;
+              setDimensions({ width: target.naturalWidth, height: target.naturalHeight });
+            }}
+            onError={(e) => {
+              if (e.currentTarget.src !== rawFallback && !item.url.startsWith("http")) {
+                e.currentTarget.src = rawFallback;
+              }
+            }}
+            className="max-h-[60vh] max-w-full rounded-lg object-contain shadow-md"
+          />
+        </div>
+
+        {/* Footer info & actions */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3.5 bg-white">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+            {dimensions && (
+              <span>
+                Dimensions: <strong className="text-ink">{dimensions.width} × {dimensions.height} px</strong>
+              </span>
+            )}
+            {item.alt && (
+              <span className="truncate max-w-xs" title={item.alt}>
+                Alt: <span className="text-ink">"{item.alt}"</span>
+              </span>
+            )}
+            {typeof item.byteSize === "number" && (
+              <span>
+                Size: <strong className="text-ink">{(item.byteSize / 1024).toFixed(0)} KB</strong>
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <a
+              href={primarySrc}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-xl border border-line px-3 py-1.5 text-xs font-semibold text-muted hover:bg-sunken hover:text-ink transition"
+            >
+              <IconExternalLink size={13} />
+              Open Original
+            </a>
+            {onSelect && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  onSelect({ url: item.url, alt: item.alt || displayTitle, preview: item.preview });
+                  onClose();
+                }}
+              >
+                Use Image
+              </Button>
+            )}
+            {onReplace && (
+              <Button
+                size="sm"
+                onClick={() => {
+                  onClose();
+                  onReplace();
+                }}
+              >
+                Replace Image
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function WebsiteMediaReplaceModal({
   siteId,
@@ -194,8 +394,9 @@ export function WebsiteMediaReplaceModal({
         <div className="flex-1 space-y-4 overflow-y-auto p-5">
           <div className="flex items-center gap-3 rounded-xl border border-line bg-sunken p-3">
             <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-line bg-white">
-              <img
+              <SafeImage
                 src={target.preview || target.url}
+                fallbackSrc={`/api/website/sites/${siteId}/raw/${target.url.replace(/^\/+/, "").replace(/\?.*$/, "")}`}
                 alt={target.alt || "Current image"}
                 className="h-full w-full object-cover"
               />
@@ -284,7 +485,7 @@ export function WebsiteMediaReplaceModal({
                     }`}
                   >
                     <div className="h-20 w-full bg-sunken overflow-hidden">
-                      <img src={asset.preview} alt={asset.alt} className="h-full w-full object-cover" />
+                      <SafeImage src={asset.preview} alt={asset.alt} className="h-full w-full object-cover" />
                     </div>
                     <div className="p-1.5">
                       <p className="truncate text-[10px] font-medium text-ink" title={asset.filename}>{asset.filename}</p>
@@ -351,6 +552,7 @@ export function WebsiteAssetLibrary({
   const [candidate, setCandidate] = useState<{ url: string; alt: string; preview: string } | null>(null);
   const [replacingTarget, setReplacingTarget] = useState<CapturedHtmlImage | null>(null);
   const [replacingAsset, setReplacingAsset] = useState<Asset | null>(null);
+  const [previewingMedia, setPreviewingMedia] = useState<PreviewMediaItem | null>(null);
   const [uploadKey, setUploadKey] = useState(0);
   const [previewFailed, setPreviewFailed] = useState(false);
   const [alt, setAlt] = useState("");
@@ -548,9 +750,13 @@ export function WebsiteAssetLibrary({
               Images & CSS background images automatically captured from this HTML page:
             </p>
           </div>
-          <div className="grid grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-2 gap-3">
             {capturedImages.map((img, idx) => {
               const name = img.alt || img.url.split("/").pop()?.split("?")[0] || `Image ${idx + 1}`;
+              const cleanUrlPath = img.url.replace(/^\/+/, "").replace(/\?.*$/, "");
+              const rawFallback = `/api/website/sites/${siteId}/raw/${cleanUrlPath}`;
+              const primarySrc = img.preview || img.url;
+
               return (
                 <div
                   key={`${img.url}-${idx}`}
@@ -559,18 +765,21 @@ export function WebsiteAssetLibrary({
                   <button
                     type="button"
                     onClick={() => {
-                      if (onSelect) {
-                        onSelect({ url: img.url, alt: img.alt, preview: img.preview });
-                      } else {
-                        setReplacingTarget(img);
-                      }
+                      setPreviewingMedia({
+                        url: img.url,
+                        preview: primarySrc,
+                        alt: img.alt,
+                        source: img.source,
+                        filename: name,
+                      });
                     }}
-                    className="relative h-28 w-full overflow-hidden bg-sunken text-left"
-                    title={`Click to select or replace ${name}`}
+                    className="relative h-32 w-full overflow-hidden bg-sunken text-left cursor-pointer"
+                    title={`Click to preview ${name}`}
                   >
-                    <img
-                      src={img.preview ?? img.url}
-                      alt={img.alt}
+                    <SafeImage
+                      src={primarySrc}
+                      fallbackSrc={rawFallback}
+                      alt={img.alt || name}
                       className="h-full w-full object-cover transition duration-200 group-hover:scale-105"
                     />
                     {img.source && (
@@ -578,15 +787,18 @@ export function WebsiteAssetLibrary({
                         {img.source}
                       </span>
                     )}
-                    <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/80 via-ink/40 to-transparent px-2 py-1.5 text-center text-[11px] font-semibold text-white opacity-0 transition group-hover:opacity-100">
-                      {onSelect ? "Use Image" : "Replace Image"}
+                    <span className="absolute inset-0 flex items-center justify-center bg-ink/35 opacity-0 transition group-hover:opacity-100">
+                      <span className="flex items-center gap-1 rounded-full bg-white/95 px-2.5 py-1 text-xs font-semibold text-ink shadow-sm backdrop-blur-xs">
+                        <IconEye size={13} />
+                        Preview
+                      </span>
                     </span>
                   </button>
-                  <div className="flex items-center justify-between gap-1 border-t border-line px-2 py-1.5">
-                    <span className="truncate text-[11px] font-medium text-ink" title={img.url}>
+                  <div className="flex flex-col gap-1.5 border-t border-line p-2">
+                    <span className="truncate text-xs font-medium text-ink" title={img.url}>
                       {name}
                     </span>
-                    <div className="flex items-center gap-1 shrink-0">
+                    <div className="flex items-center gap-1.5">
                       {access.data?.capabilities.edit && (
                         <button
                           type="button"
@@ -594,7 +806,7 @@ export function WebsiteAssetLibrary({
                             e.stopPropagation();
                             setReplacingTarget(img);
                           }}
-                          className="rounded border border-line bg-white px-1.5 py-0.5 text-[10px] font-semibold text-ink shadow-2xs hover:border-blue hover:text-blue"
+                          className="flex-1 rounded-lg border border-line bg-white px-2 py-1 text-center text-xs font-semibold text-ink shadow-2xs hover:border-blue hover:text-blue transition"
                           title="Replace this image across the page (including parallax animations and backgrounds)"
                         >
                           Replace
@@ -604,11 +816,14 @@ export function WebsiteAssetLibrary({
                         <button
                           type="button"
                           disabled={savingUrl === img.url}
-                          onClick={() => void saveCapturedToLibrary(img)}
-                          className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] font-medium text-muted hover:border-blue hover:text-blue"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void saveCapturedToLibrary(img);
+                          }}
+                          className="flex-1 rounded-lg border border-line bg-white px-2 py-1 text-center text-xs font-medium text-muted hover:border-blue hover:text-blue transition"
                           title="Save a copy into the persistent Site Library"
                         >
-                          {savingUrl === img.url ? "…" : "Save"}
+                          {savingUrl === img.url ? "Saving…" : "Save"}
                         </button>
                       )}
                     </div>
@@ -681,7 +896,7 @@ export function WebsiteAssetLibrary({
               {(deleteAsset.error as Error).message}
             </p>
           )}
-          <div className="grid grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-2 gap-3">
             {assets.data?.map((asset) => (
               <div
                 key={asset.id}
@@ -689,43 +904,50 @@ export function WebsiteAssetLibrary({
               >
                 <button
                   type="button"
-                  disabled={!onSelect || isVideo(asset)}
                   onClick={() => {
-                    if (onSelect && !isVideo(asset)) {
-                      onSelect({ url: asset.url, alt: asset.alt, preview: asset.preview });
-                    }
+                    setPreviewingMedia({
+                      url: asset.url,
+                      preview: asset.preview,
+                      alt: asset.alt,
+                      filename: asset.filename,
+                      assetId: asset.id,
+                      source: "Site Asset",
+                      byteSize: asset.byteSize,
+                    });
                   }}
-                  className="relative h-28 w-full overflow-hidden bg-sunken text-left"
-                  title={isVideo(asset) ? `${asset.filename} is a video: it plays from a video's own settings` : `Use ${asset.filename}`}
+                  className="relative h-32 w-full overflow-hidden bg-sunken text-left cursor-pointer"
+                  title={`Preview ${asset.filename}`}
                 >
                   {isVideo(asset) ? (
                     <video src={asset.preview} muted playsInline preload="metadata" aria-label={asset.filename} className="h-full w-full object-contain" />
                   ) : (
-                    <img
+                    <SafeImage
                       src={asset.preview}
-                      alt={asset.alt}
+                      fallbackSrc={`/api/website/sites/${siteId}/raw/${asset.filename}`}
+                      alt={asset.alt || asset.filename}
                       className="h-full w-full object-contain transition duration-200 group-hover:scale-105"
                     />
                   )}
-                  {onSelect && !isVideo(asset) && (
-                    <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/80 via-ink/40 to-transparent px-2 py-1.5 text-center text-[11px] font-semibold text-white opacity-0 transition group-hover:opacity-100">
-                      Use Image
+                  <span className="absolute inset-0 flex items-center justify-center bg-ink/35 opacity-0 transition group-hover:opacity-100">
+                    <span className="flex items-center gap-1 rounded-full bg-white/95 px-2.5 py-1 text-xs font-semibold text-ink shadow-sm backdrop-blur-xs">
+                      <IconEye size={13} />
+                      Preview
                     </span>
-                  )}
+                  </span>
                 </button>
-                <div className="flex items-center justify-between gap-1 border-t border-line px-2 py-1.5">
-                  <span className="truncate text-[11px] font-medium text-ink" title={asset.filename}>
+                <div className="flex flex-col gap-1.5 border-t border-line p-2">
+                  <span className="truncate text-xs font-medium text-ink" title={asset.filename}>
                     {asset.filename}
                   </span>
-                  <div className="flex items-center gap-1 shrink-0">
-                    {access.data?.capabilities.edit && (
+                  <div className="flex items-center gap-1.5">
+                    {access.data?.capabilities.edit && !isVideo(asset) && (
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           setReplacingAsset(asset);
                         }}
-                        className="rounded border border-line bg-white px-1.5 py-0.5 text-[10px] font-semibold text-ink shadow-2xs hover:border-blue hover:text-blue"
+                        className="flex-1 rounded-lg border border-line bg-white px-2 py-1 text-center text-xs font-semibold text-ink shadow-2xs hover:border-blue hover:text-blue transition"
                         title="Replace this image file with a new upload"
                       >
                         Replace
@@ -734,8 +956,11 @@ export function WebsiteAssetLibrary({
                     {access.data?.capabilities.edit && (
                       <button
                         type="button"
-                        onClick={() => deleteAsset.mutate(asset.id)}
-                        className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-muted hover:bg-danger/10 hover:text-danger-text"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteAsset.mutate(asset.id);
+                        }}
+                        className="flex-1 rounded-lg px-2 py-1 text-center text-xs font-medium text-muted hover:bg-danger/10 hover:text-danger-text transition"
                         title="Delete from Media Library and free storage"
                       >
                         Delete
@@ -748,6 +973,42 @@ export function WebsiteAssetLibrary({
           </div>
           {assets.data?.length === 0 && <p className="text-xs text-muted">Upload your first image to this website.</p>}
         </div>
+      )}
+
+      {previewingMedia && (
+        <WebsiteMediaPreviewModal
+          item={previewingMedia}
+          siteId={siteId}
+          onClose={() => setPreviewingMedia(null)}
+          onSelect={onSelect}
+          onReplace={
+            access.data?.capabilities.edit
+              ? () => {
+                  if (previewingMedia.assetId) {
+                    const matched = assets.data?.find((a) => a.id === previewingMedia.assetId);
+                    if (matched) {
+                      setReplacingAsset(matched);
+                    } else {
+                      setReplacingAsset({
+                        id: previewingMedia.assetId,
+                        url: previewingMedia.url,
+                        preview: previewingMedia.preview || previewingMedia.url,
+                        filename: previewingMedia.filename || "image",
+                        alt: previewingMedia.alt || "",
+                      });
+                    }
+                  } else {
+                    setReplacingTarget({
+                      url: previewingMedia.url,
+                      preview: previewingMedia.preview,
+                      alt: previewingMedia.alt || previewingMedia.filename || "",
+                      source: previewingMedia.source,
+                    });
+                  }
+                }
+              : undefined
+          }
+        />
       )}
 
       {replacingTarget && (
@@ -826,7 +1087,7 @@ export function WebsiteAssets() {
         {shown?.map((asset) => <article key={asset.id} className="overflow-hidden rounded-xl border border-line bg-white">
           {isVideo(asset)
             ? <video src={asset.preview} muted playsInline controls preload="metadata" aria-label={asset.filename} className="h-36 w-full bg-sunken object-contain" />
-            : <img src={asset.preview} alt={asset.alt || asset.filename} loading="lazy" className="h-36 w-full bg-sunken object-contain" />}
+            : <SafeImage src={asset.preview} fallbackSrc={`/api/website/sites/${asset.siteId}/raw/${asset.filename}`} alt={asset.alt || asset.filename} className="h-36 w-full bg-sunken object-contain" />}
           <div className="space-y-1 p-3 text-xs">
             <p className="truncate font-semibold text-ink" title={asset.filename}>{asset.filename}</p>
             <p className="truncate text-muted">{asset.siteName}</p>

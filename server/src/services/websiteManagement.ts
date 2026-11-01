@@ -158,8 +158,14 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     const site = await access.loadSite(req, req.params.siteId);
     const rawPath = (req.params as Record<string, string>)[0];
     if (!rawPath) throw new WebsiteError(400, "Missing asset path.");
+    const cleanPath = rawPath.replace(/^\/+/, "");
     const asset = await prisma.siteAsset.findFirst({
-      where: { siteId: site.id, repoPath: rawPath },
+      where: {
+        siteId: site.id,
+        repoPath: {
+          in: [cleanPath, `public/${cleanPath}`, `static/${cleanPath}`, `assets/${cleanPath}`],
+        },
+      },
     });
     if (!asset || !asset.content) {
       throw new WebsiteError(404, `Asset '${rawPath}' not found on this site.`);
