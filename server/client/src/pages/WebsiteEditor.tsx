@@ -2508,11 +2508,10 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
    * Replace a media asset across the current page (including parallax animations, CSS background containers,
    * picture sources, and <img> elements) without having to find or click the element on the canvas.
    */
-  const handleReplacePageMedia = useCallback(
-    (
-      oldImage: { url: string; preview?: string; alt?: string; source?: string },
-      newAsset: { url: string; alt?: string; preview?: string },
-    ) => {
+  const handleReplacePageMedia = (
+    oldImage: { url: string; preview?: string; alt?: string; source?: string },
+    newAsset: { url: string; alt?: string; preview?: string },
+  ) => {
       const targetUrl = oldImage.url;
       const previewUrl = oldImage.preview;
       const nextUrl = newAsset.url;
@@ -2679,9 +2678,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           ? `Replaced image across ${replacedCount} location${replacedCount === 1 ? "" : "s"} on this page`
           : "Image replaced on page",
       );
-    },
-    [allFields, frame, latestEdits, commitHistory, push, resolveImagePreview, resolveImageSource, showQuickToast],
-  );
+    };
 
   /** Versions are read against the saved draft, so the draft is saved first. */
   const openVersions = async () => {
