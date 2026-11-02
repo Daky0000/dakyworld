@@ -2,6 +2,7 @@ import express, { Router } from "express";
 import { prisma } from "../lib/prisma.js";
 import { rateLimit } from "../middleware/security.js";
 import { entitlementsFor } from "../services/entitlements.js";
+import { providerKey } from "../lib/models/registry.js";
 import {
   CODE_TTL_MS,
   authenticateClient,
@@ -148,6 +149,54 @@ partnerRouter.get("/v1/entitlements/:sub", partnerLimit, async (req, res, next) 
     if (!/^[a-z0-9]{10,40}$/i.test(sub)) return res.status(400).json({ error: "invalid_subject" });
     res.json(await entitlementsFor(sub));
   } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * The free NVIDIA models, for the Marketing SaaS. The key lives here (Settings
+ * → AI models) and never leaves: the partner sends an OpenAI-shaped chat
+ * request, this forwards it with the OS key and returns NVIDIA's answer as is.
+ * One key, one free allowance, both products on the same models.
+ */
+const NVIDIA_CHAT_URL = () => `${(process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1").replace(/\/$/, "")}/chat/completions`;
+const PROXIED_FIELDS = ["model", "messages", "max_tokens", "tools", "tool_choice", "reasoning_effort", "temperature", "top_p"] as const;
+
+partnerRouter.get("/v1/nvidia/status", partnerLimit, async (req, res, next) => {
+  try {
+    res.set("Cache-Control", "no-store");
+    if (!partnerKeyMatches(req.get("authorization"))) return res.status(401).json({ error: "invalid_token" });
+    res.json({ configured: Boolean(await providerKey("nvidia")) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+partnerRouter.post("/v1/nvidia/chat/completions", partnerLimit, express.json({ limit: "2mb" }), async (req, res, next) => {
+  try {
+    res.set("Cache-Control", "no-store");
+    if (!partnerKeyMatches(req.get("authorization"))) return res.status(401).json({ error: "invalid_token" });
+    const key = await providerKey("nvidia");
+    if (!key) return res.status(503).json({ error: { message: "Dakyworld OS has no NVIDIA key (Settings → AI models)." } });
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    if (typeof body.model !== "string" || !/^[\w./-]{3,120}$/.test(body.model) || !Array.isArray(body.messages)) {
+      return res.status(400).json({ error: { message: "model and messages are required" } });
+    }
+    const forwarded: Record<string, unknown> = {};
+    for (const field of PROXIED_FIELDS) if (body[field] !== undefined) forwarded[field] = body[field];
+    forwarded.max_tokens = Math.min(Number(forwarded.max_tokens) || 4096, 32_000);
+    const upstream = await fetch(NVIDIA_CHAT_URL(), {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify(forwarded),
+      signal: AbortSignal.timeout(90_000),
+    });
+    const text = await upstream.text();
+    // A refused OS key is the OS's problem, not the partner's credential.
+    const status = upstream.status === 401 || upstream.status === 403 ? 502 : upstream.status;
+    res.status(status).type("application/json").send(text);
+  } catch (err) {
+    if ((err as Error)?.name === "TimeoutError") return res.status(504).json({ error: { message: "NVIDIA did not answer in 90 s" } });
     next(err);
   }
 });
