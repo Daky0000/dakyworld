@@ -19,10 +19,42 @@ const CLOUDFLARE_CHALLENGE = /Cloudflare|Attention Required!|Just a moment\.\.\.
 
 const PNG_OPTIONS = { compressionLevel: 9, adaptiveFiltering: true, palette: false } as const;
 
+// libvips keeps decoded images in its own cache and runs one thread per core
+// (Railway reports 24). Neither helps a process that shoots a batch a few
+// times a day, and both stay resident between batches.
+sharp.cache(false);
+sharp.concurrency(1);
+
 let sharedBrowser: Browser | null = null;
 let activeUsers = 0;
 
+/**
+ * Chromium costs several hundred MB while it is open, and Railway bills
+ * memory by the minute. A batch reuses one browser, but once nothing has
+ * used it for this long it is closed; the next batch pays one launch.
+ */
+const BROWSER_IDLE_MS = 60_000;
+let idleTimer: NodeJS.Timeout | null = null;
+
+function cancelIdleClose(): void {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+}
+
+function scheduleIdleClose(): void {
+  cancelIdleClose();
+  if (activeUsers > 0 || !sharedBrowser) return;
+  idleTimer = setTimeout(() => {
+    idleTimer = null;
+    if (activeUsers === 0) void closeSharedBrowser();
+  }, BROWSER_IDLE_MS);
+  idleTimer.unref();
+}
+
 async function getBrowser(): Promise<Browser> {
+  cancelIdleClose();
   if (sharedBrowser && sharedBrowser.isConnected()) {
     return sharedBrowser;
   }
@@ -39,9 +71,13 @@ async function getBrowser(): Promise<Browser> {
 }
 
 export async function closeSharedBrowser(): Promise<void> {
-  if (sharedBrowser && sharedBrowser.isConnected()) {
-    await sharedBrowser.close().catch(() => {});
-    sharedBrowser = null;
+  cancelIdleClose();
+  const browser = sharedBrowser;
+  // Cleared before the await, so a batch starting mid-close launches a fresh
+  // browser instead of being handed the one that is shutting down.
+  sharedBrowser = null;
+  if (browser && browser.isConnected()) {
+    await browser.close().catch(() => {});
   }
 }
 
@@ -313,6 +349,7 @@ export async function captureLocalScreenshots(
     browser = await getBrowser();
   } catch (err: any) {
     activeUsers--;
+    scheduleIdleClose();
     return {
       rows,
       blockedCount: 0,
@@ -335,6 +372,7 @@ export async function captureLocalScreenshots(
     }
   } finally {
     activeUsers = Math.max(0, activeUsers - 1);
+    scheduleIdleClose();
   }
 
   return { rows, blockedCount, successCount, browserError: null };

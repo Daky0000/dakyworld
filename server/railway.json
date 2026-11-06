@@ -3,7 +3,16 @@
   "_comment": "This is the file Railway actually reads, because the service's Root Directory is `server`. `npm run build` here builds server/client first, then the API.",
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "npm run build"
+    "buildCommand": "npm run build",
+    "watchPatterns": [
+      "/server/**",
+      "!/server/**/*.md",
+      "!/server/docs/**",
+      "!/server/checks/**",
+      "!/server/tmp/**",
+      "!/server/load/**",
+      "!/server/*.pdf"
+    ]
   },
   "deploy": {
     "preDeployCommand": "npm run db:deploy",
@@ -12,5 +21,6 @@
     "healthcheckPath": "/api/ready",
     "healthcheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE"
-  }
+  },
+  "_watchComment": "Watch paths are relative to the repo root. Website and doc-only pushes no longer rebuild the OS: each rebuild runs old and new containers side by side, which shows up as memory on the Railway bill."
 }
