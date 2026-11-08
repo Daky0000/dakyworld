@@ -297,6 +297,15 @@ export const PAGES = [
     schema: ["webpage"],
   },
   {
+    file: "sms-consent.html",
+    path: "/sms-consent",
+    priority: "0.3",
+    changefreq: "yearly",
+    breadcrumb: [["Privacy", "/privacy"], ["SMS Terms", "/sms-consent"]],
+    keywords: "SMS terms, text message consent, opt in, opt out, STOP, HELP, DakyXTech SMS",
+    schema: ["webpage"],
+  },
+  {
     file: "user-data-deletion.html",
     path: "/user-data-deletion",
     priority: "0.1",
