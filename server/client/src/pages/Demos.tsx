@@ -21,6 +21,16 @@ import {
 import { DemoAnalyticsModal } from "../components/DemoAnalyticsModal";
 import { IconBarChart, IconClock, IconFlame, IconGlobe } from "../components/WebsiteIcons";
 import { compileClaudeDynamicTemplate } from "../../../src/shared/templateCompiler";
+import { getFilesFromDataTransfer } from "../lib/folderZip";
+import {
+  type FolderFile,
+  MAX_DEMO_FOLDER_BYTES,
+  htmlPagesIn,
+  localFilesNamedInBrowser,
+  pageInZip,
+  relativeToFolder,
+  zipPageWithFiles,
+} from "../lib/demoFolder";
 
 function formatDuration(seconds: number): string {
   if (!seconds || seconds <= 0) return "0s";
@@ -760,6 +770,13 @@ function ImportDemoDrawer({
   const [fileSize, setFileSize] = useState<number | null>(null);
   const [dataBase64, setDataBase64] = useState<string>("");
   const [rawHtml, setRawHtml] = useState<string>("");
+  // A folder (zipped here) or a ZIP brings the page's pictures with it.
+  const [folder, setFolder] = useState<{ name: string; files: FolderFile[]; pages: string[] } | null>(null);
+  const [entry, setEntry] = useState<string | null>(null);
+  const [packageNote, setPackageNote] = useState<string | null>(null);
+  const [packaging, setPackaging] = useState(false);
+  // Files a lone HTML file names beside it, which it cannot bring.
+  const [localFiles, setLocalFiles] = useState<string[]>([]);
 
   const [businessName, setBusinessName] = useState("");
   const [title, setTitle] = useState("");
@@ -799,6 +816,10 @@ function ImportDemoDrawer({
     setDataBase64("");
     setRawHtml("");
     setSourceTab("file");
+    setFolder(null);
+    setEntry(null);
+    setPackageNote(null);
+    setLocalFiles([]);
 
     if (editingDemo) {
       setBusinessName(editingDemo.businessName);
@@ -842,12 +863,90 @@ function ImportDemoDrawer({
     }
   }, [open, editingDemo]);
 
-  const handleFile = async (file: File) => {
+  const fillFromPage = (html: string, name: string) => {
+    const meta = parseHtmlClientMetadata(html, name);
+    if (!businessName.trim()) setBusinessName(meta.businessName);
+    if (!title.trim()) setTitle(meta.title);
+    if (!slugTouched && !slug.trim()) setSlug(meta.suggestedSlug);
+  };
+
+  /** Zips one page of a chosen folder with the files it uses. */
+  const packFolderPage = async (chosen: { name: string; files: FolderFile[] }, page: string) => {
+    setPackaging(true);
     setError(null);
-    if (!/\.html?$/i.test(file.name) && file.type && !file.type.includes("html") && !file.type.includes("text")) {
-      setError("Please select an .html or .htm file.");
+    try {
+      const zipped = await zipPageWithFiles(chosen.files, page, chosen.name);
+      setDataBase64(zipped.base64);
+      setFileName(zipped.filename);
+      setFileSize(zipped.totalBytes);
+      setEntry(page);
+      setPackageNote(`${page} and ${zipped.fileCount - 1} file${zipped.fileCount === 2 ? "" : "s"} it uses`);
+      fillFromPage(zipped.html, page);
+    } catch (err) {
+      setDataBase64("");
+      setError((err as Error).message);
+    } finally {
+      setPackaging(false);
+    }
+  };
+
+  const handleFolder = async (entries: FolderFile[], name: string) => {
+    setError(null);
+    setLocalFiles([]);
+    const files = relativeToFolder(entries);
+    const pages = htmlPagesIn(files);
+    if (!pages.length) {
+      setError("That folder has no .html page in it.");
       return;
     }
+    const chosen = { name, files, pages };
+    setFolder(chosen);
+    await packFolderPage(chosen, pages[0]!);
+  };
+
+  const handleZip = async (file: File) => {
+    if (file.size > MAX_DEMO_FOLDER_BYTES) {
+      setError(`That ZIP is ${(file.size / 1024 / 1024).toFixed(0)} MB; the limit is ${MAX_DEMO_FOLDER_BYTES / 1024 / 1024} MB.`);
+      return;
+    }
+    setPackaging(true);
+    try {
+      const page = await pageInZip(file);
+      if (!page) throw new Error("That ZIP has no .html page in it.");
+      const b64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("Could not read file."));
+        reader.onload = () => resolve(String(reader.result));
+        reader.readAsDataURL(file);
+      });
+      setFolder(null);
+      setLocalFiles([]);
+      setEntry(page.path);
+      setFileName(file.name);
+      setFileSize(file.size);
+      setDataBase64(b64);
+      setPackageNote(page.pages > 1 ? `${page.path} is the demo; ${page.pages - 1} other page${page.pages === 2 ? " is" : "s are"} left out` : page.path);
+      fillFromPage(page.html, page.path);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setPackaging(false);
+    }
+  };
+
+  const handleFile = async (file: File) => {
+    setError(null);
+    if (/\.zip$/i.test(file.name) || file.type === "application/zip" || file.type === "application/x-zip-compressed") {
+      await handleZip(file);
+      return;
+    }
+    if (!/\.html?$/i.test(file.name) && file.type && !file.type.includes("html") && !file.type.includes("text")) {
+      setError("Please select an .html or .htm file, a ZIP, or the page's folder.");
+      return;
+    }
+    setFolder(null);
+    setEntry(null);
+    setPackageNote(null);
     if (file.size > 10 * 1024 * 1024) {
       setError("HTML file exceeds the 10 MB limit.");
       return;
@@ -885,11 +984,8 @@ function ImportDemoDrawer({
       setFileName(file.name);
       setFileSize(file.size);
       setDataBase64(resolvedB64);
-
-      const meta = parseHtmlClientMetadata(resolvedText, file.name);
-      if (!businessName.trim()) setBusinessName(meta.businessName);
-      if (!title.trim()) setTitle(meta.title);
-      if (!slugTouched && !slug.trim()) setSlug(meta.suggestedSlug);
+      setLocalFiles(localFilesNamedInBrowser(resolvedText));
+      fillFromPage(resolvedText, file.name);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -913,7 +1009,9 @@ function ImportDemoDrawer({
 
       if (sourceTab === "file" && dataBase64) {
         payload.fileName = fileName;
+        payload.filename = fileName;
         payload.dataBase64 = dataBase64;
+        if (entry) payload.entry = entry;
       } else if (sourceTab === "paste" && rawHtml.trim()) {
         payload.html = rawHtml.trim();
       } else if (!editingDemo) {
@@ -947,8 +1045,8 @@ function ImportDemoDrawer({
       title={editingDemo ? `Update Demo — ${editingDemo.businessName}` : "Import HTML File as Demo"}
       subtitle={
         editingDemo
-          ? "Upload a new .html file version or adjust its public URL and recipient settings."
-          : "Turn any standalone .html file into a hosted public demo URL you can send to a client or attach to an email."
+          ? "Upload a new version (the page's folder brings its pictures) or adjust its public URL and recipient settings."
+          : "Turn an .html page, or its whole folder with the pictures, into a hosted public demo URL you can send to a client or attach to an email."
       }
     >
       {savedDemo ? (
@@ -1053,6 +1151,16 @@ function ImportDemoDrawer({
                 onDrop={(e) => {
                   e.preventDefault();
                   setDragging(false);
+                  const dropped = e.dataTransfer.items?.[0]?.webkitGetAsEntry?.();
+                  if (dropped?.isDirectory) {
+                    const name = dropped.name;
+                    setPackaging(true);
+                    void getFilesFromDataTransfer(e.dataTransfer.items)
+                      .then((entries) => handleFolder(entries, name))
+                      .catch((err) => setError((err as Error).message))
+                      .finally(() => setPackaging(false));
+                    return;
+                  }
                   const file = e.dataTransfer.files?.[0];
                   if (file) void handleFile(file);
                 }}
@@ -1066,7 +1174,7 @@ function ImportDemoDrawer({
               >
                 <input
                   type="file"
-                  accept=".html,.htm,text/html"
+                  accept=".html,.htm,.zip,text/html,application/zip"
                   className="hidden"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
@@ -1074,27 +1182,71 @@ function ImportDemoDrawer({
                     e.target.value = "";
                   }}
                 />
-                {fileName ? (
+                {packaging ? (
+                  <span className="text-sm font-medium text-ink">Packing the page and its pictures…</span>
+                ) : fileName ? (
                   <>
-                    <Badge tone="positive">Selected File</Badge>
-                    <span className="mt-2 font-mono text-sm font-medium text-ink">{fileName}</span>
+                    <Badge tone="positive">{packageNote ? "Selected Page and Files" : "Selected File"}</Badge>
+                    <span className="mt-2 font-mono text-sm font-medium text-ink">{packageNote ?? fileName}</span>
                     {fileSize !== null && (
-                      <span className="mt-0.5 text-xs text-muted">{Math.max(1, Math.round(fileSize / 1024))} KB</span>
+                      <span className="mt-0.5 text-xs text-muted">
+                        {fileSize >= 1024 * 1024 ? `${(fileSize / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(fileSize / 1024))} KB`}
+                      </span>
                     )}
-                    <span className="mt-2 text-xs text-blue underline">Click or drop another .html file to replace</span>
+                    <span className="mt-2 text-xs text-blue underline">Click or drop another file, ZIP or folder to replace</span>
                   </>
                 ) : (
                   <>
                     <span className="text-sm font-medium text-ink">
-                      Drop your <code className="font-mono text-xs">.html</code> file here, or{" "}
+                      Drop the page's folder, a ZIP or an <code className="font-mono text-xs">.html</code> file here, or{" "}
                       <span className="text-blue underline underline-offset-2">browse</span>
                     </span>
                     <span className="mt-1 text-xs text-muted">
-                      Supports standalone HTML files with inline CSS/JS, Tailwind CDN, fonts, and external images (up to 10 MB)
+                      A page whose pictures sit beside it (<code className="font-mono">images/…</code>) needs its folder or a ZIP, or they show broken
                     </span>
                   </>
                 )}
               </label>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                <label className="cursor-pointer rounded-lg border border-line bg-white px-3 py-1.5 font-medium text-ink hover:border-ink/40">
+                  Choose the page's folder
+                  <input
+                    type="file"
+                    className="hidden"
+                    {...({ webkitdirectory: "", directory: "", multiple: true } as Record<string, string | boolean>)}
+                    onChange={(e) => {
+                      const list = Array.from(e.target.files ?? []);
+                      e.target.value = "";
+                      if (!list.length) return;
+                      const entries = list.map((file) => ({ file, path: file.webkitRelativePath || file.name }));
+                      void handleFolder(entries, entries[0]!.path.split("/")[0] || "demo");
+                    }}
+                  />
+                </label>
+                {folder && folder.pages.length > 1 && (
+                  <label className="flex items-center gap-1.5 text-muted">
+                    Page
+                    <select
+                      className="input py-1 text-xs"
+                      value={entry ?? folder.pages[0]}
+                      disabled={packaging}
+                      onChange={(e) => void packFolderPage(folder, e.target.value)}
+                    >
+                      {folder.pages.map((page) => (
+                        <option key={page} value={page}>{page}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+              {localFiles.length > 0 && (
+                <p role="alert" className="mt-2 rounded-xl border border-warn-line bg-warn-surface p-3 text-xs text-warn-text">
+                  This page uses {localFiles.length === 1 ? "a file" : `${localFiles.length} files`} kept beside it (
+                  {localFiles.slice(0, 3).join(", ")}
+                  {localFiles.length > 3 ? ` and ${localFiles.length - 3} more` : ""}). An HTML file brings none of them, so they
+                  would show as broken pictures. Choose the page's folder instead (or a ZIP of it) and they come with it.
+                </p>
+              )}
             </div>
           ) : (
             <Field label="Raw HTML Markup" hint="Paste a complete <!DOCTYPE html> document or HTML snippet." full>

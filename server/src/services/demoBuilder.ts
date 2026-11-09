@@ -12,6 +12,7 @@ import type { CompanyAudit } from "./companyAudit.js";
 import type { HomepageLook } from "./homepageLook.js";
 import { extractColorsFromHtml } from "./website/pageColors.js";
 import zlib from "node:zlib";
+import { DemoPackageError, bundleDemoFiles, bundledFilesNote, readDemoPackage, zipUploadBytes } from "./demoPackage.js";
 
 /**
  * Building the demo.
@@ -732,7 +733,7 @@ export function localFilesNamed(html: string): string[] {
 
 function missingFilesNote(files: string[]): string {
   const listed = files.slice(0, 6).join(", ") + (files.length > 6 ? ` and ${files.length - 6} more` : "");
-  return `${files.length === 1 ? "This page uses a file" : `This page uses ${files.length} files`} that ${files.length === 1 ? "was" : "were"} not uploaded with it: ${listed}. An HTML file brings no other files with it, so ${files.length === 1 ? "it shows" : "they show"} as missing. Open the page in the Website Builder, select ${files.length === 1 ? "it" : "each one"} and upload the file there: a video under its Video file, a picture with Replace.`;
+  return `${files.length === 1 ? "This page uses a file" : `This page uses ${files.length} files`} that ${files.length === 1 ? "was" : "were"} not uploaded with it: ${listed}. An HTML file brings no other files with it, so ${files.length === 1 ? "it shows" : "they show"} as missing. Update the demo with the page's whole folder (or a ZIP of it) and ${files.length === 1 ? "it comes" : "they come"} with it; or open the page in the Website Builder, select ${files.length === 1 ? "it" : "each one"} and upload the file there: a video under its Video file, a picture with Replace.`;
 }
 
 /**
@@ -794,11 +795,30 @@ export interface ImportDemoInput {
   makeInert?: boolean;
   demoId?: string | null;
   userId?: string | null;
+  /** With a ZIP upload: which page in it is the demo, when it holds several. */
+  entry?: string | null;
 }
 
+/**
+ * Imports a demo from one HTML document, or from a ZIP of the page and the
+ * files beside it (a folder is zipped in the browser). The files a ZIP brings
+ * come back as `assets`, for the caller to store on the demo's site once
+ * `ensureDemoSitePage` has made it.
+ */
 export async function importDemo(input: ImportDemoInput) {
-  const rawHtml = decodeHtmlUpload({ html: input.html, dataBase64: input.dataBase64 });
-  const meta = extractHtmlMetadata(rawHtml, input.filename);
+  try {
+    return await importDemoRecord(input);
+  } catch (err) {
+    if (err instanceof DemoPackageError) throw new DemoImportError(err.status, err.message);
+    throw err;
+  }
+}
+
+async function importDemoRecord(input: ImportDemoInput) {
+  const zip = zipUploadBytes(input.dataBase64);
+  const pkg = zip ? await readDemoPackage(zip, input.filename, input.entry) : null;
+  const rawHtml = pkg ? decodeHtmlUpload({ html: pkg.html }) : decodeHtmlUpload({ html: input.html, dataBase64: input.dataBase64 });
+  const meta = extractHtmlMetadata(rawHtml, pkg ? pkg.entryPath.split("/").pop() : input.filename);
   const profile = await companyProfile();
 
   const [lead, client] = await Promise.all([
@@ -855,8 +875,13 @@ export async function importDemo(input: ImportDemoInput) {
     slug = await uniqueSlug(businessName, null);
   }
 
+  const base = await appUrl();
+  // Pointed at the address the demo serves its own files from: the one the
+  // editor's Replace writes too (`assetUrl` on the demo's site).
+  const bundled = pkg ? await bundleDemoFiles(rawHtml, pkg, `${new URL(demoUrl(slug, base)).pathname}/assets/dw`) : null;
+
   const includeBanner = input.includeBanner ?? true;
-  const prepared = prepareImportedDemoHtml(rawHtml, {
+  const prepared = prepareImportedDemoHtml(bundled?.html ?? rawHtml, {
     businessName,
     title,
     senderName: profile.displayName,
@@ -876,6 +901,7 @@ export async function importDemo(input: ImportDemoInput) {
     colours: extractedColours,
     palette: extractedColours,
     filename: input.filename ?? existingBrief.filename ?? null,
+    entry: pkg?.entryPath ?? null,
     headline: meta.headline,
     includeBanner,
     makeInert: input.makeInert ?? true,
@@ -926,7 +952,6 @@ export async function importDemo(input: ImportDemoInput) {
     await recordImportedConcept(demo.leadId, demo, input.userId);
   }
 
-  const base = await appUrl();
   return {
     demo: {
       ...demo,
@@ -935,7 +960,8 @@ export async function importDemo(input: ImportDemoInput) {
       recipientEmail,
       recipientName,
     },
-    notes: prepared.notes,
+    notes: [...(pkg && bundled ? bundledFilesNote(pkg, bundled.assets.length, bundled.skipped) : []), ...prepared.notes],
+    assets: bundled?.assets ?? [],
   };
 }
 

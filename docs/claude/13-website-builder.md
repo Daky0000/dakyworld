@@ -923,6 +923,25 @@ is here is why it is built this way, and what cost time.
   move or a new video address counted as growth. It now applies to Duplicate
   only, which is what its message always said. The browser check uses the
   framed shape; `checks/websiteVideoFiles.ts` covers both.
+- **A demo can be imported with its folder (9 Nov 2026).** The Ghacem demo went
+  in as `index.html` alone; it named 20 pictures as `./images/...` beside it, so
+  the canvas, the preview and the demo link all showed them broken (HTTP logs:
+  `GET /demos/ghacem/images/... 404` on every load), and the only remedy was
+  Replace, one picture at a time. The Demos drawer now takes the page's folder
+  (picked or dropped) or a ZIP, and warns when a lone `.html` names local files.
+  A folder is zipped in the browser with only the files the page could use (a
+  name match against the page and its stylesheets and scripts,
+  `client/src/lib/demoFolder.ts`); for Ghacem that is 21 files of a 52 MB folder.
+  The server (`services/demoPackage.ts`) unzips through `analyzeImportPackage`
+  (its zip-bomb and traversal guards), resolves every reference with
+  `resolvePackagePath` — attributes, `srcset`, CSS `url()`, strings in scripts;
+  a stylesheet against itself, a script against the page — stores each file used
+  as a `SiteAsset` of the demo's site at `assets/dw/<uuid>`, and rewrites the
+  page to `/demos/<slug>/assets/dw/<file>`, which is what Replace writes too.
+  Pictures go through the upload optimiser (Ghacem: 52 MB to 5.2 MB of WebP);
+  GIFs are kept as they are so they still animate; SVG through the sanitiser.
+  Only `/import` and `PATCH /:id` take 100 MB of JSON; the rest of the router
+  keeps 15 MB. `checks/demoPackage.ts`.
 - **Videos up to 1 GB, on every plan (Dan, 20 Oct 2026).** Pictures keep each
   plan's own single-file limit and storage totals are unchanged, so a big video
   still has to fit the plan's storage. Up to 10 MB a video goes the old way

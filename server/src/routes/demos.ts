@@ -36,6 +36,7 @@ import { createVisitToken, verifyVisitToken } from "../lib/demoTokens.js";
 import { injectDemoTracker } from "../services/demoTracker.js";
 import { extractColorsFromHtml } from "../services/website/pageColors.js";
 import { updateSiteSettings } from "../services/websiteSiteSettings.js";
+import { storeDemoAssets } from "../services/demoPackage.js";
 
 /**
  * Demos: the pages built for prospects, and the public serving of them.
@@ -68,6 +69,12 @@ demosRouter.use(
 
 // Imported HTML files ride in the JSON body (raw or base64), so this router
 // mounts its own larger body parser after the permission check. See index.ts -> UPLOAD_PATHS.
+// The two doors that take a ZIP of a page and its pictures get more room than
+// a page alone needs; the general parser below then leaves an already-read
+// body alone.
+const DEMO_PACKAGE_BODY = "100mb";
+demosRouter.post("/import", express.json({ limit: DEMO_PACKAGE_BODY }));
+demosRouter.patch("/:id", express.json({ limit: DEMO_PACKAGE_BODY }));
 demosRouter.use(express.json({ limit: MAX_UPLOAD_BODY }));
 
 interface DemoBriefMeta {
@@ -829,11 +836,13 @@ const importInput = z.object({
   includeBanner: z.boolean().default(true),
   makeInert: z.boolean().default(true),
   demoId: z.string().nullish(),
+  entry: z.string().max(500).nullish(),
 });
 
 /**
  * Imports an HTML file (or raw HTML markup) as a hosted demo with its own
  * public URL (`/demos/<slug>`), ready to share via link or attach to an email.
+ * A ZIP of the page's folder brings the pictures and files the page uses.
  */
 demosRouter.post("/import", async (req, res, next) => {
   try {
@@ -843,6 +852,7 @@ demosRouter.post("/import", async (req, res, next) => {
       userId: req.dbUser?.id ?? null,
     });
     const editor = await ensureDemoSitePage(result.demo, { overwriteSourceHtml: true });
+    await storeDemoAssets(editor.siteId, result.assets);
     res.status(201).json({
       ...result.demo,
       siteId: editor.siteId,
@@ -927,6 +937,7 @@ const updateInput = z.object({
   dataBase64: z.string().nullish(),
   filename: z.string().max(240).nullish(),
   fileName: z.string().max(240).nullish(),
+  entry: z.string().max(500).nullish(),
   accessMode: z.enum(["PUBLIC", "LINK_ONLY", "PASSWORD", "INVITED_ONLY"]).optional(),
   password: z.string().max(100).optional(),
   expiresAt: z.string().datetime().nullable().optional(),
@@ -957,12 +968,15 @@ demosRouter.patch("/:id", async (req, res, next) => {
         includeBanner: input.includeBanner ?? prevMeta.includeBanner ?? true,
         makeInert: input.makeFormsInert ?? prevMeta.makeInert ?? true,
         userId: req.dbUser?.id ?? null,
+        entry: input.entry,
       });
       const editor = await ensureDemoSitePage(updated.demo, { overwriteSourceHtml: true });
+      await storeDemoAssets(editor.siteId, updated.assets);
       return res.json({
         ...updated.demo,
         siteId: editor.siteId,
         sitePageId: editor.pageId,
+        notes: updated.notes,
       });
     }
 
