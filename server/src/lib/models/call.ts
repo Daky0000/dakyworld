@@ -973,6 +973,13 @@ async function callModelUnbounded<T>(request: ModelRequest): Promise<ModelResult
         if (!(err instanceof AttemptFailed)) throw err;
         if (!err.failover) throw err.error;
         if (err.carry) carry = err.carry;
+        // The vendor's own reason, in the log. `why` is a few words for a
+        // person, and two of them hide what to fix: "failed" covers a 402 (out
+        // of credit), a 404 and a timeout alike, and "refused the request
+        // shape" is also what a rejected Anthropic key and an empty Anthropic
+        // balance arrive as. When every rung fails at once the only question is
+        // which bill or key, and that answer was being thrown away here.
+        console.warn(`[models] ${model ?? PROVIDERS[serving].name} (${serving}) ${err.why}: ${err.error.message.replace(/\s+/g, " ").slice(0, 300)}`);
         // Named by model where there was a choice of them, because "NVIDIA
         // failed" three times over is a note that hides which rungs were tried
         // and reads as one thing going wrong three times.
