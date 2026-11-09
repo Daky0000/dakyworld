@@ -82,6 +82,16 @@ them is a system that costs nothing most days and never stops.
   `pruneFreeLadders()` uses at boot to drop a rung the vendor has retired. It
   never *picks* a ladder, because a list picked from a capability-free
   catalogue would be three ids nobody has ever called.
+- **Pruning covers stored ladders only, so the shipped ones can go stale.** On
+  9 Nov 2026 NVIDIA had retired `moonshotai/kimi-k3` (the vendor default and
+  first rung of eleven ladders) and `openai/gpt-oss-120b`. Every job lost two
+  of its three free tries to a fast 404. The Builder agent then failed on every
+  model when the paid vendors were also out of credit. A key-only save was
+  refused too, because the key was checked against the retired default. To
+  catch it, compare every id in `registry.ts` with
+  `curl -s https://integrate.api.nvidia.com/v1/models` (no key needed). The
+  shipped ladders now use only verified, listed models, and a key-only save no
+  longer checks a model nobody typed.
 - **On by default.** A deployment that never opens the Settings screen still
   starts every job on the models chosen for it. It shipped as an opt-in for one
   day in August 2026 and an opt-in nobody has opted into is a feature that does

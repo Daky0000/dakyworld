@@ -1815,11 +1815,28 @@ export async function verifyProviderKey(provider: ProviderKey, apiKey: string, m
 
       // The id being saved with the key, when the form sent one — checking the
       // stored value instead would miss a slug corrected in the same submit.
-      const wanted = (modelChoice?.trim() || (await providerModel(provider)) || model).trim();
+      const typed = modelChoice?.trim();
+      const wanted = (typed || (await providerModel(provider)) || model).trim();
       const payload = (await response.json().catch(() => null)) as { data?: { id?: unknown }[] } | null;
       const ids = (payload?.data ?? []).map((entry) => (typeof entry?.id === "string" ? entry.id : "")).filter(Boolean);
+      // Only an id typed in this same submit can refuse the key. The Settings
+      // form saves the key on its own, so without that rule the check fell back
+      // to the stored or shipped model. When NVIDIA retired that model (Kimi
+      // K3, 9 Nov 2026), a key that had just been proven good was refused with
+      // "put it in the model field", for a field the person never touched.
+      if (!typed && ids.length > 0 && !ids.includes(wanted)) {
+        console.warn(`[models] NVIDIA key saved; the model it falls back to, ${wanted}, is no longer listed by NVIDIA.`);
+        return { model: wanted };
+      }
       if (ids.length > 0 && !ids.includes(wanted)) {
-        const matches = ids.filter((id) => id.toLowerCase().includes(wanted.toLowerCase())).slice(0, 5);
+        // Same name first, then the same maker: "moonshotai/kimi-k3" has no
+        // substring match once it is retired, but "moonshotai/kimi-k2.6" is the
+        // answer the person is looking for.
+        const lower = wanted.toLowerCase();
+        const house = lower.includes("/") ? `${lower.split("/")[0]}/` : null;
+        const byName = ids.filter((id) => id.toLowerCase().includes(lower));
+        const byHouse = house ? ids.filter((id) => id.toLowerCase().startsWith(house) && !byName.includes(id)) : [];
+        const matches = [...byName, ...byHouse].slice(0, 5);
         throw new AnalystError(
           400,
           [

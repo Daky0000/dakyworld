@@ -415,6 +415,7 @@ export const FREE_MODELS: FreeModel[] = [
     vision: true,
     reasoning: true,
     checked: "2026-09-01",
+    down: "No longer in NVIDIA's catalogue (checked 9 Nov 2026), so every request for it is refused. NVIDIA now lists Kimi K2.6 instead, which this app has not checked yet.",
   },
   {
     id: "nvidia/nemotron-3-super-120b-a12b",
@@ -448,6 +449,7 @@ export const FREE_MODELS: FreeModel[] = [
     vision: false,
     reasoning: true,
     checked: "2026-09-01",
+    down: "No longer in NVIDIA's catalogue (checked 9 Nov 2026), so every request for it is refused. GPT-OSS 20B is still listed.",
   },
   {
     id: "openai/gpt-oss-20b",
@@ -795,10 +797,12 @@ export const PROVIDERS: Record<ProviderKey, ProviderDefinition> = {
     // What NVIDIA is asked for when the free ladders are switched off, which
     // is a strange thing to do here and is allowed anyway: every model on this
     // vendor is free, so "off" means *one* free model for everything instead
-    // of the right one per job. It is the strongest all-rounder in the
-    // catalogue — the only model that does tools, a strict schema and vision
-    // at once.
-    defaultModel: "moonshotai/kimi-k3",
+    // of the right one per job. Nemotron Super calls tools and holds a strict
+    // schema, and it is still listed. Kimi K3 was the default until NVIDIA
+    // retired it (9 Nov 2026). A retired default made every key-only save
+    // fail, because the key is checked against this id when nobody has picked
+    // one.
+    defaultModel: "nvidia/nemotron-3-super-120b-a12b",
     // The small, fast, genuinely cheaper-to-wait-for one. Free either way, so
     // the economy tier here buys latency rather than money — which is exactly
     // what triage and prompt-sorting want.
@@ -1078,7 +1082,7 @@ export function isLadderKey(value: unknown): value is LadderKey {
 export const FREE_LADDER_BY_JOB: Record<LadderKey, string[]> = {
   // Prose a customer reads. The two biggest models here, then a reasoning
   // model that writes cleanly, across three houses.
-  text: ["moonshotai/kimi-k3", "nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-120b"],
+  text: ["nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-20b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"],
 
   // The same three, and deliberately not a shorter ladder. A cold message is
   // forty words, so the temptation is a small fast model — but forty words to
@@ -1092,13 +1096,13 @@ export const FREE_LADDER_BY_JOB: Record<LadderKey, string[]> = {
   // which is exactly what Perplexity was chosen for — so a draft written here
   // is written from the handed facts alone, which is the safe direction to
   // degrade in.
-  outreach: ["moonshotai/kimi-k3", "nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-120b"],
+  outreach: ["nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-20b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"],
 
   // A spreadsheet is the one job where context length is the whole game: forty
   // columns across three tables, and the plan is wrong if the model only saw
   // half of it. Nemotron Super carries 1M tokens of context and leads for that
   // reason alone.
-  spreadsheet: ["nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k3", "openai/gpt-oss-120b"],
+  spreadsheet: ["nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-20b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"],
 
   // Filing a written instruction under ten headings: comprehension, not prose,
   // with a right answer and nothing a customer reads. The small fast model
@@ -1125,10 +1129,16 @@ export const FREE_LADDER_BY_JOB: Record<LadderKey, string[]> = {
   // different host, and it cannot serve a single one of the text jobs.
   image: ["black-forest-labs/flux.2-klein-4b"],
 
-  // A complete page is a coding job. Kimi K3 is built for long-horizon coding,
-  // Nemotron Super for coding and planning, and GPT-OSS 120B reasons its way
-  // through a layout well enough to finish one.
-  html: ["moonshotai/kimi-k3", "nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-120b"],
+  // A complete page is a coding job. Nemotron Super is built for coding and
+  // planning, with GPT-OSS 20B and Nemotron Nano behind it.
+  //
+  // **9 Nov 2026: NVIDIA retired Kimi K3 and GPT-OSS 120B.** They were the
+  // first and third rung of eleven ladders. A retired id is a fast 404, so
+  // every job silently lost two of its three free tries. Each ladder now uses
+  // only models that were checked by hand and are still listed. Kimi K2.6,
+  // DeepSeek V4.1 Flash, GLM 5.3 Flash and Nemotron 3 Ultra are new in the
+  // catalogue. Probe them before adding them to a ladder.
+  html: ["nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-20b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"],
 
   // **None of these searches the live web**, which is a real limit rather than
   // a detail: what comes back is reasoned from training data, and the tool
@@ -1136,16 +1146,16 @@ export const FREE_LADDER_BY_JOB: Record<LadderKey, string[]> = {
   // down the chain for when that distinction matters more than free does. So
   // the ladder is ordered by reasoning quality, which is what is actually on
   // offer here.
-  factcheck: ["openai/gpt-oss-120b", "nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k3"],
+  factcheck: ["openai/gpt-oss-20b", "nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"],
 
   // Same limit, same honesty, and a longer answer — a company profile is more
   // writing than a claim check, so the 1M-context model leads.
-  research: ["nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k3", "openai/gpt-oss-120b"],
+  research: ["nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-20b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"],
 
   // A rewrite is short, mechanical and wanted immediately, usually with
   // somebody waiting on the screen. DiffusionGemma generates tokens in
   // parallel and is the fastest thing here by a distance.
-  humanise: ["google/diffusiongemma-26b-a4b-it", "moonshotai/kimi-k3", "openai/gpt-oss-120b"],
+  humanise: ["google/diffusiongemma-26b-a4b-it", "openai/gpt-oss-20b", "nvidia/nemotron-3-super-120b-a12b"],
 
   // The three models in this catalogue that can actually look at a picture,
   // strongest first. Llama 3.2 90B Vision is the largest and is built for
@@ -1155,29 +1165,28 @@ export const FREE_LADDER_BY_JOB: Record<LadderKey, string[]> = {
   // Its schema is ignored (500 on a strict one), so the shape goes in the
   // prompt — which is the right trade here, because the alternative is
   // describing a screenshot with a model that cannot see it.
-  vision: ["meta/llama-3.2-90b-vision-instruct", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "moonshotai/kimi-k3"],
+  vision: ["meta/llama-3.2-90b-vision-instruct", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "google/diffusiongemma-26b-a4b-it"],
 
   // The redesign call is made from the same two pictures, so it is the vision
   // ladder — a model that cannot see cannot decide whether a page needs
-  // rebuilding, however well it writes. The order differs by one place and the
-  // reason is the job: this answer is a page of prose a client reads rather
-  // than a list of observations, so Kimi K3 comes up behind the largest vision
-  // model and ahead of the small omni one.
-  redesign: ["meta/llama-3.2-90b-vision-instruct", "moonshotai/kimi-k3", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"],
+  // rebuilding, however well it writes. With Kimi K3 retired, the three models
+  // here that can see are the whole of it, in the same order as `vision`.
+  redesign: ["meta/llama-3.2-90b-vision-instruct", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "google/diffusiongemma-26b-a4b-it"],
 
   // Sizing a task: one word from three and a reason, with a person's task
   // waiting behind it. The small fast model first, then two more houses, all
   // three with a schema that is actually enforced — an answer that invents
   // its own field names here is a task routed on a guess.
-  routing: ["openai/gpt-oss-20b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "moonshotai/kimi-k3"],
+  routing: ["openai/gpt-oss-20b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "nvidia/nemotron-3-super-120b-a12b"],
 
   // The workforce loop. Every rung has to call tools — a model that cannot
   // fails on turn one, having read the whole system prompt first — and has to
   // hold a long conversation without losing the thread. All three are verified
-  // tool-callers, and Kimi K3 leads because it is the only one built for
-  // long-horizon agentic use *and* able to look at a screenshot a tool
-  // returned.
-  agent: ["moonshotai/kimi-k3", "nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-120b"],
+  // tool-callers. Nemotron Super leads for its 1M context and agentic
+  // training. Nemotron Nano is last because it is the one that can look at a
+  // screenshot a tool returned. The Builder agent's planner asks this ladder
+  // too.
+  agent: ["nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-20b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"],
 };
 
 /**
