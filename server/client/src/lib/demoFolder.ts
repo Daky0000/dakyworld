@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import { zipFilesToBase64 } from "./folderZip";
+import { zipFilesToBase64 } from "./folderZip.js";
 
 /**
  * Importing a demo with the folder beside it.
@@ -57,35 +57,86 @@ export function localFilesNamedInBrowser(html: string): string[] {
   return [...names];
 }
 
-const TEXT_FILE = /\.(?:css|js|mjs)$/i;
+// The same reference rule as the server (services/demoPackage.ts): a path with
+// a known extension, standing alone in an attribute, a srcset, a CSS url() or a
+// script string. Anything with a scheme or `//` is somewhere else.
+const EXTENSIONS = "png|jpe?g|gif|webp|avif|svg|ico|bmp|mp4|webm|ogv|ogg|mov|m4v|mp3|wav|m4a|aac|woff2?|ttf|otf|eot|css|js|mjs|json|vtt";
+const REFERENCE = new RegExp(
+  `(?:^|[\\s"'(,=])((?![a-z][a-z0-9+.-]*:|//)[^\\s"'()<>,]*?\\.(?:${EXTENSIONS}))(?:[?#][^\\s"'()<>,]*)?(?=$|[\\s"'),])`,
+  "gi",
+);
+
+const dirOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
+
+function normalise(p: string): string | null {
+  const out: string[] = [];
+  for (const segment of p.split("/")) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") {
+      if (!out.length) return null;
+      out.pop();
+    } else out.push(segment);
+  }
+  return out.join("/");
+}
+
+/** The file in the folder a reference names, resolved the way the browser would. */
+function resolveReference(reference: string, sourcePath: string, siteRoot: string, byPath: Map<string, FolderFile>): FolderFile | null {
+  const attempts = [reference];
+  try {
+    const decoded = decodeURIComponent(reference);
+    if (decoded !== reference) attempts.push(decoded);
+  } catch {}
+  for (const attempt of attempts) {
+    const clean = attempt.replace(/&amp;/g, "&");
+    const bare = clean.replace(/^\/+/, "");
+    const join = (dir: string) => (dir ? `${dir}/${bare}` : bare);
+    // `/images/a.jpg` is from the site's root: the page's own folder, or a
+    // framework's public/ or static/. Anything else is from the file naming it.
+    const candidates = clean.startsWith("/")
+      ? [join(siteRoot), bare, `public/${bare}`, `static/${bare}`]
+      : [join(dirOf(sourcePath)), join(siteRoot ? `${siteRoot}/public` : "public")];
+    for (const candidate of candidates) {
+      const resolved = normalise(candidate);
+      const hit = resolved === null ? undefined : byPath.get(resolved);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
 
 /**
- * The page and every file in the folder it could use: one named anywhere in
- * the page, or in a stylesheet or script it uses. Generous on purpose — a
- * name match is enough here, and the server decides exactly — so a folder of
- * sixteen pages and fifty megabytes of pictures sends only this page's share.
+ * The page and exactly the files in the folder it points at: from the page,
+ * and from the stylesheets (resolved against themselves) and scripts (against
+ * the page) it uses. Resolved by path, not by name, so choosing a big folder —
+ * Downloads, with three other copies of the same site in it — still sends only
+ * this page's own pictures.
  */
 export async function filesForPage(entries: FolderFile[], entryPath: string): Promise<FolderFile[]> {
-  const page = entries.find((entry) => entry.path === entryPath);
+  const byPath = new Map(entries.map((entry) => [entry.path, entry]));
+  const page = byPath.get(entryPath);
   if (!page) return [];
-  const candidates = entries.filter((entry) => entry !== page && !/\.html?$/i.test(entry.path));
+  const siteRoot = dirOf(entryPath);
   const chosen = new Set<FolderFile>([page]);
-  const texts = [await page.file.text()];
-  for (let i = 0; i < texts.length; i++) {
-    const text = texts[i]!;
-    for (const candidate of candidates) {
-      if (chosen.has(candidate)) continue;
-      const name = candidate.path.split("/").pop()!;
-      if (text.includes(name) || text.includes(encodeURIComponent(name)) || text.includes(name.replace(/ /g, "%20"))) {
-        chosen.add(candidate);
-        if (TEXT_FILE.test(candidate.path)) texts.push(await candidate.file.text());
-      }
+  const queue: Array<{ text: string; base: string }> = [{ text: await page.file.text(), base: entryPath }];
+  while (queue.length) {
+    const { text, base } = queue.shift()!;
+    for (const match of text.matchAll(REFERENCE)) {
+      const hit = resolveReference(match[1]!, base, siteRoot, byPath);
+      if (!hit || chosen.has(hit) || /\.html?$/i.test(hit.path)) continue;
+      chosen.add(hit);
+      if (/\.css$/i.test(hit.path)) queue.push({ text: await hit.file.text(), base: hit.path });
+      else if (/\.m?js$/i.test(hit.path)) queue.push({ text: await hit.file.text(), base: entryPath });
     }
   }
   return [...chosen];
 }
 
-/** The page and its files, zipped for the import. */
+/**
+ * The page and its files, zipped for the import. When every file sits in the
+ * page's own folder, that folder becomes the archive's top, so the page is at
+ * its root and named by its own file name.
+ */
 export async function zipPageWithFiles(entries: FolderFile[], entryPath: string, folderName: string) {
   const files = await filesForPage(entries, entryPath);
   const bytes = files.reduce((sum, entry) => sum + entry.file.size, 0);
@@ -94,8 +145,13 @@ export async function zipPageWithFiles(entries: FolderFile[], entryPath: string,
       `This page and the files it uses come to ${(bytes / 1024 / 1024).toFixed(0)} MB; the limit is ${MAX_DEMO_FOLDER_BYTES / 1024 / 1024} MB. Make the pictures smaller and choose the folder again.`,
     );
   }
-  const zipped = await zipFilesToBase64(files, `${folderName || "demo"}.zip`);
-  return { ...zipped, html: await files[0]!.file.text() };
+  const root = dirOf(entryPath);
+  const rebased = root && files.every((entry) => entry.path.startsWith(`${root}/`))
+    ? files.map((entry) => ({ file: entry.file, path: entry.path.slice(root.length + 1) }))
+    : files;
+  const entry = root && rebased !== files ? entryPath.slice(root.length + 1) : entryPath;
+  const zipped = await zipFilesToBase64(rebased, `${folderName || "demo"}.zip`);
+  return { ...zipped, entry, html: await files[0]!.file.text() };
 }
 
 /** The page inside an uploaded ZIP the server will choose, read for its title. */

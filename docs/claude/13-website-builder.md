@@ -942,6 +942,14 @@ is here is why it is built this way, and what cost time.
   GIFs are kept as they are so they still animate; SVG through the sanitiser.
   Only `/import` and `PATCH /:id` take 100 MB of JSON; the rest of the router
   keeps 15 MB. `checks/demoPackage.ts`.
+  An hour later Dan imported the lone file again (169 KB request, same 20
+  404s): a warning under the drop zone was not enough. The warning now leads
+  with how many pictures will be broken, carries its own "Choose the folder
+  `index.html` is in" button (which opens on that page), and the import button
+  reads "Import without its 20 pictures". The browser resolves references by
+  path, not by name: his `index.html` sits in Downloads beside three other copies
+  of the site, and choosing Downloads (9,973 files) must still send exactly the
+  page's 21 files. A page deeper in the folder is zipped from its own folder.
 - **Videos up to 1 GB, on every plan (Dan, 20 Oct 2026).** Pictures keep each
   plan's own single-file limit and storage totals are unchanged, so a big video
   still has to fit the plan's storage. Up to 10 MB a video goes the old way

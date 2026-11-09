@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
@@ -773,6 +773,8 @@ function ImportDemoDrawer({
   // A folder (zipped here) or a ZIP brings the page's pictures with it.
   const [folder, setFolder] = useState<{ name: string; files: FolderFile[]; pages: string[] } | null>(null);
   const [entry, setEntry] = useState<string | null>(null);
+  const [folderPage, setFolderPage] = useState<string | null>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
   const [packageNote, setPackageNote] = useState<string | null>(null);
   const [packaging, setPackaging] = useState(false);
   // Files a lone HTML file names beside it, which it cannot bring.
@@ -818,6 +820,7 @@ function ImportDemoDrawer({
     setSourceTab("file");
     setFolder(null);
     setEntry(null);
+    setFolderPage(null);
     setPackageNote(null);
     setLocalFiles([]);
 
@@ -879,8 +882,9 @@ function ImportDemoDrawer({
       setDataBase64(zipped.base64);
       setFileName(zipped.filename);
       setFileSize(zipped.totalBytes);
-      setEntry(page);
-      setPackageNote(`${page} and ${zipped.fileCount - 1} file${zipped.fileCount === 2 ? "" : "s"} it uses`);
+      setEntry(zipped.entry);
+      setFolderPage(page);
+      setPackageNote(`${page} and the ${zipped.fileCount - 1} file${zipped.fileCount === 2 ? "" : "s"} it uses`);
       fillFromPage(zipped.html, page);
     } catch (err) {
       setDataBase64("");
@@ -890,7 +894,8 @@ function ImportDemoDrawer({
     }
   };
 
-  const handleFolder = async (entries: FolderFile[], name: string) => {
+  /** `prefer` is the lone file picked before, so its folder opens on that page. */
+  const handleFolder = async (entries: FolderFile[], name: string, prefer?: string) => {
     setError(null);
     setLocalFiles([]);
     const files = relativeToFolder(entries);
@@ -901,7 +906,10 @@ function ImportDemoDrawer({
     }
     const chosen = { name, files, pages };
     setFolder(chosen);
-    await packFolderPage(chosen, pages[0]!);
+    const preferred = prefer
+      ? pages.find((page) => page === prefer) ?? pages.find((page) => page.split("/").pop() === prefer)
+      : undefined;
+    await packFolderPage(chosen, preferred ?? pages[0]!);
   };
 
   const handleZip = async (file: File) => {
@@ -1211,6 +1219,7 @@ function ImportDemoDrawer({
                 <label className="cursor-pointer rounded-lg border border-line bg-white px-3 py-1.5 font-medium text-ink hover:border-ink/40">
                   Choose the page's folder
                   <input
+                    ref={folderInput}
                     type="file"
                     className="hidden"
                     {...({ webkitdirectory: "", directory: "", multiple: true } as Record<string, string | boolean>)}
@@ -1219,7 +1228,7 @@ function ImportDemoDrawer({
                       e.target.value = "";
                       if (!list.length) return;
                       const entries = list.map((file) => ({ file, path: file.webkitRelativePath || file.name }));
-                      void handleFolder(entries, entries[0]!.path.split("/")[0] || "demo");
+                      void handleFolder(entries, entries[0]!.path.split("/")[0] || "demo", localFiles.length ? fileName : undefined);
                     }}
                   />
                 </label>
@@ -1228,7 +1237,7 @@ function ImportDemoDrawer({
                     Page
                     <select
                       className="input py-1 text-xs"
-                      value={entry ?? folder.pages[0]}
+                      value={folderPage ?? folder.pages[0]}
                       disabled={packaging}
                       onChange={(e) => void packFolderPage(folder, e.target.value)}
                     >
@@ -1240,12 +1249,20 @@ function ImportDemoDrawer({
                 )}
               </div>
               {localFiles.length > 0 && (
-                <p role="alert" className="mt-2 rounded-xl border border-warn-line bg-warn-surface p-3 text-xs text-warn-text">
-                  This page uses {localFiles.length === 1 ? "a file" : `${localFiles.length} files`} kept beside it (
-                  {localFiles.slice(0, 3).join(", ")}
-                  {localFiles.length > 3 ? ` and ${localFiles.length - 3} more` : ""}). An HTML file brings none of them, so they
-                  would show as broken pictures. Choose the page's folder instead (or a ZIP of it) and they come with it.
-                </p>
+                <div role="alert" className="mt-2 rounded-xl border border-warn-line bg-warn-surface p-3 text-xs text-warn-text">
+                  <p className="font-semibold">
+                    {localFiles.length === 1 ? "1 picture" : `${localFiles.length} pictures`} will be broken if you import only this file.
+                  </p>
+                  <p className="mt-1">
+                    {fileName} shows {localFiles.slice(0, 2).join(", ")}
+                    {localFiles.length > 2 ? ` and ${localFiles.length - 2} more` : ""} from the folder it sits in. A browser
+                    never lets a website read the files beside one you pick, so choose that folder and they come with it.
+                    Your browser will ask whether to upload the folder: say Upload.
+                  </p>
+                  <Button className="mt-2" onClick={() => folderInput.current?.click()}>
+                    Choose the folder {fileName} is in
+                  </Button>
+                </div>
               )}
             </div>
           ) : (
@@ -1467,12 +1484,20 @@ function ImportDemoDrawer({
             <Button variant="ghost" onClick={onClose}>
               Cancel
             </Button>
-            <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+            {/* Not blocked: a page whose pictures are elsewhere on purpose may
+                still go in. But the button says what it will do. */}
+            <Button
+              variant={sourceTab === "file" && localFiles.length > 0 ? "secondary" : undefined}
+              onClick={() => saveMutation.mutate()}
+              disabled={saveMutation.isPending || packaging}
+            >
               {saveMutation.isPending
                 ? "Saving Demo…"
-                : editingDemo
-                  ? "Save Changes"
-                  : "Import & Generate Public URL"}
+                : sourceTab === "file" && localFiles.length > 0
+                  ? `${editingDemo ? "Save" : "Import"} without its ${localFiles.length} picture${localFiles.length === 1 ? "" : "s"}`
+                  : editingDemo
+                    ? "Save Changes"
+                    : "Import & Generate Public URL"}
             </Button>
           </div>
         </div>

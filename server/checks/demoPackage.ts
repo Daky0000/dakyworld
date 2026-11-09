@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import JSZip from "jszip";
 import { bundleDemoFiles, bundledFilesNote, readDemoPackage, zipUploadBytes } from "../src/services/demoPackage.js";
 import { localFilesNamed } from "../src/services/demoBuilder.js";
+import { filesForPage, htmlPagesIn, localFilesNamedInBrowser, relativeToFolder, zipPageWithFiles } from "../client/src/lib/demoFolder.js";
 
 let checks = 0;
 const equal = (name: string, actual: unknown, expected: unknown) => { assert.deepEqual(actual, expected, name); checks++; };
@@ -89,6 +90,34 @@ ok("a picture goes through the upload optimiser", bundled.assets.filter((asset) 
 const notes = bundledFilesNote(pkg, bundled.assets.length, bundled.skipped);
 ok("the import says what came with the page", notes[0]?.startsWith("10 files the page uses were uploaded with it"));
 ok("and that the other page is not part of the demo", notes.some((note) => note.includes("1 other page was in the folder")));
+
+// Same day, second round: Dan picked the lone file again, and the page sits
+// straight in Downloads beside three other copies of the same site. Choosing
+// that folder must send this page's pictures, by path, and nothing else.
+const folderFile = (p: string, body: string | Buffer = PNG) => ({
+  path: `Downloads/${p}`,
+  file: new File([typeof body === "string" ? body : new Uint8Array(body)], p.split("/").pop()!),
+});
+const downloads = relativeToFolder([
+  folderFile("index.html", '<img src="./images/hero/plant.png"><link rel="stylesheet" href="css/a.css"><a href="about.html">x</a>'),
+  folderFile("about.html", "<p>about</p>"),
+  folderFile("css/a.css", "body{background:url('../images/bg.png')}"),
+  folderFile("images/hero/plant.png"),
+  folderFile("images/bg.png"),
+  folderFile("ghacem-nextjs/public/images/hero/plant.png"),
+  folderFile("ghacem-website/ghacem-static-html/images/hero/plant.png"),
+  folderFile("ghacem-website/ghacem-static-html/index.html", '<img src="images/hero/plant.png">'),
+  folderFile("node_modules/x/plant.png"),
+]);
+equal("the folder's own name comes off, node_modules is never listed", downloads.map((f) => f.path).includes("node_modules/x/plant.png"), false);
+equal("the top index.html is offered first", htmlPagesIn(downloads)[0], "index.html");
+equal("only the files the page names, by path — not every file with the same name",
+  (await filesForPage(downloads, "index.html")).map((f) => f.path).sort(), ["css/a.css", "images/bg.png", "images/hero/plant.png", "index.html"]);
+const nested = await zipPageWithFiles(downloads, "ghacem-website/ghacem-static-html/index.html", "Downloads");
+equal("a page deeper in the folder is zipped from its own folder, so it sits at the top", nested.entry, "index.html");
+const nestedPkg = await readDemoPackage(zipUploadBytes(nested.base64)!, nested.filename, nested.entry);
+equal("and the server finds it and its picture there", [nestedPkg.entryPath, [...nestedPkg.files.keys()]], ["index.html", ["images/hero/plant.png"]]);
+equal("the browser's warning names what the server's note would", localFilesNamedInBrowser(page), localFilesNamed(page));
 
 const empty = new JSZip();
 empty.file("readme.txt", "no page here");
