@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { SitePage } from "@prisma/client";
 import { discoverFields, structureControls } from "../src/services/website/index.js";
-import { mentionedPages, pageFacts, pageList, pageOutline, selectedDetails } from "../src/services/websiteAgentOutline.js";
+import { expandGroupChanges, mentionedPages, pageFacts, pageList, pageOutline, selectedDetails } from "../src/services/websiteAgentOutline.js";
 
 const page = `<!doctype html><html><head><title>Kumasi Bakery — fresh bread every morning in Kumasi, Ashanti Region, Ghana</title></head><body>
 <header><a href="/"><img src="/logo.png" alt="Kumasi Bakery"></a><nav><a href="/menu">Menu</a><a href="#">Order</a></nav></header>
@@ -81,6 +81,29 @@ const oneClassFacts = pageFacts(oneClass.fields).join("\n");
 const buttonIds = oneClass.fields.filter((field) => field.kind === "button").map((field) => field.id);
 assert.equal(buttonIds.length, 3);
 assert.ok(oneClassFacts.includes(`The page has 3 buttons: ${buttonIds.join(", ")}.`), oneClassFacts);
+
+// "Make all buttons gold" is one change, and code finds every button (9 Nov
+// 2026: a small model asked twice what a button was and changed nothing).
+const gold = { fieldId: "all:button", operation: "set_style", property: "background-color", value: "#DAA563", reason: "" };
+const all = expandGroupChanges([gold], oneClass.fields);
+assert.deepEqual(all.changes.map((change) => change.fieldId), buttonIds, "one change per button, in page order");
+assert.ok(all.changes.every((change) => change.value === "#DAA563" && change.property === "background-color"));
+assert.equal(all.empty.length, 0);
+assert.ok(!all.changes.some((change) => change.fieldId === oneClass.fields.find((field) => field.preview === "About us")!.id), "a plain link is not a button");
+
+// A named change for the same property overrides the group; another property does not.
+const green = { ...gold, fieldId: buttonIds[0], value: "#00AA00" };
+const words = { fieldId: buttonIds[0], operation: "replace_text", property: "", value: "Book now", reason: "" };
+const mixed = expandGroupChanges([gold, green, words], oneClass.fields).changes;
+assert.equal(mixed.filter((change) => change.fieldId === buttonIds[0] && change.operation === "set_style").length, 1, "the first button is green once, not gold and green");
+assert.equal(mixed.find((change) => change.fieldId === buttonIds[0] && change.operation === "set_style")!.value, "#00AA00");
+assert.ok(mixed.some((change) => change.fieldId === buttonIds[0] && change.operation === "replace_text"), "and still gets its new words");
+
+// The other groups, and a group with nothing in it.
+assert.equal(expandGroupChanges([{ ...gold, fieldId: "ALL:LINK" }], oneClass.fields).changes.length, 1, "case does not matter; only the plain link");
+assert.deepEqual(expandGroupChanges([{ ...gold, fieldId: "all:image" }], oneClass.fields), { changes: [], empty: ["this page has no pictures to change"] });
+assert.ok(expandGroupChanges([{ ...gold, fieldId: "all:heading" }], fields).changes.length >= 4, "the bakery's headings");
+assert.ok(!expandGroupChanges([{ ...gold, fieldId: "all:text" }], fields).changes.some((change) => change.fieldId.startsWith("meta.")), "the browser title is never a paragraph");
 
 // Pages named in the request, besides the open one.
 const sitePages = [

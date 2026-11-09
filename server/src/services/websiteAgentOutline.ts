@@ -75,6 +75,55 @@ export function looksLikeButton(field: SiteField): boolean {
   return field.kind === "button" || field.tag === "button" || (field.tag === "a" && /btn|button|cta/i.test(field.classes ?? ""));
 }
 
+/**
+ * Every element of one kind, named as a target the model can write instead of
+ * an id: `all:button`.
+ *
+ * "Make all the buttons gold" used to mean the model copying out every
+ * button's id, one change each. A small free model did not. It asked twice
+ * what a button was, and never made a change. Now the model says which kind,
+ * and code finds every one, using the same tests the site-wide operations
+ * use. The model decides what was meant, and the code does the counting.
+ */
+export const GROUP_TARGETS = {
+  "all:button": { label: "every button", test: looksLikeButton },
+  "all:heading": { label: "every heading", test: (field: SiteField) => /^h[1-6]$/i.test(field.tag) },
+  "all:link": { label: "every link", test: (field: SiteField) => field.kind === "link" && !looksLikeButton(field) },
+  "all:image": { label: "every picture", test: (field: SiteField) => field.kind === "image" },
+  "all:text": { label: "every paragraph", test: (field: SiteField) => (field.kind === "text" || field.kind === "richtext") && !/^h[1-6]$/i.test(field.tag) && !field.id.startsWith("meta.") },
+} as const;
+export type GroupTarget = keyof typeof GROUP_TARGETS;
+
+export function isGroupTarget(fieldId: string): fieldId is GroupTarget {
+  return Object.prototype.hasOwnProperty.call(GROUP_TARGETS, fieldId.trim().toLowerCase());
+}
+
+/**
+ * The model's changes with each group target replaced by one change per
+ * matching element, in page order. A named id that is also in a group keeps
+ * its own change for the same operation and property: "make all buttons
+ * gold, and the first one green" means exactly that. A group that matches nothing is reported, not passed on as an
+ * unknown id.
+ */
+export function expandGroupChanges<T extends { fieldId: string; operation?: string; property?: string | null }>(changes: T[], fields: SiteField[]): { changes: T[]; empty: string[] } {
+  const slot = (fieldId: string, change: T) => `${fieldId}|${change.operation ?? ""}|${change.property ?? ""}`;
+  const named = new Set(changes.filter((change) => !isGroupTarget(change.fieldId)).map((change) => slot(change.fieldId, change)));
+  const out: T[] = [];
+  const empty: string[] = [];
+  for (const change of changes) {
+    const key = change.fieldId.trim().toLowerCase();
+    if (!isGroupTarget(key)) { out.push(change); continue; }
+    const group = GROUP_TARGETS[key];
+    const members = fields.filter((field) => !field.id.startsWith("meta.") && group.test(field));
+    if (members.length === 0) { empty.push(`this page has no ${group.label.replace(/^every /, "")}s to change`); continue; }
+    for (const field of members) {
+      if (named.has(slot(field.id, change))) continue;
+      out.push({ ...change, fieldId: field.id });
+    }
+  }
+  return { changes: out, empty };
+}
+
 /** What the element is, in the fewest characters that still say it. */
 function what(field: SiteField): string {
   switch (field.kind) {
@@ -314,7 +363,7 @@ export function pageFacts(fields: SiteField[]): string[] {
   const buttons = fields.filter(looksLikeButton);
   if (buttons.length) {
     const listed = buttons.slice(0, 80).map((field) => field.id).join(", ");
-    facts.push(`The page has ${buttons.length} button${buttons.length === 1 ? "" : "s"}: ${listed}${buttons.length > 80 ? ` and ${buttons.length - 80} more` : ""}. "All buttons" means every one of these.`);
+    facts.push(`The page has ${buttons.length} button${buttons.length === 1 ? "" : "s"}: ${listed}${buttons.length > 80 ? ` and ${buttons.length - 80} more` : ""}. To change all of them, write one change with fieldId all:button.`);
   }
   const placeholders = fields.filter((field) => field.kind !== "container" && /\[[A-Z][^\]]{1,40}\]|lorem ipsum/i.test(field.preview || field.value));
   if (placeholders.length) facts.push(`${placeholders.length} element${placeholders.length === 1 ? " still holds" : "s still hold"} placeholder words such as [Customer name]: ${ids(placeholders)}. Only the business can fill these; never invent them.`);

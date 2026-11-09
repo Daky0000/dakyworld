@@ -56,7 +56,7 @@ import {
   injectSectionNear,
   type SectionKind,
 } from "./websiteSectionTemplates.js";
-import { mentionedPages, pageFacts, pageList, pageOutline, selectedDetails } from "./websiteAgentOutline.js";
+import { expandGroupChanges, mentionedPages, pageFacts, pageList, pageOutline, selectedDetails } from "./websiteAgentOutline.js";
 import { commandTarget, fontIsSiteWide, parseExactCommand, type ExactCommand } from "./websiteAgentCommands.js";
 import { MOTION_EFFECTS, MOTION_TRIGGERS, describeMotion, motionPatch, type MotionEffect, type MotionTrigger } from "./websiteAgentMotion.js";
 import { createWebsiteEscalation } from "./websiteEscalationService.js";
@@ -1122,7 +1122,7 @@ export const AI_PLAN_JSON_SCHEMA = {
     intent: {
       type: "string",
       enum: [...PLAN_INTENTS],
-      description: "page_edits: changes to named elements (pages), with any blocks (structuralActions) and a new section (sections). structure: only blocks removed, duplicated or moved. font/color/phone/email/content: one value replaced across the whole site (parsedOperation). command: undo, redo or discard. clarify: a question, with options. review: findings, with proposed fixes in pages. escalate: needs a developer.",
+      description: "page_edits: changes to named elements (pages), with any blocks (structuralActions) and a new section (sections). structure: only blocks removed, duplicated or moved. font/color/phone/email/content: one value replaced across the whole site (parsedOperation). command: undo, redo or discard. clarify: a question, with options, only when the request could mean two different things on this page. Buttons, headings, links, pictures and paragraphs are never unclear: the outline marks each one. review: findings, with proposed fixes in pages. escalate: needs a developer.",
     },
     editorCommand: { type: "string", enum: ["none", "undo", "redo", "discard"], description: "Only for intent command; otherwise none." },
     escalationReason: { type: "string", description: "Only for intent escalate: what a developer would have to do. Otherwise an empty string." },
@@ -1189,7 +1189,7 @@ export const AI_PLAN_JSON_SCHEMA = {
               additionalProperties: false,
               required: ["fieldId", "operation", "property", "value", "reason"],
               properties: {
-                fieldId: { type: "string" },
+                fieldId: { type: "string", description: "An id from the outline, or all:button, all:heading, all:link, all:image or all:text for every element of that kind on the page. \"Make all buttons gold\" is one change with fieldId all:button." },
                 operation: { type: "string", enum: [...PLAN_OPERATIONS] },
                 property: { type: "string", description: "For the style operations, the one CSS property, such as font-size. For set_animation, when it plays: load, view, scroll, loop, hover or click. Otherwise an empty string." },
                 value: { type: "string", description: "The new words, address, description, CSS value, animation effect, variant, true/false for set_new_tab, or for set_image the picture's address." },
@@ -2412,7 +2412,10 @@ async function buildModelPlan(site: Site, aiData: AiPlan, ctx: ModelContext, sho
     const pageChanges: SiteAgentPagePlan["changes"] = [];
     const pageEdits: Record<string, AgentFieldEdit> = {};
 
-    for (const ch of aiPage.changes) {
+    // "all:button" and the rest become one change per matching element.
+    const grouped = expandGroupChanges(aiPage.changes, fields);
+    dropped.push(...grouped.empty);
+    for (const ch of grouped.changes) {
       const field = byId.get(ch.fieldId);
       if (!field) { dropped.push(`${ch.fieldId} is not an element on ${page.title}`); continue; }
       const prevEdit = pageEdits[field.id] ?? (existingDraft[field.id] ? editableValues(existingDraft[field.id]) : {});
