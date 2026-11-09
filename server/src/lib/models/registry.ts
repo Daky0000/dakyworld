@@ -1182,11 +1182,14 @@ export const FREE_LADDER_BY_JOB: Record<LadderKey, string[]> = {
   // The workforce loop. Every rung has to call tools — a model that cannot
   // fails on turn one, having read the whole system prompt first — and has to
   // hold a long conversation without losing the thread. All three are verified
-  // tool-callers. Nemotron Super leads for its 1M context and agentic
-  // training. Nemotron Nano is last because it is the one that can look at a
-  // screenshot a tool returned. The Builder agent's planner asks this ladder
-  // too.
-  agent: ["nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-20b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"],
+  // tool-callers. The Builder agent's planner asks this ladder too.
+  //
+  // Ordered by what answered on 9 Nov 2026, not by size. Nemotron Super is
+  // in NVIDIA's public catalogue but answers 404 "Function … Not found for
+  // account" on this account. GPT-OSS 20B timed out at sixty seconds on three
+  // of four requests. Nemotron Nano answered every time. A rung that times out
+  // costs the person a minute, so the one that answers goes first.
+  agent: ["nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "openai/gpt-oss-20b", "nvidia/nemotron-3-super-120b-a12b"],
 };
 
 /**

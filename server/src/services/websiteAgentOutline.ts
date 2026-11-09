@@ -62,6 +62,19 @@ function short(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+/**
+ * True for an element a person would call a button: the same test the
+ * site-wide font change uses.
+ *
+ * Counted for the model rather than left for it to find. On 9 Nov 2026 the
+ * outline already marked every button, and a small free model asked "which
+ * elements are considered buttons?" twice, then gave up. A fact that lists
+ * every id gives a small model the whole answer in one line.
+ */
+export function looksLikeButton(field: SiteField): boolean {
+  return field.kind === "button" || field.tag === "button" || (field.tag === "a" && /btn|button|cta/i.test(field.classes ?? ""));
+}
+
 /** What the element is, in the fewest characters that still say it. */
 function what(field: SiteField): string {
   switch (field.kind) {
@@ -296,6 +309,13 @@ export function pageFacts(fields: SiteField[]): string[] {
   if (!description || !descriptionText) facts.push("The page has no search description (meta.1).");
   else if (descriptionText.length > 160) facts.push(`The search description (meta.1) is ${descriptionText.length} characters; search results cut it off near 160.`);
   else if (descriptionText.length < 50) facts.push(`The search description (meta.1) is only ${descriptionText.length} characters.`);
+  // Every id, not the first eight: "make all the buttons gold" needs a change
+  // for each one, and a model handed eight changes eight.
+  const buttons = fields.filter(looksLikeButton);
+  if (buttons.length) {
+    const listed = buttons.slice(0, 80).map((field) => field.id).join(", ");
+    facts.push(`The page has ${buttons.length} button${buttons.length === 1 ? "" : "s"}: ${listed}${buttons.length > 80 ? ` and ${buttons.length - 80} more` : ""}. "All buttons" means every one of these.`);
+  }
   const placeholders = fields.filter((field) => field.kind !== "container" && /\[[A-Z][^\]]{1,40}\]|lorem ipsum/i.test(field.preview || field.value));
   if (placeholders.length) facts.push(`${placeholders.length} element${placeholders.length === 1 ? " still holds" : "s still hold"} placeholder words such as [Customer name]: ${ids(placeholders)}. Only the business can fill these; never invent them.`);
   return facts;

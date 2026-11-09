@@ -69,6 +69,18 @@ assert.match(facts, /1 link goes nowhere/);
 assert.match(facts, /browser title \(meta\.0\) is \d+ characters/);
 assert.match(facts, /no search description/);
 assert.match(facts, /placeholder words such as \[Customer name\]/);
+const orderNow = fields.find((field) => field.preview === "Order now")!;
+assert.match(facts, new RegExp(`The page has 1 button: ${orderNow.id.replace(/\./g, "\\.")}\\.`), "the btn link is counted as a button");
+
+// Every button id is handed over, so "all buttons" needs no searching.
+// Webflow, Elementor and a site's own "cta" count; a plain link does not.
+const oneClass = discoverFields(`<!doctype html><html><head><title>t</title></head><body><main>
+<a class="button w-button" href="/a">Book a call</a><a class="elementor-button" href="/b">Get a quote</a><a class="hero-cta" href="/c">Start</a><a href="/d">About us</a>
+</main></body></html>`);
+const oneClassFacts = pageFacts(oneClass.fields).join("\n");
+const buttonIds = oneClass.fields.filter((field) => field.kind === "button").map((field) => field.id);
+assert.equal(buttonIds.length, 3);
+assert.ok(oneClassFacts.includes(`The page has 3 buttons: ${buttonIds.join(", ")}.`), oneClassFacts);
 
 // Pages named in the request, besides the open one.
 const sitePages = [

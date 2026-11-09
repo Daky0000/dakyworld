@@ -56,6 +56,12 @@ assert.equal(sloppy.pages[0].changes.length, 0, "an operation outside the list i
 assert.equal(sloppy.structuralActions.length, 0);
 assert.equal(planFromModel(null).pages.length, 0, "no answer is no changes, not a crash");
 
+// A command only rides on a command answer. Nemotron Nano answered "which
+// links are buttons" with page_edits, "none found" and discard (9 Nov 2026).
+assert.equal(planFromModel({ intent: "page_edits", editorCommand: "discard", explanation: "No buttons found." }).editorCommand, null, "a discard outside a command answer is dropped");
+assert.equal(planFromModel({ intent: "clarify", editorCommand: "undo" }).editorCommand, null, "so is an undo");
+assert.equal(planFromModel({ intent: "command", editorCommand: "discard" }).editorCommand, "discard", "a command answer keeps its command");
+
 // ---------------------------------------------------------- asking for help
 for (const phrase of ["I need a developer", "Request developer help", "can a developer help with this", "let us help", "hand off to a developer", "talk to a human"]) {
   assert.equal(isExplicitEscalationRequest(phrase), true, `"${phrase}" asks for a developer`);

@@ -1242,7 +1242,11 @@ export function planFromModel(raw: unknown): AiPlan {
   return {
     explanation: text(data.explanation),
     intent,
-    editorCommand: command === "undo" || command === "redo" || command === "discard" ? command : null,
+    // Only a command answer carries a command. The schema says so, and a small
+    // model ignored it: asked which links were buttons, it answered
+    // `page_edits`, "no buttons found", and `editorCommand: "discard"`, which
+    // offered to throw away the whole page's draft.
+    editorCommand: intent === "command" && (command === "undo" || command === "redo" || command === "discard") ? command : null,
     escalationReason: text(data.escalationReason) || undefined,
     escalationCategory: category && category !== "none" ? (category as AiPlan["escalationCategory"]) : undefined,
     parsedOperation: operation ? { from: text(operation.from), to: text(operation.to), property: text(operation.property) || null } : undefined,
@@ -2324,7 +2328,10 @@ async function planExactCommand(
 // ============================================================================
 
 /** Room for the answer, by the router's level: a one-property change needs little; rewriting a page needs a lot. */
-const ANSWER_TOKENS: Record<TaskLevel, number> = { simple: 2_500, standard: 4_000, complex: 8_000 };
+// Simple was 2,500. The free rungs think before they answer, and "make all 20
+// buttons gold" is twenty changes, so a reasoning model ran out of room
+// (9 Nov 2026). It is a ceiling, not a charge.
+const ANSWER_TOKENS: Record<TaskLevel, number> = { simple: 4_000, standard: 5_000, complex: 8_000 };
 
 type ModelContext = {
   site: Site;
@@ -2590,6 +2597,9 @@ function modelPrompt(ctx: ModelContext, shown: Map<string, Workspace>, overview:
   return blocks.join("\n\n");
 }
 
+/** The person's own words asking for the draft to go: "discard my changes", "start over", "throw it all away". */
+const ASKS_TO_DISCARD = /\b(?:discard|scrap|throw (?:it |them |everything |all |it all )?away|start (?:over|again|from scratch)|reset|revert (?:all|everything)|undo (?:all|everything)|get rid of (?:all |my )?(?:the )?(?:changes|edits|draft))\b/i;
+
 async function planWithModel(ctx: ModelContext): Promise<SiteAgentPlan> {
   const { site, pages, livePages, currentPage, ws, trimmed, attachments, read } = ctx;
   const total = livePages.length;
@@ -2685,6 +2695,14 @@ async function planWithModel(ctx: ModelContext): Promise<SiteAgentPlan> {
 
     if (aiData.intent === "clarify" && built.kept === 0) {
       return answerOnly(aiData.explanation || "Which one do you mean?", total, { options: aiData.options, ...meta });
+    }
+
+    // Discarding loses every unpublished edit on the page, so the model's word
+    // is not enough: the person has to have asked for it in their own words.
+    // Undo and redo stay with the model, because the other one reverses them.
+    if (aiData.editorCommand === "discard" && !ASKS_TO_DISCARD.test(trimmed)) {
+      console.warn(`[website agent] site ${site.id}: ${result.model} proposed discarding the draft for "${trimmed.slice(0, 80)}"; dropped, the request did not ask for it.`);
+      aiData = { ...aiData, editorCommand: null };
     }
 
     if (aiData.editorCommand) {
