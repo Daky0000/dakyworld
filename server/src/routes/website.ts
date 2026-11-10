@@ -88,8 +88,9 @@ websiteRouter.use((req, res, next) => {
   next();
 });
 
-// Business allows up to 1 GB uploads.
-websiteRouter.use(json({ limit: "1gb" }));
+// Business allows up to 2 GB uploads. A 2 GB ZIP package base64-encoded in JSON
+// takes ~2.67 GB, so the parser limit is 3 GB to allow full package payloads.
+websiteRouter.use(json({ limit: "3gb" }));
 
 // Plan features, ahead of every route. The table is `websiteTierFeature`;
 // registering this before any route means no route's position in this file

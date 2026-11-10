@@ -364,8 +364,8 @@ export function ConnectWebsite() {
                         const file = items[0].getAsFile();
                         if (!file) return;
                         const isZip = file.name.toLowerCase().endsWith(".zip") || file.type === "application/zip";
-                        if (isZip && file.size > 1024 * 1024 * 1024) {
-                          setFileError("Choose a ZIP package smaller than 1 GB.");
+                        if (isZip && file.size > 2 * 1024 * 1024 * 1024) {
+                          setFileError("Choose a ZIP package smaller than 2 GB.");
                           return;
                         }
                         if (isZip) {
@@ -438,12 +438,12 @@ export function ConnectWebsite() {
                             setFilename("");
                             if (!file) return;
                             const isZip = file.name.toLowerCase().endsWith(".zip") || file.type === "application/zip";
-                            if (isZip && file.size > 1024 * 1024 * 1024) {
-                              setFileError("Choose a ZIP package smaller than 1 GB.");
+                            if (isZip && file.size > 2 * 1024 * 1024 * 1024) {
+                              setFileError("Choose a ZIP package smaller than 2 GB.");
                               return;
                             }
-                            if (!isZip && file.size > 1024 * 1024 * 1024) {
-                              setFileError("Choose an HTML file smaller than 1 GB.");
+                            if (!isZip && file.size > 2 * 1024 * 1024 * 1024) {
+                              setFileError("Choose an HTML file smaller than 2 GB.");
                               return;
                             }
                             try {

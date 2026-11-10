@@ -43,7 +43,7 @@ export function ImportWebsitePage({ siteId }: { siteId: string }) {
 
       if (!file) throw new Error("Choose an HTML file, ZIP package, or project folder.");
       if (isZip) {
-        if (file.size > 1024 * 1024 * 1024) throw new Error("Choose a ZIP package smaller than 1 GB.");
+        if (file.size > 2 * 1024 * 1024 * 1024) throw new Error("Choose a ZIP package smaller than 2 GB.");
         const data = await fileToBase64(file);
         const result = await api.post<PackageImportResult>(`/website/sites/${siteId}/import-package`, {
           filename: file.name,
@@ -53,7 +53,7 @@ export function ImportWebsitePage({ siteId }: { siteId: string }) {
         return { id: result.pages[0].id, packageResult: result };
       }
 
-      if (file.size > 1024 * 1024 * 1024) throw new Error("Choose an HTML file smaller than 1 GB.");
+      if (file.size > 2 * 1024 * 1024 * 1024) throw new Error("Choose an HTML file smaller than 2 GB.");
       const result = await api.post<{ id: string }>(`/website/sites/${siteId}/import`, {
         title: title.trim(),
         path: path.trim(),

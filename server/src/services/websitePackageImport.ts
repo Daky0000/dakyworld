@@ -28,10 +28,10 @@ import {
 } from "./websiteTierPlans.js";
 import type { WebsiteActor } from "./websiteActor.js";
 
-export const MAX_PACKAGE_SIZE = 1024 * 1024 * 1024; // 1 GB compressed limit
-export const MAX_UNCOMPRESSED_SIZE = 2 * 1024 * 1024 * 1024; // 2 GB uncompressed limit (zip bomb defense)
+export const MAX_PACKAGE_SIZE = 2 * 1024 * 1024 * 1024; // 2 GB compressed limit
+export const MAX_UNCOMPRESSED_SIZE = 4 * 1024 * 1024 * 1024; // 4 GB uncompressed limit (zip bomb defense)
 export const MAX_FILE_COUNT = 500; // max entries in zip
-export const MAX_SINGLE_FILE_SIZE = 1024 * 1024 * 1024; // 1 GB per single asset
+export const MAX_SINGLE_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2 GB per single asset
 
 export type DiscoveredPage = {
   filePath: string;
@@ -374,8 +374,10 @@ const tooLargeAlone = (name: string) =>
  * name the field and leave it commented out); null when it is not there.
  */
 function declaredSize(entry: JSZip.JSZipObject): number | null {
-  const size = (entry as unknown as { _data?: { uncompressedSize?: unknown } })._data?.uncompressedSize;
-  return typeof size === "number" && Number.isFinite(size) && size >= 0 ? size : null;
+  const raw = (entry as unknown as { _data?: { uncompressedSize?: unknown } })._data?.uncompressedSize;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return null;
+  const size = raw >>> 0;
+  return size >= 0 ? size : null;
 }
 
 /**
