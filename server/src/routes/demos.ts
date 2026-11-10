@@ -70,9 +70,8 @@ demosRouter.use(
 // Imported HTML files ride in the JSON body (raw or base64), so this router
 // mounts its own larger body parser after the permission check. See index.ts -> UPLOAD_PATHS.
 // The two doors that take a ZIP of a page and its pictures get more room than
-// a page alone needs; the general parser below then leaves an already-read
-// body alone.
-const DEMO_PACKAGE_BODY = "100mb";
+// a page alone needs; 2 GB binary in base64 is ~2.67 GB, so 3 GB accommodates it.
+const DEMO_PACKAGE_BODY = "3gb";
 demosRouter.post("/import", express.json({ limit: DEMO_PACKAGE_BODY }));
 demosRouter.patch("/:id", express.json({ limit: DEMO_PACKAGE_BODY }));
 demosRouter.use(express.json({ limit: MAX_UPLOAD_BODY }));

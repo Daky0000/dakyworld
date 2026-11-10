@@ -914,7 +914,7 @@ function ImportDemoDrawer({
 
   const handleZip = async (file: File) => {
     if (file.size > MAX_DEMO_FOLDER_BYTES) {
-      setError(`That ZIP is ${(file.size / 1024 / 1024).toFixed(0)} MB; the limit is ${MAX_DEMO_FOLDER_BYTES / 1024 / 1024} MB.`);
+      setError(`That ZIP is ${(file.size / 1024 / 1024).toFixed(0)} MB; the limit is 2 GB.`);
       return;
     }
     setPackaging(true);

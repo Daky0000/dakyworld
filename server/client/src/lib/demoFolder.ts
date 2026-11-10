@@ -13,8 +13,8 @@ import { zipFilesToBase64 } from "./folderZip.js";
 
 export type FolderFile = { file: File; path: string };
 
-/** The largest folder sent, before base64; the server takes 100 MB of JSON. */
-export const MAX_DEMO_FOLDER_BYTES = 70 * 1024 * 1024;
+/** The largest folder sent, before base64; the server takes 3 GB of JSON. */
+export const MAX_DEMO_FOLDER_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
 
 const SKIP = /(^|\/)(?:node_modules|\.git|__MACOSX)\/|(^|\/)(?:\.DS_Store|Thumbs\.db)$/;
 
@@ -142,7 +142,7 @@ export async function zipPageWithFiles(entries: FolderFile[], entryPath: string,
   const bytes = files.reduce((sum, entry) => sum + entry.file.size, 0);
   if (bytes > MAX_DEMO_FOLDER_BYTES) {
     throw new Error(
-      `This page and the files it uses come to ${(bytes / 1024 / 1024).toFixed(0)} MB; the limit is ${MAX_DEMO_FOLDER_BYTES / 1024 / 1024} MB. Make the pictures smaller and choose the folder again.`,
+      `This page and the files it uses come to ${(bytes / 1024 / 1024).toFixed(0)} MB; the limit is 2 GB. Make the pictures smaller and choose the folder again.`,
     );
   }
   const root = dirOf(entryPath);
