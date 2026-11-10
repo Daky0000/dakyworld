@@ -1056,6 +1056,27 @@ is here is why it is built this way, and what cost time.
   (`!important`, (0,3,0)) wins over it. Known and not yet decided: making
   Desktop win means mirroring Desktop declarations into the generated
   stylesheet for every edited element.
+- **The editor preview links uploads; it does not embed them (10 Nov 2026).**
+  `embedWebsiteAssets(site, html, { linkFrom: editorOrigin(req) })` points each
+  picture and font at `<origin>/api/website/sites/:id/assets/:assetId/content`
+  (absolute, because the preview's `<base>` is the published site; https unless
+  the host is this machine). The Ghacem demo was 13.5 MB of base64 per preview
+  load, 2–5 s of server time, and every layout change reloads it. That route is
+  now `private, no-cache` so a reload is a 304. Export and review links still
+  embed (a file on its own; a visitor with no session). A preview address
+  handed back inside an edit — an `<img>` in a button's words — is turned back
+  into the file's own address by `relinkPreviewAssets` on draft save. The media
+  helpers (`lib/websiteMedia.ts`) pass `data:`/`blob:` through untouched: the
+  media list re-runs on every edit and was URL-parsing megabytes per drag step.
+- **An inline `!important` the page already had is kept (10 Nov 2026).** Imported
+  pages carry it — every Ghacem button is `background-color: #DAA563 !important`.
+  The Style tab reads values through `withoutImportant` and writes through
+  `restoreImportant` (`lib/websiteStyleValues.ts`), so a control sees `#DAA563`
+  and the new value goes back flagged, winning exactly where the old one did.
+  Before, the colour picker could not parse the flagged value, fell back to its
+  default navy, and an opacity drag turned the gold button translucent navy. The
+  picker now also falls back to the element's computed colour, never navy, for a
+  value it cannot hold (a `var()`). `checks/browser/colourOpacity.mjs`.
 - **Custom CSS is the declarations no control owns.** One inline style holds
   everything, so the box shows what is left over (a `text-shadow`, a `cursor`)
   and refuses, with the reason, anything a control owns, anything `--dw-*`, and

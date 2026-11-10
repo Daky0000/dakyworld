@@ -547,6 +547,57 @@ export function writeProperty(raw: Record<string, string>, property: string, val
   return next;
 }
 
+/**
+ * `!important`, held to one side while the panel works.
+ *
+ * Imported pages carry it inline — every button on the Ghacem demo is
+ * `background-color: #DAA563 !important` — and a control that reads the value
+ * with the flag still on cannot parse it: the colour picker fell back to its
+ * default navy, so dragging opacity painted the button translucent navy instead
+ * of fading the gold. Controls see the bare value; the write puts the flag back.
+ *
+ * Put back, rather than dropped, because it was on the page for a reason — a
+ * site rule marked `!important` that the inline one was beating — and the new
+ * value should win exactly where the old one did.
+ */
+const IMPORTANT = /\s*!\s*important\s*$/i;
+
+export function withoutImportant(raw: Record<string, string>): { clean: Record<string, string>; important: Set<string> } {
+  const clean: Record<string, string> = {};
+  const important = new Set<string>();
+  for (const [property, value] of Object.entries(raw)) {
+    if (IMPORTANT.test(value)) {
+      important.add(property);
+      clean[property] = value.replace(IMPORTANT, "");
+    } else clean[property] = value;
+  }
+  return { clean, important };
+}
+
+/** The shorthand a longhand came out of, when a write took one apart. */
+function ownerOf(property: string): string | undefined {
+  if (OWNER[property]) return OWNER[property];
+  if (/^border-(?:width|style|color)$/.test(property)) return "border";
+  if (/^background-/.test(property)) return "background";
+  return undefined;
+}
+
+/**
+ * The flag back on whatever had it — and on a longhand a write split out of a
+ * shorthand that had it, so `margin: 0 auto !important` stays four important
+ * sides when one of them is changed.
+ */
+export function restoreImportant(next: Record<string, string>, before: Record<string, string>, important: Set<string>): Record<string, string> {
+  if (!important.size) return next;
+  const out: Record<string, string> = {};
+  for (const [property, value] of Object.entries(next)) {
+    const owner = ownerOf(property);
+    const flagged = important.has(property) || (before[property] === undefined && owner !== undefined && important.has(owner));
+    out[property] = flagged && value !== "" && !IMPORTANT.test(value) ? `${value} !important` : value;
+  }
+  return out;
+}
+
 /** Whether this screen size may carry the declaration: tablet and phone rules have a narrower language. */
 export function allowedAt(device: "desktop" | "tablet" | "mobile", property: string, value = "1px"): boolean {
   return device === "desktop" || safeResponsiveStyle(`${property}: ${value}`) !== "";

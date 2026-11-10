@@ -20,7 +20,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { INSPECTED_PROPERTIES, toHex } from "../client/src/lib/elementInspector.js";
 import {
-  allowedAt, readBackground, readFilters, readGradient, readShadows, readTransforms, readTransitions, readable, splitTop,
+  allowedAt, readBackground, restoreImportant, withoutImportant, readFilters, readGradient, readShadows, readTransforms, readTransitions, readable, splitTop,
   writeBackground, writeFilters, writeGradient, writeProperty, writeShadows, writeTransforms, writeTransitions,
 } from "../client/src/lib/websiteStyleValues.js";
 import {
@@ -216,5 +216,21 @@ for (const property of shown) check(`${property} is measured in the frame`, INSP
 check("the frame is asked for each property once", new Set(INSPECTED_PROPERTIES).size === INSPECTED_PROPERTIES.length);
 
 equal("rgb reads as hex", toHex("rgb(8, 16, 31)"), "#08101F");
+
+/* ------------------------------------------- !important, held to one side */
+// The Ghacem demo's buttons: the picker read "#DAA563 !important" as no colour.
+{
+  const { clean, important } = withoutImportant({ "background-color": "#DAA563 !important", color: "#141317 ! IMPORTANT", "font-weight": "600", margin: "0 auto !important" });
+  equal("controls read the bare value", clean["background-color"], "#DAA563");
+  equal("whatever its spacing or case", clean.color, "#141317");
+  equal("and an unflagged one as it was", clean["font-weight"], "600");
+  const written = restoreImportant(writeProperty(clean, "background-color", "rgba(218, 165, 99, 0.5)"), clean, important);
+  equal("a changed value keeps the flag it had", written["background-color"], "rgba(218, 165, 99, 0.5) !important");
+  equal("its neighbours keep theirs", written.color, "#141317 !important");
+  equal("and an unflagged one gains none", written["font-weight"], "600");
+  const sides = restoreImportant(writeProperty(clean, "margin-top", "8px"), clean, important);
+  equal("a longhand split out of a flagged shorthand is flagged", [sides["margin-top"], sides["margin-left"]], ["8px !important", "auto !important"]);
+  equal("the server keeps it", safeStyle("background-color: rgba(218, 165, 99, 0.5) !important"), "background-color: rgba(218, 165, 99, 0.5) !important");
+}
 
 console.log(`websiteInspector: ${checks} checks — list values as rows and back, refusals instead of near misses, shorthands expanded only when touched, screen-size limits, legacy motion read, interactions written and read back, every keyframe exists, the server keeps every value, every shown property measured passed`);

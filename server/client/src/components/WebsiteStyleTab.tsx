@@ -8,7 +8,7 @@ import {
 } from "./StyleControls";
 import {
   FILTERS, TRANSITION_GROUPS, filterSummary, layerSummary, readBackground, readFilters, readGradient, readShadows, readTransforms,
-  readTransitions, shadowSummary, transformSummary, writeBackground, writeFilters, writeGradient, writeShadows, writeTransforms,
+  readTransitions, restoreImportant, shadowSummary, transformSummary, withoutImportant, writeBackground, writeFilters, writeGradient, writeShadows, writeTransforms,
   writeTransitions, type BackgroundLayer, type FilterItem, type Gradient, type Shadow, type TransformItem,
 } from "../lib/websiteStyleValues";
 
@@ -63,20 +63,22 @@ const isGrid = (display: string) => /(?:^|-)grid$/.test(display.trim());
 
 export function WebsiteStyleTab(props: Props) {
   const { style, sourceStyle, inheritedStyle, computed, facts, device, readOnly, designer, onChange, onCommit } = props;
-  const raw = parseStyle(style);
+  // Controls read values without `!important`; writes put it back (see withoutImportant).
+  const { clean: raw, important } = withoutImportant(parseStyle(style));
+  const bare = (text: string) => withoutImportant(parseStyle(text)).clean;
   const c: StyleCtx = {
     map: readable(raw),
     raw,
-    source: readable(parseStyle(sourceStyle)),
-    inherited: readable(parseStyle(inheritedStyle)),
+    source: readable(bare(sourceStyle)),
+    inherited: readable(bare(inheritedStyle)),
     computed,
     device,
     readOnly,
-    set: (property, value, commit) => onChange(writeStyle(writeProperty(raw, property, value)), commit),
+    set: (property, value, commit) => onChange(writeStyle(restoreImportant(writeProperty(raw, property, value), raw, important)), commit),
     setMany: (patch, commit) => {
       let next = raw;
       for (const [property, value] of Object.entries(patch)) next = writeProperty(next, property, value);
-      onChange(writeStyle(next), commit);
+      onChange(writeStyle(restoreImportant(next, raw, important)), commit);
     },
     commit: onCommit,
   };
@@ -102,7 +104,7 @@ export function WebsiteStyleTab(props: Props) {
       <BackgroundSection c={c} changed={changed} onPickImage={props.onPickImage} resolveImage={props.resolveImage} videoBackground={props.videoBackground} />
       <BorderSection c={c} effective={effective} changed={changed} />
       <EffectsSection c={c} changed={changed} />
-      {designer && <CustomCssSection c={c} onChange={onChange} />}
+      {designer && <CustomCssSection c={c} full={parseStyle(style)} onChange={onChange} />}
     </fieldset>
   );
 }
@@ -1050,8 +1052,10 @@ function declarationProblem(property: string, value: string, device: Device): st
   return null;
 }
 
-function CustomCssSection({ c, onChange }: { c: StyleCtx; onChange: (style: string, commit?: boolean) => void }) {
-  const others = Object.entries(c.raw).filter(([property]) => !owned(property));
+// `full` is the style as written, `!important` and all: this is the one place that
+// shows and writes the declarations as text, so it must not lose the flag.
+function CustomCssSection({ c, full, onChange }: { c: StyleCtx; full: Record<string, string>; onChange: (style: string, commit?: boolean) => void }) {
+  const others = Object.entries(full).filter(([property]) => !owned(property));
   const text = others.map(([property, value]) => `  ${property}: ${value};`).join("\n");
   const [draft, setDraft] = useState(text);
   const [dropped, setDropped] = useState<string[]>([]);
@@ -1062,7 +1066,7 @@ function CustomCssSection({ c, onChange }: { c: StyleCtx; onChange: (style: stri
   const apply = () => {
     editing.current = false;
     const body = draft.replace(/^\s*element\.style\s*\{|\}\s*$/g, "");
-    const kept: Record<string, string> = Object.fromEntries(Object.entries(c.raw).filter(([property]) => owned(property)));
+    const kept: Record<string, string> = Object.fromEntries(Object.entries(full).filter(([property]) => owned(property)));
     const refused: string[] = [];
     for (const line of body.split(";")) {
       const colon = line.indexOf(":");

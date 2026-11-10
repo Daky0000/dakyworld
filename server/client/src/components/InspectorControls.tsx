@@ -140,9 +140,28 @@ function rgbToHex(r: number, g: number, b: number): string {
 
 export type Colour = { hex: string; alpha: number };
 
-export function readColour(value: string | undefined): Colour {
-  const raw = (value ?? "").trim();
-  if (!raw) return { hex: "#0D1526", alpha: 1 };
+const DEFAULT_COLOUR: Colour = { hex: "#0D1526", alpha: 1 };
+
+/** Named colours, hsl() and the like, through the browser's own parser; null where there is none. */
+let colourProbe: CanvasRenderingContext2D | null | undefined;
+function normaliseColour(raw: string): string | null {
+  if (colourProbe === undefined) {
+    try { colourProbe = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d"); } catch { colourProbe = null; }
+  }
+  if (!colourProbe) return null;
+  // Two different sentinels: a value the canvas refuses leaves the previous one in place.
+  colourProbe.fillStyle = "#000001";
+  colourProbe.fillStyle = raw;
+  const first = String(colourProbe.fillStyle);
+  colourProbe.fillStyle = "#000002";
+  colourProbe.fillStyle = raw;
+  return first === String(colourProbe.fillStyle) ? first : null;
+}
+
+/** A colour the picker can show, or null when the value is not one (a `var()`, a gradient). */
+export function parseColour(value: string | undefined): Colour | null {
+  const raw = (value ?? "").trim().replace(/\s*!\s*important\s*$/i, "");
+  if (!raw) return null;
   const rgba = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:[\s,/]+([\d.%]+))?\s*\)$/i.exec(raw);
   if (rgba) {
     const alphaRaw = rgba[4];
@@ -153,7 +172,13 @@ export function readColour(value: string | undefined): Colour {
   if (hex8) return { hex: `#${hex8[1]!.toUpperCase()}`, alpha: parseInt(hex8[2]!, 16) / 255 };
   const rgb = hexToRgb(raw);
   if (rgb) return { hex: rgbToHex(...rgb), alpha: 1 };
-  return { hex: "#0D1526", alpha: 1 };
+  if (/^(?:var|calc|env)\(|gradient\(|^url\(/i.test(raw)) return null;
+  const normal = normaliseColour(raw);
+  return normal && normal !== raw ? parseColour(normal) : null;
+}
+
+export function readColour(value: string | undefined): Colour {
+  return parseColour(value) ?? DEFAULT_COLOUR;
 }
 
 export function writeColour({ hex, alpha }: Colour): string {
@@ -1049,7 +1074,10 @@ export function ColorCodeInput({
   className?: string;
 }) {
   const effectiveLabel = ariaLabel ?? label;
-  const parsed = useMemo(() => readColour(value || placeholder), [value, placeholder]);
+  // What the element shows (the placeholder is its computed colour) when the
+  // value is not a colour the picker can hold — a `var()`, say. The old fallback
+  // was a fixed navy, so dragging opacity on such a button turned it navy.
+  const parsed = useMemo(() => parseColour(value) ?? parseColour(placeholder) ?? readColour(""), [value, placeholder]);
   const palette = useContext(PaletteContext) ?? COLOURS;
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement>(null);
