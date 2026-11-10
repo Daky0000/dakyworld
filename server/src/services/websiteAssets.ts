@@ -77,13 +77,27 @@ async function assetBytes(ids: string[]): Promise<Map<string, Buffer>> {
  * gives the preview a `<base>`, so the browser fetches it from there. Replacing
  * it with nothing would blank a picture that is working perfectly well.
  */
-export async function embedWebsiteAssets(site: Site, html: string): Promise<string> {
+export async function embedWebsiteAssets(site: Site, html: string, options: { linkFrom?: string } = {}): Promise<string> {
   const assets = await referencedAssets(site, html);
-  const bytes = await assetBytes(assets.map((asset) => asset.id));
+  // `linkFrom` is the editor's own origin. The editor preview points every
+  // picture and font at the asset route instead of pasting its bytes into the
+  // page: one imported page carried 13.5 MB of base64 on every load — and every
+  // layout change reloads the preview — which is most of why the editor felt
+  // heavy. The route is same-origin to the preview frame, so the session cookie
+  // goes with it. Absolute, because the preview's `<base>` is the published
+  // site and a bare `/api/...` would resolve there. Export and review links
+  // still embed: an export is a file on its own, and a review visitor has no
+  // session for the route.
+  const linkFrom = options.linkFrom?.replace(/\/+$/, "");
+  const swept = linkFrom
+    ? new Set((await prisma.siteAsset.findMany({ where: { id: { in: assets.map((asset) => asset.id) }, content: null }, select: { id: true } })).map((row) => row.id))
+    : null;
+  const bytes = linkFrom ? new Map<string, Buffer>() : await assetBytes(assets.map((asset) => asset.id));
   let out = html;
   for (const asset of assets) {
     const content = bytes.get(asset.id);
-    if (!content) {
+    const held = swept ? !swept.has(asset.id) : Boolean(content);
+    if (!held) {
       if (isR2Configured()) {
         const r2Url = getR2PublicUrl(asset.repoPath);
         out = out.split(assetUrl(site, asset.repoPath)).join(r2Url);
@@ -93,10 +107,12 @@ export async function embedWebsiteAssets(site: Site, html: string): Promise<stri
 
     const isImage = asset.contentType.startsWith("image/");
     const isFont = asset.contentType.startsWith("font/") || asset.contentType.includes("fontobject");
-    const replacement =
-      isImage || isFont
-        ? `data:${asset.contentType};base64,${content.toString("base64")}`
-        : `/api/website/sites/${site.id}/assets/${asset.id}/content`;
+    const route = `/api/website/sites/${site.id}/assets/${asset.id}/content`;
+    const replacement = linkFrom
+      ? `${linkFrom}${route}`
+      : isImage || isFont
+        ? `data:${asset.contentType};base64,${content!.toString("base64")}`
+        : route;
 
     const hosted = assetUrl(site, asset.repoPath);
     const webPath = asset.repoPath.replace(/^(?:public|static)\//, "");
@@ -165,6 +181,39 @@ export async function embedWebsiteAssets(site: Site, html: string): Promise<stri
     }
   }
   return out;
+}
+
+/**
+ * The origin the editor preview links its assets from: the host the request
+ * came to. https unless it is this machine — Railway terminates TLS in front of
+ * the app, so `req.protocol` can read `http` there and an http picture inside an
+ * https frame is blocked as mixed content.
+ */
+export function editorOrigin(req: { get(name: string): string | undefined; protocol: string }): string | undefined {
+  const host = req.get("host");
+  if (!host) return undefined;
+  const local = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(host);
+  return `${local ? req.protocol : "https"}://${host}`;
+}
+
+/**
+ * The reverse of linking: a preview asset address that came back in an edit —
+ * an `<img>` inside a button's words is handed back as the frame shows it —
+ * goes back to the file's own address on the site. Stored as the preview
+ * address, it would publish a picture behind a login.
+ */
+export async function relinkPreviewAssets<T>(site: Pick<Site, "id" | "publicUrl">, values: T): Promise<T> {
+  const json = JSON.stringify(values);
+  const marker = `/api/website/sites/${site.id}/assets/`;
+  if (!json.includes(marker)) return values;
+  const pattern = new RegExp(`(?:https?:\\/\\/[^"'\\s()<>]+)?\\/api\\/website\\/sites\\/${site.id}\\/assets\\/([a-z0-9]+)\\/content(?:\\?v=[\\w.-]*)?`, "gi");
+  const ids = [...new Set([...json.matchAll(pattern)].map((match) => match[1]!))];
+  const rows = await prisma.siteAsset.findMany({ where: { siteId: site.id, id: { in: ids } }, select: { id: true, repoPath: true } });
+  const paths = new Map(rows.map((row) => [row.id, row.repoPath]));
+  return JSON.parse(json.replace(pattern, (whole, id: string) => {
+    const repoPath = paths.get(id);
+    return repoPath ? assetUrl(site, repoPath) : whole;
+  })) as T;
 }
 
 /**

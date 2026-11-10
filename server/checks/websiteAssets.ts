@@ -59,7 +59,7 @@ function check(name: string, condition: unknown) { assert.ok(condition, name); c
 function equal(name: string, actual: unknown, expected: unknown) { assert.deepEqual(actual, expected, name); checks++; }
 
 const { prisma } = await import("../src/lib/prisma.js");
-const { assetUrl, embedWebsiteAssets, mentionsAsset, storedObjectStillNeeded, unpublishedUsesOf, websiteAssetFiles, websiteAssetFilesIn } = await import("../src/services/websiteAssets.js");
+const { assetUrl, editorOrigin, embedWebsiteAssets, mentionsAsset, relinkPreviewAssets, storedObjectStillNeeded, unpublishedUsesOf, websiteAssetFiles, websiteAssetFilesIn } = await import("../src/services/websiteAssets.js");
 const { registerWebsiteManagement } = await import("../src/services/websiteManagement.js");
 
 /** Every SiteAsset read, and whether it asked for the blob. */
@@ -143,6 +143,26 @@ try {
   const embedded = await embedWebsiteAssets(site, spare);
   check("an unpublished upload is still embedded for the preview", embedded.includes(`data:image/png;base64,${bytes(2).toString("base64")}`));
   check("and its URL is gone, because the bytes replaced it", !embedded.includes(assetUrl(site, "assets/dw/spare.png")));
+
+  /* ------------------------------------- the editor preview links instead */
+  // One imported page was 13.5 MB of base64 on every preview load. The editor
+  // preview points at the asset route; export and review links still embed.
+  const spareRow = await prisma.siteAsset.findFirstOrThrow({ where: { siteId: site.id, repoPath: "assets/dw/spare.png" } });
+  since();
+  const linked = await embedWebsiteAssets(site, spare, { linkFrom: "https://editor.example/" });
+  const linkedUrl = `https://editor.example/api/website/sites/${site.id}/assets/${spareRow.id}/content`;
+  check("the editor preview links an upload to its route", linked.includes(linkedUrl));
+  check("and carries none of its bytes", !linked.includes("base64"));
+  check("linking never reads a picture's bytes", !since().includes("content"));
+  const swept = await embedWebsiteAssets(site, page, { linkFrom: "https://editor.example" });
+  check("a swept asset keeps its address when linking too", swept.includes(assetUrl(site, used.repoPath)));
+  equal(
+    "an address handed back from the preview goes back to the file's own on save",
+    await relinkPreviewAssets(site, { a: { value: `<img src="${linkedUrl}">` }, b: { value: "untouched" } }),
+    { a: { value: `<img src="${assetUrl(site, "assets/dw/spare.png")}">` }, b: { value: "untouched" } },
+  );
+  equal("an https host is linked as https, whatever the proxy said", editorOrigin({ get: () => "os.dakyx.com", protocol: "http" }), "https://os.dakyx.com");
+  equal("this machine keeps its own scheme", editorOrigin({ get: () => "127.0.0.1:4000", protocol: "http" }), "http://127.0.0.1:4000");
 
   /* ------------------------------------------- 6. what still needs a file */
   // Nothing unpublished points at the spare upload yet.

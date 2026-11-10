@@ -142,7 +142,11 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     const asset = await prisma.siteAsset.findFirst({ where: { id: req.params.assetId, siteId: site.id } });
     if (!asset) throw new WebsiteError(404, "That asset is not part of this site.");
     res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("Cache-Control", "private, no-store");
+    // Kept by the browser but checked every time: the editor preview now links
+    // its pictures here rather than embedding them, so a reload should cost a
+    // 304, not the picture again. `no-cache` rather than a max-age because a
+    // replace keeps the asset's id and changes its bytes.
+    res.setHeader("Cache-Control", "private, no-cache");
     if (asset.contentType === "image/svg+xml") res.setHeader("Content-Security-Policy", SVG_CONTENT_SECURITY_POLICY);
     // Published uploads can have their duplicate bytes swept from storage.
     // Their previews must use the published file instead of an empty image.

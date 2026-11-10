@@ -163,7 +163,9 @@ try {
   const image = fields.find(field => field.kind === "image")!;
   assert.equal((await call("PUT", `${pageUrl}/draft`, { ifRevision: 1, values: { [title.id]: headingEdit, [image.id]: { value: asset.url, alt: "Pixel" } } })).status, 200);
   const rendered = await (await call("GET", `${pageUrl}/preview?pick=1`)).text();
-  assert.ok(rendered.includes(`data:image/png;base64,${png}`));
+  // Linked, not embedded: the editor preview reloads on every layout change.
+  assert.ok(rendered.includes(`/api/website/sites/${site.id}/assets/${asset.id}/content`), "the preview links the upload");
+  assert.ok(!rendered.includes(`data:image/png;base64,${png}`), "and does not paste its bytes in");
   const assertResponsiveOutput = (output: string) => {
     const sheets = [...output.matchAll(/<style\b[^>]*\bdata-dw-responsive-styles(?:\s*=\s*["'][^"']*["'])?[^>]*>([\s\S]*?)<\/style>/gi)];
     assert.equal(sheets.length, 1, "one generated responsive stylesheet per page");

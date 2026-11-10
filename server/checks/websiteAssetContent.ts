@@ -35,7 +35,7 @@ try {
   const draft = await fetch(`${base}/draft/content`);
   assert.equal(draft.status, 200);
   assert.match(draft.headers.get("content-type") ?? "", /^image\/png/);
-  assert.equal(draft.headers.get("cache-control"), "private, no-store");
+  assert.equal(draft.headers.get("cache-control"), "private, no-cache");
   assert.deepEqual(Buffer.from(await draft.arrayBuffer()), png);
 
   const published = await fetch(`${base}/published/content`, { redirect: "manual" });

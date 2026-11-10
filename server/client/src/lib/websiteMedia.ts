@@ -7,6 +7,14 @@ export type WebsiteMediaContext = {
   assets: readonly WebsiteMediaAsset[];
 };
 
+/**
+ * A data: or blob: address is its own picture: it has no publish path to recover
+ * and no file name to match. Parsing one as a URL is not free either — a page
+ * with its pictures inlined hands these helpers megabytes of base64, and the
+ * media list runs them on every edit, so each opacity drag step paid for it.
+ */
+const INLINE_MEDIA = /^\s*['"]?(?:data|blob):/i;
+
 function absoluteUrl(value: string, base: string): string {
   try { return new URL(value, base).href; } catch { return value; }
 }
@@ -30,6 +38,7 @@ function extractComparableSegments(value: string): string[] {
 export function websiteMediaPreviewUrl(value: string, context: WebsiteMediaContext): string {
   const raw = value.trim();
   if (!raw) return "";
+  if (INLINE_MEDIA.test(raw)) return raw;
   const source = absoluteUrl(raw, context.pageUrl);
 
   const getHost = (u: string) => {
@@ -60,6 +69,7 @@ export function websiteMediaPreviewUrl(value: string, context: WebsiteMediaConte
 
 /** Recover the publish path from a captured preview or absolute site URL. */
 export function websiteMediaSourceUrl(value: string, context: WebsiteMediaContext): string {
+  if (INLINE_MEDIA.test(value)) return value;
   const getHost = (u: string) => {
     try { if (/^[a-z]+:\/\//i.test(u)) return new URL(u).host; } catch {}
     return null;
@@ -101,6 +111,7 @@ function matchesSingleMediaUrl(candidate: string, target: string): boolean {
   const c = clean(candidate);
   const t = clean(target);
   if (c === t) return true;
+  if (INLINE_MEDIA.test(c) || INLINE_MEDIA.test(t)) return false;
 
   const cSegs = extractComparableSegments(c);
   const tSegs = extractComparableSegments(t);

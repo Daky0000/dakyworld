@@ -19,7 +19,7 @@ import { registerWebsiteSource } from "../services/websiteSource.js";
 import { registerWebsiteFrameworkView, sourceManagedFields } from "../services/websiteFrameworkView.js";
 import { nameFieldsOnPage } from "../services/websiteFrameworkPublish.js";
 import { hasSourceManifest } from "../services/websitePageManifest.js";
-import { embedWebsiteAssets } from "../services/websiteAssets.js";
+import { editorOrigin, embedWebsiteAssets, relinkPreviewAssets } from "../services/websiteAssets.js";
 import { registerWebsiteManagement, siteInput } from "../services/websiteManagement.js";
 import { registerWebsiteShared, saveSharedEdits, sharedOnPage } from "../services/websiteShared.js";
 import { registerWebsiteReadiness } from "../services/websiteReadiness.js";
@@ -641,14 +641,15 @@ const DRAFT_WRITE = { maxWait: 10_000, timeout: 30_000 };
  */
 websiteRouter.put("/pages/:pageId/draft", async (req, res, next) => {
   try {
-    const body = draftBody.parse(req.body);
-    if (body.ifRevision === undefined) {
+    const parsed = draftBody.parse(req.body);
+    if (parsed.ifRevision === undefined) {
       throw new WebsiteError(
         400,
         "This editor is out of date and did not say which version of the page it was showing. Reload the page and make the change again — nothing has been lost.",
       );
     }
     const { page, site } = await loadPage(req, req.params.pageId);
+    const body = { ...parsed, ifRevision: parsed.ifRevision, values: await relinkPreviewAssets(site, parsed.values) };
     const allowance = await assertEditAllowance(req, site.id, page);
     const source = await pageSource(site, page);
     const existing = draftValues(page);
@@ -908,7 +909,10 @@ websiteRouter.get("/pages/:pageId/preview", async (req, res, next) => {
       // The preview carries client-written copy; nothing here should be framed
       // by anyone but the editor itself.
       .set("X-Frame-Options", "SAMEORIGIN")
-      .send(await embedWebsiteAssets(site, document.html));
+      // The editing frame keeps the app's origin, so it can fetch the asset route
+      // with the session. An isolated preview is an opaque origin whose requests
+      // count as cross-site — the cookie may not go — so it still embeds.
+      .send(await embedWebsiteAssets(site, document.html, document.isolated ? {} : { linkFrom: editorOrigin(req) }));
   } catch (err) {
     next(err);
   }

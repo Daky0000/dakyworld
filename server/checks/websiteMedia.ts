@@ -28,6 +28,15 @@ assert.equal(rewriteWebsiteMediaStyle(style, resolve), `background: linear-gradi
 assert.equal(rewriteWebsiteMediaStyle(`background-image: url(${upload}), url("images/team.jpg")`, resolve), `background-image: url("https://editor.test${preview}"), url("https://site.test/shop/about/images/team.jpg")`);
 const inlineImage = 'background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="); color: red';
 assert.equal(rewriteWebsiteMediaStyle(inlineImage, resolve), inlineImage, "data URL payloads remain unchanged");
+// A page with its pictures inlined hands these megabytes of base64 on every edit.
+const bigInline = `data:image/jpeg;base64,${"A".repeat(2_000_000)}`;
+const started = performance.now();
+for (let i = 0; i < 50; i++) { resolve(bigInline); websiteMediaSourceUrl(bigInline, context); matchesWebsiteMediaUrl(bigInline, upload); }
+assert.ok(performance.now() - started < 200, "an inline picture is passed through, not parsed as an address");
+assert.equal(resolve(bigInline), bigInline);
+assert.equal(websiteMediaSourceUrl(bigInline, context), bigInline);
+assert.equal(matchesWebsiteMediaUrl(bigInline, bigInline), true, "the same inline picture is still itself");
+assert.equal(matchesWebsiteMediaUrl("data:image/png;base64,AAAA/photo.png", upload), false, "and never matches a file by a name inside its payload");
 const escapedImage = String.raw`background-image: url("images/photo\"name.png")`;
 assert.equal(rewriteWebsiteMediaStyle(escapedImage, resolve), escapedImage, "escaped CSS URLs remain under browser parsing");
 assert.equal(rewriteWebsiteMediaStyle(`background-image: url("https://editor.test${preview}")`, value => websiteMediaSourceUrl(value, context)), `background-image: url("${upload}")`, "preview CSS can be saved without editor URLs");
