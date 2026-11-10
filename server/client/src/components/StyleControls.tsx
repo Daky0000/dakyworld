@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
-import { ColorCodeInput } from "./InspectorControls";
+import { ColorCodeInput, colourText, parseColour } from "./InspectorControls";
 import { allowedAt, expandShorthand, readable, writeProperty, SHORTHANDS } from "../lib/websiteStyleValues";
 
 export { allowedAt, expandShorthand, readable, writeProperty, SHORTHANDS };
@@ -384,6 +384,9 @@ export function Select({ c, label, property, options, aria, write, value, placeh
 
 export function ColourProp({ c, label, property, disabledReason }: { c: StyleCtx; label: string; property: string; disabledReason?: string }) {
   const placeholder = c.inherited[property] ?? c.computed[property] ?? "";
+  // `color(srgb 1 1 1 / 0.7)` is how Chrome reports a Webflow colour made with
+  // color-mix(); the old reader saw none of it and showed #000000 for white text.
+  const shown = colourText(placeholder);
   return (
     <div className="dx-f" title={disabledReason}>
       <PropLabel c={c} label={label} props={[property]} />
@@ -391,7 +394,7 @@ export function ColourProp({ c, label, property, disabledReason }: { c: StyleCtx
         label={label}
         className="dx-cbtn"
         value={c.map[property] ?? ""}
-        placeholder={/^rgba\(0, 0, 0, 0\)$/.test(placeholder) ? "None" : rgbToHex(placeholder) ?? "#000000"}
+        placeholder={!placeholder || parseColour(placeholder)?.alpha === 0 ? "None" : shown ?? placeholder}
         disabled={c.readOnly || Boolean(disabledReason)}
         onChange={(next) => c.set(property, next || null)}
         onCommit={c.commit}

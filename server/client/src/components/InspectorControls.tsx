@@ -142,20 +142,43 @@ export type Colour = { hex: string; alpha: number };
 
 const DEFAULT_COLOUR: Colour = { hex: "#0D1526", alpha: 1 };
 
-/** Named colours, hsl() and the like, through the browser's own parser; null where there is none. */
+/**
+ * Any other colour the browser understands — a name, hsl(), oklch(), a
+ * color-mix() — by painting one pixel with it and reading the pixel back.
+ * Null when the canvas refuses the value.
+ */
 let colourProbe: CanvasRenderingContext2D | null | undefined;
-function normaliseColour(raw: string): string | null {
+function paintedColour(raw: string): Colour | null {
   if (colourProbe === undefined) {
-    try { colourProbe = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d"); } catch { colourProbe = null; }
+    try { colourProbe = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d", { willReadFrequently: true }); } catch { colourProbe = null; }
   }
-  if (!colourProbe) return null;
+  const probe = colourProbe;
+  if (!probe) return null;
   // Two different sentinels: a value the canvas refuses leaves the previous one in place.
-  colourProbe.fillStyle = "#000001";
-  colourProbe.fillStyle = raw;
-  const first = String(colourProbe.fillStyle);
-  colourProbe.fillStyle = "#000002";
-  colourProbe.fillStyle = raw;
-  return first === String(colourProbe.fillStyle) ? first : null;
+  probe.fillStyle = "#000001";
+  probe.fillStyle = raw;
+  const first = String(probe.fillStyle);
+  probe.fillStyle = "#000002";
+  probe.fillStyle = raw;
+  if (first !== String(probe.fillStyle)) return null;
+  // The alpha is read from the value's own form when it has one: a pixel's
+  // alpha is a byte, and 0.7 would come back as 0.698.
+  probe.clearRect(0, 0, 1, 1);
+  probe.fillRect(0, 0, 1, 1);
+  const [r, g, b, a] = probe.getImageData(0, 0, 1, 1).data;
+  if (a === 0) return { hex: "#000000", alpha: 0 };
+  return { hex: rgbToHex(r!, g!, b!), alpha: Number((a! / 255).toFixed(2)) };
+}
+
+/** `color(srgb 1 1 1 / 0.7)`: how Chrome reports a colour a stylesheet wrote with color-mix() or relative syntax. */
+function srgbFunction(raw: string): Colour | null {
+  const match = /^color\(\s*srgb\s+([-\d.e]+%?)\s+([-\d.e]+%?)\s+([-\d.e]+%?)(?:\s*\/\s*([-\d.e]+%?))?\s*\)$/i.exec(raw);
+  if (!match) return null;
+  const unit = (part: string) => (part.endsWith("%") ? Number(part.slice(0, -1)) / 100 : Number(part));
+  const [r, g, b] = [match[1]!, match[2]!, match[3]!].map((part) => Math.round(Math.max(0, Math.min(1, unit(part))) * 255));
+  const alpha = match[4] === undefined ? 1 : Math.max(0, Math.min(1, unit(match[4])));
+  if (![r, g, b, alpha].every(Number.isFinite)) return null;
+  return { hex: rgbToHex(r!, g!, b!), alpha: Number(alpha.toFixed(3)) };
 }
 
 /** A colour the picker can show, or null when the value is not one (a `var()`, a gradient). */
@@ -172,9 +195,20 @@ export function parseColour(value: string | undefined): Colour | null {
   if (hex8) return { hex: `#${hex8[1]!.toUpperCase()}`, alpha: parseInt(hex8[2]!, 16) / 255 };
   const rgb = hexToRgb(raw);
   if (rgb) return { hex: rgbToHex(...rgb), alpha: 1 };
+  const srgb = srgbFunction(raw);
+  if (srgb) return srgb;
   if (/^(?:var|calc|env)\(|gradient\(|^url\(/i.test(raw)) return null;
-  const normal = normaliseColour(raw);
-  return normal && normal !== raw ? parseColour(normal) : null;
+  return paintedColour(raw);
+}
+
+/**
+ * How the panel names a colour: `#RRGGBB` when opaque, `rgba(…)` when not, and
+ * null when it is not a colour at all. Reads every form a browser reports.
+ */
+export function colourText(value: string | undefined): string | null {
+  const colour = parseColour(value);
+  if (!colour) return null;
+  return colour.alpha >= 1 ? colour.hex.toUpperCase() : writeColour(colour);
 }
 
 export function readColour(value: string | undefined): Colour {
@@ -1099,7 +1133,9 @@ export function ColorCodeInput({
         style={{ background: CHECKER }}
         title={effectiveLabel ? `${effectiveLabel} (${parsed.hex})` : `Pick color (${parsed.hex})`}
       >
-        <span className="block h-full w-full rounded-[3px]" style={{ backgroundColor: value || parsed.hex }} />
+        {/* With nothing set, the swatch is what the element shows — and empty
+            (the checker) when it shows no colour, not the picker's starting navy. */}
+        <span className="block h-full w-full rounded-[3px]" style={{ backgroundColor: value || (parseColour(placeholder) ? writeColour(parsed) : "transparent") }} />
       </button>
       <input
         type="color"

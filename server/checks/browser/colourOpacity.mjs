@@ -9,6 +9,12 @@ import assert from "node:assert/strict";
  * with the flag on, fell back to its default navy, and dragging opacity painted
  * the button translucent navy instead of fading the gold. Asserted on the
  * computed style, never the attribute.
+ *
+ * Same day, round two: plain Ghacem buttons carry no inline style, and a
+ * <style> in the page says `.button { … !important }`, so every change there
+ * was thrown away (now written flagged where the site would beat it — see
+ * lib/websiteSiteImportant.ts); and Webflow colours made with color-mix() are
+ * reported as `color(srgb 1 1 1 / 0.7)`, which the panel showed as #000000.
  */
 const { chromium } = await import(process.env.PLAYWRIGHT_URL ?? "playwright");
 const browser = await chromium.launch({ headless: true });
@@ -22,6 +28,14 @@ const CASES = [
     css: ".button{display:inline-block;padding:14px 22px;background-color:#222 !important}",
     want: "rgba(218, 165, 99, 0.5)",
     keeps: ["background-color: rgba(218, 165, 99, 0.5) !important", "border-color: #DAA563 !important", "color: #141317 !important"],
+  },
+  {
+    name: "a site rule marked !important, behind a transition",
+    inline: "",
+    css: ".button{display:inline-block;padding:14px 22px;transition:all .3s;color:color-mix(in srgb, #ffffff 70%, transparent) !important;background-color:#DAA563 !important}",
+    want: "rgba(218, 165, 99, 0.5)",
+    keeps: ["background-color: rgba(218, 165, 99, 0.5) !important"],
+    textShown: "rgba(255, 255, 255, 0.7)",
   },
   { name: "the site's own class", inline: "", css: ".button{display:inline-block;padding:14px 22px;background:#D4FF00}", want: "rgba(212, 255, 0, 0.5)" },
   { name: "a named colour", inline: "background-color: white", css: ".button{display:inline-block;padding:14px 22px}", want: "rgba(255, 255, 255, 0.5)" },
@@ -75,6 +89,11 @@ try {
     await button().evaluate(() => parent.postMessage({ source: "dakyworld-preview", type: "select", id: "hero.cta" }, location.origin));
     await inspector().waitFor();
     await inspector().getByRole("tab", { name: "Style", exact: true }).click();
+    if (example.textShown) {
+      const typography = page.locator('.dx-style [data-section="typography"]');
+      if (!(await typography.evaluate((details) => details.open))) await typography.locator(":scope > summary").click();
+      assert.equal(await typography.locator('input[aria-label="Text color"]').getAttribute("placeholder"), example.textShown, `${example.name}: a color-mix() colour is shown as itself, not #000000`);
+    }
     const section = page.locator('.dx-style [data-section="background"]');
     if (!(await section.evaluate((details) => details.open))) await section.locator(":scope > summary").click();
     // The tooltip layer moves `title` to `data-tip` on hover; the accessible name stays.
@@ -88,6 +107,7 @@ try {
     await page.mouse.down();
     for (let step = 1; step <= 10; step += 1) await page.mouse.move(box.x + box.width * (1 - step * 0.05), box.y + box.height / 2);
     await page.mouse.up();
+    await page.waitForTimeout(450); // a transition on the button finishes
 
     const shown = await button().evaluate((element) => getComputedStyle(element).backgroundColor);
     assert.equal(shown, example.want, `${example.name}: dragging opacity to half fades the button's own colour`);

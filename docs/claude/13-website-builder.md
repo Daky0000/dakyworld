@@ -1077,6 +1077,21 @@ is here is why it is built this way, and what cost time.
   default navy, and an opacity drag turned the gold button translucent navy. The
   picker now also falls back to the element's computed colour, never navy, for a
   value it cannot hold (a `var()`). `checks/browser/colourOpacity.mjs`.
+- **A Desktop change the site's own `!important` would beat is written flagged
+  (10 Nov 2026, round two).** Ghacem's page has `.button, a.button, … { color: …
+  !important; background-color: … !important }` in a `<style>`, so on its plain
+  buttons every colour change landed in the draft and showed nowhere.
+  `winOverSiteImportant` (`lib/websiteSiteImportant.ts`, called from
+  `changePickedStyle`) tries each touched declaration on the element plain and
+  then `!important`, transitions off; if the computed values differ, it writes
+  that one flagged. This settles the open decision above for the cases where it
+  bites: Desktop now wins over a site `!important` — at the cost that a
+  tablet/phone override of that same property on that element loses to it.
+- **Computed colours in `color(srgb r g b / a)` form** — how Chrome reports a
+  colour a stylesheet made with `color-mix()` — were unreadable and shown as
+  `#000000`. `parseColour` reads them, and anything else the browser can paint
+  (by drawing one pixel). A swept 334 Ghacem elements: the panel now shows each
+  element's own colour on every one.
 - **Custom CSS is the declarations no control owns.** One inline style holds
   everything, so the box shows what is left over (a `text-shadow`, a `cursor`)
   and refuses, with the reason, anything a control owns, anything `--dw-*`, and

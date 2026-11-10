@@ -97,6 +97,7 @@ import {
 } from "../components/WebsiteIcons";
 import { useWebsiteAccess } from "../components/WebsiteMembers";
 import { responsivePreviewCss, safeResponsiveStyle, writeResponsivePreview } from "../lib/websiteResponsive";
+import { winOverSiteImportant } from "../lib/websiteSiteImportant";
 import { matchesWebsiteMediaUrl, rewriteWebsiteMediaStyle, websiteMediaPreviewUrl, websiteMediaSourceUrl, type WebsiteMediaAsset } from "../lib/websiteMedia";
 import { WebsiteIconPicker } from "../components/WebsiteIconPicker";
 import { iconPreviewSrc } from "../lib/websiteIconPreview";
@@ -2164,7 +2165,7 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
     : pickedResponsive[device] ?? "";
   const changePickedStyle = (style: string, commit = false) => {
     if (!picked) return;
-    if (device === "desktop") change(picked.id, { ...edits[picked.id], style }, { commit });
+    if (device === "desktop") change(picked.id, { ...edits[picked.id], style: winOverSiteImportant(pickedElement, edits[picked.id]?.style ?? picked.style ?? "", style) }, { commit });
     else {
       if (style.split(";").some(declaration => declaration.trim() && !safeResponsiveStyle(declaration))) {
         setFailure("That screen-size style contains a value the editor cannot save. Use layout, colour, typography or gradient values; image URLs belong in the image control.");
