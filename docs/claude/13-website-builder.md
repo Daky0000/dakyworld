@@ -950,6 +950,25 @@ is here is why it is built this way, and what cost time.
   path, not by name: his `index.html` sits in Downloads beside three other copies
   of the site, and choosing Downloads (9,973 files) must still send exactly the
   page's 21 files. A page deeper in the folder is zipped from its own folder.
+- **Then the pictures were stored and still broken (11 Nov 2026).** The HTTP
+  logs showed every `GET /demos/ghacem/assets/dw/<file>` answering 200 with the
+  whole file, and in a browser not one picture appeared:
+  `net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin`. The demo page runs under
+  `DEMO_SANDBOX` without `allow-same-origin`, so its document is opaque and
+  every file it loads from us is cross-origin, even from the host it was served
+  from. The app-wide `Cross-Origin-Resource-Policy: same-origin` from
+  `securityHeaders` had the browser discard each one *after* it arrived, which
+  is why the server side looked clean. The same block hit anything a demo
+  stores on our origin: Replace's uploads, videos, stylesheets and scripts.
+  Fonts also failed, because they are CORS requests from `Origin: null`. The
+  route now runs `sandboxedPageFiles` (`middleware/security.ts`): CORP
+  `cross-origin`, `Access-Control-Allow-Origin: *`, no credentials grant.
+  The editing preview never showed the fault, because it keeps
+  `allow-same-origin` and reads pictures through
+  `/api/website/sites/:id/assets/:id/content`. **For "pictures broken" when
+  the logs say 200, open the page in a real browser and read the failed
+  requests.** Server logs cannot see a block the browser applies after the
+  response. `checks/demoPackage.ts` asserts the headers in `index.ts`'s order.
 - **Videos up to 1 GB, on every plan (Dan, 20 Oct 2026).** Pictures keep each
   plan's own single-file limit and storage totals are unchanged, so a big video
   still has to fit the plan's storage. Up to 10 MB a video goes the old way

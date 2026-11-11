@@ -90,6 +90,35 @@ export function securityHeaders(_req: Request, res: Response, next: NextFunction
 }
 
 /**
+ * For a file that a sandboxed page loads from us: a demo's pictures, videos,
+ * stylesheets, scripts and fonts at `/demos/<slug>/assets/dw/<file>`.
+ *
+ * A demo runs under `sandbox` without `allow-same-origin` (`DEMO_SANDBOX` in
+ * routes/demos.ts), so its document has an opaque origin, and **every** file it
+ * loads from us counts as cross-origin, including one from the host the page
+ * itself came from. The `Cross-Origin-Resource-Policy: same-origin` that
+ * `securityHeaders` puts on everything therefore made the browser discard each
+ * of those files after the server had sent it in full. The HTTP logs read 200
+ * with the whole byte count while the browser said
+ * `net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin`, and the Ghacem demo showed no
+ * pictures at all (11 Nov 2026). `same-site` would not help, because an opaque
+ * origin is not same-site with anything either.
+ *
+ * Fonts, module scripts and `fetch` go out in CORS mode with `Origin: null`, so
+ * they also need the allow-origin. The CORS middleware never grants `null`.
+ * These are the files of a page anyone holding its link can open, sent without
+ * a cookie, so letting any origin embed them gives away nothing the link did
+ * not. Credentials are taken off: `*` is only honoured for a request that
+ * carries none.
+ */
+export function sandboxedPageFiles(_req: Request, res: Response, next: NextFunction) {
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.removeHeader("Access-Control-Allow-Credentials");
+  next();
+}
+
+/**
  * HSTS only helps a browser that has already been here once. The redirect is
  * what covers the first visit, a typed http:// address, and a link somebody
  * pasted into a chat.

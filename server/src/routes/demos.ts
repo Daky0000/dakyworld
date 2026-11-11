@@ -21,6 +21,7 @@ import { appUrl } from "../services/emailSender.js";
 import { MAX_UPLOAD_BODY } from "../services/fileStore.js";
 import { companyProfile } from "../services/systemProfile.js";
 import { gateBy } from "../middleware/permissionGate.js";
+import { sandboxedPageFiles } from "../middleware/security.js";
 import { recordBuild } from "../services/concept/record.js";
 import { countryHint } from "./products.js";
 import { isR2Configured, getR2PublicUrl } from "../lib/r2.js";
@@ -1382,7 +1383,9 @@ const IMPORTED_CSP = [
   "frame-ancestors 'self'",
 ].join("; ");
 
-demoPagesRouter.get("/:slug/assets/dw/:filename", async (req, res, next) => {
+// The page above is opaque-origin, so without `sandboxedPageFiles` the browser
+// throws away every file this route sends it (see that function).
+demoPagesRouter.get("/:slug/assets/dw/:filename", sandboxedPageFiles, async (req, res, next) => {
   try {
     const filename = req.params.filename;
     const repoPath = `assets/dw/${filename}`;
