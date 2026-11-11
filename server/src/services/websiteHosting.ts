@@ -427,6 +427,17 @@ export function publicSiteHosting() {
 
       if (!page) {
         if (await serveSiteFile(site, host, path, res)) return;
+        // A site that has its own not-found page (an imported `404.html`
+        // becomes the page at /404) answers with it, still as a 404.
+        const ownNotFound = path === "/404" ? null : await livePage(site.id, host, "/404", false);
+        if (ownNotFound?.publishedHtml) {
+          return res
+            .status(404)
+            .set("Content-Type", "text/html; charset=utf-8")
+            .set("Cache-Control", "no-store")
+            .set("X-Content-Type-Options", "nosniff")
+            .send(servedPage(ownNotFound.publishedHtml, "/404", ownNotFound.publishedEtag ?? etagFor(ownNotFound.publishedHtml)).html);
+        }
         const anyPublished = await prisma.sitePage.count({ where: { siteId: site.id, publishedHtml: { not: null } } });
         return res
           .status(anyPublished > 0 ? 404 : 503)

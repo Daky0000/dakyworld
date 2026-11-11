@@ -574,6 +574,21 @@ button:disabled { cursor:not-allowed; }
 .dx-row small { margin-left:auto; color:var(--editor-muted); font:11px ui-monospace,Menlo,monospace; white-space:nowrap; }
 .dx-row svg { flex:none; color:var(--editor-muted); }
 .dx-row.sel svg, .dx-row.danger svg { color:inherit; }
+/* The page switcher: a tree of the site's pages, with a search over them. */
+.dx-pages { min-width:340px; width:min(440px, calc(100vw - 16px)); }
+.dx-pop-search { width:100%; height:30px; padding:0 9px; border-radius:8px; border:1px solid var(--editor-line); background:var(--editor-input); color:var(--editor-text); font:inherit; font-size:12.5px; }
+.dx-pop-search:focus { outline:2px solid var(--editor-accent); outline-offset:-1px; }
+.dx-pop-tip { font-size:11px; }
+.dx-tree-row { display:flex; align-items:center; gap:2px; }
+.dx-tree-row .dx-row { min-width:0; }
+.dx-tree-toggle { flex:none; width:20px; height:24px; display:inline-flex; align-items:center; justify-content:center; border-radius:6px; color:var(--editor-muted); }
+.dx-tree-toggle:is(button):hover { background:var(--editor-input); color:var(--editor-text); }
+.dx-tree-toggle svg { transition:transform 120ms; }
+.dx-row-folder { color:var(--editor-muted); cursor:default; }
+.dx-row-folder:hover { background:none!important; }
+/* The parent page, before the page name in the bar. */
+.dx-parent { display:flex; align-items:center; gap:6px; height:32px; padding:0 2px 0 8px; border-radius:8px; max-width:160px; min-width:0; font-size:12.5px; color:var(--editor-muted); }
+.dx-parent:hover { color:var(--editor-text); background:var(--editor-input); }
 .dx-switch { justify-content:space-between; cursor:pointer; }
 .dx-mrow { display:flex; gap:10px; align-items:flex-start; padding:9px 10px; border-radius:8px; width:100%; text-align:left; color:var(--editor-text); }
 .dx-mrow:hover { background:var(--editor-input); }

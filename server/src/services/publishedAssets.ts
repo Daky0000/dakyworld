@@ -51,7 +51,46 @@ export async function publishedAssetPaths(site: { id: string; publicUrl: string 
     SELECT ${LIVE_VERSION} AS version,
       array(SELECT DISTINCT (regexp_matches(p."publishedHtml", ${pattern}, 'g'))[1] ${livePages(site.id)}) AS paths
     ${livePages(site.id)}`;
-  return rows[0] ?? { version: "", paths: [] };
+  const read = rows[0] ?? { version: "", paths: [] };
+  return { version: read.version, paths: await withStylesheetFiles(site, read.paths) };
+}
+
+/** `ASSET_NAME` in JavaScript's dialect: Postgres spells whitespace `[:space:]`. */
+const JS_ASSET_NAME = "[^\\s\"'`()<>,;?#&\\\\/]+";
+
+/**
+ * Adds the files a referenced stylesheet names in turn.
+ *
+ * A page names its stylesheet; the stylesheet names the fonts and background
+ * pictures. An imported site (websiteSitePackage.ts) stores those as files of
+ * their own, and a font named only inside the stylesheet answered 404 on the
+ * hosted site because no page named it. The stylesheet's version is its path
+ * (every import writes a fresh one), so the page version still keys the set.
+ * Three levels, for `@import` chains; a stylesheet whose bytes have moved to R2
+ * is not read, and its files are served from there too.
+ */
+export async function withStylesheetFiles(site: { id: string; publicUrl: string }, paths: string[]): Promise<string[]> {
+  const pattern = `${escapeRegex(assetUrl(site, ""))}(assets/dw/${JS_ASSET_NAME})`;
+  const all = new Set(paths);
+  let frontier = paths;
+  for (let depth = 0; depth < 3 && frontier.length; depth++) {
+    const sheets = await prisma.siteAsset.findMany({
+      where: { siteId: site.id, repoPath: { in: frontier }, contentType: "text/css", content: { not: null } },
+      select: { content: true },
+    });
+    const found: string[] = [];
+    const named = new RegExp(pattern, "g");
+    for (const sheet of sheets) {
+      for (const match of Buffer.from(sheet.content!).toString("utf8").matchAll(named)) {
+        if (match[1] && !all.has(match[1])) {
+          all.add(match[1]);
+          found.push(match[1]);
+        }
+      }
+    }
+    frontier = found;
+  }
+  return [...all];
 }
 
 /**

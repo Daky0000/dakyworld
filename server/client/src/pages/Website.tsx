@@ -2,8 +2,10 @@ import { useSiteDirectory, SiteDirectoryMore } from "../lib/siteDirectory";
 import { reachableAddress } from "../lib/websiteAddress";
 import { ConnectWebsite } from "../components/ConnectWebsite";
 import { ImportWebsitePage } from "../components/ImportWebsitePage";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { buildPageTree, countPagesUnder, defaultCollapsed, flattenPageTree } from "../lib/pageTree";
+import { IconChevronDown } from "../components/WebsiteIcons";
 import { Link, Navigate } from "react-router-dom";
 import { api, ApiError } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -51,11 +53,32 @@ export function Website() {
     queryKey: ["website", "pages", current?.id],
     initialPageParam: "",
     enabled: Boolean(current),
-    queryFn: ({ pageParam, signal }) => api.get<{ site: SiteSummary; pages: SitePageRow[]; nextCursor: string | null }>(`/website/sites/${current!.id}/pages?limit=25${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`, signal),
+    queryFn: ({ pageParam, signal }) => api.get<{ site: SiteSummary; pages: SitePageRow[]; nextCursor: string | null }>(`/website/sites/${current!.id}/pages?limit=100${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`, signal),
     getNextPageParam: page => page.nextCursor ?? undefined,
   });
 
   const pages = { ...pageQuery, data: pageQuery.data ? { pages: pageQuery.data.pages.flatMap(page => page.pages) } : undefined };
+
+  // The list is a tree, and a tree with half its pages missing puts children
+  // under the wrong parent, so every page is loaded — a hundred at a time, up
+  // to two thousand — rather than waiting for "Load more".
+  const loadedCount = pages.data?.pages.length ?? 0;
+  useEffect(() => {
+    if (pageQuery.hasNextPage && !pageQuery.isFetchingNextPage && loadedCount < 2000) void pageQuery.fetchNextPage();
+  }, [pageQuery.hasNextPage, pageQuery.isFetchingNextPage, loadedCount, pageQuery]);
+
+  const tree = useMemo(() => buildPageTree((pages.data?.pages ?? []).filter((page) => showHidden || page.status === "LIVE")), [pages.data, showHidden]);
+  const collapsedByDefault = useMemo(() => defaultCollapsed(tree), [tree]);
+  /** Entries the person opened or closed, against the default. */
+  const [toggled, setToggled] = useState<Set<string>>(() => new Set());
+  const collapsed = useMemo(() => new Set([...collapsedByDefault, ...toggled].filter((key) => collapsedByDefault.has(key) !== toggled.has(key))), [collapsedByDefault, toggled]);
+  const rows = useMemo(() => flattenPageTree(tree, collapsed), [tree, collapsed]);
+  const toggle = (key: string) => setToggled((current) => {
+    const next = new Set(current);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  });
 
   const scan = useMutation({
     mutationFn: () => api.post<{ found: number; added: number; missing: string[]; folder: string; movedTo: string | null }>(`/website/sites/${current!.id}/scan`),
@@ -92,7 +115,6 @@ export function Website() {
   }
 
   const all = pages.data?.pages ?? [];
-  const visible = all.filter((page) => showHidden || page.status === "LIVE");
   const hiddenCount = all.length - all.filter((page) => page.status === "LIVE").length;
   const draftCount = all.filter((page) => page.hasDraft).length;
 
@@ -188,13 +210,51 @@ export function Website() {
               </tr>
             </thead>
             <tbody>
-              {visible.map((page) => (
+              {rows.map(({ node, depth, collapsed: shut }) => {
+                const page = node.page;
+                const under = node.children.length ? countPagesUnder(node) : 0;
+                // Indented by depth; a chevron opens and closes what is under it.
+                const toggleButton = node.children.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => toggle(node.key)}
+                    aria-expanded={!shut}
+                    aria-label={`${shut ? "Show" : "Hide"} the ${under} page${under === 1 ? "" : "s"} under ${node.label}`}
+                    className="-ml-1 mr-1 inline-flex h-6 w-6 items-center justify-center text-muted hover:text-ink"
+                  >
+                    <IconChevronDown size={14} style={{ transform: shut ? "rotate(-90deg)" : undefined, transition: "transform 120ms" }} />
+                  </button>
+                );
+                const indent = { paddingLeft: `${20 + depth * 22}px` };
+                if (!page) {
+                  return (
+                    <tr key={node.key} className="border-b border-line/60 last:border-0">
+                      <td className="py-3 pr-5" style={indent} colSpan={5}>
+                        <div className="flex items-center">
+                          {toggleButton}
+                          <span className="font-semibold text-ink">{node.label}</span>
+                          <span className="ml-3 font-mono text-xs text-muted">{node.path}/ · {under} page{under === 1 ? "" : "s"}, no page of its own</span>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                }
+                return (
                 <tr key={page.id} className="border-b border-line/60 last:border-0">
-                  <td className="px-5 py-4">
-                    <Link to={`/website/pages/${page.id}`} className="font-semibold text-ink hover:underline">
-                      {page.title}
-                    </Link>
-                    <div className="text-xs text-muted">{/^wordpress\/pages\//.test(page.filePath) ? "WordPress page" : page.filePath}</div>
+                  <td className="py-4 pr-5" style={indent}>
+                    <div className="flex items-start">
+                      {/* A blank of the chevron's width keeps every title at its depth's edge. */}
+                      {toggleButton || <span aria-hidden className="-ml-1 mr-1 inline-flex h-6 w-6 shrink-0 items-center justify-center text-line-strong">{depth > 0 ? "└" : ""}</span>}
+                      <div className="min-w-0">
+                        <Link to={`/website/pages/${page.id}`} className="font-semibold text-ink hover:underline">
+                          {page.title}
+                        </Link>
+                        <div className="text-xs text-muted">
+                          {/^wordpress\/pages\//.test(page.filePath) ? "WordPress page" : page.filePath}
+                          {shut && under > 0 && ` · ${under} page${under === 1 ? "" : "s"} under it`}
+                        </div>
+                      </div>
+                    </div>
                   </td>
                   <td className="px-5 py-4 font-mono text-xs text-muted">{page.path}</td>
                   <td className="px-5 py-4">
@@ -242,11 +302,14 @@ export function Website() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </Table>
           </div>
-          {pages.hasNextPage && <Button variant="secondary" disabled={pages.isFetchingNextPage} onClick={() => void pages.fetchNextPage()}>Load more pages</Button>}
+          {pages.hasNextPage && (loadedCount < 2000
+            ? <p className="mt-3 text-xs text-muted">Loading the rest of the pages…</p>
+            : <Button variant="secondary" disabled={pages.isFetchingNextPage} onClick={() => void pages.fetchNextPage()}>Load more pages</Button>)}
 
           {hiddenCount > 0 && (
             <button

@@ -12,7 +12,8 @@ import { StyleSection } from "../components/StyleControls";
 import { mediaKind, type ElementSettingsChange } from "../../../src/shared/websiteElementSettings";
 import { lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { buildPageTree, defaultCollapsed, flattenPageTree, normalisePagePath, pageAncestors, pageForHref } from "../lib/pageTree";
 import { api, ApiError, apiUrl } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import type { DraftConflict, DraftSaveResult, FieldEdit, PublishResult, SiteFieldRow, SiteSectionRow, SitePageDetail, SitePageRow } from "../lib/types";
@@ -302,6 +303,12 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       setContextToast((prev) => (prev === msg ? null : prev));
     }, 2600);
   }, []);
+  /**
+   * Ctrl or Cmd and a click on a link in the canvas opens the page it points
+   * at, here in the editor. Set once the page list has loaded, further down;
+   * read through a ref because the frame's message listener is set up first.
+   */
+  const openLinkedPage = useRef<(href: string) => void>(() => {});
   useEffect(() => {
     if (!contextMenu) return;
     const close = () => setContextMenu(null);
@@ -982,8 +989,13 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
         text?: string;
         hidden?: number;
         hiding?: boolean;
+        href?: string;
       };
       if (event.source !== frame.current?.contentWindow || event.origin !== window.location.origin || data?.source !== "dakyworld-preview") return;
+      if (data.type === "open_link" && typeof data.href === "string") {
+        openLinkedPage.current(data.href);
+        return;
+      }
       if (data.type === "overlays") {
         // The frame hides them by default; somebody who chose to see them gets
         // them back on every reload.
@@ -1597,11 +1609,65 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
       window.removeEventListener("keydown", onKey);
     };
   }, [menu]);
+  // Every page in the site, not the first hundred: the switcher is a tree, the
+  // bar shows this page's parent, and a link on the canvas can open any page.
+  // Loaded once per visit (the list barely changes while somebody edits).
   const sitePages = useQuery({
     queryKey: ["website", "editor-pages", page.data?.site.id],
-    enabled: menu === "page" && Boolean(page.data?.site.id),
-    queryFn: ({ signal }) => api.get<{ pages: SitePageRow[] }>(`/website/sites/${page.data!.site.id}/pages?limit=100`, signal),
+    enabled: Boolean(page.data?.site.id),
+    staleTime: 60_000,
+    queryFn: async ({ signal }) => {
+      const all: SitePageRow[] = [];
+      let cursor: string | null = null;
+      do {
+        const batch: { pages: SitePageRow[]; nextCursor: string | null } = await api.get(`/website/sites/${page.data!.site.id}/pages?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, signal);
+        all.push(...batch.pages);
+        cursor = batch.nextCursor;
+      } while (cursor && all.length < 2000);
+      return { pages: all };
+    },
   });
+  const navigate = useNavigate();
+  const [pageSearch, setPageSearch] = useState("");
+  const [switcherToggled, setSwitcherToggled] = useState<Set<string>>(() => new Set());
+  const switcherTree = useMemo(() => buildPageTree(sitePages.data?.pages ?? []), [sitePages.data]);
+  const switcherRows = useMemo(() => {
+    const defaults = defaultCollapsed(switcherTree);
+    // The branch this page is in starts open, so it is never hidden in its own menu.
+    const own = normalisePagePath(page.data?.page.path ?? "/");
+    for (const key of [...defaults]) if (own.startsWith(`${key}/`)) defaults.delete(key);
+    const collapsed = new Set([...defaults, ...switcherToggled].filter((key) => defaults.has(key) !== switcherToggled.has(key)));
+    return flattenPageTree(switcherTree, collapsed);
+  }, [switcherTree, switcherToggled, page.data?.page.path]);
+  const pageMatches = useMemo(() => {
+    const query = pageSearch.trim().toLowerCase();
+    if (!query) return null;
+    return (sitePages.data?.pages ?? []).filter((candidate) => candidate.title.toLowerCase().includes(query) || candidate.path.toLowerCase().includes(query)).slice(0, 60);
+  }, [pageSearch, sitePages.data]);
+  /** Home, then each page above this one; the last is its parent. */
+  const ancestors = useMemo(() => (page.data ? pageAncestors(page.data.page.path, sitePages.data?.pages ?? []) : []), [page.data, sitePages.data]);
+  const parentPage = ancestors[ancestors.length - 1] ?? null;
+  const goToPage = useCallback((id: string) => {
+    if (id === pageId) return;
+    if (dirty.current) saveNow(latestEdits.current);
+    setMenu(null);
+    navigate(`/website/pages/${id}`);
+  }, [pageId, saveNow, navigate]);
+  openLinkedPage.current = (href: string) => {
+    const site = page.data?.site;
+    if (!site) return;
+    const target = pageForHref(href, site.publicUrl, sitePages.data?.pages ?? []);
+    if (target) {
+      if (target.id === pageId) showQuickToast("That link is to this page.");
+      else goToPage(target.id);
+      return;
+    }
+    let outside = true;
+    try {
+      outside = new URL(href).host !== new URL(site.publicUrl).host;
+    } catch {}
+    showQuickToast(outside ? "That link goes to another website, so it isn't opened here." : "That link isn't one of this website's pages.");
+  };
   /** What the first-edit checklist reads. Remembered for this visit only, except putting it away. */
   const [guideHidden, setGuideHidden] = useState(false);
   useEffect(() => {
@@ -3039,6 +3105,19 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
           >
             <IconArrowLeft size={17} />
           </Link>
+          {/* The page above this one, one click away. Every page but home has
+              one: its nearest ancestor page, or home. */}
+          {parentPage && !isDemo && (
+            <button
+              type="button"
+              className="dx-parent dx-hide-sm"
+              title={`Up to ${parentPage.title || parentPage.path} (${parentPage.path})`}
+              onClick={() => goToPage(parentPage.id)}
+            >
+              <span className="truncate">{parentPage.title || parentPage.path}</span>
+              <span aria-hidden="true">/</span>
+            </button>
+          )}
           <div className="relative min-w-0">
             <button
               type="button"
@@ -3053,22 +3132,69 @@ function WebsitePageEditor({ pageId }: { pageId: string }) {
               <IconChevronDown size={15} />
             </button>
             {menu === "page" && (
-              <div className="dx-pop" role="menu" style={{ left: 0 }} onClick={(event) => event.stopPropagation()}>
-                <div className="dx-pop-pad">Pages in this website</div>
-                {(sitePages.data?.pages ?? []).length === 0 && <div className="dx-pop-pad">Loading pages…</div>}
-                {(sitePages.data?.pages ?? []).map((candidate) => (
-                  <Link
-                    key={candidate.id}
-                    role="menuitem"
-                    to={`/website/pages/${candidate.id}`}
-                    onClick={() => { if (dirty.current) saveNow(latestEdits.current); setMenu(null); }}
-                    className={`dx-row${candidate.id === pageId ? " sel" : ""}`}
-                  >
-                    <IconFileText size={15} />
-                    <span className="truncate">{candidate.title || candidate.path}</span>
-                    <small>{candidate.path}</small>
-                  </Link>
-                ))}
+              <div className="dx-pop dx-pages" role="menu" style={{ left: 0 }} onClick={(event) => event.stopPropagation()}>
+                <div className="dx-pop-pad">
+                  Pages in this website{sitePages.data ? ` (${sitePages.data.pages.length})` : ""}
+                  {(sitePages.data?.pages.length ?? 0) > 8 && (
+                    <input
+                      type="search"
+                      className="dx-pop-search"
+                      placeholder="Find a page by name or address"
+                      aria-label="Find a page"
+                      value={pageSearch}
+                      autoFocus
+                      onChange={(event) => setPageSearch(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && pageMatches?.[0]) goToPage(pageMatches[0].id);
+                      }}
+                    />
+                  )}
+                  <span className="dx-pop-tip">Tip: Ctrl or ⌘ and click a link on the page to open the page it goes to.</span>
+                </div>
+                {!sitePages.data && <div className="dx-pop-pad">Loading pages…</div>}
+                {pageMatches
+                  ? pageMatches.length === 0
+                    ? <div className="dx-pop-pad">No page matches “{pageSearch.trim()}”.</div>
+                    : pageMatches.map((candidate) => (
+                      <button key={candidate.id} type="button" role="menuitem" onClick={() => goToPage(candidate.id)} className={`dx-row${candidate.id === pageId ? " sel" : ""}`}>
+                        <IconFileText size={15} />
+                        <span className="truncate">{candidate.title || candidate.path}</span>
+                        <small>{candidate.path}</small>
+                      </button>
+                    ))
+                  : switcherRows.map(({ node, depth, collapsed: shut }) => (
+                    <div key={node.key} className="dx-tree-row" style={{ paddingLeft: depth * 16 }}>
+                      {node.children.length > 0 ? (
+                        <button
+                          type="button"
+                          className="dx-tree-toggle"
+                          aria-expanded={!shut}
+                          aria-label={`${shut ? "Show" : "Hide"} pages under ${node.label}`}
+                          onClick={() => setSwitcherToggled((current) => {
+                            const next = new Set(current);
+                            if (next.has(node.key)) next.delete(node.key);
+                            else next.add(node.key);
+                            return next;
+                          })}
+                        >
+                          <IconChevronDown size={13} style={{ transform: shut ? "rotate(-90deg)" : undefined }} />
+                        </button>
+                      ) : <span className="dx-tree-toggle" aria-hidden="true" />}
+                      {node.page ? (
+                        <button type="button" role="menuitem" onClick={() => goToPage(node.page!.id)} className={`dx-row${node.page.id === pageId ? " sel" : ""}`}>
+                          <IconFileText size={15} />
+                          <span className="truncate">{node.label}</span>
+                          <small>{node.children.length ? `${node.path} · ${node.children.length}` : node.path}</small>
+                        </button>
+                      ) : (
+                        <div className="dx-row dx-row-folder">
+                          <IconLayout size={15} />
+                          <span className="truncate">{node.label}</span>
+                          <small>{node.path}/</small>
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 <hr />
                 <Link role="menuitem" to="/website/sites" className="dx-row" onClick={() => setMenu(null)}>
                   <IconLayout size={15} />

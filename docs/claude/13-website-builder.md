@@ -997,6 +997,71 @@ is here is why it is built this way, and what cost time.
   verified by removing the prefix headers on purpose: the check fails.
   The probe scans computed backgrounds once, capped at 60 addresses. A
   `::before`/`::after` background is not probed.
+- **A whole website from a ZIP or folder, every page working (11 Nov 2026).**
+  Dan asked for this for any built site, not one customer: import it, and
+  all its pages open, link to each other, and sit under their parent. The
+  Gulf Contracting export (Next.js 15, made with Gemini, 52 pages, 110 MB) was
+  the test case. Measured in Chromium, an edited `<h1>` read "EDITED" at load
+  and the original heading three seconds later. **Hydration repaints a
+  framework page from the copy of its content in its own inline data
+  (`self.__next_f`), so every edit was undone on the published site.** It
+  never showed in the editor, because the editing frame blocks the page's
+  scripts. `commitSitePackage` (`services/websiteSitePackage.ts`) replaces
+  `commitPackageToSite` on all three package routes:
+  1. *Recognise and freeze* (`website/buildOutput.ts`). Next app and pages
+     router, Gatsby, Nuxt, SvelteKit, Remix and Astro islands lose their
+     runtime `<script src>`, hydration data and script preloads. Pictures,
+     fonts, stylesheets, analytics and the site's other inline scripts stay.
+     `BEHAVIOURS_SCRIPT` (inline, `data-dw-behaviours`) puts back
+     `aria-controls`/`aria-expanded` toggles, `<dialog>` with its close button,
+     backdrop and links, tabs and Escape. Buttons it cannot drive are named in
+     the summary. Webflow and plain HTML are not frozen. A page that is empty
+     until its scripts run (`drawnByScript`) is named rather than fixed.
+  2. *One page per address*: `404.html` beats `404/index.html` (`choosePages`).
+     A hosted site answers a missing address with its own LIVE `/404` page,
+     still as a 404.
+  3. *Links between pages* go to each page's clean address under the site's
+     base path (`rewritePageLinks`). Relative links broke one folder down once
+     hosting dropped `index.html` from the address.
+  4. *Files* go through the Demos bundler, now exported from
+     `demoPackage.ts` (PDFs added), for all pages at once. Each file is stored
+     as `assets/dw/<uuid>.<ext>` on its own site, which ends the shared R2
+     keys. Files of 8 MB or more go to R2 with a null `content`, the swept
+     state every reader already handles. Unused files are left out (Gulf: 101
+     of 251, the build's chunks and `index.txt` data).
+  5. *Stored safely*: files are written with `createMany` in batches outside
+     the transaction; pages and versions are written in one transaction with
+     a 120 s timeout. Failure removes the files.
+  6. *Fonts*: `publishedAssetPaths` adds files named by a referenced
+     stylesheet, up to three levels deep (`withStylesheetFiles`), because a
+     font named only in the CSS answered 404 on the hosted site. The editor's
+     asset route rewrites a stylesheet's `assets/dw` addresses to their own
+     asset routes (`stylesheetForEditor`), so the canvas has the site's fonts.
+  7. *Titles*: `extractPageTitle` decodes entities, and `tidyPageTitles` drops
+     the site name repeated on most titles from the list. The `<title>` itself
+     is unchanged.
+  Client: `lib/pageTree.ts` builds the tree from addresses (home first,
+  folders without a page shown as groups, big groups collapsed). The page list
+  loads every page, up to 2000, instead of "Load more". The editor's switcher
+  is a tree with search, the bar has a parent link, and Ctrl/Cmd and a click on
+  a canvas link posts `open_link` from the picker so the editor opens that
+  page. The import screen shows a summary (tree plus notes) instead of jumping
+  into the first page, and a picked folder can now be submitted: the button
+  had required `file`. `checks/websiteSitePackage.ts` (68 checks). On the
+  real ZIP: 10 s, 51 pages, no runtime left, 1,589 links rewritten, 150 files
+  (74 MB, mostly PDFs). Served and opened in Chromium: no failed request,
+  every internal address answering, site fonts loaded, the edit still there
+  after 3 s, the drawer opening and closing. The commit path ran with Prisma
+  mocked, because Docker's engine answered 500. **Trap:** a scratch script
+  importing server code from a worktree that has no `.env` (node_modules
+  junctioned to the main checkout) still saw the main checkout's R2
+  credentials. Plain `node` and `dotenv` from that folder did not, and the
+  exact loader was not pinned down. That run wrote one 20 MB PDF to the live
+  bucket, which was found by listing `assets/dw/` by time and deleted. In a
+  scratch run, set `R2_ACCOUNT_ID=` empty or check `isR2Configured()` first.
+  Still open: upload in
+  pieces as a background job (a 110 MB ZIP is still one base64 POST), a shared
+  header and footer on import, and import from a web address.
 - **Videos up to 1 GB, on every plan (Dan, 20 Oct 2026).** Pictures keep each
   plan's own single-file limit and storage totals are unchanged, so a big video
   still has to fit the plan's storage. Up to 10 MB a video goes the old way

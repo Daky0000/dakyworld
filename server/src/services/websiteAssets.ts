@@ -6,6 +6,32 @@ import { isR2Configured, getR2PublicUrl, downloadFromR2 } from "../lib/r2.js";
 
 export function assetUrl(site: Pick<Site, "publicUrl">, repoPath: string) { return `${new URL(site.publicUrl).pathname.replace(/\/+$/, "")}/${repoPath}`; }
 
+const escapeForRegex = (text: string) => text.replace(/[\\^$.|?*+()[\]{}]/g, "\\$&");
+
+/**
+ * A stylesheet as the editor's preview fetches it, from the asset route.
+ *
+ * An imported site's stylesheet names its fonts and pictures at their hosted
+ * addresses (`/assets/dw/<file>`). Fetched from `/api/website/sites/…`, those
+ * resolve against the editor's own origin, which has no such files, so the
+ * canvas fell back to system fonts. Each one this site holds is pointed at its
+ * own asset route instead, same-origin with the session like the stylesheet.
+ * The stored file is not changed: published, the hosted addresses are right.
+ */
+export async function stylesheetForEditor(site: Pick<Site, "id" | "publicUrl">, css: string): Promise<string> {
+  const base = assetUrl(site, "assets/dw/");
+  let absolute = "";
+  try {
+    absolute = new URL(base, site.publicUrl).href;
+  } catch {}
+  const pattern = new RegExp(`(?:${absolute ? `${escapeForRegex(absolute)}|` : ""}${escapeForRegex(base)})([^\\s"'\`()<>,;?#&\\\\/]+)`, "g");
+  const names = [...new Set([...css.matchAll(pattern)].map((match) => match[1]!))];
+  if (!names.length) return css;
+  const rows = await prisma.siteAsset.findMany({ where: { siteId: site.id, repoPath: { in: names.map((name) => `assets/dw/${name}`) } }, select: { id: true, repoPath: true } });
+  const ids = new Map(rows.map((row) => [row.repoPath.slice("assets/dw/".length), row.id]));
+  return css.replace(pattern, (whole, name: string) => (ids.has(name) ? `/api/website/sites/${site.id}/assets/${ids.get(name)}/content` : whole));
+}
+
 /**
  * Reading a site's images without reading a site's images.
  *

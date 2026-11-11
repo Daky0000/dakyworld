@@ -11,7 +11,7 @@ import { pageSource, WebsiteError } from "./website/site.js";
 import { sniff, sniffVideo } from "../lib/fileType.js";
 import { optimizeImageBuffer } from "../lib/imageOptimization.js";
 import { looksLikeSvg, SvgRejected, SVG_CONTENT_SECURITY_POLICY } from "../lib/svgSanitize.js";
-import { assetUrl, embedWebsiteAssets, pagesUsingAsset, storedObjectStillNeeded, unpublishedUsesOf } from "./websiteAssets.js";
+import { assetUrl, embedWebsiteAssets, pagesUsingAsset, storedObjectStillNeeded, stylesheetForEditor, unpublishedUsesOf } from "./websiteAssets.js";
 import { listPage } from "../lib/pagination.js";
 import { isR2Configured, uploadToR2, deleteFromR2, downloadFromR2, getR2PublicUrl, getR2Client } from "../lib/r2.js";
 import { PART_BYTES, partCount, partLength, readTicket, signTicket, type VideoUploadTicket } from "./websiteVideoUpload.js";
@@ -32,7 +32,8 @@ import { installationRepositories } from "./githubApp.js";
 import { autoPopulateSitePaletteFromHtml, extractColorsFromHtml } from "./website/pageColors.js";
 import { generateStarterSiteHtml, STARTER_TEMPLATES } from "./websiteSectionTemplates.js";
 import { prepareImportedHtml } from "./htmlCompiler.js";
-import { analyzeImportPackage, commitPackageToSite } from "./websitePackageImport.js";
+import { analyzeImportPackage } from "./websitePackageImport.js";
+import { commitSitePackage as commitPackageToSite } from "./websiteSitePackage.js";
 import { generatePagePrepublishReport, generateSitePrepublishReport } from "./websitePrepublishReport.js";
 import { updateSiteSettings } from "./websiteSiteSettings.js";
 import { HOST_DOMAIN, PLACEHOLDER_HOST_DOMAIN, PLACEHOLDER_HOSTS, expectedHostedUrl, hostedPublicUrl, isSlugAddress } from "./websiteHosting.js";
@@ -157,6 +158,10 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       }
       if (!asset.publishedAt) throw new WebsiteError(404, "That asset is no longer available. Upload it again.");
       res.redirect(new URL(assetUrl(site, asset.repoPath), site.publicUrl).href);
+      return;
+    }
+    if (asset.contentType === "text/css") {
+      res.type(asset.contentType).send(await stylesheetForEditor(site, Buffer.from(asset.content).toString("utf8")));
       return;
     }
     res.type(asset.contentType).send(asset.content);
@@ -576,7 +581,10 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       publicUrl: publicUrl.optional(),
       html: z.string().min(1).max(15_000_000).optional(),
       templateKey: z.string().max(60).optional(),
-      packageData: z.string().min(1).max(35_000_000).optional(),
+      // No ceiling of its own, the same as `import-package`: a built site with
+      // its pictures is routinely over 26 MB, and `analyzeImportPackage` holds
+      // the archive to MAX_PACKAGE_SIZE before anything is unpacked.
+      packageData: z.string().min(1).optional(),
       packageFilename: z.string().max(200).optional(),
       /**
        * A repository the signed-in person proved they reach, through GitHub,

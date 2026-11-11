@@ -1233,6 +1233,15 @@ function pickerAssets(nonce: string, allowEditing: boolean): string {
     // Keep links inert while in editor preview so clicks don't unload the iframe
     if (a && !editing) {
       event.preventDefault();
+      // Ctrl or Cmd and a click goes to the page the link points at, in the
+      // editor: the way to move between the pages of an imported site from
+      // the page itself. The editor decides whether it is one of the site's.
+      if ((event.metaKey || event.ctrlKey) && a.getAttribute("href")) {
+        event.stopPropagation();
+        var href = typeof a.href === "string" ? a.href : new URL(a.getAttribute("href"), document.baseURI).href;
+        post({ type: "open_link", href: href });
+        return;
+      }
     }
     // While typing, a click inside the same element is the caret being placed.
     if (editing && el === editing) return;

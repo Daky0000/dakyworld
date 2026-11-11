@@ -5,14 +5,65 @@ import { api, fileToBase64 } from "../lib/api";
 import { getFilesFromDataTransfer, zipFilesToBase64 } from "../lib/folderZip";
 import { Button } from "./ui";
 import { WebsiteTierStatusBanner, notifyTierStatusChanged, useWebsiteTierStatus } from "./WebsiteTierStatusBanner";
+import { buildPageTree, countPagesUnder, defaultCollapsed, flattenPageTree } from "../lib/pageTree";
 
+/** What `websiteSitePackage.ts` reports back about a whole-site import. */
 type PackageImportResult = {
   pages: Array<{ id: string; title: string; path: string; filePath: string }>;
   assetsCount: number;
-  missingAssets: string[];
-  externalResources: string[];
+  missingAssets: unknown[];
+  externalResources: unknown[];
   warnings: string[];
+  build?: { kind: string; label: string; frozen: boolean };
+  linksRewritten?: number;
+  leftOut?: { count: number; examples: string[] };
+  notes?: string[];
 };
+
+function ImportSummary({ result, onOpen, onDone }: { result: PackageImportResult; onOpen: (pageId: string) => void; onDone: () => void }) {
+  const home = result.pages.find((page) => page.path === "/") ?? result.pages[0];
+  const tree = buildPageTree(result.pages);
+  const rows = flattenPageTree(tree, defaultCollapsed(tree));
+  return (
+    <div className="w-full max-w-xl space-y-4 rounded-2xl bg-white p-6 shadow-xl">
+      <h2 id="import-page-title" className="font-display text-xl">
+        {result.pages.length} page{result.pages.length === 1 ? "" : "s"} imported
+      </h2>
+      {result.build && (
+        <p className="text-sm text-muted">
+          Recognised as {result.build.label}.{" "}
+          {result.build.frozen ? "Ready to edit, and your changes will stay on the published site." : ""}
+        </p>
+      )}
+      <div className="max-h-56 overflow-auto rounded-xl border border-line bg-sunken/60 p-3 text-xs">
+        {rows.map(({ node, depth, collapsed }) => (
+          <div key={node.key} className="flex items-baseline gap-2 py-0.5" style={{ paddingLeft: depth * 16 }}>
+            {node.page ? (
+              <button type="button" className="truncate text-left font-medium text-ink hover:underline" onClick={() => onOpen(node.page!.id)}>
+                {node.label}
+              </button>
+            ) : (
+              <span className="truncate text-muted">{node.label}</span>
+            )}
+            <span className="ml-auto shrink-0 font-mono text-muted">
+              {node.path}
+              {collapsed ? ` · ${countPagesUnder(node)} under it` : ""}
+            </span>
+          </div>
+        ))}
+      </div>
+      {(result.notes?.length ?? 0) > 0 && (
+        <ul className="list-disc space-y-1.5 pl-5 text-xs text-muted">
+          {result.notes!.map((note) => <li key={note}>{note}</li>)}
+        </ul>
+      )}
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" onClick={onDone}>See all pages</Button>
+        {home && <Button onClick={() => onOpen(home.id)}>Edit the home page</Button>}
+      </div>
+    </div>
+  );
+}
 
 export function ImportWebsitePage({ siteId }: { siteId: string }) {
   const [open, setOpen] = useState(false);
@@ -24,6 +75,7 @@ export function ImportWebsitePage({ siteId }: { siteId: string }) {
   const [title, setTitle] = useState("");
   const [path, setPath] = useState("/new-page");
   const [filePath, setFilePath] = useState("new-page.html");
+  const [summary, setSummary] = useState<PackageImportResult | null>(null);
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { status: tierStatus } = useWebsiteTierStatus(siteId);
@@ -65,6 +117,12 @@ export function ImportWebsitePage({ siteId }: { siteId: string }) {
     onSuccess: async (result) => {
       await qc.invalidateQueries({ queryKey: ["website"] });
       notifyTierStatusChanged();
+      // A whole site gets a summary first: which pages arrived, how they hang
+      // together, and what changed on the way in. A single page opens straight away.
+      if ("packageResult" in result && result.packageResult && result.packageResult.pages.length > 1) {
+        setSummary(result.packageResult);
+        return;
+      }
       navigate(`/website/pages/${result.id}`);
     },
   });
@@ -87,6 +145,20 @@ export function ImportWebsitePage({ siteId }: { siteId: string }) {
             if (event.key === "Escape" && !upload.isPending) setOpen(false);
           }}
         >
+          {summary ? (
+            <ImportSummary
+              result={summary}
+              onOpen={(pageId) => navigate(`/website/pages/${pageId}`)}
+              onDone={() => {
+                setSummary(null);
+                setOpen(false);
+                setFile(null);
+                setFolderPackage(null);
+                setIsZip(false);
+                upload.reset();
+              }}
+            />
+          ) : (
           <form
             className="w-full max-w-xl space-y-4 rounded-2xl bg-white p-6 shadow-xl"
             onSubmit={(event) => {
@@ -266,9 +338,12 @@ export function ImportWebsitePage({ siteId }: { siteId: string }) {
               <div className="rounded-xl border border-line bg-sunken/60 p-4 text-xs text-muted space-y-1.5">
                 <p className="font-semibold text-ink">Package Import Detected</p>
                 <p>
-                  Pages and relative assets (CSS, JS, fonts, images) will be automatically discovered and imported as a site operation.
+                  Every page in it is imported, with the pictures, fonts, stylesheets and PDFs the pages use. Links between the pages are pointed at the imported pages.
                 </p>
-                <p>Page URLs and routes will be mapped from the archive file structure (e.g. index.html or home.html → /).</p>
+                <p>Page addresses come from the folders (about/index.html → /about), and a page inside a folder sits under that folder's page.</p>
+                <p>
+                  A site built with Next.js, Gatsby, Nuxt, SvelteKit, Remix or Astro has its own scripts taken out, because they would put the original words back over your edits. Menus, drawers and tabs keep working; the summary names anything else that may stop.
+                </p>
               </div>
             ) : (
               ([
@@ -304,11 +379,13 @@ export function ImportWebsitePage({ siteId }: { siteId: string }) {
               <Button variant="ghost" disabled={upload.isPending} onClick={() => setOpen(false)}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={!file || upload.isPending || importsExhausted}>
+              {/* A chosen folder is a package with no single file behind it. */}
+              <Button type="submit" disabled={!(file || folderPackage) || isPackaging || upload.isPending || importsExhausted}>
                 {upload.isPending ? "Importing…" : isZip ? "Import package & edit" : "Import & edit"}
               </Button>
             </div>
           </form>
+          )}
         </div>
       )}
     </>

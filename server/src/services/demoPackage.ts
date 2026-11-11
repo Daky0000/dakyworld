@@ -103,15 +103,20 @@ export async function readDemoPackage(buffer: Buffer, filename: string | null | 
  * a `srcset` candidate, a CSS `url()`, or a string in a script. Anything with a
  * scheme or `//` is somewhere else and is left alone.
  */
-const EXTENSIONS = "png|jpe?g|gif|webp|avif|svg|ico|bmp|mp4|webm|ogv|ogg|mov|m4v|mp3|wav|m4a|aac|woff2?|ttf|otf|eot|css|js|mjs|json|vtt";
+const EXTENSIONS = "png|jpe?g|gif|webp|avif|svg|ico|bmp|mp4|webm|ogv|ogg|mov|m4v|mp3|wav|m4a|aac|woff2?|ttf|otf|eot|css|js|mjs|json|vtt|pdf";
 const REFERENCE = new RegExp(
   `(^|[\\s"'(,=])((?![a-z][a-z0-9+.-]*:|//)[^\\s"'()<>,]*?\\.(?:${EXTENSIONS}))((?:[?#][^\\s"'()<>,]*)?)(?=$|[\\s"'),])`,
   "gi",
 );
 
-const STORABLE = /^(?:image\/|video\/|audio\/|font\/|text\/css$|application\/javascript$|application\/json$|application\/vnd\.ms-fontobject$|text\/vtt$)/;
+/**
+ * What may be stored and served from an archive. A PDF is here because a
+ * site's pages link their brochures and terms; the demo page and the site
+ * import (websiteSitePackage.ts) share this list and the helpers below.
+ */
+export const STORABLE = /^(?:image\/|video\/|audio\/|font\/|text\/css$|application\/javascript$|application\/json$|application\/vnd\.ms-fontobject$|text\/vtt$|application\/pdf$)/;
 
-function contentTypeFor(filePath: string): string {
+export function contentTypeFor(filePath: string): string {
   const ext = path.posix.extname(filePath).toLowerCase();
   const extra: Record<string, string> = {
     ".avif": "image/avif",
@@ -142,7 +147,7 @@ function resolveIn(known: Set<string>, reference: string, sourcePath: string): s
   return null;
 }
 
-function referencesIn(text: string, sourcePath: string, known: Set<string>): string[] {
+export function referencesIn(text: string, sourcePath: string, known: Set<string>): string[] {
   const found: string[] = [];
   for (const match of text.matchAll(REFERENCE)) {
     const resolved = resolveIn(known, match[2]!, sourcePath);
@@ -151,7 +156,7 @@ function referencesIn(text: string, sourcePath: string, known: Set<string>): str
   return found;
 }
 
-function rewriteReferences(text: string, sourcePath: string, known: Set<string>, hosted: Map<string, string>): string {
+export function rewriteReferences(text: string, sourcePath: string, known: Set<string>, hosted: Map<string, string>): string {
   return text.replace(REFERENCE, (whole, before: string, reference: string, suffix: string) => {
     const resolved = resolveIn(known, reference, sourcePath);
     const url = resolved ? hosted.get(resolved) : undefined;
@@ -162,7 +167,7 @@ function rewriteReferences(text: string, sourcePath: string, known: Set<string>,
   });
 }
 
-const isTextAsset = (contentType: string) => contentType === "text/css" || contentType === "application/javascript" || contentType === "application/json";
+export const isTextAsset = (contentType: string) => contentType === "text/css" || contentType === "application/javascript" || contentType === "application/json";
 
 /**
  * Rewrites the page so every file it names from the archive points at the

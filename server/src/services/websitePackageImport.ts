@@ -16,7 +16,7 @@ import JSZip from "jszip";
 import type { Prisma, Site } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { WebsiteError } from "./website/site.js";
-import { parseHtml, walk, attr, type ElementNode } from "./website/parse.js";
+import { parseHtml, walk, attr, decodeEntities, type ElementNode } from "./website/parse.js";
 import { discoverFields } from "./website/index.js";
 import { assetUrl } from "./websiteAssets.js";
 import { isR2Configured, getR2PublicUrl, uploadToR2 } from "../lib/r2.js";
@@ -138,6 +138,26 @@ export function mimeTypeFromPath(filePath: string): string {
       return "video/webm";
     case ".mp3":
       return "audio/mpeg";
+    // A site's brochures and terms open in the browser rather than download
+    // as an unnamed binary; the rest are what a built site carries beside its pages.
+    case ".pdf":
+      return "application/pdf";
+    case ".txt":
+      return "text/plain";
+    case ".xml":
+      return "application/xml";
+    case ".webmanifest":
+      return "application/manifest+json";
+    case ".avif":
+      return "image/avif";
+    case ".mov":
+      return "video/quicktime";
+    case ".ogg":
+      return "audio/ogg";
+    case ".wav":
+      return "audio/wav";
+    case ".m4a":
+      return "audio/mp4";
     default:
       return "application/octet-stream";
   }
@@ -284,13 +304,14 @@ export function extractPageTitle(html: string, fallbackFilename: string): string
   const root = parseHtml(html);
   for (const el of walk(root)) {
     if (el.tag === "title" && el.innerEnd > el.innerStart) {
-      const title = html.slice(el.innerStart, el.innerEnd).trim();
+      // Decoded: the page list showed "Services &amp; Capabilities".
+      const title = decodeEntities(html.slice(el.innerStart, el.innerEnd)).replace(/\s+/g, " ").trim();
       if (title) return title;
     }
   }
   for (const el of walk(root)) {
     if (el.tag === "h1" && el.innerEnd > el.innerStart) {
-      const h1 = html.slice(el.innerStart, el.innerEnd).replace(/<[^>]*>/g, "").trim();
+      const h1 = decodeEntities(html.slice(el.innerStart, el.innerEnd).replace(/<[^>]*>/g, "")).replace(/\s+/g, " ").trim();
       if (h1) return h1;
     }
   }
@@ -887,18 +908,15 @@ export function rewritePageAssetReferences(
     }
   }
 
-  // Neutralize Webflow FOUC lockup if present so subsequent sections remain visible outside Webflow
-  if (updated.includes("w-mod-ix3") && !updated.includes("data-dw-wmod-heal")) {
-    const healScript = '<script data-dw-wmod-heal>if(typeof document!=="undefined"&&document.documentElement)document.documentElement.classList.add("w-mod-ix3");</script>';
-    const headClose = updated.indexOf("</head>");
-    if (headClose !== -1) {
-      updated = updated.slice(0, headClose) + healScript + updated.slice(headClose);
-    } else {
-      updated = healScript + updated;
-    }
-  }
+  return healWebflowFouc(updated);
+}
 
-  return updated;
+/** Neutralize Webflow FOUC lockup if present so subsequent sections remain visible outside Webflow. */
+export function healWebflowFouc(html: string): string {
+  if (!html.includes("w-mod-ix3") || html.includes("data-dw-wmod-heal")) return html;
+  const healScript = '<script data-dw-wmod-heal>if(typeof document!=="undefined"&&document.documentElement)document.documentElement.classList.add("w-mod-ix3");</script>';
+  const headClose = html.indexOf("</head>");
+  return headClose !== -1 ? html.slice(0, headClose) + healScript + html.slice(headClose) : healScript + html;
 }
 
 /**
