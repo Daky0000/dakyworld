@@ -8,11 +8,7 @@
  * A ZIP (or a folder, zipped in the browser) now brings them.
  */
 import assert from "node:assert/strict";
-import type { AddressInfo } from "node:net";
-import cors from "cors";
-import express from "express";
 import JSZip from "jszip";
-import { isTrustedOrigin, sandboxedPageFiles, securityHeaders } from "../src/middleware/security.js";
 import { bundleDemoFiles, bundledFilesNote, readDemoPackage, zipUploadBytes } from "../src/services/demoPackage.js";
 import { localFilesNamed } from "../src/services/demoBuilder.js";
 import { filesForPage, htmlPagesIn, localFilesNamedInBrowser, relativeToFolder, zipPageWithFiles } from "../client/src/lib/demoFolder.js";
@@ -127,34 +123,5 @@ const empty = new JSZip();
 empty.file("readme.txt", "no page here");
 await assert.rejects(readDemoPackage(await empty.generateAsync({ type: "nodebuffer" }), "x.zip"), (err: Error & { status?: number }) => err.status === 400);
 checks++;
-
-// 11 Nov 2026: with the files stored, the Ghacem demo still showed no pictures.
-// The page runs sandboxed in an opaque origin, so to the browser every file it
-// loads from us is cross-origin, and the app-wide CORP `same-origin` had it
-// discard each one after a full 200. The stack below is index.ts's order: CORS,
-// then securityHeaders, then the route's own override.
-{
-  const app = express();
-  app.use(cors({ origin: (origin, callback) => callback(null, !origin || isTrustedOrigin(origin)), credentials: true }));
-  app.use(securityHeaders);
-  app.get("/demos/ghacem/assets/dw/:file", sandboxedPageFiles, (_req, res) => { res.type("image/png").send(PNG); });
-  app.get("/api/ready", (_req, res) => { res.json({ ok: true }); });
-  const server = app.listen(0, "127.0.0.1");
-  await new Promise<void>((resolve) => server.once("listening", resolve));
-  const { port } = server.address() as AddressInfo;
-  try {
-    // What a sandboxed page sends for a font or a module script.
-    const file = await fetch(`http://127.0.0.1:${port}/demos/ghacem/assets/dw/a.png`, { headers: { Origin: "null" } });
-    equal("a demo's file may be loaded by its own opaque-origin page", file.headers.get("cross-origin-resource-policy"), "cross-origin");
-    equal("and read in CORS mode from Origin: null", file.headers.get("access-control-allow-origin"), "*");
-    equal("without a credentials grant beside the wildcard", file.headers.get("access-control-allow-credentials"), null);
-    equal("the rest of the security headers still apply to it", file.headers.get("x-content-type-options"), "nosniff");
-    const app_ = await fetch(`http://127.0.0.1:${port}/api/ready`, { headers: { Origin: "null" } });
-    equal("everything else keeps CORP same-origin", app_.headers.get("cross-origin-resource-policy"), "same-origin");
-    equal("and grants no origin to null", app_.headers.get("access-control-allow-origin"), null);
-  } finally {
-    server.close();
-  }
-}
 
 console.log(`demoPackage: ${checks} checks passed`);

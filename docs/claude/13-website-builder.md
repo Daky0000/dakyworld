@@ -968,7 +968,35 @@ is here is why it is built this way, and what cost time.
   `/api/website/sites/:id/assets/:id/content`. **For "pictures broken" when
   the logs say 200, open the page in a real browser and read the failed
   requests.** Server logs cannot see a block the browser applies after the
-  response. `checks/demoPackage.ts` asserts the headers in `index.ts`'s order.
+  response.
+- **So that a fourth cause cannot hide the same way (11 Nov 2026, Dan: "it
+  shouldn't happen again").** Those pictures broke three times for three
+  different reasons, and each time the server had nothing to show for it. Two
+  changes:
+  1. *The headers belong to the prefix, not the route.* `demoPagesRouter`
+     applies `sandboxedPageFiles` to every GET under `/demos/<slug>/` (the
+     page itself excepted), so a file route added there later is covered
+     without anyone remembering to add it.
+  2. *The page reports what it could not load.* `FILE_WATCH_SCRIPT`
+     (`services/demoTracker.ts`) goes first in `<head>`, before anything the
+     page loads. A picture that fails mid-parse fires its error before a script
+     at the end of `<body>` exists. It catches `error` on pictures, videos,
+     sources, scripts, stylesheets and frames (captured on window, since those
+     events do not bubble), failed fonts, and CSS background pictures (probed
+     after load, because a failed background fires no event). A live visit
+     sends the list with its beacon. It is stored on `DemoVisit.brokenFiles`,
+     written to the server log as `[demos] <slug>: N files did not load in a
+     visitor's browser`, and shown as a red line on the demo's card and a panel
+     in Analytics & Heatmap, from the last 7 days
+     (`services/demoBrokenFiles.ts`). A preview inside the Demos screen posts
+     the same list to the frame around it, so the owner sees it before any
+     visitor does. Whatever the next cause is (a header, a CSP, a deleted
+     asset, R2), it shows up the first time anybody opens the page.
+  `checks/demoBrokenFiles.ts` drives the real router behind the real security
+  headers in Chromium, with the database mocked as in `geoRoutes.ts`. It was
+  verified by removing the prefix headers on purpose: the check fails.
+  The probe scans computed backgrounds once, capped at 60 addresses. A
+  `::before`/`::after` background is not probed.
 - **Videos up to 1 GB, on every plan (Dan, 20 Oct 2026).** Pictures keep each
   plan's own single-file limit and storage totals are unchanged, so a big video
   still has to fit the plan's storage. Up to 10 MB a video goes the old way

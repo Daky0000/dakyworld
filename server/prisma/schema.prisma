@@ -780,6 +780,11 @@ model DemoVisit {
   /// Clicks & Heatmap data: array of { x, y, xPercent, yPercent, targetTag, targetText, targetSelector, timeOffset }
   clicks Json?
 
+  /// Files this visitor's browser failed to load: array of { url, kind }.
+  /// Reported by the page itself, because a block the browser applies after a
+  /// 200 (CORP, CSP, a wrong MIME type) never reaches the server's logs.
+  brokenFiles Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

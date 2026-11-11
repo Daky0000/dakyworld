@@ -1410,6 +1410,21 @@ export interface DemoAnalyticsSummary {
   topCountry?: { code: string; name: string; flag: string; count: number } | null;
   topDevice?: string | null;
   recentVisitsCount?: number;
+  /** Files visitors' browsers failed to load in the last 7 days. */
+  brokenFiles?: DemoBrokenFile[];
+}
+
+/**
+ * A file the demo page could not load, as the visitor's own browser reported
+ * it. `visits` and `lastSeenAt` are absent for one seen in the Demos screen's
+ * own preview, which is reported live rather than stored.
+ */
+export interface DemoBrokenFile {
+  url: string;
+  /** img, video, source, script, link, iframe, background or font. */
+  kind: string;
+  visits?: number;
+  lastSeenAt?: string;
 }
 
 export interface DemoVisitClick {
@@ -1509,6 +1524,8 @@ export interface DemoAnalyticsReport {
     totalClicks: number;
     bounceRate: number;
   };
+  /** Files visitors' browsers failed to load in the last 7 days. */
+  brokenFiles?: DemoBrokenFile[];
   breakdowns: {
     countries: Array<{ code: string; name: string; flag: string; count: number; percentage: number }>;
     cities: Array<{ region?: string | null; city: string; country: string; flag: string; count: number; percentage: number; unverified?: boolean }>;

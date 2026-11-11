@@ -19,6 +19,7 @@ import {
   StatTile,
 } from "../components/ui";
 import { DemoAnalyticsModal } from "../components/DemoAnalyticsModal";
+import { BrokenFilesBadge } from "../components/DemoBrokenFiles";
 import { IconBarChart, IconClock, IconFlame, IconGlobe } from "../components/WebsiteIcons";
 import { compileClaudeDynamicTemplate } from "../../../src/shared/templateCompiler";
 import { getFilesFromDataTransfer } from "../lib/folderZip";
@@ -609,6 +610,7 @@ export function Demos() {
                         last viewed <RelativeTime value={demo.lastViewedAt} />
                       </div>
                     )}
+                    <BrokenFilesBadge files={demo.analytics?.brokenFiles} onOpen={() => setAnalyticsDemo(demo)} />
                     {demo.sentAt && (
                       <div className="mt-0.5">
                         sent <RelativeTime value={demo.sentAt} />

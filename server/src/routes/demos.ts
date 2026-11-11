@@ -22,6 +22,7 @@ import { MAX_UPLOAD_BODY } from "../services/fileStore.js";
 import { companyProfile } from "../services/systemProfile.js";
 import { gateBy } from "../middleware/permissionGate.js";
 import { sandboxedPageFiles } from "../middleware/security.js";
+import { MAX_BROKEN_FILES, brokenFilesLogLine, mergeBrokenFiles, summariseBrokenFiles } from "../services/demoBrokenFiles.js";
 import { recordBuild } from "../services/concept/record.js";
 import { countryHint } from "./products.js";
 import { isR2Configured, getR2PublicUrl } from "../lib/r2.js";
@@ -330,7 +331,9 @@ demosRouter.get("/", async (req, res, next) => {
               durationSeconds: true,
               scrollDepth: true,
               clicks: true,
+              brokenFiles: true,
               createdAt: true,
+              updatedAt: true,
             },
             orderBy: { createdAt: "desc" },
             take: 50,
@@ -404,6 +407,7 @@ demosRouter.get("/", async (req, res, next) => {
           topCountry,
           topDevice,
           recentVisitsCount: demo.visits.length,
+          brokenFiles: summariseBrokenFiles(demo.visits),
         };
 
         const { visits: _visits, ...demoWithoutVisits } = demo;
@@ -721,6 +725,9 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
         totalClicks,
         bounceRate,
       },
+      // From every visit in range, internal ones included: the owner checking
+      // their own demo is the first person who should hear about a broken file.
+      brokenFiles: summariseBrokenFiles(rawVisits),
       breakdowns: {
         countries: countryBreakdown,
         cities: cityBreakdown,
@@ -1287,6 +1294,20 @@ export const demoPagesRouter = Router();
 demoPagesRouter.use(express.json({ limit: "512kb" }));
 demoPagesRouter.use(express.text({ type: ["text/plain", "application/json"], limit: "512kb" }));
 
+/**
+ * Everything under a demo's own address is a file that demo loads, and the demo
+ * runs in an opaque origin (`DEMO_SANDBOX`), so every one of them needs
+ * `sandboxedPageFiles` or the browser discards it after a full 200. Applied
+ * here for the whole prefix rather than on one route, so a file route added
+ * under `/demos/<slug>/` later is covered without anyone remembering to. The
+ * page itself (`/demos/<slug>`) is left out: it is a navigation, not a file.
+ * `checks/demoBrokenFiles.ts` holds this.
+ */
+demoPagesRouter.use("/:slug", (req, res, next) => {
+  if (req.path === "/" || (req.method !== "GET" && req.method !== "HEAD")) return next();
+  sandboxedPageFiles(req, res, next);
+});
+
 const beaconRateLimits = new Map<string, { count: number; resetAt: number }>();
 
 function checkBeaconRateLimit(key: string, maxPerMin = 120): boolean {
@@ -1328,6 +1349,11 @@ const analyticsBeaconInput = z.object({
       }),
     )
     .max(100)
+    .optional(),
+  // Files the visitor's browser could not load (see services/demoBrokenFiles.ts).
+  brokenFiles: z
+    .array(z.object({ url: z.string().trim().min(1).max(500), kind: z.string().trim().min(1).max(20) }))
+    .max(MAX_BROKEN_FILES)
     .optional(),
 });
 
@@ -1383,9 +1409,7 @@ const IMPORTED_CSP = [
   "frame-ancestors 'self'",
 ].join("; ");
 
-// The page above is opaque-origin, so without `sandboxedPageFiles` the browser
-// throws away every file this route sends it (see that function).
-demoPagesRouter.get("/:slug/assets/dw/:filename", sandboxedPageFiles, async (req, res, next) => {
+demoPagesRouter.get("/:slug/assets/dw/:filename", async (req, res, next) => {
   try {
     const filename = req.params.filename;
     const repoPath = `assets/dw/${filename}`;
@@ -1485,6 +1509,11 @@ demoPagesRouter.post("/:slug/analytics", async (req, res, next) => {
     const newClicks = incomingClicks.filter((c) => !c.id || !existingIds.has(c.id));
     const mergedClicks = [...existingClicks, ...newClicks].slice(-500);
 
+    // A file the browser threw away never shows in the HTTP logs as anything
+    // but a 200, so the page's own report is written to the log as well.
+    const broken = mergeBrokenFiles(existingVisit.brokenFiles, data.brokenFiles);
+    if (broken.added.length) console.warn(brokenFilesLogLine(slug, broken.added));
+
     await prisma.demoVisit.update({
       where: { id: existingVisit.id },
       data: {
@@ -1496,6 +1525,7 @@ demoPagesRouter.post("/:slug/analytics", async (req, res, next) => {
         screenWidth: data.screenWidth ? Math.round(data.screenWidth) : existingVisit.screenWidth,
         screenHeight: data.screenHeight ? Math.round(data.screenHeight) : existingVisit.screenHeight,
         clicks: mergedClicks as Prisma.InputJsonValue,
+        ...(broken.added.length ? { brokenFiles: broken.files as unknown as Prisma.InputJsonValue } : {}),
       },
     });
 

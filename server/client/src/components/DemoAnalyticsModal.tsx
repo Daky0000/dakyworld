@@ -1,8 +1,9 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
-import type { Demo, DemoAnalyticsReport, DemoVisitSession, DemoVisitClick } from "../lib/types.js";
+import type { Demo, DemoAnalyticsReport, DemoBrokenFile, DemoVisitSession, DemoVisitClick } from "../lib/types.js";
 import { Button, Badge, RelativeTime, CopyButton } from "./ui.js";
+import { BrokenFilesPanel, mergeBrokenFiles } from "./DemoBrokenFiles.js";
 import {
   IconAward,
   IconBarChart,
@@ -59,6 +60,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
   const [isInteractiveMode, setIsInteractiveMode] = useState<boolean>(false);
   const [iframeHeight, setIframeHeight] = useState<number>(900);
   const [selectedElementSelector, setSelectedElementSelector] = useState<string | null>(null);
+  const [previewBroken, setPreviewBroken] = useState<DemoBrokenFile[]>([]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -104,16 +106,32 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
 
   // Demo pages run sandboxed in an origin of their own, so the frame cannot be
   // measured from here; in heatmap mode the page reports its own height.
+  // The same channel carries the files the preview could not load, which is how
+  // a broken picture shows here before any visitor has reported it.
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
-      const data = event.data as { source?: string; type?: string; value?: number } | null;
-      if (event.source !== iframeRef.current?.contentWindow || data?.source !== "dakyx-demo" || data.type !== "height") return;
+      const data = event.data as { source?: string; type?: string; value?: number; files?: unknown } | null;
+      if (event.source !== iframeRef.current?.contentWindow || data?.source !== "dakyx-demo") return;
+      if (data.type === "broken-files" && Array.isArray(data.files)) {
+        setPreviewBroken(
+          data.files
+            .filter((file: unknown): file is DemoBrokenFile =>
+              Boolean(file) && typeof (file as DemoBrokenFile).url === "string" && typeof (file as DemoBrokenFile).kind === "string")
+            .slice(0, 40)
+            .map(({ url, kind }) => ({ url, kind })),
+        );
+        return;
+      }
+      if (data.type !== "height") return;
       const height = Number(data.value);
       if (Number.isFinite(height) && height > 100 && height < 60_000) setIframeHeight(Math.max(height, 850));
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, []);
+
+  // A preview of a different demo says nothing about this one.
+  useEffect(() => setPreviewBroken([]), [demo?.id]);
 
   // Filter clicks based on selected visit and selected element
   const filteredClicks = useMemo(() => {
@@ -320,6 +338,7 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
             </div>
           ) : (
             <>
+              <BrokenFilesPanel files={mergeBrokenFiles(previewBroken, report?.brokenFiles)} />
               {/* TAB 1: OVERVIEW & VISITOR ACTIVITY */}
               {activeTab === "overview" && (
                 <div className="space-y-6">

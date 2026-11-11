@@ -16,6 +16,96 @@
  * Lightweight, zero dependencies, completely silent, resilient to SVG/DOM edge cases.
  */
 
+/**
+ * Notices every file the page fails to load, in the visitor's own browser.
+ *
+ * The server cannot see a file the browser discards after a 200 (11 Nov 2026:
+ * every Ghacem picture, blocked by Cross-Origin-Resource-Policy, while the HTTP
+ * logs read 200), so the page reports it instead — see
+ * `services/demoBrokenFiles.ts`. It goes at the top of `<head>`: a picture that
+ * fails while the body is still being parsed fires its error before a script at
+ * the end of the body exists to hear it.
+ *
+ * What it catches: `error` on any picture, video, audio, source, script,
+ * stylesheet or iframe (captured on window, since those events do not bubble),
+ * a font that fails, and CSS background pictures (probed once the page has
+ * loaded, because a failed background fires no event at all). The list goes to
+ * `window.__dwBrokenReport` when the tracker has set one, and to the parent
+ * frame when there is one — the Demos screen's own preview listens for it.
+ *
+ * No backslashes and no `${` in here: this is a template literal, and either
+ * would be eaten before the browser saw it.
+ */
+export const FILE_WATCH_SCRIPT = `<script id="dw-file-watch">(function(){
+  if (window.__dwFileWatch) return;
+  var list = window.__dwBrokenFiles = [], seen = {}, timer = null;
+  window.__dwFileWatch = true;
+  function send() {
+    timer = null;
+    try { if (window.__dwBrokenReport) window.__dwBrokenReport(list.slice()); } catch (e) {}
+    try { if (window.parent && window.parent !== window) window.parent.postMessage({ source: "dakyx-demo", type: "broken-files", files: list.slice() }, "*"); } catch (e) {}
+  }
+  function note(url, kind) {
+    try {
+      if (url && typeof url !== "string") url = url.baseVal || String(url);
+      if (!url || /^(data|blob|about|javascript):/i.test(url)) return;
+      if (seen[url] || list.length >= 40) return;
+      seen[url] = 1;
+      list.push({ url: String(url).slice(0, 500), kind: kind });
+      if (!timer) timer = setTimeout(send, 800);
+    } catch (e) {}
+  }
+  window.addEventListener("error", function (e) {
+    var t = e && e.target;
+    if (!t || t === window || !t.tagName) return;
+    var tag = String(t.tagName).toLowerCase();
+    if (tag === "link" && !/stylesheet|preload/i.test(t.rel || "")) return;
+    note(t.currentSrc || t.src || t.href || (t.getAttribute && (t.getAttribute("src") || t.getAttribute("href"))), tag);
+  }, true);
+  try {
+    if (document.fonts && document.fonts.addEventListener) {
+      document.fonts.addEventListener("loadingerror", function (e) {
+        var faces = (e && e.fontfaces) || [];
+        for (var i = 0; i < faces.length; i++) note("font " + faces[i].family, "font");
+      });
+    }
+  } catch (e) {}
+  function backgrounds() {
+    try {
+      var els = document.getElementsByTagName("*"), urls = [], have = {};
+      for (var i = 0; i < els.length && urls.length < 60; i++) {
+        var bg = getComputedStyle(els[i]).backgroundImage;
+        if (!bg || bg.indexOf("url(") < 0) continue;
+        var parts = bg.split("url(");
+        for (var j = 1; j < parts.length; j++) {
+          var u = parts[j].split(")")[0].trim();
+          if (u.charAt(0) === '"' || u.charAt(0) === "'") u = u.slice(1, -1);
+          if (u && !have[u] && !/^(data|blob):/i.test(u)) { have[u] = 1; urls.push(u); }
+        }
+      }
+      for (var k = 0; k < urls.length; k++) (function (u) {
+        var probe = new Image();
+        probe.onerror = function () { note(u, "background"); };
+        probe.src = u;
+      })(urls[k]);
+    } catch (e) {}
+  }
+  function later() { setTimeout(backgrounds, 1500); }
+  if (document.readyState === "complete") later(); else window.addEventListener("load", later);
+})();</script>`;
+
+/** Puts the file watch first in `<head>`, before anything the page loads. */
+export function injectFileWatch(html: string): string {
+  if (html.includes('id="dw-file-watch"')) return html;
+  const head = /<head\b[^>]*>/i.exec(html);
+  if (head) return html.slice(0, head.index + head[0].length) + FILE_WATCH_SCRIPT + html.slice(head.index + head[0].length);
+  const root = /<html\b[^>]*>/i.exec(html);
+  if (root) return html.slice(0, root.index + root[0].length) + FILE_WATCH_SCRIPT + html.slice(root.index + root[0].length);
+  const doctype = /^\s*<!doctype[^>]*>/i.exec(html);
+  if (doctype) return doctype[0] + FILE_WATCH_SCRIPT + html.slice(doctype[0].length);
+  return FILE_WATCH_SCRIPT + html;
+}
+
 export interface InjectTrackerOptions {
   slug: string;
   visitId?: string;
@@ -88,6 +178,15 @@ export function generateTrackerScript(options: {
     var maxScrollDepth = 0;
     var clickQueue = [];
     var isTabActive = !document.hidden;
+
+    // Files this browser could not load, from the file watch at the top of
+    // <head>. It may have found some before this script existed.
+    var brokenFiles = (window.__dwBrokenFiles || []).slice();
+    var ackedBroken = 0;
+    window.__dwBrokenReport = function(files) {
+      brokenFiles = files || [];
+      if (brokenFiles.length > ackedBroken) setTimeout(function() { flush(false); }, 300);
+    };
 
     var lastAckedDuration = 0;
     var lastAckedScroll = 0;
@@ -277,8 +376,10 @@ export function generateTrackerScript(options: {
         var hasNewClicks = clicksToSend.length > 0;
         var hasNewDuration = (currentDuration - lastAckedDuration) >= 3;
         var hasNewScroll = maxScrollDepth > lastAckedScroll;
+        var brokenToSend = brokenFiles.slice();
+        var hasNewBroken = brokenToSend.length > ackedBroken;
 
-        if (!isFinal && !hasNewClicks && !hasNewDuration && !hasNewScroll) {
+        if (!isFinal && !hasNewClicks && !hasNewDuration && !hasNewScroll && !hasNewBroken) {
           return;
         }
 
@@ -305,7 +406,8 @@ export function generateTrackerScript(options: {
           screenHeight: window.screen ? window.screen.height : null,
           timezone: timezone || undefined,
           locale: locale || undefined,
-          clicks: clicksToSend
+          clicks: clicksToSend,
+          brokenFiles: hasNewBroken ? brokenToSend : undefined
         };
 
         var endpoint = "/demos/" + encodeURIComponent(SLUG) + "/analytics";
@@ -345,6 +447,7 @@ export function generateTrackerScript(options: {
           if (res.ok) {
             lastAckedDuration = currentDuration;
             lastAckedScroll = maxScrollDepth;
+            if (brokenToSend.length > ackedBroken) ackedBroken = brokenToSend.length;
             // Acknowledge and remove sent clicks
             if (clicksToSend.length > 0) {
               var ackedMap = {};
@@ -389,6 +492,9 @@ export function generateTrackerScript(options: {
  */
 export function injectDemoTracker(html: string, options: InjectTrackerOptions): string {
   const script = generateTrackerScript(options);
+  // In both modes: a live visit reports through the beacon, a preview inside
+  // the Demos screen through postMessage.
+  html = injectFileWatch(html);
 
   if (html.includes("</body>")) {
     return html.replace("</body>", `${script}\n</body>`);
