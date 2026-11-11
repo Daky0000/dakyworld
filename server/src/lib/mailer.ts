@@ -267,6 +267,38 @@ function transient(error: unknown): boolean {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * A mail server that answered with an error code took nothing.
+ *
+ * That makes it a different failure from a socket that went quiet mid-DATA,
+ * and callers tell the two apart by class: a MailerError is a definite refusal
+ * (safe to correct and send again), anything else may have been delivered. A
+ * raw SMTP refusal used to reach them as a plain Error, so a letter the server
+ * had plainly turned away was held as "may have been delivered".
+ *
+ * The one refusal that names its own fix is spelled out: a login sending as an
+ * address its mailbox does not own (Postfix's reject_sender_login_mismatch,
+ * which Hostinger runs).
+ */
+function refusal(error: unknown): MailerError | null {
+  if (error instanceof MailerError) return null;
+  const e = error as { responseCode?: number; response?: string; message?: string } | null;
+  if (typeof e?.responseCode !== "number") return null;
+  const said = (e.response ?? e.message ?? "").trim();
+
+  const login = /not owned by user\s+<?([^\s>]+@[^\s>]+)>?/i.exec(said)?.[1];
+  if (login) {
+    const from = /<([^\s>]+@[^\s>]+)>/.exec(said)?.[1] ?? "the From address";
+    return new MailerError(
+      502,
+      `The mail server would not send as ${from}: the mailbox signed in, ${login}, does not own that address. ` +
+        `Set the From email to ${login} under Settings → Email (a MAIL_FROM_EMAIL set in Railway overrides that screen), ` +
+        `or add ${from} as an alias of ${login} with the mail host. Nothing was sent. (${said})`,
+    );
+  }
+  return new MailerError(502, `The mail server refused the message, so nothing was sent: ${said}`);
+}
+
+/**
  * Sends one email, tries again on a temporary failure, and records the outcome.
  *
  * Every path that sends mail comes through here, so every send — an account
@@ -291,8 +323,9 @@ export async function sendMail(args: SendArgs): Promise<SendReceipt> {
       await sleep(BACKOFF_MS[attempts - 1] ?? 8_000);
     }
   }
-  await recordDelivery(args, transportName, "FAILED", attempts, (lastError as Error)?.message ?? String(lastError), null);
-  throw lastError;
+  const failure = refusal(lastError) ?? lastError;
+  await recordDelivery(args, transportName, "FAILED", attempts, (failure as Error)?.message ?? String(failure), null);
+  throw failure;
 }
 
 /** Best effort: a database hiccup must never turn a delivered email into a failed request. */

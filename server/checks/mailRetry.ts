@@ -6,7 +6,7 @@
 import net from "node:net";
 
 let connections = 0;
-let mode: "temp-then-ok" | "permanent" = "temp-then-ok";
+let mode: "temp-then-ok" | "permanent" | "mismatch" = "temp-then-ok";
 let delivered = 0;
 
 const server = net.createServer((socket) => {
@@ -25,6 +25,7 @@ const server = net.createServer((socket) => {
       else if (cmd === "AUTH") socket.write("235 2.7.0 ok\r\n");
       else if (cmd === "MAIL") {
         if (mode === "permanent") socket.write("550 5.7.1 refused\r\n");
+        else if (mode === "mismatch") socket.write("553 5.7.1 <dan@dakyx.com>: Sender address rejected: not owned by user info@dakyx.com\r\n");
         else if (nth === 1) socket.write("451 4.7.1 try again later\r\n");
         else socket.write("250 ok\r\n");
       } else if (cmd === "RCPT") socket.write("250 ok\r\n");
@@ -59,8 +60,19 @@ mode = "permanent"; connections = 0; delivered = 0;
 await sendMail(msg).then(() => { ok = false; console.log("B: unexpectedly sent"); }).catch((e) => console.log(`B: refused after ${connections} connection(s): ${e.message.slice(0, 60)}`));
 if (connections !== 1) ok = false;
 
+// Case C: Hostinger's sender-login mismatch. A definite refusal, so it must come
+// back as a MailerError (callers read anything else as "may have been
+// delivered") that names the login to send as.
+mode = "mismatch"; connections = 0; delivered = 0;
+const { MailerError } = await import("../src/lib/mailer.js");
+await sendMail(msg).then(() => { ok = false; console.log("C: unexpectedly sent"); }).catch((e) => {
+  const named = e instanceof MailerError && e.message.includes("Set the From email to info@dakyx.com") && e.message.includes("as dan@dakyx.com");
+  console.log(`C: ${named ? "explained" : "NOT explained"} after ${connections} connection(s): ${e.message.slice(0, 90)}`);
+  if (!named || connections !== 1) ok = false;
+});
+
 console.log("delivery rows:", JSON.stringify(rows.map((r) => [r.status, r.attempts, r.category])));
-if (JSON.stringify(rows.map((r) => [r.status, r.attempts])) !== JSON.stringify([["SENT", 2], ["FAILED", 1]])) ok = false;
+if (JSON.stringify(rows.map((r) => [r.status, r.attempts])) !== JSON.stringify([["SENT", 2], ["FAILED", 1], ["FAILED", 1]])) ok = false;
 server.close();
 console.log(ok ? "PASS" : "FAIL");
 process.exit(ok ? 0 : 1);

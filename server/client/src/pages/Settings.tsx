@@ -822,7 +822,7 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
               <input type="number" value={port} onChange={(event) => setPort(Number(event.target.value))} className="input" />
             </Field>
             <Field label="Username">
-              <input value={user} onChange={(event) => setUser(event.target.value)} placeholder="dan@dakyx.com" className="input" />
+              <input value={user} onChange={(event) => setUser(event.target.value)} placeholder="info@dakyx.com" className="input" />
             </Field>
             <Field label="Password" hint="Stored encrypted. Never shown again.">
               <input
@@ -837,7 +837,7 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
               <input value={fromName} onChange={(event) => setFromName(event.target.value)} className="input" />
             </Field>
             <Field label="From address">
-              <input value={fromEmail} onChange={(event) => setFromEmail(event.target.value)} placeholder="dan@dakyx.com" className="input" />
+              <input value={fromEmail} onChange={(event) => setFromEmail(event.target.value)} placeholder="info@dakyx.com" className="input" />
             </Field>
             <Field label="Reply-to" hint="Optional — where replies should land, if not the from address." full>
               <input value={replyTo} onChange={(event) => setReplyTo(event.target.value)} className="input" />
@@ -1062,7 +1062,7 @@ function InboxPanel({ settings }: { settings: AppSettings }) {
               <input value={port} onChange={(event) => setPort(event.target.value)} className="input" />
             </Field>
             <Field label="Username">
-              <input value={user} onChange={(event) => setUser(event.target.value)} placeholder="dan@dakyx.com" className="input" />
+              <input value={user} onChange={(event) => setUser(event.target.value)} placeholder="info@dakyx.com" className="input" />
             </Field>
             <Field
               label="Password"
