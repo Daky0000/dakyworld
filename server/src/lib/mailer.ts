@@ -288,6 +288,17 @@ function refusal(error: unknown): MailerError | null {
   const login = /not owned by user\s+<?([^\s>]+@[^\s>]+)>?/i.exec(said)?.[1];
   if (login) {
     const from = /<([^\s>]+@[^\s>]+)>/.exec(said)?.[1] ?? "the From address";
+    // Refused as its own address: the From setting cannot be the fault. Seen on
+    // 11 Nov 2026 the morning the Hostinger email plan for the domain expired —
+    // the login still worked, the domain was no longer the mailbox's to send as.
+    if (from.toLowerCase() === login.toLowerCase()) {
+      const domain = login.split("@")[1];
+      return new MailerError(
+        502,
+        `The mail server would not let ${login} send as itself, so the From setting is not the problem: the mail host no longer treats ${domain} as belonging to this mailbox. ` +
+          `Check that the email plan for ${domain} is active with the mail host (Hostinger: hPanel → Emails). Nothing was sent. (${said})`,
+      );
+    }
     return new MailerError(
       502,
       `The mail server would not send as ${from}: the mailbox signed in, ${login}, does not own that address. ` +

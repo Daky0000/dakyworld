@@ -6,7 +6,7 @@
 import net from "node:net";
 
 let connections = 0;
-let mode: "temp-then-ok" | "permanent" | "mismatch" = "temp-then-ok";
+let mode: "temp-then-ok" | "permanent" | "mismatch" | "self" = "temp-then-ok";
 let delivered = 0;
 
 const server = net.createServer((socket) => {
@@ -26,6 +26,7 @@ const server = net.createServer((socket) => {
       else if (cmd === "MAIL") {
         if (mode === "permanent") socket.write("550 5.7.1 refused\r\n");
         else if (mode === "mismatch") socket.write("553 5.7.1 <dan@dakyx.com>: Sender address rejected: not owned by user info@dakyx.com\r\n");
+        else if (mode === "self") socket.write("553 5.7.1 <info@dakyx.com>: Sender address rejected: not owned by user info@dakyx.com\r\n");
         else if (nth === 1) socket.write("451 4.7.1 try again later\r\n");
         else socket.write("250 ok\r\n");
       } else if (cmd === "RCPT") socket.write("250 ok\r\n");
@@ -71,8 +72,18 @@ await sendMail(msg).then(() => { ok = false; console.log("C: unexpectedly sent")
   if (!named || connections !== 1) ok = false;
 });
 
+// Case D: the same refusal when From and login are one address — what an
+// expired email plan looks like. Telling the person to set the From email to
+// the address it already is would send them in a circle.
+mode = "self"; connections = 0; delivered = 0;
+await sendMail(msg).then(() => { ok = false; console.log("D: unexpectedly sent"); }).catch((e) => {
+  const right = e instanceof MailerError && e.message.includes("email plan for dakyx.com is active") && !e.message.includes("Set the From email");
+  console.log(`D: ${right ? "explained" : "NOT explained"}: ${e.message.slice(0, 90)}`);
+  if (!right) ok = false;
+});
+
 console.log("delivery rows:", JSON.stringify(rows.map((r) => [r.status, r.attempts, r.category])));
-if (JSON.stringify(rows.map((r) => [r.status, r.attempts])) !== JSON.stringify([["SENT", 2], ["FAILED", 1], ["FAILED", 1]])) ok = false;
+if (JSON.stringify(rows.map((r) => [r.status, r.attempts])) !== JSON.stringify([["SENT", 2], ["FAILED", 1], ["FAILED", 1], ["FAILED", 1]])) ok = false;
 server.close();
 console.log(ok ? "PASS" : "FAIL");
 process.exit(ok ? 0 : 1);
