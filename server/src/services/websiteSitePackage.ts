@@ -330,7 +330,7 @@ const listOf = (items: string[], max = 4) => items.slice(0, max).join(", ") + (i
 /** Turns the archive into the site's pages and files. Replaces `commitPackageToSite` for every package import. */
 export async function commitSitePackage(input: { req: WebsiteActor; siteId: string; analysis: PackageAnalysis }): Promise<SitePackageResult> {
   const { req, siteId, analysis } = input;
-  const site = await prisma.site.findUniqueOrThrow({ where: { id: siteId }, select: { id: true, name: true, publicUrl: true } });
+  const site = await prisma.site.findUniqueOrThrow({ where: { id: siteId }, select: { id: true, name: true, slug: true, publicUrl: true } });
   await assertImportAllowance(req, siteId);
 
   const build = recogniseBuild([...analysis.assets.map((asset) => asset.repoPath), ...analysis.pages.map((page) => page.filePath)], analysis.pages);
@@ -340,7 +340,7 @@ export async function commitSitePackage(input: { req: WebsiteActor; siteId: stri
   const frozen = kept.map((page) => ({ page, frozen: freezePage(page.html, build) }));
 
   // 2. Links between pages, to each page's own address.
-  const basePath = new URL(site.publicUrl).pathname;
+  const basePath = `/website/${site.slug}`;
   const byFile = new Map(analysis.pages.map((page) => [page.filePath, page.path]));
   const routes = new Set(kept.map((page) => page.path));
   let linksRewritten = 0;
@@ -352,7 +352,7 @@ export async function commitSitePackage(input: { req: WebsiteActor; siteId: stri
 
   // 3. The files the pages use, under this site's own names.
   const files = new Map(analysis.assets.map((asset) => [asset.repoPath, asset.content]));
-  const bundle = await bundleSiteFiles(linked, files, assetUrl(site, "assets/dw"));
+  const bundle = await bundleSiteFiles(linked, files, `/website/${site.slug}/assets/dw`);
 
   const totalBytes = bundle.files.reduce((sum, file) => sum + file.content.length, 0);
   const largestVideo = Math.max(0, ...bundle.files.filter((file) => file.contentType.startsWith("video/")).map((file) => file.content.length));

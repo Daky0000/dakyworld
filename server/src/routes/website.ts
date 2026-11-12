@@ -465,13 +465,19 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
       }),
     ]);
 
-    // Where "Live Demo" goes. Never the site's publicUrl: an imported page keeps
-    // the business's real address there, so the button opened their live site
-    // rather than the copy being edited. A demo is served by this app, so its
-    // link is a path; otherwise the hosted address, or no link at all.
+    // Where "Live Demo" goes. For demos, /demos/:slug. For standalone imported websites,
+    // /website/:siteSlug/:pagePath so it opens the demo-style interconnected website page.
+    // Otherwise the hosted address, or no link at all.
     const linkedDemo = await findLinkedDemo(site, page.id);
     const hosted = page.publishedHtml ? hostedUrlFor(site) : null;
-    const liveUrl = linkedDemo ? `/demos/${encodeURIComponent(linkedDemo.slug)}` : hosted ? `${hosted}${page.path === "/" ? "/" : page.path}` : null;
+    const websitePath = `/website/${encodeURIComponent(site.slug)}${page.path === "/" ? "" : page.path}`;
+    const liveUrl = linkedDemo
+      ? `/demos/${encodeURIComponent(linkedDemo.slug)}`
+      : (page.publishedHtml || page.sourceHtml)
+        ? websitePath
+        : hosted
+          ? `${hosted}${page.path === "/" ? "/" : page.path}`
+          : null;
 
     res.json({
       // A WordPress site has no repository and is not hosted here, and is

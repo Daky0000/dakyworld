@@ -137,7 +137,7 @@ export function ConnectWebsite() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 id="connect-title" className="font-display text-xl">
-                  {route === null ? "Bring your website" : route === "hosted" ? "We host it for you" : route === "wordpress" ? "Connect your WordPress website" : "Publish to your repository"}
+                  {route === null ? "Bring your website" : route === "hosted" ? "Import a whole project or framework" : route === "wordpress" ? "Connect your WordPress website" : "Publish to your repository"}
                 </h2>
                 {route !== null && (
                   <button type="button" className="mt-1 text-xs text-muted underline" onClick={() => setRoute(null)}>
@@ -162,10 +162,9 @@ export function ConnectWebsite() {
                   className="block w-full rounded-xl border border-line p-4 text-left hover:border-line-strong"
                   onClick={() => setRoute("hosted")}
                 >
-                  <span className="block text-sm font-semibold text-ink">We host it for you</span>
+                  <span className="block text-sm font-semibold text-ink">Import a framework or full project</span>
                   <span className="mt-1 block text-xs leading-relaxed text-muted">
-                    You get an address straight away and can point your own domain at it with two DNS records. Nothing to
-                    install, no developer needed. Choose this if you are not sure.
+                    Import a ZIP archive or folder containing a full website framework (Next.js, Astro, Vite, HTML). All pages, images, and links are extracted and connected under one website for editing.
                   </span>
                 </button>
 
@@ -253,12 +252,9 @@ export function ConnectWebsite() {
                 <p className="text-sm leading-relaxed text-muted">
                   {route === "hosted" ? (
                     <>
-                      Name it and give the address it has now (or will have). Publishing puts pages live here
-                      immediately; pointing your own domain at it is two DNS records, in{" "}
-                      <a className="text-blue underline" href={assistance.data?.guides.hosted ?? GUIDE.hosted} target="_blank" rel="noreferrer">
-                        the hosting guide
-                      </a>
-                      .
+                      Name your website and upload your project archive (ZIP) or select a project folder. Frameworks
+                      like Next.js, Astro, Vite, or multi-page HTML are automatically detected, compiled, and turned
+                      into standalone pages connected under your website.
                     </>
                   ) : (
                     <>
@@ -283,13 +279,13 @@ export function ConnectWebsite() {
                   />
                 </label>
                 <label className="block text-xs text-muted">
-                  Public website address
+                  {route === "hosted" ? "Original website address (optional)" : "Public website address"}
                   <input
-                    required
+                    required={route !== "hosted"}
                     type="url"
                     value={publicUrl}
                     onChange={(event) => setUrl(event.target.value)}
-                    placeholder="https://your-site.com"
+                    placeholder={route === "hosted" ? "https://your-site.com (optional)" : "https://your-site.com"}
                     className="mt-1 h-10 w-full rounded-xl border border-line px-3 text-sm text-ink"
                   />
                 </label>
@@ -544,8 +540,8 @@ export function ConnectWebsite() {
                 </div>
 
                 <p className="text-xs leading-relaxed text-muted">
-                  A website address supplies relative images and styles. Package ZIPs discover local CSS, images, and fonts automatically.
-                  React/Next.js app shells require source integration; uploading compiled HTML does not update React components.
+                  Package ZIPs and folders discover local CSS, images, and fonts automatically. Multi-page projects and
+                  frameworks (Next.js, Astro, Vite, HTML) are compiled into standalone pages interconnected under your website.
                 </p>
 
                 {(create.error || fileError) && (
@@ -572,7 +568,7 @@ export function ConnectWebsite() {
                       <p className="text-sm font-semibold text-ink">Stuck? We will do it for you — {price}</p>
                       <p className="mt-1 text-xs leading-relaxed text-muted">
                         {route === "hosted"
-                          ? "We set up the domain and the DNS records and confirm it is live."
+                          ? "We prepare your framework archive, verify all pages and ensure everything connects cleanly."
                           : "We install the GitHub app, connect the repository and make the first publish with you."}
                       </p>
                       <textarea

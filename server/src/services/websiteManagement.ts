@@ -38,6 +38,7 @@ import { generatePagePrepublishReport, generateSitePrepublishReport } from "./we
 import { updateSiteSettings } from "./websiteSiteSettings.js";
 import { HOST_DOMAIN, PLACEHOLDER_HOST_DOMAIN, PLACEHOLDER_HOSTS, expectedHostedUrl, hostedPublicUrl, isSlugAddress } from "./websiteHosting.js";
 import { addWordPressPages, prepareWordPressSite, WORDPRESS_SOURCE_KIND, wordpressConnectInput } from "./websiteWordPress.js";
+import { appUrl } from "./emailSender.js";
 
 const publicUrl = z.string().url().max(2000).refine(value => {
   const url = new URL(value);
@@ -615,9 +616,8 @@ export function registerWebsiteManagement(router: Router, access: Access) {
       ...rest,
       ...(github ? { repoOwner: github.owner, repoName: github.name, repoBranch: github.branch, githubInstallationId: github.installationId, githubRepositoryId: github.repositoryId } : {}),
       // A repository's site with no address given is most often its GitHub
-      // Pages one; better than a hosted address that will never serve it.
-      // Otherwise the hosted address its first publish will give it.
-      publicUrl: wordpressSite?.publicUrl ?? givenPublicUrl ?? (github ? githubPagesUrl(github.owner, github.name) : await expectedHostedUrl(slug)),
+      // Pages one; otherwise standalone path-based website URL under /website/:slug.
+      publicUrl: wordpressSite?.publicUrl ?? givenPublicUrl ?? (github ? githubPagesUrl(github.owner, github.name) : `${(await appUrl()).replace(/\/+$/, "")}/website/${slug}`),
       ...(wordpressSite ? { sourceKind: WORDPRESS_SOURCE_KIND } : {}),
     };
     if (html) {

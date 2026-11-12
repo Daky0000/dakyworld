@@ -68,6 +68,7 @@ import { ensureStandingWork } from "./services/agents/standingWork.js";
 import { SETTING } from "./lib/settings.js";
 import { pruneFreeLadders } from "./lib/models/call.js";
 import { demosRouter, demoPagesRouter } from "./routes/demos.js";
+import { websitePagesRouter } from "./routes/websitePages.js";
 import { auditsRouter } from "./routes/audits.js";
 import { conceptsRouter } from "./routes/concepts.js";
 import { startScheduler } from "./services/scheduler.js";
@@ -193,6 +194,7 @@ app.use("/api/messaging", webhookRateLimit, express.raw({ type: "*/*", limit: "1
 // deliberate: the individual pages are unlisted-but-public, and the list of
 // every business DakyXTech is pitching to stays behind the login.
 app.use("/demos", demoPagesRouter);
+app.use("/website", websitePagesRouter);
 
 const publicReviewRouter = express.Router();
 publicReviewRouter.use(express.json());
