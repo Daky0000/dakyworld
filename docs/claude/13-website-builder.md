@@ -2257,3 +2257,57 @@ why each rule is there:
   a review's findings with a severity mark, the reason under each change, and
   sends each earlier reply's changes with the history ("[Changed: Main heading
   font-weight → 700]"), so "make it bigger" means what changed.
+
+### Skills, and a picture of the website (12 Nov 2026)
+
+`services/websiteAgentSkills.ts`. The Builder agent is one agent and always
+was; what it lacked was craft and context. It carried one brief for every kind
+of request — a line about words, a line about design — which is enough to pick
+an operation and not enough to do the work well, and it was told almost nothing
+about the site beyond ten hex codes and five font names counted off the page.
+Neither addition calls a model.
+
+- **Skills** (`BUILDER_SKILLS`, `pickBuilderSkills`): ten short doctrines —
+  copy, visual design, layout, search and sharing, accessibility, motion,
+  pictures, conversion, site-wide and navigation, page review. A request picks
+  **at most two**, by how many distinct words ask for the craft; a review is
+  always first because it changes the shape of the answer; an attachment adds
+  pictures; and the selected element decides when the wording does not ("make
+  this better" with a picture selected is about the picture). **Nothing
+  matching picks nothing**, and the agent works from its brief exactly as
+  before. This is the same shape as the OS orchestrator (see
+  [07](07-agent-runtime.md)): one agent, the right skill for the task, the same
+  tools throughout.
+- **The doctrine rides in the request, not the system prompt.** The system
+  prompt is the same for every request and is cached; ten doctrines there would
+  be paid for on every message for the one that applied. It sits above the
+  "Untrusted page data" line, because it is ours. No doctrine may tell the agent
+  to invent a fact — the brief's rule about placeholders outranks all of them,
+  and the check holds that.
+- **The site profile** (`siteProfile`, on `SiteOverview.profile`): how the site
+  was built (the generator tag, WordPress, Elementor, Shopify, Wix, Squarespace,
+  Webflow, Next.js, Nuxt, Astro, Tailwind, Bootstrap — from the marks each
+  leaves), the page's `lang`, the home page's title, description and main
+  heading, the menu's labels, and **the stylesheet's own design tokens**. The
+  last is the one that changes answers: a model shown `--brand: #0B3D2E` uses
+  the brand colour, and one shown the ten commonest hex codes picks a grey.
+  A framework's internal variables (`--tw-…`, `--bs-…`, `--wp--…`,
+  `--e-global-…`) are left out; a token is kept only when its value is a
+  colour, a font, or a size with a name that says what it is for.
+- **The home page is the shortest path read; the open page decides the
+  language.** A page whose `lang` is not English adds one line to the request:
+  new words for the page in that language, the reply in the language of the
+  request.
+- **`pageRole`** tells the model what kind of page is open — home, contact,
+  pricing, about, article, legal — from the path and the title.
+- **The overview is kept for three minutes** (`overviewCache`), keyed on the
+  pages read and each one's draft revision and status. It was read on every
+  message that reached the model — up to twelve pages parsed and five
+  stylesheets fetched — and between two messages of one conversation almost
+  none of it changes. An edit to any page read is a new key on the next message.
+- **The answer names the skills** (`plan.skills`), and the chat prints them
+  with the strength: "Copywriting · Medium strength · free models first".
+
+`checks/websiteAgentSkills.ts` (47, no database) holds the picks, the profile
+against a French WordPress/Elementor fixture and this repository's own home
+page, and the page roles.

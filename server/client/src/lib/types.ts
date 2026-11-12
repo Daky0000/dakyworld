@@ -3819,6 +3819,8 @@ export type SiteAgentPlan = {
   model?: string;
   /** How the OS's task router sized the request: the level picks the paid model that takes over from the free ones. */
   routing?: { level: "simple" | "standard" | "complex"; effort: string; decidedBy: "rules" | "model" | "legacy"; sentence: string };
+  /** The skills the agent used for this request, by name. */
+  skills?: string[];
   /** What the request cost in AI credits: 1 from a free model, 2/3/5 from a paid one by level, 0 with no model. */
   credits?: number;
   /** A question's answers to tap, each complete enough to send as the next request. */

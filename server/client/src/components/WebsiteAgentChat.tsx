@@ -12,6 +12,7 @@ import {
   IconUndo,
   IconUploadCloud,
 } from "./WebsiteIcons";
+import { strengthOf } from "../lib/types";
 import type {
   FieldEdit,
   SiteAgentPlan,
@@ -29,7 +30,7 @@ type ChatMessage = {
   attachments?: SiteAgentAttachment[];
   plan?: SiteAgentPlan | null;
   /** How the router sized the request and which model answered — one quiet line under the reply. */
-  routed?: { level: string; sentence: string; model?: string; credits?: number } | null;
+  routed?: { level: string; sentence: string; model?: string; credits?: number; skills?: string[] } | null;
   /** A question's answers, as buttons that send them. */
   options?: string[];
   /** Next requests the agent suggests, as buttons that send them. */
@@ -742,7 +743,7 @@ export function WebsiteAgentChat({
         userPrompt: text,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         plan: hasActionableChanges ? plan : null,
-        routed: plan.routing ? { level: plan.routing.level, sentence: plan.routing.sentence, model: plan.model, credits: plan.credits } : null,
+        routed: plan.routing ? { level: plan.routing.level, sentence: plan.routing.sentence, model: plan.model, credits: plan.credits, skills: plan.skills } : null,
         requiresApproval: needsApproval,
         options: plan.options?.length ? plan.options : undefined,
         suggestions: plan.suggestions?.length ? plan.suggestions : undefined,
@@ -1041,7 +1042,7 @@ export function WebsiteAgentChat({
                   )}
                   {msg.routed && (
                     <p className="mt-1.5 text-[11px] leading-snug text-muted" title={msg.routed.sentence}>
-                      {msg.routed.level.charAt(0).toUpperCase() + msg.routed.level.slice(1)} task · free models first{msg.routed.model ? ` · answered by ${msg.routed.model}` : ""}
+                      {msg.routed.skills?.length ? `${msg.routed.skills.join(" + ")} · ` : ""}{strengthOf(msg.routed.level) ?? msg.routed.level} strength · free models first{msg.routed.model ? ` · answered by ${msg.routed.model}` : ""}
                       {msg.routed.credits !== undefined ? ` · ${msg.routed.credits} ${msg.routed.credits === 1 ? "credit" : "credits"}` : ""}
                     </p>
                   )}
