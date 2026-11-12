@@ -47,11 +47,11 @@ async function main() {
 
   for (const page of pages) {
     if (!page.sourceHtml) continue;
-    const { html: newSource, rewritten } = rewritePageLinks(page.sourceHtml, page.filePath, byFile, routes, basePath);
+    const { html: newSource, rewritten } = rewritePageLinks(page.sourceHtml, page.filePath, byFile, routes, basePath, site.slug);
     totalRewritten += rewritten;
 
     const newPublished = page.publishedHtml
-      ? rewritePageLinks(page.publishedHtml, page.filePath, byFile, routes, basePath).html
+      ? rewritePageLinks(page.publishedHtml, page.filePath, byFile, routes, basePath, site.slug).html
       : null;
 
     await prisma.sitePage.update({

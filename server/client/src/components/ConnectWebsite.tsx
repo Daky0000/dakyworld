@@ -36,10 +36,12 @@ const GUIDE = {
   wordpress: WORDPRESS_GUIDE,
 };
 
-export function ConnectWebsite() {
+export function ConnectWebsite({ label = "Import Website" }: { label?: string } = {}) {
   const [open, setOpen] = useState(false);
   const [route, setRoute] = useState<Route | null>(null);
   const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
+  const [slugCustomized, setSlugCustomized] = useState(false);
   const [publicUrl, setUrl] = useState("");
   const [repository, setRepo] = useState("");
   const [branch, setBranch] = useState("main");
@@ -70,7 +72,8 @@ export function ConnectWebsite() {
       if (repository.trim() && parts.length !== 2) throw new Error("Enter the repository as owner/name.");
       return api.post<{ id: string; pageId: string | null }>("/website/sites", {
         name,
-        publicUrl,
+        slug: slug.trim() || undefined,
+        publicUrl: route === "hosted" ? undefined : (publicUrl.trim() || undefined),
         repoOwner: route === "github" && repository.trim() ? parts[0] : null,
         repoName: route === "github" && repository.trim() ? parts[1] : null,
         repoBranch: branch,
@@ -105,6 +108,15 @@ export function ConnectWebsite() {
     setRoute(null);
     setHelpAsked(null);
     setHelpNotes("");
+    setName("");
+    setSlug("");
+    setSlugCustomized(false);
+    setUrl("");
+    setHtml(undefined);
+    setPackageData(undefined);
+    setPackageFilename(undefined);
+    setFilename("");
+    setFileError(null);
   }
 
   const price = assistance.data?.display ?? "GHS 120";
@@ -120,7 +132,7 @@ export function ConnectWebsite() {
           setOpen(true);
         }}
       >
-        Connect a website
+        {label}
       </Button>
 
       {open && (
@@ -274,21 +286,53 @@ export function ConnectWebsite() {
                     autoFocus
                     required
                     value={name}
-                    onChange={(event) => setName(event.target.value)}
+                    onChange={(event) => {
+                      const newName = event.target.value;
+                      setName(newName);
+                      if (!slugCustomized) {
+                        setSlug(newName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50));
+                      }
+                    }}
+                    placeholder="e.g. Gulf Contracting"
                     className="mt-1 h-10 w-full rounded-xl border border-line px-3 text-sm text-ink"
                   />
                 </label>
-                <label className="block text-xs text-muted">
-                  {route === "hosted" ? "Original website address (optional)" : "Public website address"}
-                  <input
-                    required={route !== "hosted"}
-                    type="url"
-                    value={publicUrl}
-                    onChange={(event) => setUrl(event.target.value)}
-                    placeholder={route === "hosted" ? "https://your-site.com (optional)" : "https://your-site.com"}
-                    className="mt-1 h-10 w-full rounded-xl border border-line px-3 text-sm text-ink"
-                  />
-                </label>
+
+                {route === "hosted" && (
+                  <label className="block text-xs text-muted">
+                    Main slug (for page URLs)
+                    <div className="mt-1 flex items-center rounded-xl border border-line bg-white px-3 focus-within:border-line-strong">
+                      <span className="text-xs text-muted select-none">/website/</span>
+                      <input
+                        required
+                        value={slug}
+                        onChange={(event) => {
+                          setSlugCustomized(true);
+                          setSlug(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""));
+                        }}
+                        placeholder="gulf-contracting"
+                        className="h-10 w-full bg-transparent px-1 text-sm text-ink outline-none"
+                      />
+                    </div>
+                    <span className="mt-1 block text-[11px] text-muted">
+                      Pages will be created as <code>{slug || "site"}-home</code>, <code>{slug || "site"}-about-us</code>, <code>{slug || "site"}-services</code>...
+                    </span>
+                  </label>
+                )}
+
+                {route === "github" && (
+                  <label className="block text-xs text-muted">
+                    Public website address
+                    <input
+                      required
+                      type="url"
+                      value={publicUrl}
+                      onChange={(event) => setUrl(event.target.value)}
+                      placeholder="https://your-site.com"
+                      className="mt-1 h-10 w-full rounded-xl border border-line px-3 text-sm text-ink"
+                    />
+                  </label>
+                )}
 
                 {route === "hosted" && !html && (
                   <label className="block text-xs text-muted">
@@ -555,7 +599,7 @@ export function ConnectWebsite() {
                     Cancel
                   </Button>
                   <Button type="submit" disabled={create.isPending || !!fileError}>
-                    {create.isPending ? "Connecting…" : "Open website"}
+                    {create.isPending ? "Importing…" : "Import Website"}
                   </Button>
                 </div>
 

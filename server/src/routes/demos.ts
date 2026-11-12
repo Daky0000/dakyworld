@@ -1561,6 +1561,22 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
     }
     const demo = await prisma.demo.findUnique({ where: { slug: req.params.slug } });
     if (!demo || demo.status === "ARCHIVED") {
+      const targetSlug = req.params.slug;
+      if (targetSlug.includes("-")) {
+        const matchingSite = await prisma.site.findFirst({
+          where: {
+            OR: [
+              { slug: targetSlug },
+              { slug: { in: targetSlug.split("-").map((_, i, arr) => arr.slice(0, i + 1).join("-")) } },
+            ],
+            deletionScheduledFor: null,
+          },
+          select: { id: true, slug: true },
+        });
+        if (matchingSite) {
+          return res.redirect(302, `/website/${targetSlug}`);
+        }
+      }
       const profile = await companyProfile();
       return res.status(404).type("html").send(missingPage(profile.displayName));
     }

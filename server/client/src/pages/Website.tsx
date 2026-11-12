@@ -145,7 +145,7 @@ export function Website() {
         }
       />
 
-      {canConnect && <div className="mb-5"><ConnectWebsite /></div>}
+      {canConnect && <div className="mb-5"><ConnectWebsite label="Import Website" /></div>}
       <SiteDirectoryMore directory={sites} />
       {(sites.data?.length ?? 0) > 1 && (
         <div className="mb-6 flex flex-wrap items-center gap-2">

@@ -24,12 +24,18 @@ websitePagesRouter.get("/:siteSlug/assets/dw/:filename", async (req: Request, re
       return res.redirect(302, getR2PublicUrl(repoPath));
     }
 
-    const site = await prisma.site.findFirst({
+    let site = await prisma.site.findFirst({
       where: {
         OR: [{ slug: siteSlug }, { id: siteSlug }],
       },
-      select: { id: true },
+      select: { id: true, slug: true },
     });
+
+    if (!site && siteSlug.includes("-")) {
+      const allSites = await prisma.site.findMany({ select: { id: true, slug: true } });
+      const match = allSites.filter((s) => siteSlug === s.slug || siteSlug.startsWith(`${s.slug}-`)).sort((a, b) => b.slug.length - a.slug.length)[0];
+      if (match) site = match;
+    }
 
     if (!site) return res.status(404).set("Cache-Control", "no-store").end();
 
@@ -77,17 +83,18 @@ const RESERVED_WEBSITE_PATHS = new Set([
 
 /**
  * Serves any subpage or the home page of a website by its slug.
- * Routes:
- * - /website/:siteSlug
- * - /website/:siteSlug/*
+ * Supports:
+ * - /website/:siteSlug (e.g. /website/gulf-contracting)
+ * - /website/:siteSlug/:pageName (e.g. /website/gulf-contracting/about-us)
+ * - /website/:compoundSlug (e.g. /website/gulf-contracting-home, /website/gulf-contracting-about-us)
  */
 websitePagesRouter.get(["/:siteSlug", "/:siteSlug/*"], async (req: Request, res: Response, next: NextFunction) => {
   try {
     const siteSlug = req.params.siteSlug;
     if (!siteSlug || RESERVED_WEBSITE_PATHS.has(siteSlug.toLowerCase())) return next();
 
-    // Find the website
-    const site = await prisma.site.findFirst({
+    // 1. Find the website
+    let site = await prisma.site.findFirst({
       where: {
         OR: [{ slug: siteSlug }, { id: siteSlug }],
         deletionScheduledFor: null,
@@ -95,22 +102,38 @@ websitePagesRouter.get(["/:siteSlug", "/:siteSlug/*"], async (req: Request, res:
       select: { id: true, name: true, slug: true },
     });
 
+    let rawSubpath = req.params[0] ?? "";
+
+    // 2. If site was not directly matched, check if siteSlug is a compound slug (e.g. "gulf-contracting-home", "gulf-contracting-about-us")
+    if (!site && siteSlug.includes("-")) {
+      const allSites = await prisma.site.findMany({
+        where: { deletionScheduledFor: null },
+        select: { id: true, name: true, slug: true },
+      });
+      const match = allSites
+        .filter((s) => siteSlug === s.slug || siteSlug.startsWith(`${s.slug}-`))
+        .sort((a, b) => b.slug.length - a.slug.length)[0];
+
+      if (match) {
+        site = match;
+        const remainder = siteSlug.slice(match.slug.length + 1); // e.g. "about-us" or "home"
+        rawSubpath = remainder === "home" ? "" : remainder;
+      }
+    }
+
     if (!site) {
       return res.status(404).type("html").send(site404Page());
     }
 
-    // Extract requested subpath relative to /website/:siteSlug
-    // e.g. req.params[0] is "about" or "projects/51-east-lagoona-mall"
-    const rawSubpath = req.params[0] ?? "";
     const cleanSub = rawSubpath.trim().replace(/^\/+/, "").replace(/\/+$/, "");
 
     // Generate candidate routes and file paths to match SitePage
     const candidates: string[] = [];
     const fileCandidates: string[] = [];
 
-    if (!cleanSub) {
-      candidates.push("/", "");
-      fileCandidates.push("index.html", "index.htm");
+    if (!cleanSub || cleanSub === "home") {
+      candidates.push("/", "", "/home", "/home/");
+      fileCandidates.push("index.html", "index.htm", "home.html");
     } else {
       candidates.push(
         `/${cleanSub}`,
@@ -118,6 +141,9 @@ websitePagesRouter.get(["/:siteSlug", "/:siteSlug/*"], async (req: Request, res:
         `/${cleanSub.replace(/\.html?$/i, "")}`,
         `/${cleanSub.replace(/\.html?$/i, "")}/`,
       );
+      if (cleanSub.includes("-")) {
+        candidates.push(`/${cleanSub.replace(/-/g, "")}`, `/${cleanSub.split("-")[0]}`);
+      }
       fileCandidates.push(
         cleanSub,
         `${cleanSub}.html`,
@@ -125,6 +151,9 @@ websitePagesRouter.get(["/:siteSlug", "/:siteSlug/*"], async (req: Request, res:
         `${cleanSub.replace(/\.html?$/i, "")}.html`,
         `${cleanSub.replace(/\.html?$/i, "")}/index.html`,
       );
+      if (cleanSub.includes("-")) {
+        fileCandidates.push(`${cleanSub.replace(/-/g, "")}.html`, `${cleanSub.split("-")[0]}.html`);
+      }
     }
 
     // Query matching page for this site
@@ -139,10 +168,24 @@ websitePagesRouter.get(["/:siteSlug", "/:siteSlug/*"], async (req: Request, res:
     });
 
     // Fallback if home page requested but not matched by exact path
-    if (!page && !cleanSub) {
+    if (!page && (!cleanSub || cleanSub === "home")) {
       page = await prisma.sitePage.findFirst({
         where: { siteId: site.id },
         orderBy: [{ sortOrder: "asc" }, { id: "asc" }],
+      });
+    }
+
+    // Fallback: search by path or title containing cleanSub
+    if (!page && cleanSub) {
+      page = await prisma.sitePage.findFirst({
+        where: {
+          siteId: site.id,
+          OR: [
+            { path: { contains: cleanSub, mode: "insensitive" } },
+            { filePath: { contains: cleanSub, mode: "insensitive" } },
+            { title: { contains: cleanSub, mode: "insensitive" } },
+          ],
+        },
       });
     }
 

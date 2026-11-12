@@ -470,7 +470,8 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
     // Otherwise the hosted address, or no link at all.
     const linkedDemo = await findLinkedDemo(site, page.id);
     const hosted = page.publishedHtml ? hostedUrlFor(site) : null;
-    const websitePath = `/website/${encodeURIComponent(site.slug)}${page.path === "/" ? "" : page.path}`;
+    const pagePart = page.path === "/" ? "home" : page.path.replace(/^\/+/, "").replace(/\/+$/, "").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    const websitePath = `/website/${encodeURIComponent(site.slug)}-${pagePart}`;
     const liveUrl = linkedDemo
       ? `/demos/${encodeURIComponent(linkedDemo.slug)}`
       : (page.publishedHtml || page.sourceHtml)

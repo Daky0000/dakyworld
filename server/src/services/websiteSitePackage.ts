@@ -147,7 +147,14 @@ export function pageLinkTarget(href: string, fromFile: string, byFile: ReadonlyM
 const escapeAttribute = (value: string) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 
 /** Every link to another imported page rewritten to that page's address under the site's base path. */
-export function rewritePageLinks(html: string, fromFile: string, byFile: ReadonlyMap<string, string>, routes: ReadonlySet<string>, basePath: string): { html: string; rewritten: number } {
+export function rewritePageLinks(
+  html: string,
+  fromFile: string,
+  byFile: ReadonlyMap<string, string>,
+  routes: ReadonlySet<string>,
+  basePath: string,
+  siteSlug?: string,
+): { html: string; rewritten: number } {
   const base = basePath.replace(/\/+$/, "");
   const edits: Array<{ start: number; end: number; value: string }> = [];
   for (const node of walk(parseHtml(html))) {
@@ -156,7 +163,17 @@ export function rewritePageLinks(html: string, fromFile: string, byFile: Readonl
     if (!href) continue;
     const target = pageLinkTarget(href.value, fromFile, byFile, routes);
     if (!target) continue;
-    const address = `${base}${target.route === "/" ? "/" : target.route}${target.suffix}`;
+
+    let address = "";
+    if (siteSlug) {
+      const pagePart = target.route === "/"
+        ? "home"
+        : target.route.replace(/^\/+/, "").replace(/\/+$/, "").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+      address = `/website/${siteSlug}-${pagePart}${target.suffix}`;
+    } else {
+      address = `${base}${target.route === "/" ? "/" : target.route}${target.suffix}`;
+    }
+
     if (decodeEntities(href.value) === address) continue;
     edits.push({ start: href.valueStart, end: href.valueEnd, value: escapeAttribute(address) });
   }
@@ -345,7 +362,7 @@ export async function commitSitePackage(input: { req: WebsiteActor; siteId: stri
   const routes = new Set(kept.map((page) => page.path));
   let linksRewritten = 0;
   const linked = frozen.map(({ page, frozen: result }) => {
-    const links = rewritePageLinks(result.html, page.filePath, byFile, routes, basePath);
+    const links = rewritePageLinks(result.html, page.filePath, byFile, routes, basePath, site.slug);
     linksRewritten += links.rewritten;
     return { filePath: page.filePath, html: links.html };
   });

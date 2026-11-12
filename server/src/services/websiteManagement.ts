@@ -576,10 +576,17 @@ export function registerWebsiteManagement(router: Router, access: Access) {
 
   router.post("/sites", handler(async (req, res) => {
     const input = siteInput.extend({
-      // Optional here only: somebody starting their first website often has no
-      // address yet, and inventing one ("acme.com") would point every "view
-      // live" link at a stranger's domain. See `fallbackPublicUrl` below.
-      publicUrl: publicUrl.optional(),
+      slug: z.string().trim().max(100).optional(),
+      publicUrl: z.string().trim().optional().transform((val) => {
+        if (!val) return undefined;
+        try {
+          const url = new URL(val);
+          if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password) {
+            return val;
+          }
+        } catch {}
+        return undefined;
+      }),
       html: z.string().min(1).max(15_000_000).optional(),
       templateKey: z.string().max(60).optional(),
       // No ceiling of its own, the same as `import-package`: a built site with
@@ -602,8 +609,16 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     }).parse(req.body);
     if (!!input.repoOwner !== !!input.repoName) throw new WebsiteError(400, "Enter both the repository owner and name.");
     if (!input.publicUrl && input.repoOwner) throw new WebsiteError(400, "Enter the address the repository's website is published at.");
-    const slug = `${input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0,60) || "site"}-${randomUUID().slice(0,8)}`;
-    let { html, templateKey, packageData, packageFilename, publicUrl: givenPublicUrl, githubRepositoryId, wordpress: wordpressInput, ...rest } = input;
+
+    const requestedSlug = (input.slug?.trim() || input.name.trim())
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 60) || "site";
+    const existingSiteWithSlug = await prisma.site.findFirst({ where: { slug: requestedSlug }, select: { id: true } });
+    const slug = existingSiteWithSlug ? `${requestedSlug}-${randomUUID().slice(0, 6)}` : requestedSlug;
+
+    let { html, templateKey, packageData, packageFilename, publicUrl: givenPublicUrl, githubRepositoryId, wordpress: wordpressInput, slug: _givenSlug, ...rest } = input;
     if (wordpressInput && (html || templateKey || packageData || rest.repoOwner || rest.repoName || githubRepositoryId)) {
       throw new WebsiteError(400, "A WordPress website takes its pages from WordPress, so it cannot also start from a template, an upload or a repository.");
     }
