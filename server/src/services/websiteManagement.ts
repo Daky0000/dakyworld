@@ -837,9 +837,10 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     const input = z.object({
       filename: z.string().max(200).default("package.zip"),
       data: z.string().min(1), // base64 package
+      autoBuild: z.boolean().optional().default(true),
     }).parse(req.body);
     const buffer = Buffer.from(input.data, "base64");
-    const analysis = await analyzeImportPackage({ buffer, filename: input.filename });
+    const analysis = await analyzeImportPackage({ buffer, filename: input.filename, autoBuild: input.autoBuild });
     const result = await commitPackageToSite({ req, siteId: site.id, analysis });
     res.status(201).json(result);
   }));

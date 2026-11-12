@@ -38,6 +38,7 @@ import { drawnByScript } from "./website/site.js";
 import { freezePage, recogniseBuild, type BuildRecognition } from "./website/buildOutput.js";
 import { contentTypeFor, isTextAsset, referencesIn, rewriteReferences, STORABLE } from "./demoPackage.js";
 import { healWebflowFouc, type DiscoveredPage, type ImportPackageResult, type PackageAnalysis } from "./websitePackageImport.js";
+import type { SourceProjectDetection } from "./website/sourceBuild.js";
 import { assetUrl } from "./websiteAssets.js";
 import { assertImportAllowance, assertMediaStorageAllowance, recordImportUsed, recordMediaStorageAdded } from "./websiteTierPlans.js";
 import type { WebsiteActor } from "./websiteActor.js";
@@ -319,6 +320,8 @@ export type SitePackageResult = ImportPackageResult & {
   scriptDrawnPages: string[];
   /** Sentences for the import summary. */
   notes: string[];
+  sourcePackage?: SourceProjectDetection | null;
+  autoBuilt?: boolean;
 };
 
 const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
@@ -395,6 +398,9 @@ export async function commitSitePackage(input: { req: WebsiteActor; siteId: stri
   const clientOnly = frozen.filter((entry) => entry.frozen.clientOnlyParts > 0);
   const scriptDrawnPages = finalPages.filter((page) => drawnByScript(page.html)).map((page) => page.path);
   const notes: string[] = [];
+  if (analysis.autoBuilt) {
+    notes.push(`Compiled and exported from ${analysis.sourcePackage?.label ?? "source project"} into ${plural(kept.length, "page")}.`);
+  }
   if (build.freezes) {
     notes.push(`Recognised as ${build.label}. Its own scripts were taken out of ${plural(kept.length, "page")}, because they would have put the original words back over every edit on the published site. A small DakyXTech script now opens and closes the menus, drawers and tabs they ran${restored ? ` (${plural(restored, "control")})` : ""}.`);
   } else {
@@ -459,5 +465,7 @@ export async function commitSitePackage(input: { req: WebsiteActor; siteId: stri
     leftOut: { count: bundle.leftOut.length, examples: bundle.leftOut.slice(0, 10) },
     scriptDrawnPages,
     notes,
+    sourcePackage: analysis.sourcePackage ?? null,
+    autoBuilt: Boolean(analysis.autoBuilt),
   };
 }

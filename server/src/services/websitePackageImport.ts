@@ -18,6 +18,7 @@ import { prisma } from "../lib/prisma.js";
 import { WebsiteError } from "./website/site.js";
 import { parseHtml, walk, attr, decodeEntities, type ElementNode } from "./website/parse.js";
 import { discoverFields } from "./website/index.js";
+import { detectSourceProject, extractPrebuiltEntries, buildSourceProject, type SourceProjectDetection } from "./website/sourceBuild.js";
 import { assetUrl } from "./websiteAssets.js";
 import { isR2Configured, getR2PublicUrl, uploadToR2 } from "../lib/r2.js";
 import {
@@ -78,6 +79,8 @@ export type PackageAnalysis = {
   externalResources: ExternalResourceReference[];
   totalBytes: number;
   warnings: string[];
+  sourcePackage?: SourceProjectDetection | null;
+  autoBuilt?: boolean;
 };
 
 export type ImportPackageResult = {
@@ -465,8 +468,9 @@ function inflateWithin(entry: JSZip.JSZipObject, name: string, packageBytesLeft:
 export async function analyzeImportPackage(input: {
   buffer: Buffer;
   filename?: string;
+  autoBuild?: boolean;
 }): Promise<PackageAnalysis> {
-  const { buffer, filename = "import.html" } = input;
+  const { buffer, filename = "import.html", autoBuild = true } = input;
   if (!buffer || buffer.length === 0) {
     throw new WebsiteError(400, "Choose a non-empty file or ZIP package to import.");
   }
@@ -551,7 +555,39 @@ export async function analyzeImportPackage(input: {
   const assets: DiscoveredAsset[] = [];
   let totalBytes = 0;
 
-  const htmlEntries = rawEntries.filter((e) => /\.(html|htm)$/i.test(e.path));
+  let activeEntries = rawEntries;
+  let htmlEntries = activeEntries.filter((e) => /\.(html|htm)$/i.test(e.path));
+  let sourcePackage: SourceProjectDetection | null = null;
+  let autoBuilt = false;
+
+  if (htmlEntries.length === 0) {
+    const pkgJson = activeEntries.find((e) => e.path.endsWith("package.json"))?.content.toString("utf8");
+    sourcePackage = detectSourceProject(activeEntries.map((e) => e.path), pkgJson);
+
+    if (sourcePackage.isSourceProject) {
+      // 1. Try extracting prebuilt entries from out/ or dist/
+      const prebuilt = extractPrebuiltEntries(activeEntries);
+      if (prebuilt && prebuilt.length > 0) {
+        activeEntries = prebuilt;
+        htmlEntries = activeEntries.filter((e) => /\.(html|htm)$/i.test(e.path));
+        autoBuilt = true;
+      } else if (autoBuild !== false) {
+        // 2. Try automated local build
+        try {
+          const built = await buildSourceProject(activeEntries);
+          activeEntries = built.entries;
+          htmlEntries = activeEntries.filter((e) => /\.(html|htm)$/i.test(e.path));
+          autoBuilt = true;
+        } catch (buildErr) {
+          const msg = buildErr instanceof Error ? buildErr.message : String(buildErr);
+          throw new WebsiteError(400, `${sourcePackage.guidance} (Auto-build error: ${msg})`);
+        }
+      } else {
+        throw new WebsiteError(400, sourcePackage.guidance);
+      }
+    }
+  }
+
   const commonHtmlDir = findCommonHtmlDirectory(htmlEntries.map((e) => e.path));
   const hasRootIndex = htmlEntries.some((e) => {
     let norm = e.path.replace(/\\/g, "/").replace(/^\/+/, "");
@@ -567,7 +603,7 @@ export async function analyzeImportPackage(input: {
     return norm.toLowerCase() === "index.html" || norm.toLowerCase() === "index.htm";
   });
 
-  for (const entry of rawEntries) {
+  for (const entry of activeEntries) {
     totalBytes += entry.content.length;
     const isHtml = /\.(html|htm)$/i.test(entry.path);
     if (isHtml) {
@@ -602,6 +638,9 @@ export async function analyzeImportPackage(input: {
   }
 
   if (pages.length === 0) {
+    if (sourcePackage && sourcePackage.isSourceProject) {
+      throw new WebsiteError(400, sourcePackage.guidance);
+    }
     throw new WebsiteError(400, "No HTML pages were found in the imported package. Provide at least one .html or .htm file.");
   }
 
@@ -848,6 +887,8 @@ export async function analyzeImportPackage(input: {
     externalResources,
     totalBytes,
     warnings,
+    sourcePackage,
+    autoBuilt,
   };
 }
 

@@ -15,6 +15,8 @@ type PackageImportResult = {
   externalResources: unknown[];
   warnings: string[];
   build?: { kind: string; label: string; frozen: boolean };
+  sourcePackage?: { kind: string; label: string; routes: Array<{ path: string; filePath: string; title: string }> } | null;
+  autoBuilt?: boolean;
   linksRewritten?: number;
   leftOut?: { count: number; examples: string[] };
   notes?: string[];
@@ -335,14 +337,24 @@ export function ImportWebsitePage({ siteId }: { siteId: string }) {
             </div>
 
             {isZip || folderPackage ? (
-              <div className="rounded-xl border border-line bg-sunken/60 p-4 text-xs text-muted space-y-1.5">
-                <p className="font-semibold text-ink">Package Import Detected</p>
+              <div className="rounded-xl border border-line bg-sunken/60 p-4 text-xs text-muted space-y-2">
+                <p className="font-semibold text-ink">Website Package Import</p>
                 <p>
                   Every page in it is imported, with the pictures, fonts, stylesheets and PDFs the pages use. Links between the pages are pointed at the imported pages.
                 </p>
-                <p>Page addresses come from the folders (about/index.html → /about), and a page inside a folder sits under that folder's page.</p>
+                <div className="rounded-lg border border-line/60 bg-surface/90 p-2.5 text-ink space-y-1">
+                  <p className="font-medium text-[11px] uppercase tracking-wider text-muted">Supported Archive Formats</p>
+                  <ul className="list-disc pl-4 space-y-1 text-xs text-muted">
+                    <li>
+                      <strong className="text-ink">Static Website Exports:</strong> Ready-to-serve folders or archives containing HTML pages (e.g. Next.js export, Gatsby, Nuxt, Astro, plain HTML).
+                    </li>
+                    <li>
+                      <strong className="text-ink">Framework Source Projects:</strong> Next.js, Astro, or Vite/React source repositories (with <code className="rounded bg-sunken px-1 font-mono">package.json</code> and components). These are automatically compiled and exported on import, or you can drop your pre-built <code className="rounded bg-sunken px-1 font-mono">out/</code> or <code className="rounded bg-sunken px-1 font-mono">dist/</code> folder.
+                    </li>
+                  </ul>
+                </div>
                 <p>
-                  A site built with Next.js, Gatsby, Nuxt, SvelteKit, Remix or Astro has its own scripts taken out, because they would put the original words back over your edits. Menus, drawers and tabs keep working; the summary names anything else that may stop.
+                  A site built with Next.js, Gatsby, Nuxt, SvelteKit, Remix or Astro has its hydration runtime frozen so your edits stick on the live site, while navigation menus, drawers, and tabs keep working.
                 </p>
               </div>
             ) : (
@@ -381,7 +393,7 @@ export function ImportWebsitePage({ siteId }: { siteId: string }) {
               </Button>
               {/* A chosen folder is a package with no single file behind it. */}
               <Button type="submit" disabled={!(file || folderPackage) || isPackaging || upload.isPending || importsExhausted}>
-                {upload.isPending ? "Importing…" : isZip ? "Import package & edit" : "Import & edit"}
+                {upload.isPending ? "Importing & processing…" : isZip ? "Import package & edit" : "Import & edit"}
               </Button>
             </div>
           </form>
