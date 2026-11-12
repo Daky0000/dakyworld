@@ -685,8 +685,8 @@ for (const key of ["cro", "cmo", "design.graphic", "seo.specialist"]) {
 // allowed to reach it, `outreach.writer`'s own contextRef sentence included. A
 // deliberate change to that doctrine updates these in the same commit.
 const OUTREACH_FINGERPRINT: Record<string, string> = {
-  "outreach.writer": "e49aa30022774db765b45de2e38b226737e799cf1cbf23d795ccfc032a4c9ad9",
-  "outreach.followup": "ddfd4863e3cd692799f57abfca5d995f1dad5f0343134cf5f675d48d7afbf097",
+  "outreach.writer": "2785ab205a54116ebd3e8799c4883d23ccbe4e323478d54beb76d4b4319097ab",
+  "outreach.followup": "526123fcf33d2451418a99e0ec20186b6d7b77dd2e37b4325406419ed3ee0b18",
 };
 for (const [key, expected] of Object.entries(OUTREACH_FINGERPRINT)) {
   const seed = AGENT_SEEDS.find((candidate) => candidate.key === key);

@@ -229,7 +229,14 @@ console.log("\nSizing a task is a job of its own, and a cheap one");
     ladder.every((id) => known.get(id)?.schema === "enforced" && !known.get(id)?.down),
     ladder.join(", "),
   );
-  check("from three different houses", new Set(ladder.map((id) => known.get(id)?.house)).size === 3, ladder.map((id) => known.get(id)?.house).join(", "));
+  // Two houses, not three, since 9 Nov 2026: NVIDIA retired two of the models
+  // this ladder stood on, and only three free models that enforce a schema are
+  // still up — two of them NVIDIA's own. What matters is that one house going
+  // down does not take the whole ladder with it, and that the first rung is not
+  // the house the other two share.
+  const houses = ladder.map((id) => known.get(id)?.house);
+  check("from more than one house", new Set(houses).size >= 2, houses.join(", "));
+  check("and the first rung is not the house the rest share", houses.filter((house) => house === houses[0]).length === 1, houses.join(", "));
   // Sizing a task on a paid model would be paying to decide how much to pay.
   check(
     "and only the free vendor can be asked — never a paid one",

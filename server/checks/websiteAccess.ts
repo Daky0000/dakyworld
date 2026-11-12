@@ -7,12 +7,19 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import express, { type Request } from "express";
-import {
+import type { WebsitePrincipal, WebsiteMemberRole } from "../src/services/websiteAccess.js";
+
+// Before anything of ours is loaded. `middleware/auth.ts` reads DEV_NO_AUTH
+// into a constant at import time, `checks/run.ts` sets it to true for every
+// file, and `services/websiteAccess.js` now reaches that module — so with
+// static imports (which run before any statement here) the membership section
+// found sign-in already switched off and stopped at its first assertion.
+process.env.DEV_NO_AUTH = "false";
+const {
   assertWebsiteMemberChange, createWebsiteAccessGate, registerWebsiteMembership,
   SITE_MEMBER_ROLES, websiteCapabilities, websiteSiteFilter, websiteRequestAction,
-  type WebsitePrincipal, type WebsiteMemberRole,
-} from "../src/services/websiteAccess.js";
-import { WebsiteError } from "../src/services/website/site.js";
+} = await import("../src/services/websiteAccess.js");
+const { WebsiteError } = await import("../src/services/website/site.js");
 
 let passed = 0;
 function check(name: string, test: () => void) { test(); passed++; console.log(`  ok  ${name}`); }

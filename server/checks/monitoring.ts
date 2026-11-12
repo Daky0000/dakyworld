@@ -211,7 +211,13 @@ try {
   /* ---------------------------------------------------------- scrubbers -- */
 
   // One table, both copies: the server's and the browser's must agree.
-  const copies = { server, browser } as const;
+  // Typed by what this table calls, not by each SDK's own `Event`: the server
+  // and the client install @sentry separately, and whenever the two versions
+  // differ their `Event` types stop being assignable to each other, so a union
+  // of the two `scrubEvent`s cannot be called at all. The events here are
+  // plain objects either way.
+  type Scrubbers = { scrubUrl: (url: string) => string; scrubText: (text: string) => string; scrubEvent: (event: any) => any };
+  const copies: Record<"server" | "browser", Scrubbers> = { server: server as unknown as Scrubbers, browser: browser as unknown as Scrubbers };
   const urls: Array<[string, string]> = [
     [`https://os.dakyx.com/set-password?token=${SECRETS.token}&email=ama%40mensahfoods.example#x`, "https://os.dakyx.com/set-password?token=[Filtered]&email=[Filtered]"],
     [`/api/public/review/${REVIEW_TOKEN}/decision`, "/api/public/review/:token/decision"],

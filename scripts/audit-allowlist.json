@@ -1,11 +1,11 @@
 {
   "accepted": [
     {
-      "advisory": "GHSA-vfj7-8cjw-p6xm",
-      "package": "braces",
+      "advisory": "GHSA-mrhx-c7xc-m3w5",
+      "package": "zod",
       "where": "server",
-      "reason": "Pulled in only by runtime Tailwind 3 (chokidar, fast-glob, micromatch). services/website/cdnStyles.ts passes Tailwind raw page content and never a glob or a user-supplied pattern, and keeps only design keys from a page's config, so braces never expands input an outsider controls. No fixed braces release exists; Tailwind 4 removes the chain.",
-      "reviewBy": "2027-01-31"
+      "reason": "Memory exhaustion while validating an oversized constrained collection. The only fixed release is zod 4.6.6, a major version: every schema in the server (about 400 files) and zod-to-json-schema, which builds each agent tool's input schema, would have to move together. Exposure here is bounded: the global JSON parser stops a body at 100 kB before any schema sees it, every webhook body is capped at 128 kB to 1 MB, and the larger upload parsers are mounted inside their routers after the sign-in and role checks, so only a signed-in account can send a large body. Move to zod 4 as its own change, with the check suite green before and after.",
+      "reviewBy": "2026-12-15"
     }
   ]
 }

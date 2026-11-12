@@ -153,6 +153,10 @@ export function registerWebsiteManagement(router: Router, access: Access) {
     // Published uploads can have their duplicate bytes swept from storage.
     // Their previews must use the published file instead of an empty image.
     if (!asset.content) {
+      // A redirect is never kept: where a published file lives can change
+      // (a new address, a move to R2), and a remembered redirect would go on
+      // pointing at the old place. Only the bytes themselves are revalidated.
+      res.setHeader("Cache-Control", "private, no-store");
       if (isR2Configured()) {
         res.redirect(getR2PublicUrl(asset.repoPath));
         return;
