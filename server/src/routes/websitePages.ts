@@ -3,6 +3,61 @@ import { prisma } from "../lib/prisma.js";
 import { isR2Configured, getR2PublicUrl } from "../lib/r2.js";
 import { applyValues, editingSource, fieldValues } from "../services/website/index.js";
 import type { FieldValue } from "../services/website/index.js";
+import { attachUser } from "../middleware/auth.js";
+import { sandboxedPageFiles } from "../middleware/security.js";
+import { assertWebsiteSiteAccess } from "../services/websiteAccess.js";
+
+/**
+ * Every page this router sends runs in an origin of its own.
+ *
+ * These addresses are on os., editor. and app.dakyx.com — the hosts of the
+ * signed-in app — and the HTML is a customer's: an imported file or package,
+ * scripts included. Served plainly, that script runs **as whoever opens the
+ * link**: a same-origin `fetch` to `/api` carries their session, and the
+ * guard against foreign writes passes it because the origin is ours. One
+ * customer's page could read or change every record a member of staff can.
+ *
+ * `sandbox` without `allow-same-origin` makes the document opaque: it sends
+ * no cookie, cannot reach the window that opened it, and its writes arrive
+ * with `Origin: null`, which the write guard refuses. It is the rule
+ * `routes/demos.ts` already follows for the same reason (`DEMO_SANDBOX`).
+ * `allow-forms` is added here because this is a business's own website and
+ * its contact form has to submit.
+ *
+ * Nothing else is restricted: an imported site loads its fonts, styles and
+ * scripts from wherever it always did. The lasting answer is a hosting domain
+ * that is not dakyx.com (see docs/claude/13); this is what makes the path
+ * address safe to have until then.
+ */
+const SITE_SANDBOX = "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";
+
+const PAGE_HEADERS = {
+  "Content-Security-Policy": SITE_SANDBOX,
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "X-Robots-Tag": "noindex, nofollow",
+} as const;
+
+/**
+ * Whether this visitor may see the page's unpublished edits.
+ *
+ * A draft is work nobody has decided to show. It used to be laid over the page
+ * for anyone who had the address, and a site's address is its name. Only a
+ * signed-in person with access to this website sees it now; everyone else is
+ * sent the page as it stands.
+ */
+async function maySeeDraft(req: Request, res: Response, siteId: string): Promise<boolean> {
+  try {
+    await new Promise<void>((resolve, reject) => {
+      void attachUser(req, res, (err?: unknown) => (err ? reject(err) : resolve()));
+    });
+    if (!req.dbUser?.active) return false;
+    await assertWebsiteSiteAccess(req, siteId, "view");
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function readSitePageDraft(draft: unknown): Record<string, FieldValue> {
   if (!draft || typeof draft !== "object" || Array.isArray(draft)) return {};
@@ -10,6 +65,14 @@ function readSitePageDraft(draft: unknown): Record<string, FieldValue> {
 }
 
 export const websitePagesRouter = Router();
+
+// The files a sandboxed page loads from us. Its origin is opaque, so even a
+// file from this same host is cross-origin to it and would be discarded after
+// a full 200 without these headers — the fault the Ghacem demo had.
+websitePagesRouter.use("/:siteSlug/assets", (req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD") return next();
+  sandboxedPageFiles(req, res, next);
+});
 
 /**
  * Serves website assets stored in R2 or database (SiteAsset).
@@ -122,7 +185,7 @@ websitePagesRouter.get(["/:siteSlug", "/:siteSlug/*"], async (req: Request, res:
     }
 
     if (!site) {
-      return res.status(404).type("html").send(site404Page());
+      return res.status(404).type("html").set(PAGE_HEADERS).set("Cache-Control", "no-store").send(site404Page());
     }
 
     const cleanSub = rawSubpath.trim().replace(/^\/+/, "").replace(/\/+$/, "");
@@ -206,29 +269,27 @@ websitePagesRouter.get(["/:siteSlug", "/:siteSlug/*"], async (req: Request, res:
         return res
           .status(404)
           .type("html")
-          .set({
-            "X-Content-Type-Options": "nosniff",
-            "Referrer-Policy": "strict-origin-when-cross-origin",
-            "X-Robots-Tag": "noindex, nofollow",
-            "Cache-Control": "no-store",
-          })
+          .set({ ...PAGE_HEADERS, "Cache-Control": "no-store" })
           .send(notFoundHtml);
       }
 
-      return res.status(404).type("html").send(website404Page(site.name, site.slug));
+      return res.status(404).type("html").set(PAGE_HEADERS).set("Cache-Control", "no-store").send(website404Page(escapeHtml(site.name), encodeURIComponent(site.slug)));
     }
 
     let renderedHtml = page.publishedHtml || page.sourceHtml || "";
 
-    // If draft exists with live edits, apply draft values so previewing shows active changes
-    if (page.draft) {
+    // Unpublished edits are laid over the page only for somebody signed in
+    // with access to this website. Asked only when there is a draft to show,
+    // so an ordinary visit costs no session lookup.
+    const draft = page.draft ? readSitePageDraft(page.draft) : {};
+    const hasDraft = Object.keys(draft).length > 0;
+    const member = hasDraft ? await maySeeDraft(req, res, site.id) : false;
+
+    if (hasDraft && member) {
       try {
-        const draft = readSitePageDraft(page.draft);
-        if (draft && Object.keys(draft).length > 0) {
-          renderedHtml = applyValues(editingSource(renderedHtml, draft), fieldValues(draft)).html;
-        }
+        renderedHtml = applyValues(editingSource(renderedHtml, draft), fieldValues(draft)).html;
       } catch {
-        // Fall back to sourceHtml if draft parse fails
+        // Fall back to the page as it stands if the draft cannot be applied
       }
     }
 
@@ -236,16 +297,20 @@ websitePagesRouter.get(["/:siteSlug", "/:siteSlug/*"], async (req: Request, res:
       .status(200)
       .type("html")
       .set({
-        "X-Content-Type-Options": "nosniff",
-        "Referrer-Policy": "strict-origin-when-cross-origin",
-        "X-Robots-Tag": "noindex, nofollow",
-        "Cache-Control": "public, max-age=60",
+        ...PAGE_HEADERS,
+        // What a member sees is theirs alone: never kept by anything shared.
+        "Cache-Control": member ? "private, no-store" : "public, max-age=60",
+        ...(member ? { Vary: "Cookie" } : {}),
       })
       .send(renderedHtml);
   } catch (err) {
     next(err);
   }
 });
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] ?? char);
+}
 
 function website404Page(siteName: string, siteSlug: string): string {
   return `<!doctype html>
