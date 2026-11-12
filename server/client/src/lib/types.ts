@@ -619,6 +619,12 @@ export type ModelJob =
 
 /** How demanding an agent task is — and so which of a paid vendor's three models runs it. */
 export type TaskLevel = "simple" | "standard" | "complex";
+/** What a person reads for a level: a task's strength is low, medium or high. */
+export const STRENGTH: Record<TaskLevel, string> = { simple: "Low", standard: "Medium", complex: "High" };
+export function strengthOf(level: string | null | undefined): string | null {
+  const key = level?.toLowerCase();
+  return key === "simple" || key === "standard" || key === "complex" ? STRENGTH[key] : null;
+}
 
 /** How task levels are decided: off (the agent's rank, as before), rules, or rules plus a free model. */
 export type RoutingMode = "off" | "rules" | "full";
@@ -2329,6 +2335,9 @@ export interface ShippedPrompt {
 }
 
 export interface AgentList {
+  /** One agent with skills (`orchestrator`), or the roster as it was. */
+  mode?: "orchestrator" | "roster";
+  orchestratorKey?: string;
   agents: Agent[];
   summary: { total: number; active: number; aboveDraft: number; specialists: number; working: number; waiting: number };
 }

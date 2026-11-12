@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { jobPollInterval } from "../lib/queryPolicy";
+import { strengthOf } from "../lib/types";
 import type {
   AgentDetail,
   AgentMemory,
@@ -218,7 +219,7 @@ function Group({
                       back <RelativeTime value={task.pausedUntil} />
                     </span>
                   )}
-                  {(task.levelOverride ?? task.level) && <span title={task.levelReason ?? undefined}>{task.levelOverride ?? task.level}</span>}
+                  {(task.levelOverride ?? task.level) && <span title={task.levelReason ?? undefined}>{strengthOf(task.levelOverride ?? task.level)?.toLowerCase() ?? (task.levelOverride ?? task.level)} strength</span>}
                   {task.toolCalls > 0 && <span>{task.toolCalls} tool call{task.toolCalls === 1 ? "" : "s"}</span>}
                   {task.dryRunCalls > 0 && <span className="text-warn-text">{task.dryRunCalls} prepared</span>}
                   {task.delegated > 0 && <span>{task.delegated} delegated</span>}
@@ -587,9 +588,9 @@ function CeilingControl({ ceilingUsd, onSet, pending }: { ceilingUsd: number | n
 /** What each level means in a dropdown, in the Owner's words rather than a model's name. */
 const LEVEL_OPTIONS: Array<{ value: "auto" | TaskLevel; label: string }> = [
   { value: "auto", label: "Decide for me" },
-  { value: "simple", label: "Simple — the small model" },
-  { value: "standard", label: "Standard — the workhorse model" },
-  { value: "complex", label: "Complex — the top model" },
+  { value: "simple", label: "Low strength — the small model" },
+  { value: "standard", label: "Medium strength — the workhorse model" },
+  { value: "complex", label: "High strength — the top model" },
 ];
 
 /**
@@ -607,7 +608,7 @@ function TaskLevelControl({ task, onSet, pending }: { task: AgentTaskDetail; onS
       <h4 className="mb-1.5 font-sans text-[11px] uppercase tracking-[.06em] text-muted">How demanding</h4>
       <div className="flex flex-wrap items-center gap-2 text-sm">
         {task.level ? (
-          <Badge tone="muted">{task.level}</Badge>
+          <Badge tone="muted">{strengthOf(task.level) ?? task.level} strength</Badge>
         ) : (
           <span className="text-muted">Not sized yet — it is judged when the run starts.</span>
         )}

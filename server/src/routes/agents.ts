@@ -10,6 +10,7 @@ import { authoredInstruction, composePrompt, isBusy, runTask, step } from "../se
 import { historyOf, recordCreated, transition } from "../services/agents/state.js";
 import { isPaused } from "../services/agents/retry.js";
 import { fromStored, toStored } from "../services/agents/complexity.js";
+import { ORCHESTRATOR_KEY, agentMode, dispatchOrchestratorTasks } from "../services/agents/orchestrator.js";
 import { TASK_LEVELS, isTaskLevel } from "../lib/models/registry.js";
 
 import { MAX_ITERATIONS } from "../lib/claudeAgent.js";
@@ -20,7 +21,7 @@ import { AGENT_SEEDS, COMMISSIONED_AUTONOMY, PROMPT_LAYERS, commissionWorkforce,
 import { closeEscalation, openEscalations } from "../services/agents/escalationDigest.js";
 import { pendingFor } from "../services/approvals.js";
 import { paceUsage } from "../services/agents/pace.js";
-import { SETTING, getSetting } from "../lib/settings.js";
+import { SETTING, getSetting, setSetting } from "../lib/settings.js";
 import { resolveBrief } from "../services/writers/brief.js";
 import { briefSettingKey, jobsOwnedBy, writerJob } from "../services/writers/registry.js";
 import { shippedDoctrine } from "../services/writers/shipped.js";
@@ -165,6 +166,10 @@ agentsRouter.get("/", async (_req, res, next) => {
     // The roster is small; grouping it here keeps the page from re-deriving it.
     const byKey = new Map(agents.map((a) => [a.key, a.name]));
     res.json({
+      // One agent with skills, or the roster as it was. The screen draws the
+      // same rows either way; this decides what it calls them.
+      mode: await agentMode(),
+      orchestratorKey: ORCHESTRATOR_KEY,
       // Agents narrowed to one job that still hold a tool that job has no use
       // for. One extra query over a handful of rows, and the only place this
       // has ever been visible outside a boot log nobody reads.
@@ -251,6 +256,23 @@ agentsRouter.patch("/bulk", async (req, res, next) => {
  * segments (`/hiring/gaps`, `/memory/shared`, `/questions/blocked`) and is safe
  * wherever it sits; a one-segment one is not.
  */
+/**
+ * One agent with skills, or the roster.
+ *
+ * A setting rather than a migration: tasks carry the key of the skill that
+ * works them in both modes, so switching moves nothing and can be undone.
+ * Mounted above `/:key` for the same reason `bulk` is.
+ */
+agentsRouter.put("/mode", async (req, res, next) => {
+  try {
+    const { mode } = z.object({ mode: z.enum(["orchestrator", "roster"]) }).parse(req.body);
+    await setSetting(SETTING.AGENT_MODE, mode);
+    res.json({ mode: await agentMode() });
+  } catch (err) {
+    next(err);
+  }
+});
+
 agentsRouter.get("/escalations", async (_req, res, next) => {
   try {
     res.json({ escalations: await openEscalations() });
@@ -1406,6 +1428,9 @@ agentsRouter.delete("/:key", async (req, res, next) => {
   try {
     const agent = await prisma.agent.findUnique({ where: { key: req.params.key } });
     if (!agent) return res.status(404).json({ error: "No such agent." });
+    if (agent.key === ORCHESTRATOR_KEY) {
+      return res.status(409).json({ error: "The Orchestrator cannot be deleted — every skill runs as it. Pause it to stop all work, or switch to the roster under its panel." });
+    }
     if (!agent.custom) {
       return res.status(409).json({
         error: `${agent.name} is a built-in agent. Set it to Retired instead — deleting it would only mean the next deploy created it again.`,
@@ -1645,7 +1670,12 @@ agentsRouter.post("/:key/tasks", async (req, res, next) => {
 
     // Not awaited: a run takes minutes and the request should not.
     if (input.runNow && agent.status === "ACTIVE" && !input.scheduledFor) {
-      void runTask(task.id).catch((err) => console.error(`[agent] ${task.id} died:`, (err as Error).message));
+      // A task given to the orchestrator is matched to a skill first, so the
+      // run that starts now is that skill's rather than a generic one.
+      void (agent.key === ORCHESTRATOR_KEY ? dispatchOrchestratorTasks((id, kind, message, extra) => step(id, kind, message, extra)) : Promise.resolve(0))
+        .catch(() => 0)
+        .then(() => runTask(task.id))
+        .catch((err) => console.error(`[agent] ${task.id} died:`, (err as Error).message));
     }
 
     res.status(201).json({

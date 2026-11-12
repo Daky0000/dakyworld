@@ -228,6 +228,19 @@ export const SETTING = {
    */
   AGENT_ROUTING: "agents.routing",
 
+  /**
+   * `orchestrator` (unset) or `roster`.
+   *
+   * In orchestrator mode there is one agent and every other row in the Agent
+   * table is one of its skills — see `services/agents/orchestrator.ts`.
+   * `roster` is the workforce as it was before Nov 2026, and the rollback that
+   * needs no deploy. `AGENTS_MODE` in the environment wins, which is how the
+   * check suite keeps exercising the roster path.
+   */
+  AGENT_MODE: "agents.mode",
+  /** The reading tools the orchestrator's own row has been offered, so an unticked one stays unticked. */
+  AGENT_ORCHESTRATOR_OFFERED: "agents.orchestratorOffered",
+
   GOOGLE_CLIENT_ID: "google.clientId",
   GOOGLE_CLIENT_SECRET: "google.clientSecret",
   /** Written by the OAuth callback; the only Google credential that persists. */
@@ -901,6 +914,7 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.FLAG_DELIVERABLES]: "FLAG_DELIVERABLES",
   [SETTING.FLAG_PROMPT_VERSIONS]: "FLAG_PROMPT_VERSIONS",
   [SETTING.FLAG_AGENT_DASHBOARD]: "FLAG_AGENT_DASHBOARD",
+  [SETTING.AGENT_MODE]: "AGENTS_MODE",
 };
 
 // One process, one cache. Writes go through setSetting, which clears it.

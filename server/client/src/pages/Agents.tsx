@@ -9,6 +9,7 @@ import { AgentMemories, AgentWork } from "../components/AgentWork";
 import { AgentPromptEditor } from "../components/AgentPrompt";
 import { SharedMemoryPanel } from "../components/SharedMemory";
 import { AgentHiring } from "../components/AgentHiring";
+import { OrchestratorPanel } from "../components/OrchestratorPanel";
 
 /** What each level actually permits, in the Owner's terms rather than the blueprint's. */
 const LEVELS = [
@@ -122,7 +123,13 @@ export function Agents() {
   const [selectedDept, setSelectedDept] = useState("ALL");
   const [selectedStatus, setSelectedStatus] = useState<"ALL" | "ACTIVE" | "DRAFT" | "PAUSED" | "BUSY">("ALL");
 
-  const agents = data?.agents ?? [];
+  // One agent with skills, or the roster. The rows are the same either way;
+  // in orchestrator mode the orchestrator's own row is drawn as the panel at
+  // the top and everything else is one of its skills.
+  const mode = data?.mode ?? "roster";
+  const asSkills = mode === "orchestrator";
+  const orchestrator = (data?.agents ?? []).find((agent) => agent.key === (data?.orchestratorKey ?? "orchestrator")) ?? null;
+  const agents = (data?.agents ?? []).filter((agent) => agent.key !== orchestrator?.key);
   const drafts = agents.filter((agent) => agent.status === "DRAFT");
 
   const filteredAgents = agents.filter((agent) => {
@@ -149,20 +156,24 @@ export function Agents() {
     <div className="space-y-8">
       <PageHeader
         eyebrow="Workforce"
-        title="Agents"
-        subtitle="Each agent has a mission, a manager and limits on what it may do. Check status, autonomy and dry run to see what can run."
+        title={asSkills ? "Orchestrator" : "Agents"}
+        subtitle={
+          asSkills
+            ? "One agent runs the work. Each card below is a skill it holds — an instruction, a set of tools and limits on what it may do unasked."
+            : "Each agent has a mission, a manager and limits on what it may do. Check status, autonomy and dry run to see what can run."
+        }
         action={
           <div className="flex items-center gap-2">
             <StartTheDay />
-            <Button onClick={() => setHiring(true)}>Hire a specialist</Button>
+            <Button onClick={() => setHiring(true)}>{asSkills ? "Add a skill" : "Hire a specialist"}</Button>
           </div>
         }
       />
 
       {/* The only number that really matters is how much can act unattended. */}
       <StatGrid columns={4}>
-        <StatTile label="On the roster" value={data?.summary.total ?? "—"} />
-        <StatTile label="Active" value={data?.summary.active ?? "—"} sub="taking work from their queues" />
+        <StatTile label={asSkills ? "Skills" : "On the roster"} value={data ? agents.length : "—"} />
+        <StatTile label="Active" value={data ? agents.filter((agent) => agent.status === "ACTIVE").length : "—"} sub={asSkills ? "skills the Orchestrator may use" : "taking work from their queues"} />
         <StatTile
           label="Can act unattended"
           value={data?.summary.aboveDraft ?? "—"}
@@ -177,10 +188,20 @@ export function Agents() {
 
       {/* Above the roster, because a proposal waiting on a decision is the one
           thing on this screen that is blocking work rather than describing it. */}
+      {data && (
+        <OrchestratorPanel
+          mode={mode}
+          orchestrator={orchestrator}
+          skillCount={agents.length}
+          activeSkills={agents.filter((agent) => agent.status === "ACTIVE").length}
+          onOpen={setOpenKey}
+        />
+      )}
+
       <AgentHiring />
 
       <div className="os-filterbar os-agent-filters">
-        <label className="os-filter-search"><span>Find an agent</span><input type="search" className="input" value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="Name, mission or skill" /></label>
+        <label className="os-filter-search"><span>{asSkills ? "Find a skill" : "Find an agent"}</span><input type="search" className="input" value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="Name, mission or skill" /></label>
         <label><span>Status</span><select className="input" value={selectedStatus} onChange={event => setSelectedStatus(event.target.value as typeof selectedStatus)}>
           <option value="ALL">All statuses ({agents.length})</option>
           <option value="ACTIVE">Active ({agents.filter(agent => agent.status === "ACTIVE").length})</option>

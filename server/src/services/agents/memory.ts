@@ -1,4 +1,4 @@
-import type { AgentMemoryKind } from "@prisma/client";
+import type { AgentMemoryKind, Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 
 /**
@@ -259,8 +259,20 @@ export interface Recalled {
  * twenty-four places the Owner's own rules compete for. `livingContextBlock()`
  * is the one channel they reach a prompt through now.
  */
-export async function recall(agentKey: string, subjects: string[]): Promise<Recalled[]> {
+export async function recall(agentKey: string, subjects: string[], options: { everySkill?: boolean } = {}): Promise<Recalled[]> {
   const own = [...new Set(["self", ...subjects.filter(Boolean)])];
+  // **One agent, one memory** (orchestrator mode). What any skill concluded
+  // about a lead, a client or a project is shown to every skill working that
+  // record — the whole reason for one orchestrator is that it has the whole
+  // context. `self` stays with the skill that wrote it: it is a lesson about
+  // one craft's own way of working, and fifty crafts' habits competing for the
+  // same twenty-four places would help none of them. Recall is still by
+  // subject either way, so one client's facts never reach another's task.
+  const records = subjects.filter(Boolean);
+  const mine: Prisma.AgentMemoryWhereInput =
+    options.everySkill && records.length > 0
+      ? { scope: "AGENT", OR: [{ agentKey, subject: "self" }, { subject: { in: records } }] }
+      : { scope: "AGENT", agentKey, subject: { in: own } };
   // `self` is an agent's own; the company's equivalent is `company`. A shared
   // memory filed against `self` would be one agent's habit imposed on all of
   // them, so it is deliberately not recalled here.
@@ -269,7 +281,7 @@ export async function recall(agentKey: string, subjects: string[]): Promise<Reca
   const memories = await prisma.agentMemory.findMany({
     where: {
       OR: [
-        { scope: "AGENT", agentKey, subject: { in: own } },
+        mine,
         { scope: "SHARED", subject: { in: shared }, NOT: { content: { startsWith: STATE_PREFIX } } },
       ],
       AND: [{ OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] }],

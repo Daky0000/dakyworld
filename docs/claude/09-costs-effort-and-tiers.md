@@ -163,7 +163,12 @@ badly.
 2026. The router sits between a claimed task and `runAgentLoop` and sizes it
 simple, standard or complex; the level picks the paid model on every vendor of
 the floor (`TIER_MODELS` in registry.ts) and the effort with it. Free NVIDIA
-rungs still serve first. Four stages, first answer wins:
+rungs still serve first. **What a person reads is a task's strength — low,
+medium or high** (`STRENGTH` in `complexity.ts`, `strengthOf` in the client):
+the ROUTED sentence, the task drawer, the give-task forms and Settings all say
+it that way since Nov 2026. The stored values, the settings and the code keep
+simple / standard / complex, so nothing saved needed migrating. Four stages,
+first answer wins:
 
 1. **Fixed answers.** `AgentTask.levelOverride` (the Owner's call, per task, from
    the give-task form or the task drawer — `POST /agents/tasks/:id/level`). A

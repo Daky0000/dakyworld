@@ -30,7 +30,10 @@ for (const file of files) {
     // own imports have run would get 401 and report a defect in the route that
     // is really a defect in the harness. It is force-disabled in production
     // regardless, so this cannot leak past a developer's machine.
-    env: { ...process.env, DEV_NO_AUTH: "true" },
+    // `AGENTS_MODE=roster`: these checks hold the roster's rules — who may
+    // delegate to whom, whose memory an agent is shown — which orchestrator
+    // mode deliberately relaxes. `orchestrator.ts` sets its own mode.
+    env: { ...process.env, DEV_NO_AUTH: "true", AGENTS_MODE: process.env.AGENTS_MODE ?? "roster" },
   });
   if (result.error) console.error(`Could not complete ${file}: ${result.error.message}`);
   if (result.status !== 0) failed += 1;

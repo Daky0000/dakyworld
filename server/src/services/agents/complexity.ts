@@ -515,6 +515,14 @@ const MODEL_WORDS: Record<TaskLevel, string> = {
  * Never throws for a reason that is not a bug: a failed look keeps the rules'
  * answer, and a budget that cannot be read leaves the level where it was.
  */
+/**
+ * The three levels in the words the Owner uses for them: a task's *strength*
+ * is low, medium or high. The stored values and every setting keep the
+ * original spelling (simple, standard, complex) — only what a person reads
+ * changes, so nothing saved needs migrating.
+ */
+export const STRENGTH: Record<TaskLevel, "low" | "medium" | "high"> = { simple: "low", standard: "medium", complex: "high" };
+
 export async function routeTask(request: RouteRequest): Promise<LevelDecision> {
   const { agent, task } = request;
   const mode = request.mode ?? (await routingMode());
@@ -538,7 +546,7 @@ export async function routeTask(request: RouteRequest): Promise<LevelDecision> {
   if (override) {
     level = override;
     decidedBy = "owner";
-    sentence = `Sized as a ${level} task because that was chosen for it.`;
+    sentence = `Graded ${STRENGTH[level]} strength because that was chosen for it.`;
   } else if (stored && request.previousStatus === "FAILED" && !NOT_THE_MODELS_FAULT.has(request.previousActor ?? "") && request.failureClass === "truncated") {
     // A reply that ran out of room. Every Claude turn goes out with the same
     // fixed `max_tokens`, and thinking is counted inside it, so a rung up the
@@ -551,7 +559,7 @@ export async function routeTask(request: RouteRequest): Promise<LevelDecision> {
     decidedBy = "retry";
     sentence =
       `Its last run ran out of room before it finished, and thinking harder spends more of the same reply budget, ` +
-      `so this one stays ${stored} at ${effortForLevel(stored)} effort rather than climbing.`;
+      `so this one stays ${STRENGTH[stored]} at ${effortForLevel(stored)} effort rather than climbing.`;
   } else if (stored && request.previousStatus === "FAILED" && !NOT_THE_MODELS_FAULT.has(request.previousActor ?? "") && request.failureClass != null && BUYS_NOTHING.has(request.failureClass)) {
     // The far end, or the task's own spending ceiling: nothing about the task
     // or how hard the model thinks would have changed either, and the second
@@ -560,8 +568,8 @@ export async function routeTask(request: RouteRequest): Promise<LevelDecision> {
     decidedBy = "retry";
     sentence =
       request.failureClass === "budget"
-        ? `Its last run stopped at its own spending ceiling, and thinking harder costs more, so a retry buys nothing: this one stays ${stored} at ${effortForLevel(stored)} effort.`
-        : `Its last run failed because no model could be reached, which nothing about the task causes, so a retry buys nothing: this one stays ${stored} at ${effortForLevel(stored)} effort.`;
+        ? `Its last run stopped at its own spending ceiling, and thinking harder costs more, so a retry buys nothing: this one stays ${STRENGTH[stored]} at ${effortForLevel(stored)} effort.`
+        : `Its last run failed because no model could be reached, which nothing about the task causes, so a retry buys nothing: this one stays ${STRENGTH[stored]} at ${effortForLevel(stored)} effort.`;
   } else if (stored && request.previousStatus === "FAILED" && !NOT_THE_MODELS_FAULT.has(request.previousActor ?? "")) {
     // **Effort before model** — the Owner's rule. The first retry keeps the
     // level, and so the model and its warm cache, and only thinks harder: a
@@ -576,15 +584,15 @@ export async function routeTask(request: RouteRequest): Promise<LevelDecision> {
       level = stored;
       effortFloor = raiseEffort(effortForLevel(stored), failures);
       sentence =
-        `Its last ${failures === 1 ? "run" : `${failures} runs`} failed as a complex task, and there is no stronger model to hand it to, ` +
+        `Its last ${failures === 1 ? "run" : `${failures} runs`} failed at high strength, and there is no stronger model to hand it to, ` +
         `so this one thinks harder — ${effortFloor} effort rather than ${effortForLevel(stored)}.`;
     } else if (failures === 1) {
       level = stored;
       effortFloor = raiseEffort(effortForLevel(stored), 1);
-      sentence = `Its last run failed as a ${stored} task, so this one stays ${stored} and thinks harder — ${effortFloor} effort rather than ${effortForLevel(stored)} — before a stronger model is tried.`;
+      sentence = `Its last run failed as a ${STRENGTH[stored]} task, so this one stays ${STRENGTH[stored]} and thinks harder — ${effortFloor} effort rather than ${effortForLevel(stored)} — before a stronger model is tried.`;
     } else {
       level = stepUp(stored);
-      sentence = `Its last ${failures} runs in a row failed, and thinking harder was tried first, so this one runs as ${level} rather than ${stored}.`;
+      sentence = `Its last ${failures} runs in a row failed, and thinking harder was tried first, so this one runs as ${STRENGTH[level]} rather than ${STRENGTH[stored]}.`;
     }
   } else if (stored && request.resuming) {
     level = stored;
@@ -602,7 +610,7 @@ export async function routeTask(request: RouteRequest): Promise<LevelDecision> {
     level = fromRules;
     decidedBy = "rules";
     const because = reasons.length > 0 ? reasons.join("; ") : "nothing in it stood out";
-    sentence = `Sized as a ${level} task (score ${score}): ${because}.`;
+    sentence = `Graded ${STRENGTH[level]} strength (score ${score}): ${because}.`;
 
     if (mode === "full" && isUnclear(scored.score)) {
       const look = await (request.look ?? lookAtTask)(agent, facts).catch(() => null);
@@ -610,16 +618,16 @@ export async function routeTask(request: RouteRequest): Promise<LevelDecision> {
         const clamped = clampLevel(look.level, fromRules);
         level = clamped;
         decidedBy = "model";
-        const held = clamped !== look.level ? ` (it said ${look.level}; held to one step from the rules)` : "";
+        const held = clamped !== look.level ? ` (it said ${STRENGTH[look.level]}; held to one step from the rules)` : "";
         sentence =
-          `Sized as a ${level} task. The rules scored it ${score}, on the line between two levels — ${because} — ` +
+          `Graded ${STRENGTH[level]} strength. The rules scored it ${score}, on the line between two levels — ${because} — ` +
           `so a free model was asked${held}: “${look.reason || "no reason given"}”.`;
       }
     }
 
     if (OUTSIDE_WRITING_FLOOR && WRITES_FOR_OUTSIDE.has(agent.key) && atLeast(level, OUTSIDE_WRITING_FLOOR) !== level) {
       level = OUTSIDE_WRITING_FLOOR;
-      sentence = `${sentence} Raised to ${level}, the floor for writing that leaves the company.`;
+      sentence = `${sentence} Raised to ${STRENGTH[level]}, the floor for writing that leaves the company.`;
     }
   }
 
@@ -632,7 +640,7 @@ export async function routeTask(request: RouteRequest): Promise<LevelDecision> {
     // The harder thinking goes with it. Effort is spend as surely as the model
     // is, and the ceiling's answer outranks the retry's.
     effortFloor = null;
-    const held = "Held at standard because spending is in its downgrade band.";
+    const held = "Held at medium strength because spending is in its downgrade band.";
     sentence = sentence ? `${sentence} ${held}` : held;
   }
 

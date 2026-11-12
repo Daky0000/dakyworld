@@ -44,6 +44,7 @@ import { check, scopesForAgent, type BudgetState } from "../budgets.js";
 import { hasPace, paceFor } from "./pace.js";
 import { planFor } from "./retry.js";
 import { EFFORT_LADDER, NOT_THE_MODELS_FAULT, routeTask, toStored } from "./complexity.js";
+import { ORCHESTRATOR_KEY, dispatchOrchestratorTasks, orchestratorHalted, orchestratorIdentity, orchestratorOn, skillsParagraph } from "./orchestrator.js";
 
 /**
  * What actually runs an agent.
@@ -1453,8 +1454,15 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
       }
       // Down the chart only. An agent handing work sideways or upward is an
       // agent routing around the person who owns that lane.
-      if (target.managerKey !== agent.key) {
+      //
+      // One agent has nobody to route around: in orchestrator mode every row is
+      // a skill of the same agent, and a sub-task may be raised under any of
+      // them. The roster's rule is kept for the roster.
+      if (target.managerKey !== agent.key && !(await orchestratorOn())) {
         return { content: `${target.name} does not report to you. You may only delegate to your own reports.`, isError: true };
+      }
+      if (target.key === ORCHESTRATOR_KEY) {
+        return { content: "That is the orchestrator itself, not a skill. Name the skill the work belongs to — use findAgent to see them.", isError: true };
       }
       if (target.status === "RETIRED" || target.status === "PAUSED") {
         return { content: `${target.name} is ${target.status.toLowerCase()} and cannot take work.`, isError: true };
@@ -1512,7 +1520,7 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
     ) as Record<string, unknown>,
     run: async (input) => {
       const need = String(input.need ?? "");
-      const matches = await searchRoster(need, agent.key);
+      const matches = (await searchRoster(need, agent.key)).filter((match) => match.key !== ORCHESTRATOR_KEY);
       if (matches.length === 0) {
         return {
           content: `Nobody on the roster matches “${need}”. If this work genuinely has to be done and it is not your craft, use \`needSkill\` to record that — do not attempt it badly, and do not assume somebody will pick it up.`,
@@ -1968,6 +1976,40 @@ function routingSteps(can: WorkflowAvailability): string {
   return steps.map((step, index) => `${index + 1}. ${step}`).join("\n");
 }
 
+/**
+ * The same ladder, said for one agent with many skills.
+ *
+ * The tools keep their names — `findAgent`, `consult`, `delegate`, `handOff`
+ * — because a checkpoint written under one name must resume under it, and the
+ * definitions are part of a cached prefix. What changes is what they mean:
+ * each "agent" is one of the orchestrator's own skills, so the words are about
+ * choosing a skill rather than about asking a colleague.
+ */
+function skillSteps(can: WorkflowAvailability): string {
+  const steps: string[] = [
+    "`findAgent` — look up which of your skills owns a kind of work. Each result is a skill, with the key to use. Do this before attempting anything outside the skill you are using.",
+  ];
+  if (can.consult) {
+    steps.push(
+      "`consult` — get one judgement from another skill's own instructions without leaving this task. Ask the thing only that craft would know. The answer is an opinion: where it contradicts the record in front of you, the record wins and you say so.",
+    );
+  }
+  if (can.delegate) {
+    steps.push(
+      "`delegate` — raise a sub-task under another skill, as often as the work needs. It runs on its own with that skill's tools, so write the brief for somebody who was not here, name the record, and say what done looks like.",
+    );
+  }
+  if (can.handOff) {
+    steps.push(
+      `\`handOff\` — the rest of this task belongs under another skill entirely. Say why. You get ${MAX_HANDOFFS} of these on a whole task.`,
+    );
+  }
+  steps.push(
+    "`needSkill` — only when `findAgent` found no skill for it. It records that the company has no such skill, and a person decides whether to add one. Never use it to put down work a skill already covers.",
+  );
+  return steps.map((step, index) => `${index + 1}. ${step}`).join("\n");
+}
+
 /** One labelled block of the assembled prompt. */
 export interface PromptRegion {
   key:
@@ -1982,7 +2024,8 @@ export interface PromptRegion {
     | "method"
     | "working"
     | "scope"
-    | "commercial";
+    | "commercial"
+    | "orchestrator";
   /** The heading the screen puts on it. */
   label: string;
   /** Where the words come from, in a sentence, for somebody deciding whether they can change them. */
@@ -2110,7 +2153,23 @@ export async function composePrompt(
     brandBlock(),
   ]);
 
+  // One agent using a skill, rather than a specialist that shares a database.
+  // Working runs only: a consult is one skill's doctrine answering a question,
+  // and is read as an opinion from that craft.
+  const asOrchestrator = working && (await orchestratorOn());
+
   const regions: PromptRegion[] = [
+    ...(asOrchestrator
+      ? [
+          {
+            key: "orchestrator",
+            label: "Who is working",
+            source: "services/agents/orchestrator.ts — one agent, and the skill it is using for this task.",
+            editable: false,
+            text: orchestratorIdentity(agent),
+          } satisfies PromptRegion,
+        ]
+      : []),
     {
       key: "instruction",
       label: "Its instructions",
@@ -2249,11 +2308,19 @@ The tools this applies to: ${external.map((tool) => `\`${tool.key}\``).join(", "
 ${can.history ? HISTORY_ETIQUETTE : ""}- Use \`escalate\` the moment you are unsure, or the work touches money, scope, security, a live system or a public claim. Stopping is not failing.
 - When you are done, say what you did, what you found, what living context you updated, and what a person should do next — in plain English, in a few sentences. That final message is what gets read.
 
-You are not working alone. There are ${await rosterSize()} agents here, each with one craft, and the difference between a good outcome and a mediocre one is usually whether the right one was asked. **When the work needs a craft that is not yours, the answer is never to attempt it anyway.** Work through it in this order, and stop at the first step that answers:
+${
+  asOrchestrator
+    ? skillsParagraph(Math.max(0, (await rosterSize()) - 1))
+    : `You are not working alone. There are ${await rosterSize()} agents here, each with one craft, and the difference between a good outcome and a mediocre one is usually whether the right one was asked. **When the work needs a craft that is not yours, the answer is never to attempt it anyway.** Work through it in this order, and stop at the first step that answers:`
+}
 
-${routingSteps(can)}
+${asOrchestrator ? skillSteps(can) : routingSteps(can)}
 
-Asking is cheap and being wrong in public is not. An agent that consulted a colleague and changed its mind has done the job properly; say in your summary who you asked and what it changed.`,
+${
+  asOrchestrator
+    ? "Looking is free and being wrong in public is not. Say in your summary which skills you used or raised work under, and what each changed."
+    : "Asking is cheap and being wrong in public is not. An agent that consulted a colleague and changed its mind has done the job properly; say in your summary who you asked and what it changed."
+}`,
     });
   }
 
@@ -2565,7 +2632,7 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
         await step(task.id, "STARTED", `${agent.name} picked this up.`);
       }
 
-      const memories = await recall(agent.key, taskSubjects(task));
+      const memories = await recall(agent.key, taskSubjects(task), { everySkill: await orchestratorOn() });
       // One answer, given to both. The prompt describing a step the tool list
       // does not carry is worse than either sending the tool or dropping the
       // paragraph — it spends a turn on a call that cannot resolve — so the
@@ -3594,6 +3661,20 @@ export async function runDueTasks(now = new Date(), limit?: number): Promise<num
   // Before anything is picked up, because a task stuck in RUNNING now blocks
   // its agent rather than just itself.
   await reapAbandoned(now);
+
+  // The orchestrator's own row is the master switch. Said once a tick for the
+  // same reason the budget line below is: a workforce that has been stopped
+  // looks exactly like one with nothing to do.
+  const halted = await orchestratorHalted();
+  if (halted) {
+    console.log(`[agent] nothing started: ${halted}`);
+    return 0;
+  }
+  // Before anything is picked up: a task given to the orchestrator is matched
+  // to the skill that should do it, so the claim below starts it this tick.
+  await dispatchOrchestratorTasks((taskId, kind, message, extra) => step(taskId, kind, message, extra)).catch((err) =>
+    console.error("[agent] could not match tasks to skills:", (err as Error).message),
+  );
 
   const effectiveLimit = limit ?? (await getEffectiveConcurrencyLimit());
   const capacity = Math.max(0, effectiveLimit - running.size);

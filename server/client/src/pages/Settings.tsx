@@ -1904,9 +1904,9 @@ const MODE_LABEL: Record<RoutingMode, string> = {
 };
 
 const LEVEL_HEADING: Record<TaskLevel, string> = {
-  simple: "Simple",
-  standard: "Standard",
-  complex: "Complex",
+  simple: "Low strength",
+  standard: "Medium strength",
+  complex: "High strength",
 };
 
 /**
@@ -1938,7 +1938,7 @@ function TaskLevelsPanel({ levels, providers }: { levels?: TaskLevelSettings; pr
       title="Task levels"
       what={
         <>
-          Every agent task is sized before it starts — simple, standard or complex — from its brief, the agent and the tools it
+          Every task is graded before it starts — low, medium or high strength — from its brief, the agent and the tools it
           looks like it needs. Free models still try it first. The size decides which paid model takes over if they cannot finish
           it: each vendor's small model, its workhorse, or its flagship.
         </>

@@ -9,6 +9,77 @@ only the tools its `toolkit` grants, and turns a manual tool-use loop
 (`lib/claudeAgent.ts`) until the agent finishes or escalates. Every call still
 goes through `invokeTool`, so the gate is unchanged.
 
+**One agent, many skills — `agents/orchestrator.ts`, Nov 2026.** The Owner
+asked for the roster to become one orchestrator, because fifty-seven agents are
+fifty-seven partial views of the company: what the Cold Lead Writer concluded
+about a lead was invisible to the Proposal Writer a week later, and "who do I
+give this to" had to be answered by a person before anything started. In
+orchestrator mode (`agents.mode`, unset = `orchestrator`) there is one agent,
+`orchestrator`, and **every other row in the `Agent` table is one of its
+skills**: an instruction, a toolkit and the words a task is matched on, all
+still edited on the same screen. Nothing was migrated, because nothing moved —
+a task still carries the key of the skill that works it — so `agents.mode =
+roster` (or `AGENTS_MODE=roster`) is the rollback with no deploy. Everything
+below this paragraph describes both modes unless it says otherwise; read
+"agent" as "skill" in orchestrator mode.
+
+- **A task given to the orchestrator is matched to a skill before it runs** —
+  `dispatchOrchestratorTasks()`, at the top of `runDueTasks` and before a
+  run-now. `rankSkills()` scores every ACTIVE skill on the task's words: a whole
+  skill phrase counts most, then the skill's name, then its title and mission
+  lightly. **The rules decide only a clear winner** (score ≥ 1 and 1.3× the
+  next). Anything closer is put to a free model with the shortlist of six
+  (`job: "routing"`, pinned to NVIDIA exactly as the sizing look is, so it can
+  never become a paid call), and with nobody to ask **it is not guessed**: the
+  task stays with the orchestrator, which works it with read-only tools and
+  raises a sub-task under each skill it needs. "Design a logo" ranks the UI
+  designer over the graphic designer on one shared word; a wrong first place is
+  a letter written by the wrong craft, and keeping the task costs one turn.
+  "Care plan" is tokenised as one word for the reason `complexity.ts` gives.
+- **Matched once.** The decision is a ROUTED step filed under
+  `orchestrator.dispatch`; a task that has one is never looked at again, so a
+  task the orchestrator kept is not re-argued every minute and a resumed task
+  is never moved half-way through a conversation. The move is a conditional
+  update on the task still being queued and still the orchestrator's.
+- **Every working run speaks as the orchestrator** — `orchestratorIdentity()`
+  is the first region of the prompt, in front of the skill's instruction, and
+  the "you are not working alone" paragraph and its ladder are replaced by the
+  skills wording (`skillsParagraph`, `skillSteps`). The tools keep their names
+  (`findAgent`, `consult`, `delegate`, `handOff`, `needSkill`): a checkpoint
+  written under one name has to resume under it. A `consult` is still one
+  skill's doctrine answering one question, and is not given the identity.
+- **One memory.** `recall(…, { everySkill: true })` returns what *any* skill
+  concluded about the records the task is about. `self` stays with the skill
+  that wrote it — a lesson about one craft's way of working — and recall is
+  still by subject, so one client's facts never reach another's task.
+- **Any skill may raise a sub-task under any other.** `delegate` drops the
+  "must report to you" rule in orchestrator mode; the chart existed to stop
+  agents routing around each other, and one agent has nobody to route around.
+  It still refuses the orchestrator itself as a target.
+- **The gate does not change, and that is the safety story.** A tool call is
+  permitted or held against the *skill's* own card — toolkit, boundaries,
+  autonomy, dry run — so switching modes cannot widen what anything may do.
+  One task per skill at a time is unchanged too, so different skills run side
+  by side. The orchestrator's own row is a master switch on top
+  (`orchestratorHalted()`): paused or retired, `runDueTasks` starts nothing and
+  says so in the log.
+- **The row is not a seed.** `ensureOrchestrator()` creates it once — ACTIVE,
+  autonomy 2, dry run off, holding only reading tools, so its own card cannot
+  send, charge or spend — and afterwards only grants a reading tool new to the
+  catalogue, once (`agents.orchestratorOffered`). It is kept out of
+  `AGENT_SEEDS` because those are the skills and every roster check counts
+  them.
+- **The check suite runs in roster mode** (`checks/run.ts` sets
+  `AGENTS_MODE=roster`), because those files hold the roster's rules — who may
+  delegate to whom, whose memory an agent is shown — which this mode relaxes on
+  purpose. `checks/orchestrator.ts` sets its own mode and holds the dispatch,
+  the memory, the prompt, the row and the way back. `tmp/skillDispatch.ts`
+  prints how the rules place a dozen ordinary tasks against the real seeds,
+  with no database.
+- The Agents screen draws the orchestrator's row as a panel at the top with a
+  task box (`OrchestratorPanel.tsx`), calls the cards below it skills, and
+  carries the switch (`PUT /agents/mode`).
+
 **An agent turn is a job like any other, and it routes like one.** The loop
 itself picks its vendor: **NVIDIA first and free first** — it climbs the three
 rungs of the `agent` free ladder before anything is paid for — then the paid

@@ -75,7 +75,8 @@ import { startScheduler } from "./services/scheduler.js";
 import { githubCallbackSignedOut, githubWebhookHandler } from "./services/githubAppRoutes.js";
 import { ensureBuiltinTemplates } from "./services/emailTemplates.js";
 import { ensureTheses } from "./services/hunt/theses.js";
-import { COMMISSIONED_AUTONOMY, activateWorkforce, applyColdEmailPlaybook, applyOutreachDoctrine, commissionWorkforce, ensureAgents, narrowSeededAgents, reconcileSeedToolkits, refreshUneditedSeedPrompts, surplusToolkits } from "./services/agentRegistry.js";
+import { agentMode, ensureOrchestrator } from "./services/agents/orchestrator.js";
+import { AGENT_SEEDS, COMMISSIONED_AUTONOMY, activateWorkforce, applyColdEmailPlaybook, applyOutreachDoctrine, commissionWorkforce, ensureAgents, narrowSeededAgents, reconcileSeedToolkits, refreshUneditedSeedPrompts, surplusToolkits } from "./services/agentRegistry.js";
 import { backfillTaskCosts, drainRunningTasks } from "./services/agents/runner.js";
 import { backfillTags } from "./services/leadTags.js";
 import { startWatcher, stopWatcher } from "./services/mailbox/watcher.js";
@@ -548,6 +549,13 @@ ensureSystemRoles()
               `  → Corrected the recorded cost of ${costs.corrected} finished task(s) against the model and tool ledgers ` +
                 `(+$${costs.addedUsd.toFixed(2)} that had been recorded as free)`,
             );
+          }
+
+          // The one agent every other row is a skill of. Created once; after
+          // that only a reading tool new to the catalogue is added to it.
+          const orchestrator = await ensureOrchestrator();
+          if (orchestrator === "created") {
+            console.log(`  → Created the Orchestrator: one agent, and the ${AGENT_SEEDS.length} seeded agents are now its skills (agents.mode = ${await agentMode()})`);
           }
 
           // The workforce, put to work. Once ever, and only over agents still
