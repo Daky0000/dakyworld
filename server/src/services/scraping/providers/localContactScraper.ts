@@ -221,8 +221,12 @@ export async function scrapeContactsLocally(
         }
       });
 
-      // Early exit if primary contact details (email and phone) are already found on homepage
-      if (emails.size > 0 && phones.size > 0) {
+      // Stop early once there is an email and a phone — but never on the home
+      // page alone when it links to a contact page. A home page usually
+      // carries the general address (info@), and the one a person answers is
+      // on the contact page; stopping at the first page found one and missed
+      // the other. One more page costs one request.
+      if (emails.size > 0 && phones.size > 0 && (queue.length === 0 || visited.size >= 2)) {
         break;
       }
     } catch {

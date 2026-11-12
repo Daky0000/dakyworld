@@ -767,7 +767,7 @@ async function main() {
     const routed = await prisma.agentTaskStep.findFirst({ where: { taskId: sized.id, kind: "ROUTED" } });
     check("it finishes", outcome.status === "DONE" || outcome.status === "NEEDS_APPROVAL", outcome.status);
     check("the level is written on the task", row.level === "SIMPLE" && row.levelSource === "rules", `${row.level}/${row.levelSource}`);
-    check("and said on its timeline", Boolean(routed?.message.includes("simple")), routed?.message ?? "(no ROUTED step)");
+    check("and said on its timeline", Boolean(routed?.message.includes("low strength")), routed?.message ?? "(no ROUTED step)");
     check("and the small model did the work", loopTurn()?.body.model === TIER_MODELS.anthropic.simple, String(loopTurn()?.body.model));
 
     const forced = await prisma.agentTask.create({
