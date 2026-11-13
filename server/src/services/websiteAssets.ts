@@ -24,7 +24,12 @@ export async function stylesheetForEditor(site: Pick<Site, "id" | "publicUrl">, 
   try {
     absolute = new URL(base, site.publicUrl).href;
   } catch {}
-  const pattern = new RegExp(`(?:${absolute ? `${escapeForRegex(absolute)}|` : ""}${escapeForRegex(base)})([^\\s"'\`()<>,;?#&\\\\/]+)`, "g");
+  const prefixes = [
+    ...(absolute ? [escapeForRegex(absolute)] : []),
+    escapeForRegex(base),
+    ...(base !== "/assets/dw/" ? ["(?<=^|[\"'(\\s,=])\\/assets\\/dw\\/"] : []),
+  ];
+  const pattern = new RegExp(`(?:${prefixes.join("|")})([^\\s"'\`()<>,;?#&\\\\/]+)`, "g");
   const names = [...new Set([...css.matchAll(pattern)].map((match) => match[1]!))];
   if (!names.length) return css;
   const rows = await prisma.siteAsset.findMany({ where: { siteId: site.id, repoPath: { in: names.map((name) => `assets/dw/${name}`) } }, select: { id: true, repoPath: true } });

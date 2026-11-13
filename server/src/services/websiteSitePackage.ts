@@ -146,6 +146,13 @@ export function pageLinkTarget(href: string, fromFile: string, byFile: ReadonlyM
 
 const escapeAttribute = (value: string) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 
+/** Converts a route path like `/about-us` or `/projects/alpha` into its compound page segment (`about-us`, `projects-alpha`, or `home`). */
+export function compoundPagePart(routePath: string): string {
+  return routePath === "/" || !routePath
+    ? "home"
+    : routePath.replace(/^\/+/, "").replace(/\/+$/, "").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+}
+
 /** Every link to another imported page rewritten to that page's address under the site's base path. */
 export function rewritePageLinks(
   html: string,
@@ -164,15 +171,9 @@ export function rewritePageLinks(
     const target = pageLinkTarget(href.value, fromFile, byFile, routes);
     if (!target) continue;
 
-    let address = "";
-    if (siteSlug) {
-      const pagePart = target.route === "/"
-        ? "home"
-        : target.route.replace(/^\/+/, "").replace(/\/+$/, "").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
-      address = `/website/${siteSlug}-${pagePart}${target.suffix}`;
-    } else {
-      address = `${base}${target.route === "/" ? "/" : target.route}${target.suffix}`;
-    }
+    const address = siteSlug
+      ? `/website/${siteSlug}-${compoundPagePart(target.route)}${target.suffix}`
+      : `${base}${target.route === "/" ? "/" : target.route}${target.suffix}`;
 
     if (decodeEntities(href.value) === address) continue;
     edits.push({ start: href.valueStart, end: href.valueEnd, value: escapeAttribute(address) });

@@ -54,6 +54,7 @@ import { recordPresence, removePresence } from "../services/websitePresence.js";
 import { DOCUMENT_KEY, draftDocument, editingSource, fieldValues, sourceHash, documentChanged, changeStructure, structureControls, applyValues, categoriseChanges, describeChanges, buildPreview, discoverFields, drawnByScript, isVariantOfStem, sanitizeValue, validateFieldChange, type FieldValue, type SiteField } from "../services/website/index.js";
 import { discoverPages, PAGE_LIST_FIELDS, pageSource, pageStyleTexts, pageUrl, siteRepo, siteStyleClasses, WebsiteError } from "../services/website/site.js";
 import { hoverRules } from "../services/website/hover.js";
+import { compoundPagePart } from "../services/websiteSitePackage.js";
 
 import { tailwindCdnCss } from "../services/website/cdnStyles.js";
 
@@ -470,7 +471,7 @@ websiteRouter.get("/pages/:pageId", async (req, res, next) => {
     // Otherwise the hosted address, or no link at all.
     const linkedDemo = await findLinkedDemo(site, page.id);
     const hosted = page.publishedHtml ? hostedUrlFor(site) : null;
-    const pagePart = page.path === "/" ? "home" : page.path.replace(/^\/+/, "").replace(/\/+$/, "").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    const pagePart = compoundPagePart(page.path);
     const websitePath = `/website/${encodeURIComponent(site.slug)}-${pagePart}`;
     const liveUrl = linkedDemo
       ? `/demos/${encodeURIComponent(linkedDemo.slug)}`

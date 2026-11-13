@@ -100,7 +100,7 @@ async function main() {
       data: {
         name: "Gulf Contracting Co. W.L.L.",
         slug: "gulf-contracting",
-        publicUrl: "https://gulf-contracting.sites.dakyx.com",
+        publicUrl: "https://os.dakyworld.com/website/gulf-contracting",
         members: {
           create: {
             userId: owner.id,

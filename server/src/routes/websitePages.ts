@@ -1,11 +1,14 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { prisma } from "../lib/prisma.js";
 import { isR2Configured, getR2PublicUrl } from "../lib/r2.js";
+import { SVG_CONTENT_SECURITY_POLICY } from "../lib/svgSanitize.js";
+import { MOVED_ASSET_CACHE, publishedAssetCacheControl } from "../services/publishedAssets.js";
 import { applyValues, editingSource, fieldValues } from "../services/website/index.js";
 import type { FieldValue } from "../services/website/index.js";
 import { attachUser } from "../middleware/auth.js";
 import { sandboxedPageFiles } from "../middleware/security.js";
 import { assertWebsiteSiteAccess } from "../services/websiteAccess.js";
+import { compoundPagePart } from "../services/websiteSitePackage.js";
 
 /**
  * Every page this router sends runs in an origin of its own.
@@ -64,57 +67,80 @@ function readSitePageDraft(draft: unknown): Record<string, FieldValue> {
   return draft as Record<string, FieldValue>;
 }
 
+/** Resolves a site from either its own slug/ID or a compound `<siteSlug>-<pageSlug>` segment. */
+async function findSiteBySlugOrCompound(siteSlug: string): Promise<{ site: { id: string; name: string; slug: string }; remainder: string } | null> {
+  const direct = await prisma.site.findFirst({
+    where: {
+      OR: [{ slug: siteSlug }, { id: siteSlug }],
+      deletionScheduledFor: null,
+    },
+    select: { id: true, name: true, slug: true },
+  });
+  if (direct) return { site: direct, remainder: "" };
+
+  if (!siteSlug.includes("-")) return null;
+
+  const allSites = await prisma.site.findMany({
+    where: { deletionScheduledFor: null },
+    select: { id: true, name: true, slug: true },
+  });
+  const match = allSites
+    .filter((s) => siteSlug.startsWith(`${s.slug}-`))
+    .sort((a, b) => b.slug.length - a.slug.length)[0];
+
+  if (!match) return null;
+  const remainder = siteSlug.slice(match.slug.length + 1);
+  return { site: match, remainder };
+}
+
 export const websitePagesRouter = Router();
 
 // The files a sandboxed page loads from us. Its origin is opaque, so even a
 // file from this same host is cross-origin to it and would be discarded after
 // a full 200 without these headers — the fault the Ghacem demo had.
-websitePagesRouter.use("/:siteSlug/assets", (req, res, next) => {
+websitePagesRouter.use(["/:siteSlug/assets", "/:siteSlug/*/assets"], (req, res, next) => {
   if (req.method !== "GET" && req.method !== "HEAD") return next();
   sandboxedPageFiles(req, res, next);
 });
 
 /**
- * Serves website assets stored in R2 or database (SiteAsset).
+ * Serves website assets stored in Postgres (`SiteAsset.content`) or R2 when swept.
  * Route: /website/:siteSlug/assets/dw/:filename
  */
-websitePagesRouter.get("/:siteSlug/assets/dw/:filename", async (req: Request, res: Response, next: NextFunction) => {
+websitePagesRouter.get(["/:siteSlug/assets/dw/:filename", "/:siteSlug/*/assets/dw/:filename"], async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { siteSlug, filename } = req.params;
     const repoPath = `assets/dw/${filename}`;
 
-    if (isR2Configured()) {
-      return res.redirect(302, getR2PublicUrl(repoPath));
-    }
-
-    let site = await prisma.site.findFirst({
-      where: {
-        OR: [{ slug: siteSlug }, { id: siteSlug }],
-      },
-      select: { id: true, slug: true },
-    });
-
-    if (!site && siteSlug.includes("-")) {
-      const allSites = await prisma.site.findMany({ select: { id: true, slug: true } });
-      const match = allSites.filter((s) => siteSlug === s.slug || siteSlug.startsWith(`${s.slug}-`)).sort((a, b) => b.slug.length - a.slug.length)[0];
-      if (match) site = match;
-    }
-
-    if (!site) return res.status(404).set("Cache-Control", "no-store").end();
+    const resolved = await findSiteBySlugOrCompound(siteSlug);
+    if (!resolved) return res.status(404).set("Cache-Control", "no-store").end();
 
     const asset = await prisma.siteAsset.findFirst({
-      where: { siteId: site.id, repoPath },
+      where: { siteId: resolved.site.id, repoPath },
       select: { contentType: true, content: true },
     });
 
-    if (!asset || !asset.content) {
+    if (!asset) {
       return res.status(404).set("Cache-Control", "no-store").end();
     }
 
+    // Small assets (<8 MB) are stored in Postgres; larger ones or swept ones live in R2.
+    if (!asset.content) {
+      if (isR2Configured()) {
+        return res.set("Cache-Control", MOVED_ASSET_CACHE).redirect(302, getR2PublicUrl(repoPath));
+      }
+      return res.status(404).set("Cache-Control", "no-store").end();
+    }
+
+    if (asset.contentType === "image/svg+xml") {
+      res.set("Content-Security-Policy", SVG_CONTENT_SECURITY_POLICY);
+    }
+
     res.status(200)
-      .set("Content-Type", asset.contentType)
+      .set("Content-Type", asset.contentType || "application/octet-stream")
+      .set("Content-Length", String(asset.content.length))
       .set("X-Content-Type-Options", "nosniff")
-      .set("Cache-Control", "public, max-age=86400")
+      .set("Cache-Control", publishedAssetCacheControl(repoPath))
       .send(Buffer.from(asset.content));
   } catch (err) {
     next(err);
@@ -156,100 +182,93 @@ websitePagesRouter.get(["/:siteSlug", "/:siteSlug/*"], async (req: Request, res:
     const siteSlug = req.params.siteSlug;
     if (!siteSlug || RESERVED_WEBSITE_PATHS.has(siteSlug.toLowerCase())) return next();
 
-    // 1. Find the website
-    let site = await prisma.site.findFirst({
-      where: {
-        OR: [{ slug: siteSlug }, { id: siteSlug }],
-        deletionScheduledFor: null,
-      },
-      select: { id: true, name: true, slug: true },
-    });
-
-    let rawSubpath = req.params[0] ?? "";
-
-    // 2. If site was not directly matched, check if siteSlug is a compound slug (e.g. "gulf-contracting-home", "gulf-contracting-about-us")
-    if (!site && siteSlug.includes("-")) {
-      const allSites = await prisma.site.findMany({
-        where: { deletionScheduledFor: null },
-        select: { id: true, name: true, slug: true },
-      });
-      const match = allSites
-        .filter((s) => siteSlug === s.slug || siteSlug.startsWith(`${s.slug}-`))
-        .sort((a, b) => b.slug.length - a.slug.length)[0];
-
-      if (match) {
-        site = match;
-        const remainder = siteSlug.slice(match.slug.length + 1); // e.g. "about-us" or "home"
-        rawSubpath = remainder === "home" ? "" : remainder;
-      }
-    }
-
-    if (!site) {
+    const resolved = await findSiteBySlugOrCompound(siteSlug);
+    if (!resolved) {
       return res.status(404).type("html").set(PAGE_HEADERS).set("Cache-Control", "no-store").send(site404Page());
     }
 
+    const { site, remainder } = resolved;
+    const rawSubpath = remainder ? (remainder === "home" ? "" : remainder) : (req.params[0] ?? "");
     const cleanSub = rawSubpath.trim().replace(/^\/+/, "").replace(/\/+$/, "");
+    const lowerSub = cleanSub.toLowerCase();
 
-    // Generate candidate routes and file paths to match SitePage
-    const candidates: string[] = [];
-    const fileCandidates: string[] = [];
+    let page = null;
 
-    if (!cleanSub || cleanSub === "home") {
-      candidates.push("/", "", "/home", "/home/");
-      fileCandidates.push("index.html", "index.htm", "home.html");
-    } else {
-      candidates.push(
-        `/${cleanSub}`,
-        `/${cleanSub}/`,
-        `/${cleanSub.replace(/\.html?$/i, "")}`,
-        `/${cleanSub.replace(/\.html?$/i, "")}/`,
-      );
-      if (cleanSub.includes("-")) {
-        candidates.push(`/${cleanSub.replace(/-/g, "")}`, `/${cleanSub.split("-")[0]}`);
-      }
-      fileCandidates.push(
-        cleanSub,
-        `${cleanSub}.html`,
-        `${cleanSub}/index.html`,
-        `${cleanSub.replace(/\.html?$/i, "")}.html`,
-        `${cleanSub.replace(/\.html?$/i, "")}/index.html`,
-      );
-      if (cleanSub.includes("-")) {
-        fileCandidates.push(`${cleanSub.replace(/-/g, "")}.html`, `${cleanSub.split("-")[0]}.html`);
-      }
-    }
-
-    // Query matching page for this site
-    let page = await prisma.sitePage.findFirst({
-      where: {
-        siteId: site.id,
-        OR: [
-          { path: { in: candidates } },
-          { filePath: { in: fileCandidates } },
-        ],
-      },
-    });
-
-    // Fallback if home page requested but not matched by exact path
-    if (!page && (!cleanSub || cleanSub === "home")) {
-      page = await prisma.sitePage.findFirst({
-        where: { siteId: site.id },
-        orderBy: [{ sortOrder: "asc" }, { id: "asc" }],
-      });
-    }
-
-    // Fallback: search by path or title containing cleanSub
-    if (!page && cleanSub) {
+    if (!cleanSub || lowerSub === "home") {
       page = await prisma.sitePage.findFirst({
         where: {
           siteId: site.id,
           OR: [
-            { path: { contains: cleanSub, mode: "insensitive" } },
-            { filePath: { contains: cleanSub, mode: "insensitive" } },
-            { title: { contains: cleanSub, mode: "insensitive" } },
+            { path: { in: ["/", "", "/home", "/home/"] } },
+            { filePath: { in: ["index.html", "index.htm", "home.html"] } },
           ],
         },
       });
+      if (!page) {
+        page = await prisma.sitePage.findFirst({
+          where: {
+            siteId: site.id,
+            path: { notIn: ["/404", "/404/"] },
+            filePath: { notIn: ["404.html", "404/index.html"] },
+          },
+          orderBy: [{ sortOrder: "asc" }, { id: "asc" }],
+        });
+      }
+    } else {
+      const strippedHtml = cleanSub.replace(/\.html?$/i, "");
+      const exactPaths = [
+        `/${cleanSub}`,
+        `/${cleanSub}/`,
+        `/${strippedHtml}`,
+        `/${strippedHtml}/`,
+      ];
+      const exactFiles = [
+        cleanSub,
+        `${cleanSub}.html`,
+        `${cleanSub}/index.html`,
+        `${strippedHtml}.html`,
+        `${strippedHtml}/index.html`,
+      ];
+
+      // 1. Exact route or file path match
+      page = await prisma.sitePage.findFirst({
+        where: {
+          siteId: site.id,
+          OR: [
+            { path: { in: exactPaths } },
+            { filePath: { in: exactFiles } },
+          ],
+        },
+      });
+
+      // 2. Exact compound slug match (e.g. `projects-doha-festival-city` -> `/projects/doha-festival-city`)
+      if (!page) {
+        const sitePages = await prisma.sitePage.findMany({
+          where: { siteId: site.id },
+          select: { id: true, path: true, filePath: true },
+        });
+        const matchedMeta = sitePages.find((p) =>
+          compoundPagePart(p.path) === lowerSub ||
+          compoundPagePart(p.filePath.replace(/\.html?$/i, "").replace(/\/index$/i, "")) === lowerSub,
+        );
+        if (matchedMeta) {
+          page = await prisma.sitePage.findUnique({ where: { id: matchedMeta.id } });
+        }
+      }
+
+      // 3. Fallback: search by path, filePath, or title
+      if (!page) {
+        page = await prisma.sitePage.findFirst({
+          where: {
+            siteId: site.id,
+            OR: [
+              { path: { contains: cleanSub, mode: "insensitive" } },
+              { filePath: { contains: cleanSub, mode: "insensitive" } },
+              { title: { contains: cleanSub, mode: "insensitive" } },
+            ],
+          },
+        });
+      }
     }
 
     if (!page) {
