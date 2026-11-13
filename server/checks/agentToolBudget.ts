@@ -109,7 +109,8 @@ async function main() {
   ok("a manager gets delegate", full.includes("delegate"));
   ok("findAgent is always there", full.includes("findAgent"));
   ok("and so is needSkill — the only road to the Agent Creator", full.includes("needSkill"));
-  ok("a manager with a subject gets all ten workflow tools", full.length === 10, `${full.length}: ${full.join(", ")}`);
+  ok("a manager with a subject gets all eleven workflow tools", full.length === 11, `${full.length}: ${full.join(", ")}`);
+  ok("awaitSubtasks among them — the way a parent hears how its sub-tasks ended", full.includes("awaitSubtasks"));
   ok("update_living_context among them", full.includes("update_living_context"));
 
   console.log("\nA task about no record at all");
@@ -233,7 +234,11 @@ async function main() {
   console.log("\nThe weight of a turn, per agent, from the seeds");
   const LIVE_REGIONS = new Set(["brand", "contact", "commercial"]);
   const SYSTEM_CHARS_PER_AGENT = 11_131;
-  const TOOL_CHARS_PER_AGENT = 14_848;
+  // Moved from 14,848 on 13 Nov 2026, on purpose: `awaitSubtasks` and the
+  // `after` argument on `delegate` and `handOff`. About a thousand characters
+  // a turn buys sub-tasks that run in order and a parent that reads their
+  // results, which before cost a whole wasted run each time it mattered.
+  const TOOL_CHARS_PER_AGENT = 15_845;
   let systemChars = 0;
   let toolChars = 0;
   for (const seed of AGENT_SEEDS) {

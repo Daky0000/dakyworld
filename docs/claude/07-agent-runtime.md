@@ -180,7 +180,7 @@ downgraded — so checking the refusal first files prepared work as refused,
 leaves `dryRunCalls` at zero, and finishes the task `DONE`. The Owner then
 reads "done" about work that never happened. This shipped broken once.
 
-**Ten tools exist outside the catalogue** and every agent has them regardless
+**Eleven tools exist outside the catalogue** (ten until `awaitSubtasks`, Nov 2026 — see the section on sub-tasks above) and every agent has them regardless
 of its toolkit, because they are how an agent takes part in the system rather
 than things it does to the business. Six are about the agent and the records it
 works on: `escalate` (stop and ask → `BLOCKED`), `remember` (write a memory),
