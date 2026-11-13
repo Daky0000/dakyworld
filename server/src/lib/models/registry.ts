@@ -1276,6 +1276,68 @@ export async function freeLadderFor(key: LadderKey): Promise<string[]> {
 }
 
 /**
+ * Free models that answered "no such model" recently, and until when each is
+ * left out.
+ *
+ * The shipped ladders were probed by hand and the boot prune drops what
+ * NVIDIA stops *listing* — but a model can be listed and still not be there
+ * for one account. In Nov 2026 the live workforce's third rung answered
+ * `404 Function … Not found for account` on every single run: one wasted call
+ * and one wasted wait per task, on a ladder that was really two rungs long,
+ * and nothing anywhere said so.
+ *
+ * Process-local and timed, like the key cooldown in `claudeAgent.ts` and for
+ * the same reasons: it is true of the account rather than of the request, a
+ * restart clears it, and after six hours the model is asked again in case it
+ * is back. Nothing is written to settings — a default that tracks the code
+ * must not become a frozen snapshot of one bad afternoon.
+ */
+const goneUntil = new Map<string, number>();
+export const FREE_MODEL_GONE_MS = 6 * 60 * 60_000;
+
+/** Statuses that say the model itself is not there, as opposed to busy, slow or refusing this request. */
+export function saysModelIsGone(status: number): boolean {
+  return status === 404 || status === 410;
+}
+
+export function markFreeModelGone(id: string, why: string): void {
+  const already = (goneUntil.get(id) ?? 0) > Date.now();
+  goneUntil.set(id, Date.now() + FREE_MODEL_GONE_MS);
+  if (!already) {
+    console.warn(`[models] ${id} is not there for this account (${why.replace(/\s+/g, " ").slice(0, 160)}) — left out of the free ladders for ${FREE_MODEL_GONE_MS / 3_600_000} hours.`);
+  }
+}
+
+/** What is being left out right now, for a screen or a log. */
+export function freeModelsGone(): Array<{ id: string; until: string }> {
+  const now = Date.now();
+  return [...goneUntil.entries()].filter(([, until]) => until > now).map(([id, until]) => ({ id, until: new Date(until).toISOString() }));
+}
+
+/** For checks only: a second scenario in one process must start with nothing left out. */
+export function clearFreeModelsGone(): void {
+  goneUntil.clear();
+}
+
+/**
+ * The ladder to actually climb: the configured one, without the models that
+ * are not there for this account.
+ *
+ * **Never empty because of this.** With every rung left out the whole ladder
+ * comes back as configured: an empty ladder means "free models deliberately
+ * off" to everything that reads one, which is a different instruction and a
+ * different code path. `freeLadderFor` stays the configured answer, which is
+ * what the Settings screen shows.
+ */
+export async function liveFreeLadder(key: LadderKey): Promise<string[]> {
+  const ladder = await freeLadderFor(key);
+  if (goneUntil.size === 0) return ladder;
+  const now = Date.now();
+  const live = ladder.filter((id) => (goneUntil.get(id) ?? 0) <= now);
+  return live.length > 0 ? live : ladder;
+}
+
+/**
  * Where the ladder in use came from.
  *
  * The screen needs this and cannot infer it: "three rungs" looks identical
@@ -1343,7 +1405,7 @@ export async function isFreeModel(model: string): Promise<boolean> {
  * asked for at exactly the moment free capacity was short.
  */
 export async function nvidiaAttempts(job: LadderKey): Promise<(string | undefined)[]> {
-  const ladder = await freeLadderFor(job);
+  const ladder = await liveFreeLadder(job);
   return ladder.length > 0 ? ladder : [undefined];
 }
 

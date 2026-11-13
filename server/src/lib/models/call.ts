@@ -10,6 +10,9 @@ import {
   FREE_MODELS,
   JOBS,
   freeLadderFor,
+  liveFreeLadder,
+  markFreeModelGone,
+  saysModelIsGone,
   imageFunctionUrl,
   imageModelInfo,
   imageStatusUrl,
@@ -980,6 +983,9 @@ async function callModelUnbounded<T>(request: ModelRequest): Promise<ModelResult
         // balance arrive as. When every rung fails at once the only question is
         // which bill or key, and that answer was being thrown away here.
         console.warn(`[models] ${model ?? PROVIDERS[serving].name} (${serving}) ${err.why}: ${err.error.message.replace(/\s+/g, " ").slice(0, 300)}`);
+        // A free rung that is not there for this account is left out of the
+        // ladders for a while, so the next call does not pay for the same 404.
+        if (serving === "nvidia" && model && saysModelIsGone(err.error.status)) markFreeModelGone(model, err.error.message);
         // Named by model where there was a choice of them, because "NVIDIA
         // failed" three times over is a note that hides which rungs were tried
         // and reads as one thing going wrong three times.
@@ -1375,7 +1381,7 @@ async function generateImageUnbounded(request: ImageRequest): Promise<ImageResul
   for (const serving of chain) {
     // Every model this vendor should be asked for. NVIDIA has a ladder; ChatGPT
     // has the one image model its own setting names.
-    const models = serving === "nvidia" ? await freeLadderFor("image") : [await imageModel()];
+    const models = serving === "nvidia" ? await liveFreeLadder("image") : [await imageModel()];
     // A ladder switched off deliberately still leaves the vendor's own model,
     // exactly as the text path does.
     const attempts = models.length > 0 ? models : [await nvidiaImageModel()];

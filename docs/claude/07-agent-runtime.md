@@ -771,6 +771,32 @@ what an agent is told to do and what it is allowed to reach are different
 decisions. An edit lands on the agent's next task, because `runner.ts` reads
 the row rather than a cache.
 
+**In orchestrator mode a skill may work several tasks at once — never two
+about the same record** — `agents/parallel.ts`, 13 Nov 2026. The paragraph
+below is the roster's rule and still the rule on the roster. Its reason is
+memory, and that reason is about a *record*, not about an agent: two tasks
+about one lead interleave what is concluded about it. Five first letters to
+five different companies never touch the same record, and they used to run in
+a row while five other skills sat idle.
+
+- **`mayStartBeside`** (the tick) and **`claimGuard`** (the claim, which the
+  database arbitrates) ask the same question: a task shares a record with
+  another when any of its lead, client, project, proposal or invoice is the
+  same, and then it waits. **A task about no record has the skill to itself**,
+  in both directions — standing work names no record on the row and writes to
+  a dozen leads, so nothing can be said about what it will not collide with.
+- **The ceiling is `agents.perSkillTasks`** (`AGENTS_PER_SKILL`): three unset in
+  orchestrator mode, one unset on the roster, capped at six. Zero reads as the
+  default, never as "none". It is counted just before the claim, because a
+  relation filter cannot count; being one over for an instant costs nothing.
+- **It adds no slots.** The process ceiling (`agents.maxConcurrentTasks`) is
+  unchanged, so this decides which tasks fill them and asks no more of a free
+  model tier than before.
+- `busyAgents` holds task ids per skill now rather than a skill's key, so a
+  skill is busy until its last task is let go.
+- `checks/skillParallel.ts` holds the rule, the ceiling and the claim against
+  a real database.
+
 **One agent takes one task at a time.** `MAX_CONCURRENT` is the process
 ceiling; the per-agent ceiling is one, enforced in the claim itself as a
 relation filter (`agent: { tasks: { none: { status: "RUNNING" } } }`) so two

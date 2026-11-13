@@ -10,7 +10,10 @@ import {
   PROVIDER_PRICING,
   TASK_LEVELS,
   effortForLevel,
-  freeLadderFor,
+  clearFreeModelsGone,
+  liveFreeLadder,
+  markFreeModelGone,
+  saysModelIsGone,
   freeModel,
   levelForEffort,
   modelForLevel,
@@ -650,6 +653,7 @@ let nvidiaRefusedUntil = 0;
  */
 export function clearNvidiaCooldown(): void {
   nvidiaRefusedUntil = 0;
+  clearFreeModelsGone();
 }
 
 /**
@@ -1414,7 +1418,7 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
    * not answer costs one short call and the next rung is asked; when the ladder
    * runs out, the paid floor finishes the run. That is the whole feature.
    */
-  const ladder = await freeLadderFor("agent");
+  const ladder = await liveFreeLadder("agent");
   let rung = 0;
 
   // Chosen from the effort rather than fixed, so a sub-agent checking a link
@@ -1739,6 +1743,12 @@ export async function runAgentLoop(request: AgentRunRequest): Promise<AgentRunRe
       } catch (err) {
         const status = statusOf(err);
         const climbing = serving === "nvidia" && ladder.length > 0;
+
+        // A rung that is not there for this account. Left out of the ladders
+        // for a while so the runs behind this one do not each pay for the same
+        // 404 — see `liveFreeLadder`. This run carries on down the ladder it
+        // started with, exactly as below.
+        if (climbing && saysModelIsGone(status) && ladder[rung]) markFreeModelGone(ladder[rung], (err as Error).message ?? "");
 
         // Claude refused reasoning it wrote earlier in this conversation,
         // because something above it changed. The runner keeps the prompt and

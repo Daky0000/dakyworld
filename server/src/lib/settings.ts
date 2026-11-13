@@ -238,6 +238,12 @@ export const SETTING = {
    * check suite keeps exercising the roster path.
    */
   AGENT_MODE: "agents.mode",
+  /**
+   * How many tasks one skill may work at once — never two about the same
+   * record. Unset is three in orchestrator mode and one on the roster; see
+   * `services/agents/parallel.ts`. `AGENTS_PER_SKILL` in the environment wins.
+   */
+  AGENT_PER_SKILL: "agents.perSkillTasks",
   /** The reading tools the orchestrator's own row has been offered, so an unticked one stays unticked. */
   AGENT_ORCHESTRATOR_OFFERED: "agents.orchestratorOffered",
 
@@ -915,6 +921,7 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.FLAG_PROMPT_VERSIONS]: "FLAG_PROMPT_VERSIONS",
   [SETTING.FLAG_AGENT_DASHBOARD]: "FLAG_AGENT_DASHBOARD",
   [SETTING.AGENT_MODE]: "AGENTS_MODE",
+  [SETTING.AGENT_PER_SKILL]: "AGENTS_PER_SKILL",
 };
 
 // One process, one cache. Writes go through setSetting, which clears it.

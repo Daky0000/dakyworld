@@ -44,6 +44,7 @@ import { check, scopesForAgent, type BudgetState } from "../budgets.js";
 import { hasPace, paceFor } from "./pace.js";
 import { planFor } from "./retry.js";
 import { EFFORT_LADDER, NOT_THE_MODELS_FAULT, routeTask, toStored } from "./complexity.js";
+import { claimGuard, mayStartBeside, perSkillLimit, recordsOf } from "./parallel.js";
 import { MAX_AFTER, MAX_WAITS, openSubtasks, readyToCarryOn, resolveAfter, subtaskRef, waitedResults } from "./waiting.js";
 import { DISPATCH_TOOL, ORCHESTRATOR_KEY, dispatchOrchestratorTasks, orchestratorHalted, orchestratorIdentity, orchestratorOn, skillsParagraph } from "./orchestrator.js";
 
@@ -154,7 +155,22 @@ export async function drainRunningTasks(graceMs = 8_000): Promise<number> {
  * process; the claim below is a conditional update the database arbitrates, so
  * two processes reaching for the same agent still cannot both win.
  */
-const busyAgents = new Set<string>();
+const busyAgents = new Map<string, Set<string>>();
+
+/** This process has taken a task for this skill. By task, because a skill may hold several. */
+function nowBusy(agentKey: string, taskId: string): void {
+  const held = busyAgents.get(agentKey) ?? new Set<string>();
+  held.add(taskId);
+  busyAgents.set(agentKey, held);
+}
+
+/** And has let it go. Safe to call for a task this process never held. */
+function nowFree(agentKey: string, taskId: string): void {
+  const held = busyAgents.get(agentKey);
+  if (!held) return;
+  held.delete(taskId);
+  if (held.size === 0) busyAgents.delete(agentKey);
+}
 
 /** Cheap enough to be wrong about, expensive enough to be worth capping. */
 const MAX_ATTEMPTS = 3;
@@ -2543,6 +2559,25 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
   const runOwner = `${PROCESS_ID}:${(claimCounter += 1)}`;
 
   try {
+    // What the claim is made under. One task per skill on the roster; in
+    // orchestrator mode a skill may hold several, never two about one record
+    // — see `parallel.ts`. Read before the claim because the condition names
+    // this task's own records.
+    const perSkill = await perSkillLimit();
+    const shape = await prisma.agentTask.findUnique({
+      where: { id: taskId },
+      select: { agentKey: true, leadId: true, clientId: true, projectId: true, proposalId: true, invoiceId: true },
+    });
+    if (shape && perSkill > 1) {
+      // The ceiling itself. A relation filter cannot count, so it is read
+      // here; the guard below is what the database arbitrates.
+      const alreadyRunning = await prisma.agentTask.count({ where: { agentKey: shape.agentKey, status: "RUNNING", id: { not: taskId } } });
+      if (alreadyRunning >= perSkill) {
+        const current = await prisma.agentTask.findUnique({ where: { id: taskId }, select: { status: true, summary: true } });
+        return { status: current?.status ?? "QUEUED", summary: current?.summary ?? null };
+      }
+    }
+
     const claim = await transition(taskId, {
       to: "RUNNING",
       reason: "Claimed by the runner",
@@ -2554,7 +2589,7 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       // The rule, enforced where two processes can both see it. A relation
       // filter inside the conditional update means the loser of the race
       // finds out before it starts spending money rather than after.
-      guard: { agent: { tasks: { none: { status: "RUNNING" } } } },
+      guard: shape ? claimGuard(shape, perSkill) : { agent: { tasks: { none: { status: "RUNNING" } } } },
       data: {
         startedAt: new Date(),
         heartbeatAt: new Date(),
@@ -2585,7 +2620,7 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
     const task = await prisma.agentTask.findUnique({ where: { id: taskId } });
     if (!task) return { status: "CANCELLED", summary: null };
     claimedAgent = task.agentKey;
-    busyAgents.add(task.agentKey);
+    nowBusy(task.agentKey, task.id);
 
     // Everything from here runs inside the task's own context, so an audit row
     // written four frames down — a writer inside a tool handler inside the
@@ -3181,7 +3216,7 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
     });
   } finally {
     running.delete(taskId);
-    if (claimedAgent) busyAgents.delete(claimedAgent);
+    if (claimedAgent) nowFree(claimedAgent, taskId);
   }
 }
 
@@ -3755,7 +3790,7 @@ async function handBack(
         error: `${sentence} Something is stopping this run rather than it failing.`,
       },
     });
-    busyAgents.delete(task.agentKey);
+    nowFree(task.agentKey, task.id);
     return;
   }
 
@@ -3787,7 +3822,7 @@ async function handBack(
       ...(verdict === "progressed" ? { attempts: 0 } : {}),
     },
   });
-  busyAgents.delete(task.agentKey);
+  nowFree(task.agentKey, task.id);
 }
 
 /**
@@ -3853,6 +3888,7 @@ export async function runDueTasks(now = new Date(), limit?: number): Promise<num
   // A task waiting for other work is QUEUED and not yet startable. Worked out
   // once a tick: the ones whose wait is over are due like anything else, and
   // the rest are not looked at.
+  const perSkill = await perSkillLimit();
   const carryOn = await readyToCarryOn().catch((err) => {
     console.error("[agent] could not work out which waiting tasks may carry on:", (err as Error).message);
     return [] as string[];
@@ -3865,7 +3901,10 @@ export async function runDueTasks(now = new Date(), limit?: number): Promise<num
         { OR: [{ scheduledFor: null }, { scheduledFor: { lte: now } }] },
         { OR: [{ waitsFor: { isEmpty: true } }, { id: { in: carryOn } }] },
       ],
-      agent: { status: "ACTIVE", tasks: { none: { status: "RUNNING" } } },
+      // At one task a skill the database leaves out every busy skill, as it
+      // always did. Above one, which tasks may share a skill is decided below,
+      // against what each skill is actually running.
+      agent: { status: "ACTIVE", ...(perSkill <= 1 ? { tasks: { none: { status: "RUNNING" as const } } } : {}) },
     },
     take: capacity * 8,
     select: {
@@ -3873,6 +3912,11 @@ export async function runDueTasks(now = new Date(), limit?: number): Promise<num
       agentKey: true,
       priority: true,
       createdAt: true,
+      leadId: true,
+      clientId: true,
+      projectId: true,
+      proposalId: true,
+      invoiceId: true,
       // Carried on the row that is already being read, so the pace check below
       // costs a count and not a second lookup per task.
       agent: { select: { key: true, name: true, maxTasksPerDay: true, maxTasksPerWeek: true, maxTasksPerMonth: true } },
@@ -3893,16 +3937,34 @@ export async function runDueTasks(now = new Date(), limit?: number): Promise<num
     return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
   });
 
-  // One per agent, highest priority first — which the ordering above has
-  // already decided, so the first task seen for an agent is the right one.
+  // Highest priority first — which the ordering above has already decided, so
+  // the first task seen for a skill is the right one. One per skill on the
+  // roster. In orchestrator mode a skill may take several, never two about
+  // the same record and never beside a task about no record: `active` is what
+  // each skill is working, by the records each task is about, and grows as
+  // this tick starts more.
   const started: string[] = [];
-  const takenThisTick = new Set<string>();
+  const active = new Map<string, string[][]>();
+  if (perSkill > 1) {
+    const runningNow = await prisma.agentTask.findMany({
+      where: { status: "RUNNING" },
+      select: { agentKey: true, leadId: true, clientId: true, projectId: true, proposalId: true, invoiceId: true },
+    });
+    for (const row of runningNow) active.set(row.agentKey, [...(active.get(row.agentKey) ?? []), recordsOf(row)]);
+  }
+  // What this process has taken and the database may not show yet. Records
+  // unknown, so each counts as a task nothing may start beside.
+  for (const [agentKey, held] of busyAgents) {
+    const known = active.get(agentKey)?.length ?? 0;
+    for (let missing = held.size - known; missing > 0; missing -= 1) active.set(agentKey, [...(active.get(agentKey) ?? []), []]);
+  }
   let heldByBudget = 0;
   let heldByPace = 0;
   for (const task of sortedDue) {
     if (started.length >= capacity) break;
     if (running.has(task.id)) continue;
-    if (busyAgents.has(task.agentKey) || takenThisTick.has(task.agentKey)) continue;
+    const mine = recordsOf(task);
+    if (!mayStartBeside(mine, active.get(task.agentKey) ?? [], perSkill)) continue;
 
     // The cheapest place a ceiling can be enforced, and the safest: nothing has
     // started, so nothing is half-done. A task held here stays QUEUED with its
@@ -3932,7 +3994,7 @@ export async function runDueTasks(now = new Date(), limit?: number): Promise<num
       }
     }
 
-    takenThisTick.add(task.agentKey);
+    active.set(task.agentKey, [...(active.get(task.agentKey) ?? []), mine]);
     started.push(task.id);
     // Deliberately not awaited: the scheduler tick must not be held open for
     // a job that takes two minutes, and each run manages its own state.

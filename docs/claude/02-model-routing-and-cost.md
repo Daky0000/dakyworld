@@ -48,6 +48,25 @@ stopped together. NVIDIA lists a different model per kind of work, all of them
 free on one OpenAI-shaped wire, so the ladder underneath each job is now three
 models picked *for that job*.
 
+**A free model that is not there for this account is left out for six
+hours** — `liveFreeLadder`, `markFreeModelGone` in `models/registry.ts`,
+13 Nov 2026. The boot prune drops what NVIDIA stops *listing*, and only from a
+ladder the Owner stored. But a model can be listed and still answer
+`404 Function … Not found for account`: on the live workforce the third rung of
+nearly every shipped ladder did, on every run, so each task paid one call and
+one wait for a ladder that was really two rungs long, and nothing said so. A
+rung that answers 404 or 410 (`saysModelIsGone` — never a 429, a 5xx or a
+refused key, which say nothing about the model) is now marked in the agent
+loop and in `callModel`, and `liveFreeLadder` — what `runAgentLoop`,
+`nvidiaAttempts` and the image path climb — leaves it out until its time is
+up. Process-local and timed, like the key cooldown: a restart clears it, and
+nothing is written to settings. **A ladder is never emptied by this** — with
+every rung marked, the configured ladder comes back whole, because an empty
+ladder means "free models off" to everything that reads one. `freeLadderFor`
+stays the configured answer, which is what Settings shows.
+`clearNvidiaCooldown()` clears this too. `checks/freeModelGone.ts` needs no
+database.
+
 **The free ladders: three free models per job, then the best paid one of
 three** — `nvidia.freeModels`, `FREE_LADDER_BY_JOB` / `freeLadderFor()` and
 `PAID_AGENT_CHAIN` in `registry.ts`. Every model NVIDIA serves on that endpoint
