@@ -3,7 +3,7 @@ import { FLAG, flagOn } from "../../lib/featureFlags.js";
 import { prisma } from "../../lib/prisma.js";
 import { SETTING, getSetting, setSetting } from "../../lib/settings.js";
 import { parseScheduleTime, safeZone, zonedDateParts, zonedTimeToUtc } from "../../lib/timezone.js";
-import { recordCreated } from "./state.js";
+import { recordCreated, transition } from "./state.js";
 import { failureClassOf, step, type FailureClass } from "./runner.js";
 
 /**
@@ -182,6 +182,12 @@ export interface StandingSlot {
   open: number;
   /** BLOCKED runs left out of `open` because they ended short rather than asked. */
   endedShort: EndedShort[];
+  /**
+   * BLOCKED runs that stopped because no model could serve them — no key, no
+   * credit, every vendor refusing. Still counted in `open`; listed so the
+   * next slot can try them again rather than sit behind them. See `retryUnserved`.
+   */
+  unserved: string[];
 }
 
 /**
@@ -230,6 +236,7 @@ export async function standingSlot(schedule: { agentKey: string; title: string }
   ]);
 
   const endedShort: EndedShort[] = [];
+  const unserved: string[] = [];
   let asking = 0;
   for (const task of blocked) {
     const reason = task.transitions[0]?.reason ?? "";
@@ -238,9 +245,44 @@ export async function standingSlot(schedule: { agentKey: string; title: string }
       endedShort.push({ id: task.id, failureClass, reason });
     } else {
       asking += 1;
+      if (failureClass === "vendor-unavailable") unserved.push(task.id);
     }
   }
-  return { open: working + asking, endedShort };
+  return { open: working + asking, endedShort, unserved };
+}
+
+/**
+ * Puts back in the queue the runs of a standing job that no model could serve.
+ *
+ * A run that ends because every vendor refused — no key, no credit left — is
+ * BLOCKED, which is right: a person has to add the credit. But nothing about
+ * the *task* needs deciding, and it held its job's only slot from then on. On
+ * the live workforce in Nov 2026 that was all fourteen standing jobs at once:
+ * one morning with an empty Anthropic balance, an empty OpenAI one and a free
+ * tier timing out, and every later slot of every job logged "already has 1
+ * open" for days. Adding credit would not have restarted any of them either —
+ * each needed its own Carry on.
+ *
+ * So the job's next slot tries the same run again, with its conversation kept.
+ * If the vendors are back it simply carries on; if they are not, it blocks
+ * again on the same question and has cost one refused call. Never a second
+ * copy raised beside it: that would be a new task a day for as long as the
+ * outage lasts. Only this class — a task that asked a person something, ran
+ * out of turns or was declined is waiting for a decision, not for a vendor.
+ */
+export async function retryUnserved(schedule: { title: string }, unserved: readonly string[]): Promise<number> {
+  let retried = 0;
+  for (const id of unserved) {
+    const moved = await transition(id, {
+      to: "QUEUED",
+      reason: `No model could serve this at its last slot. "${schedule.title}" is due again, so it is being tried again from where it stopped rather than left waiting.`,
+      actor: "standing",
+      expect: ["BLOCKED"],
+      data: { blockedReason: null, error: null },
+    }).catch(() => ({ moved: false }));
+    if (moved.moved) retried += 1;
+  }
+  return retried;
 }
 
 /** The count alone, for the hold below. */
@@ -380,7 +422,16 @@ export async function raiseStandingWork(now = new Date(), after: Readonly<Record
     // about a deliberate decision is noise.
     if (schedule.agent.status !== "ACTIVE") continue;
 
-    const { open, endedShort } = await standingSlot(schedule);
+    const { open, endedShort, unserved } = await standingSlot(schedule);
+    // A run no model could serve is tried again at this slot, in place of a
+    // new one. Before the ceiling below, which it would otherwise sit behind.
+    if (unserved.length > 0) {
+      const retried = await retryUnserved(schedule, unserved);
+      if (retried > 0) {
+        console.log(`[standing] "${schedule.title}": trying ${retried} run(s) again that no model could serve last time.`);
+        continue;
+      }
+    }
     if (open >= schedule.maxOpenTasks) {
       console.warn(`[standing] "${schedule.title}" already has ${open} open — not raising another.`);
       continue;

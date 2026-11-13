@@ -44,7 +44,8 @@ import { check, scopesForAgent, type BudgetState } from "../budgets.js";
 import { hasPace, paceFor } from "./pace.js";
 import { planFor } from "./retry.js";
 import { EFFORT_LADDER, NOT_THE_MODELS_FAULT, routeTask, toStored } from "./complexity.js";
-import { ORCHESTRATOR_KEY, dispatchOrchestratorTasks, orchestratorHalted, orchestratorIdentity, orchestratorOn, skillsParagraph } from "./orchestrator.js";
+import { MAX_AFTER, MAX_WAITS, openSubtasks, readyToCarryOn, resolveAfter, subtaskRef, waitedResults } from "./waiting.js";
+import { DISPATCH_TOOL, ORCHESTRATOR_KEY, dispatchOrchestratorTasks, orchestratorHalted, orchestratorIdentity, orchestratorOn, skillsParagraph } from "./orchestrator.js";
 
 /**
  * What actually runs an agent.
@@ -878,6 +879,14 @@ export interface Counters {
   handedOff: number;
   /** Gaps raised: "nobody here can do this". */
   gapsRaised: number;
+  /** How many times this task has put itself down to wait for its sub-tasks. Capped at `MAX_WAITS`. */
+  waited?: number;
+  /**
+   * Set by `awaitSubtasks`: the sub-tasks this run is stopping to wait for.
+   * Like `escalated` it decides how the run ends and is never carried into
+   * the next one — a resume has been handed the results it was waiting for.
+   */
+  waitingOn?: string[];
 }
 
 /**
@@ -903,6 +912,7 @@ function restoreCounters(stored: Record<string, unknown> | undefined): Counters 
     consultedBy: restoreConsultedBy(stored),
     handedOff: number(stored?.handedOff),
     gapsRaised: number(stored?.gapsRaised),
+    waited: number(stored?.waited),
   };
 }
 
@@ -1428,12 +1438,59 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
       .max(4)
       .optional()
       .describe("Up to four yes-or-no checks that say the work is done."),
+    after: z
+      .array(z.string().max(120))
+      .max(MAX_AFTER)
+      .optional()
+      .describe("Earlier sub-tasks this one needs the result of, by reference (s1, s2). It waits for them and is handed their results. Omit for work that can run at the same time."),
   };
+
+  /**
+   * Queues one sub-task, waiting for the earlier ones it names.
+   *
+   * The one place a child row is written, for `delegate` and `handOff` both:
+   * the two used to carry a copy each, and the wait is exactly the kind of
+   * thing that reaches one copy and not the other.
+   */
+  const raiseChild = async (
+    target: Agent,
+    args: Record<string, unknown>,
+    brief: string,
+  ): Promise<{ refused: string } | { child: AgentTask; ref: string; waitsFor: string[]; waitNames: string[] }> => {
+    const scope = await childScope(args);
+    if ("refused" in scope) return scope;
+    const after = await resolveAfter(task.id, args.after);
+    if ("refused" in after) return after;
+
+    const child = await prisma.agentTask.create({
+      data: {
+        agentKey: target.key,
+        title: String(args.title ?? "").slice(0, 120),
+        brief,
+        input: scope.input,
+        origin: "AGENT",
+        parentId: task.id,
+        priority: task.priority,
+        ...scope.records,
+        waitsFor: after.ids,
+        // Inherited, always. A rehearsal that could only hold its first agent
+        // would be a rehearsal whose second agent sends the letter.
+        rehearsal: task.rehearsal,
+      },
+    });
+    return { child, ref: await subtaskRef(task.id, child.id), waitsFor: after.ids, waitNames: after.names };
+  };
+
+  /** What the model is told about a sub-task it has just raised: its name, and when it starts. */
+  const raisedNote = (ref: string, waitNames: string[]) =>
+    waitNames.length > 0
+      ? `It is sub-task ${ref}, and it starts when ${waitNames.map((name) => `"${name}"`).join(" and ")} ${waitNames.length === 1 ? "has" : "have"} ended — it will be handed the result.`
+      : `It is sub-task ${ref}, and it runs alongside your other sub-tasks. Name ${ref} in \`after\` on any later sub-task that needs its result.`;
 
   const delegate: AgentTool = {
     name: "delegate",
     description:
-      "Hand a piece of this work to one of the agents that reports to you. Use it when the work is somebody else's craft rather than yours. The task is queued for them; you do not wait for it.",
+      "Hand a piece of this work to one of the agents that reports to you. Use it when the work is somebody else's craft rather than yours. It runs on its own, alongside anything else you raise. If it needs an earlier sub-task's result, name that one in `after`. If you need the results yourself, call `awaitSubtasks` once everything is raised.",
     inputSchema: zodToJsonSchema(
       z.object({
         agentKey: z.string().max(64).describe("The key of the agent to hand it to. It must report to you."),
@@ -1467,8 +1524,6 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
       if (target.status === "RETIRED" || target.status === "PAUSED") {
         return { content: `${target.name} is ${target.status.toLowerCase()} and cannot take work.`, isError: true };
       }
-      const scope = await childScope(input);
-      if ("refused" in scope) return { content: scope.refused, isError: true };
       // In a rehearsal, a report that was never switched on is woken rather
       // than left holding a task that will never start, and put back when the
       // run ends. Without it the most interesting thing a rehearsal can show —
@@ -1477,28 +1532,18 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
       // a draft goes on queueing exactly as it did before.
       if (task.rehearsal && target.status === "DRAFT") await wakeOne(task.id, target.key);
 
-      const child = await prisma.agentTask.create({
-        data: {
-          agentKey: target.key,
-          title: String(input.title ?? "").slice(0, 120),
-          brief: String(input.brief ?? "").slice(0, 2000),
-          input: scope.input,
-          origin: "AGENT",
-          parentId: task.id,
-          priority: task.priority,
-          ...scope.records,
-          // Inherited, always. A rehearsal that could only hold its first agent
-          // would be a rehearsal whose second agent sends the letter.
-          rehearsal: task.rehearsal,
-        },
-      });
+      const raised = await raiseChild(target, input, String(input.brief ?? "").slice(0, 2000));
+      if ("refused" in raised) return { content: raised.refused, isError: true };
+      const { child } = raised;
       counters.delegated += 1;
       await recordCreated(child.id, child.traceId, child.status, {
-        reason: `${agent.name} delegated this to ${target.name}.`,
+        reason: `${agent.name} delegated this to ${target.name}${raised.waitNames.length ? `, to start after ${raised.waitNames.map((name) => `"${name}"`).join(", ")}` : ""}.`,
         actor: "agent",
       });
-      await step(task.id, "DELEGATED", `To ${target.name}: ${child.title}`, { data: { agentKey: target.key, taskId: child.id } });
-      return { content: `Queued for ${target.name}. You are not waiting on it — carry on with your own part.${draftWarning(target, task.rehearsal)}` };
+      await step(task.id, "DELEGATED", `To ${target.name}: ${child.title}${raised.waitNames.length ? ` (after ${raised.waitNames.join(", ")})` : ""}`, {
+        data: { agentKey: target.key, taskId: child.id, ref: raised.ref, after: raised.waitsFor },
+      });
+      return { content: `Queued for ${target.name}. ${raisedNote(raised.ref, raised.waitNames)}${draftWarning(target, task.rehearsal)}` };
     },
   };
 
@@ -1674,7 +1719,7 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
 
   const handOff: AgentTool = {
     name: "handOff",
-    description: `Give the remaining work to an agent that does not report to you, because it is their craft rather than yours. Unlike \`delegate\` this goes sideways across the chart, so it needs a reason a person would accept. They get a task of their own; you do not wait for it, and you say in your summary that you handed it over. You get ${MAX_HANDOFFS} of these on a task, so spend them on work that has no route down your own chart — if the agent you want sits under one of your reports, \`delegate\` to that report instead.`,
+    description: `Give the remaining work to an agent that does not report to you, because it is their craft rather than yours. Unlike \`delegate\` this goes sideways across the chart, so it needs a reason a person would accept. They get a task of their own, which runs on its own; say in your summary that you handed it over. You get ${MAX_HANDOFFS} of these on a task, so spend them on work that has no route down your own chart — if the agent you want sits under one of your reports, \`delegate\` to that report instead.`,
     inputSchema: zodToJsonSchema(
       z.object({
         agentKey: z.string().max(64).describe("Who takes it. Find one with findAgent first."),
@@ -1700,28 +1745,14 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
       if (target.status === "RETIRED" || target.status === "PAUSED") {
         return { content: `${target.name} is ${target.status.toLowerCase()} and cannot take work. Try findAgent again, or use needSkill if nobody else can.`, isError: true };
       }
-      const scope = await childScope(input);
-      if ("refused" in scope) return { content: scope.refused, isError: true };
       // Same as `delegate`, and this is the one that needs it most: a hand-off
       // goes sideways to anybody on the roster, so it is far likelier than a
       // delegation to land on a specialist nobody has switched on yet.
       if (task.rehearsal && target.status === "DRAFT") await wakeOne(task.id, target.key);
 
-      const child = await prisma.agentTask.create({
-        data: {
-          agentKey: target.key,
-          title: String(input.title ?? "").slice(0, 120),
-          brief: `${String(input.brief ?? "").slice(0, 2000)}\n\n--- Handed over by ${agent.name} ---\n${String(input.why ?? "")}`,
-          input: scope.input,
-          origin: "AGENT",
-          parentId: task.id,
-          priority: task.priority,
-          ...scope.records,
-          // Same reason as `delegate`. Handing work sideways must not be a way
-          // out of a rehearsal.
-          rehearsal: task.rehearsal,
-        },
-      });
+      const raised = await raiseChild(target, input, `${String(input.brief ?? "").slice(0, 2000)}\n\n--- Handed over by ${agent.name} ---\n${String(input.why ?? "")}`);
+      if ("refused" in raised) return { content: raised.refused, isError: true };
+      const { child } = raised;
       counters.handedOff += 1;
       await recordCreated(child.id, child.traceId, child.status, {
         reason: `${agent.name} handed this to ${target.name}: ${String(input.why ?? "no reason given")}`,
@@ -1730,7 +1761,7 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
       await step(task.id, "HANDED_OFF", `To ${target.name}: ${child.title} — ${String(input.why ?? "")}`, {
         data: { agentKey: target.key, taskId: child.id, why: input.why },
       });
-      return { content: `Queued for ${target.name}. You are not waiting on it — finish your own part and say in your summary that this went to them.${draftWarning(target, task.rehearsal)}` };
+      return { content: `Queued for ${target.name}. ${raisedNote(raised.ref, raised.waitNames)} Say in your summary that this went to them.${draftWarning(target, task.rehearsal)}` };
     },
   };
 
@@ -1781,6 +1812,48 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
     },
   };
 
+  // --- Waiting for what was raised -------------------------------------------
+  //
+  // The missing half of delegation. A parent could raise work and could never
+  // read it: its run ended with "delegated to 2 agents" as its whole account,
+  // and the note each child left on it reached no prompt.
+  const awaitSubtasks: AgentTool = {
+    name: "awaitSubtasks",
+    description:
+      "Stop until the sub-tasks you raised on this task have ended, then carry on with their results. Use it when your own part needs them: to join the pieces, check them, or report what was done. Raise everything first. If nothing is left for you to do with the results, finish instead.",
+    inputSchema: zodToJsonSchema(
+      z.object({
+        reason: z.string().min(10).max(300).describe("What you will do with the results."),
+      }),
+      { target: "jsonSchema7", $refStrategy: "none" },
+    ) as Record<string, unknown>,
+    run: async (input) => {
+      const { open, all } = await openSubtasks(task.id);
+      if (all.length === 0) {
+        return { content: "You have not raised any sub-tasks on this task, so there is nothing to wait for. Do the work, raise it under the skill that owns it, or escalate.", isError: true };
+      }
+      // Nothing is still going: the results are the answer, now, and the run carries on.
+      if (open.length === 0) {
+        return { content: await waitedResults(task, all.map((child) => child.id), "parent") };
+      }
+      if ((counters.waited ?? 0) >= MAX_WAITS) {
+        return {
+          content: `You have already stopped to wait ${MAX_WAITS} times on this task. Finish with what you have and say what is still outstanding, or escalate — a fourth round is a brief that needs a person.`,
+          isError: true,
+        };
+      }
+      counters.waited = (counters.waited ?? 0) + 1;
+      // Everything it raised, not only what is still going: the ones already
+      // over are part of the same account, and it is handed all of them at once.
+      counters.waitingOn = all.map((child) => child.id);
+      const reason = String(input.reason ?? "").slice(0, 300);
+      await step(task.id, "NOTED", `Waiting for ${open.length} sub-task${open.length === 1 ? "" : "s"} to end: ${open.map((child) => `"${child.title}"`).join(", ")}. ${reason}`, {
+        data: { waitingOn: counters.waitingOn, reason },
+      });
+      return { content: `Stopping here. You will be picked up again when ${open.length === 1 ? "it has" : `all ${open.length} have`} ended, with the results.`, stop: true };
+    },
+  };
+
   // `findAgent` and `needSkill` are on every turn of every task and are never
   // pruned: an agent that cannot *look* for a colleague reports a gap for a
   // craft that has been on the roster since March, and `needSkill` is the only
@@ -1790,6 +1863,9 @@ export function workflowTools(agent: Agent, task: AgentTask, counters: Counters,
   const tools: AgentTool[] = [escalate, rememberTool, updateLivingContextTool];
   if (can.history) tools.push(noteTool, historyTool);
   if (can.delegate) tools.push(delegate);
+  // With whichever of the two can still raise work, or with work already
+  // raised: a task that has spent both hand-offs still has their results to read.
+  if (can.delegate || can.handOff || counters.delegated + counters.handedOff > 0) tools.push(awaitSubtasks);
   tools.push(findAgentTool);
   if (can.consult) tools.push(consult);
   if (can.handOff) tools.push(handOff);
@@ -1996,7 +2072,7 @@ function skillSteps(can: WorkflowAvailability): string {
   }
   if (can.delegate) {
     steps.push(
-      "`delegate` — raise a sub-task under another skill, as often as the work needs. It runs on its own with that skill's tools, so write the brief for somebody who was not here, name the record, and say what done looks like.",
+      "`delegate` — raise a sub-task under another skill, as often as the work needs. It runs on its own with that skill's tools, so write the brief for somebody who was not here, name the record, and say what done looks like. **Pieces that do not need each other: raise them together and they run at the same time. A piece that needs another's result: name the earlier one in `after`, and it waits and is handed that result.** Then `awaitSubtasks` if your own part needs what comes back.",
     );
   }
   if (can.handOff) {
@@ -2549,6 +2625,28 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
         : null;
       const traceInConversation = trace && !halfway?.pendingAssistant ? await appendToConversation(task.id, trace) : false;
 
+      // What it waited for has ended, and this is where it is told. On the end
+      // of the conversation it is rejoining when there is one; on the brief
+      // when it has not started yet — written to the row, so a run that dies
+      // before its first checkpoint still starts from it next time. Here rather
+      // than on the tick, so a person pressing Run on a waiting task gets the
+      // same hand-over with whatever has ended so far.
+      if (task.waitsFor.length > 0) {
+        // Who is reading decides the wording: a task that waited for work it
+        // raised itself is responsible for it; one that waited for a sibling is
+        // only building on it. Where it is said is a separate question — the
+        // conversation if there is one to rejoin, the brief if there is not.
+        const own = await prisma.agentTask.count({ where: { id: { in: task.waitsFor }, parentId: task.id } });
+        const results = await waitedResults(task, task.waitsFor, own > 0 ? "parent" : "dependent");
+        const told = await appendToConversation(task.id, results);
+        if (!told) task.brief = `${task.brief}\n\n${results}`;
+        await prisma.agentTask.update({ where: { id: task.id }, data: { waitsFor: [], ...(told ? {} : { brief: task.brief }) } });
+        await step(task.id, "NOTED", `Picked up with the results of ${task.waitsFor.length} piece${task.waitsFor.length === 1 ? "" : "s"} of work it waited for.`, {
+          data: { waitedFor: task.waitsFor },
+        });
+        task.waitsFor = [];
+      }
+
       const saved = await loadCheckpoint(task.id);
       let counters: Counters = saved
         ? restoreCounters(saved.counters)
@@ -2567,6 +2665,8 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       // task would go straight back to BLOCKED without doing anything. What the
       // Owner answered is already in the conversation by this point.
       counters.escalated = null;
+      // Nor the wait: it has just been handed what it was waiting for.
+      counters.waitingOn = undefined;
 
       // **"Carry on" after the cap buys `CAP_GRANT_TURNS` more, once.** The
       // checkpoint of a run that used every turn says so (`endedBy`), and a
@@ -2690,7 +2790,11 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       const hint = likelyToolsLine(granted.likely);
       // A retry with no conversation to rejoin is told on its brief instead,
       // after everything else, where a reader can see it is ours.
-      const brief = [described, hint, trace && !traceInConversation ? trace : ""].filter(Boolean).join("\n\n");
+      // A task the orchestrator kept for itself starts from the skills the
+      // dispatch thought closest, rather than from a blank search. A guess from
+      // the wording, said as one.
+      const closest = agent.key === ORCHESTRATOR_KEY && !saved ? await closestSkillsLine(task.id) : "";
+      const brief = [described, hint, closest, trace && !traceInConversation ? trace : ""].filter(Boolean).join("\n\n");
 
       // How demanding this is, which decides the paid model and how hard every
       // model thinks. See `complexity.ts`. Written down before the run so a
@@ -2935,6 +3039,15 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
           });
         }
 
+        // Put down to wait for its sub-tasks, with its place kept. Not an
+        // outcome: the task goes back to the queue holding the ids it waits
+        // for, the tick leaves it alone until they have ended, and the claim
+        // that follows hands it their results. An escalation outranks it — an
+        // agent that asked a person has said what it needs first.
+        if (!counters.escalated && counters.waitingOn?.length) {
+          return waitingTask(task.id, runOwner, counters.waitingOn, { toolCalls: counters.toolCalls, dryRunCalls: counters.dryRun });
+        }
+
         let summary: string;
         if (result.text && result.text.trim()) {
           summary = result.text.trim();
@@ -3070,6 +3183,59 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
     running.delete(taskId);
     if (claimedAgent) busyAgents.delete(claimedAgent);
   }
+}
+
+/**
+ * Returns a run to the queue to wait for its sub-tasks.
+ *
+ * The same move an interrupt makes — RUNNING to QUEUED, checkpoint kept, skill
+ * freed — with `waitsFor` written in the same statement, so there is no
+ * instant at which the task is queued and claimable with nothing to wait for.
+ * It made progress by definition (it raised work and asked for it back), so
+ * the attempt and retry counters start again.
+ */
+async function waitingTask(taskId: string, runOwner: string, waitsFor: string[], data: { toolCalls: number; dryRunCalls: number }): Promise<RunOutcome> {
+  const spentUsd = await spendOn(taskId);
+  await transition(taskId, {
+    to: "QUEUED",
+    reason: `Waiting for ${waitsFor.length} sub-task${waitsFor.length === 1 ? "" : "s"} to end; its place is kept.`,
+    actor: "runner",
+    expect: ["RUNNING"],
+    guard: { runOwner },
+    data: {
+      runOwner: null,
+      startedAt: null,
+      interruptRequested: false,
+      waitsFor,
+      costUsd: spentUsd.toFixed(6),
+      toolCalls: data.toolCalls,
+      dryRunCalls: data.dryRunCalls,
+      attempts: 0,
+      retryCount: 0,
+      retryReason: null,
+    },
+  });
+  return { status: "QUEUED", summary: null };
+}
+
+/** The dispatch's shortlist, for a task the orchestrator kept. Empty when there was none. */
+async function closestSkillsLine(taskId: string): Promise<string> {
+  const dispatched = await prisma.agentTaskStep.findFirst({ where: { taskId, tool: DISPATCH_TOOL }, orderBy: { seq: "desc" }, select: { data: true } });
+  const shortlist = ((dispatched?.data as { shortlist?: Array<{ key?: unknown }> } | null)?.shortlist ?? [])
+    .map((entry) => (typeof entry?.key === "string" ? entry.key : ""))
+    .filter(Boolean)
+    .slice(0, 4);
+  if (shortlist.length === 0) return "";
+  const skills = await prisma.agent.findMany({ where: { key: { in: shortlist } }, select: { key: true, name: true, mission: true } });
+  if (skills.length === 0) return "";
+  return [
+    "CLOSEST SKILLS, on the wording of this task alone — none was a clear match, which is why it is yours:",
+    ...shortlist.flatMap((key) => {
+      const skill = skills.find((candidate) => candidate.key === key);
+      return skill ? [`- ${skill.name} (\`${skill.key}\`) — ${skill.mission.slice(0, 160)}`] : [];
+    }),
+    "A starting point, not a decision: check with `findAgent` before raising work under any of them.",
+  ].join("\n");
 }
 
 /** The line a short ending adds when the run also left prepared work behind. */
@@ -3684,10 +3850,21 @@ export async function runDueTasks(now = new Date(), limit?: number): Promise<num
   // a queue of eight tasks for one agent is one startable task and seven that
   // have to wait for it. Taking exactly `capacity` rows would find that agent
   // twice and start nothing.
+  // A task waiting for other work is QUEUED and not yet startable. Worked out
+  // once a tick: the ones whose wait is over are due like anything else, and
+  // the rest are not looked at.
+  const carryOn = await readyToCarryOn().catch((err) => {
+    console.error("[agent] could not work out which waiting tasks may carry on:", (err as Error).message);
+    return [] as string[];
+  });
+
   const due = await prisma.agentTask.findMany({
     where: {
       status: "QUEUED",
-      OR: [{ scheduledFor: null }, { scheduledFor: { lte: now } }],
+      AND: [
+        { OR: [{ scheduledFor: null }, { scheduledFor: { lte: now } }] },
+        { OR: [{ waitsFor: { isEmpty: true } }, { id: { in: carryOn } }] },
+      ],
       agent: { status: "ACTIVE", tasks: { none: { status: "RUNNING" } } },
     },
     take: capacity * 8,

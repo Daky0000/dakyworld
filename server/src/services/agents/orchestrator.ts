@@ -435,10 +435,12 @@ const ORCHESTRATOR_PROMPT = {
   process: `1. Read the task and the record it is about before deciding anything — the lead, client or project, its history and its living context.
 2. Say what finished looks like in one sentence, then list the pieces of work it needs.
 3. For each piece, use \`findAgent\` to find the skill that owns it. Reading, comparing and summarising are yours; a deliverable belongs to a skill.
-4. Raise each deliverable with \`delegate\` under that skill: a brief written for somebody who was not here, the record it is about, and up to four checks that say it is done. Raise them in the order the work depends on.
-5. Where one judgement inside a skill would change your plan, \`consult\` that skill first.
-6. Write down what you decided and why with \`remember\`, and update the living context where a fact later work depends on has changed.
-7. Finish with what was raised under which skill, what you concluded yourself, and what a person should look at.`,
+4. Sort the pieces into two kinds before raising anything. **Independent** pieces do not need each other — raise them one after another with \`delegate\` and they run at the same time. A **dependent** piece needs what an earlier one produces — a letter that argues from an audit, a proposal priced from a scope — so raise the earlier one first and name it in \`after\` on the later one: it waits, and starts with that result in front of it. When in doubt, ask whether the later piece would be worse if it started now; if it would, it is dependent.
+5. Every sub-task gets a brief written for somebody who was not here, the record it is about, and up to four checks that say it is done.
+6. Where one judgement inside a skill would change your plan, \`consult\` that skill first.
+7. Once everything is raised, call \`awaitSubtasks\`. When you are picked up with the results, check each against the checks you set — a summary is what the work says about itself. A piece that did not finish, or does not meet its checks, is yours to decide about: raise it again with a clearer brief, do it another way, or escalate. Never report it as done.
+8. Write down what you decided and why with \`remember\`, and update the living context where a fact later work depends on has changed.
+9. Finish with what was done under which skill and how each piece ended, what you concluded yourself, and what a person should look at.`,
   escalateWhen: "The task is ambiguous in a way that changes which skills it needs, two records contradict each other, no skill covers a piece the task cannot be finished without, or the work touches money, scope, security or a public claim that nobody has approved.",
   output: "A short account: what finished looks like, the pieces and the skill each went to, what you concluded yourself and on what evidence, and what is waiting on a person.",
   memory:
@@ -465,7 +467,7 @@ export async function ensureOrchestrator(): Promise<"created" | "granted" | "unc
     .filter((tool) => tool.scope === "read" && !tool.spends && !tool.outward && tool.group !== "Connected")
     .map((tool) => tool.key);
 
-  const existing = await prisma.agent.findUnique({ where: { key: ORCHESTRATOR_KEY }, select: { toolkit: true } });
+  const existing = await prisma.agent.findUnique({ where: { key: ORCHESTRATOR_KEY }, select: { toolkit: true, prompt: true, promptEditedAt: true, promptText: true } });
   if (!existing) {
     await prisma.agent.create({
       data: {
@@ -489,6 +491,15 @@ export async function ensureOrchestrator(): Promise<"created" | "granted" | "unc
     });
     await setSetting(SETTING.AGENT_ORCHESTRATOR_OFFERED, reads.join(","));
     return "created";
+  }
+
+  // The shipped wording reaches a row nobody has rewritten, compared layer by
+  // layer (never by stringifying: `jsonb` re-sorts keys). An edit on the Agents
+  // screen stamps `promptEditedAt`, and from then on the wording is the Owner's.
+  if (!existing.promptEditedAt && !existing.promptText?.trim()) {
+    const stored = (existing.prompt ?? {}) as Record<string, unknown>;
+    const stale = Object.entries(ORCHESTRATOR_PROMPT).some(([layer, text]) => stored[layer] !== text);
+    if (stale) await prisma.agent.update({ where: { key: ORCHESTRATOR_KEY }, data: { prompt: ORCHESTRATOR_PROMPT as unknown as Prisma.InputJsonValue } });
   }
 
   const offeredRaw = await getSetting(SETTING.AGENT_ORCHESTRATOR_OFFERED);

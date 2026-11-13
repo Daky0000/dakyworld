@@ -212,7 +212,13 @@ function Group({
                       status is the same and the news is not: this one is
                       waiting on a vendor and will start itself. */}
                   <span className={task.paused ? "text-warn-text" : undefined}>
-                    {task.paused ? "paused" : STATUS_LABEL[task.status]}
+                    {task.paused
+                      ? "paused"
+                      : task.waitingOn
+                        ? // Queued and not startable yet: a sub-task raised to run after
+                          // another, or a task waiting for the sub-tasks it raised.
+                          `waiting on ${task.waitingOn} other task${task.waitingOn === 1 ? "" : "s"}`
+                        : STATUS_LABEL[task.status]}
                   </span>
                   {task.paused && task.pausedUntil && (
                     <span className="text-warn-text">

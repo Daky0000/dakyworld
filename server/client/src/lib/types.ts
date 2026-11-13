@@ -2414,6 +2414,8 @@ export interface AgentTask {
   paused: boolean;
   pausedUntil: string | null;
   pausedBecause: string | null;
+  /** How many other tasks this one is waiting to end before it starts or carries on. 0 when it is not waiting. */
+  waitingOn?: number;
   /** How many times this run has been put down for something outside it. */
   pauses: number;
   /** How demanding it was judged to be. Null until its first run sizes it. */

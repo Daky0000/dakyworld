@@ -3128,6 +3128,19 @@ model AgentTask {
   parentId String?
   children AgentTask[] @relation("Delegation")
 
+  /// The tasks this one may not start, or carry on, before — as bare ids.
+  ///
+  /// Two things write it. A sub-task raised with `after` waits for the earlier
+  /// sub-tasks it names; a parent that calls `awaitSubtasks` waits for its own
+  /// open sub-tasks with its conversation kept. Either way the task is QUEUED
+  /// and simply not picked up until every task named here has ended, and it is
+  /// handed their results when it is. See `services/agents/waiting.ts`.
+  ///
+  /// Ids rather than a relation on purpose: a task that is waited for can be
+  /// deleted, and what waits for it must then be free to go rather than be
+  /// deleted with it or blocked by a foreign key.
+  waitsFor String[] @default([])
+
   status       AgentTaskStatus @default(QUEUED)
   /// 1 urgent, 2 normal, 3 whenever. Drives the order the runner picks in.
   priority     Int             @default(2)

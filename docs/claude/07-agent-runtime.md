@@ -80,6 +80,77 @@ below this paragraph describes both modes unless it says otherwise; read
   task box (`OrchestratorPanel.tsx`), calls the cards below it skills, and
   carries the switch (`PUT /agents/mode`).
 
+**Sub-tasks run in order or side by side, and the parent hears how they
+ended** — `agents/waiting.ts`, `AgentTask.waitsFor`, 13 Nov 2026. `delegate`
+used to queue a child and tell its parent "you are not waiting on it", which
+was true in the worst way: every child started the moment its skill was free,
+in no order, and the parent wrote its summary before any had begun. *Audit the
+site, then write the letter from the audit, then tell me what was sent* became
+three strangers working at once — a letter with no audit under it and a summary
+reading "delegated to 2 agents". One column carries both halves of the fix: the
+ids of the tasks this one may not start, or carry on, before.
+
+- **In parallel is the default; one at a time is asked for.** A sub-task raised
+  with no `after` starts as soon as its skill is free, beside the others (the
+  ceiling is still `agents.maxConcurrentTasks`, and still one task per skill).
+  A sub-task raised with `after: ["s1"]` waits for the earlier sub-tasks it
+  names and **starts with their results in its brief**. The rule the prompt
+  gives: would the later piece be worse if it started now? Then it is
+  dependent.
+- **References are the parent's own**: `s1`, `s2` in the order it raised them
+  (`subtaskRef`), returned by `delegate` and `handOff` and accepted by
+  `after`, as is an exact title. Only a sub-task this parent already raised can
+  be named, which is what makes a cycle impossible. Unknown references are
+  refused with the ones that exist; nothing is queued.
+- **`awaitSubtasks`** stops the run and puts the task back in the queue with
+  its conversation kept and `waitsFor` set to every sub-task it raised — the
+  same RUNNING → QUEUED move an interrupt makes, in one statement
+  (`waitingTask`), so there is no instant at which it is claimable with nothing
+  to wait for. With all of them already ended it answers at once and does not
+  stop. Capped at `MAX_WAITS` (3) a task; an escalation outranks it.
+- **Waiting is not a status.** A waiting task is QUEUED with a non-empty
+  `waitsFor`, exactly as a paused one is QUEUED with a future `scheduledFor`.
+  `runDueTasks` asks `readyToCarryOn()` once a tick — two queries whatever the
+  queue — and leaves the rest alone. Nothing has to wake a waiter, so nothing
+  can forget to: a restart or a second process reads the same column.
+- **What ends a wait**: DONE, NEEDS_APPROVAL (prepared work; what is left is an
+  approval, not more work), FAILED, CANCELLED, a task that no longer exists —
+  and a task QUEUED under a skill that is a draft, paused or retired, which is
+  reported as NOT STARTED rather than waited on for ever. **A BLOCKED task has
+  asked a person something and its answer is the work**, so what waits for it
+  goes on waiting.
+- **The hand-over happens at the claim, once** (`runTask`): on the end of the
+  conversation when there is a checkpoint, on the brief — written to the row —
+  when the task has not started. In the claim rather than on the tick, so a
+  person pressing Run on a waiting task gets the same hand-over with whatever
+  has ended so far. Two wordings (`waitedResults`): a **parent** is told to
+  check each result against what it asked for and that an unfinished piece is
+  its to decide about, never to report as done; a **dependent** is handed the
+  results as material and told to escalate if a piece it needs is missing.
+  Summaries and the acceptance checks only, never timelines.
+- `raiseChild` is the one place a child row is written now; `delegate` and
+  `handOff` each carried a copy.
+- A task the orchestrator kept starts with the dispatch's shortlist in its
+  brief (`closestSkillsLine`), and the orchestrator's own shipped process now
+  says: sort the pieces into independent and dependent, raise, `awaitSubtasks`,
+  check each result against its checks. `ensureOrchestrator()` carries shipped
+  wording onto a row nobody has rewritten.
+- The task API carries `waitingOn`, and the timeline list says "waiting on 2
+  other tasks" in place of "queued".
+
+`checks/delegationOrder.ts` drives the real tools against the real roster.
+
+**A standing job is not stopped by a morning with no model.** A run that ends
+because every vendor refused — no key, no credit — is BLOCKED with class
+`vendor-unavailable`, which is right, and it then held its job's only slot for
+good: on the live workforce in Nov 2026 that was all fourteen jobs at once,
+logging "already has 1 open" for days, and adding credit would not have
+restarted any of them without fourteen Carry ons. The job's next slot now puts
+that same run back in the queue with its conversation kept (`retryUnserved` in
+`standingWork.ts`) — never a second copy beside it. Only this class: a task
+that asked, ran out of turns or was declined is waiting for a decision, not
+for a vendor.
+
 **An agent turn is a job like any other, and it routes like one.** The loop
 itself picks its vendor: **NVIDIA first and free first** — it climbs the three
 rungs of the `agent` free ladder before anything is paid for — then the paid

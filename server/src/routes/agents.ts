@@ -1482,6 +1482,7 @@ function taskSummary(task: {
   createdAt: Date;
   retryCount: number;
   retryReason: string | null;
+  waitsFor: string[];
   level: string | null;
   levelOverride: string | null;
   levelReason: string | null;
@@ -1525,6 +1526,9 @@ function taskSummary(task: {
      * rules, with the screen quietly disagreeing with the runner about whether
      * a task is waiting.
      */
+    // Queued, and not startable until other work has ended: a sub-task with
+    // `after`, or a parent waiting for the sub-tasks it raised.
+    waitingOn: task.status === "QUEUED" ? task.waitsFor.length : 0,
     paused: isPaused(task),
     pausedUntil: task.scheduledFor,
     pausedBecause: task.retryReason,
