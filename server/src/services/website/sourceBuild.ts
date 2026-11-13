@@ -131,6 +131,117 @@ export function canRunLocalBuild(): boolean {
   }
 }
 
+const NEXT_CONFIG_CANDIDATES = [
+  "next.config.ts",
+  "next.config.mts",
+  "next.config.mjs",
+  "next.config.js",
+  "next.config.cjs",
+] as const;
+
+type NextConfigWrapMode = "ts" | "esm" | "cjs";
+
+function resolveNextConfigMode(ext: string, raw: string, projectDir: string): NextConfigWrapMode {
+  if (ext === ".ts" || ext === ".mts") return "ts";
+  if (ext === ".mjs") return "esm";
+  if (ext === ".cjs") return "cjs";
+  try {
+    const pkgRaw = fs.readFileSync(path.join(projectDir, "package.json"), "utf8");
+    const pkg = JSON.parse(pkgRaw) as { type?: string };
+    if (pkg.type === "module" && !/\bmodule\.exports\b/.test(raw)) return "esm";
+  } catch {}
+  if (/^\s*(export\s+default\b|import\s+)/m.test(raw) && !/\bmodule\.exports\b|\bexports\s*\./.test(raw)) {
+    return "esm";
+  }
+  return "cjs";
+}
+
+function buildNextConfigWrapper(mode: NextConfigWrapMode, origFilename: string): string {
+  const isTs = mode === "ts";
+  // Extensionless import keeps `tsc --noEmit` valid when allowImportingTsExtensions is disabled.
+  const importTarget = isTs ? `./${origFilename.replace(/\.[^.]+$/, "")}` : `./${origFilename}`;
+  const importLine =
+    mode === "cjs"
+      ? `const rawModule = require("${importTarget}");\nconst rawConfig = rawModule && rawModule.__esModule && "default" in rawModule ? rawModule.default : rawModule;`
+      : `import rawConfig from "${importTarget}";`;
+  const baseType = isTs ? ": Record<string, any> | undefined | null" : "";
+  const argsType = isTs ? ": any[]" : "";
+  const anyType = isTs ? ": any" : "";
+  const exportConst = isTs ? `"export" as const` : `"export"`;
+  const fnCast = isTs ? `(rawConfig as (...a: any[]) => any)` : `rawConfig`;
+  const objCast = isTs ? `rawConfig as Record<string, any>` : `rawConfig`;
+  const imagesExpr = isTs ? "(base?.images as Record<string, any> | undefined)" : "base?.images";
+
+  return [
+    importLine,
+    ``,
+    `const dwWithStaticExport = (base${baseType}) => ({`,
+    `  ...(base ?? {}),`,
+    `  output: ${exportConst},`,
+    `  trailingSlash: base?.trailingSlash ?? true,`,
+    `  images: {`,
+    `    ...(${imagesExpr} ?? {}),`,
+    `    unoptimized: true,`,
+    `  },`,
+    `});`,
+    ``,
+    `const wrappedConfig =`,
+    `  typeof rawConfig === "function"`,
+    `    ? async (...args${argsType}) => dwWithStaticExport(await ${fnCast}(...args))`,
+    `    : rawConfig && typeof ${isTs ? "(rawConfig as any)" : "rawConfig"}.then === "function"`,
+    `      ? Promise.resolve(rawConfig).then((resolved${anyType}) => dwWithStaticExport(resolved))`,
+    `      : dwWithStaticExport(${objCast});`,
+    ``,
+    mode === "cjs" ? `module.exports = wrappedConfig;` : `export default wrappedConfig;`,
+    ``,
+  ].join("\n");
+}
+
+/**
+ * Ensures a Next.js project produces a static `out/` export even when the uploaded
+ * archive omits `output: "export"` or ignores `STATIC_EXPORT=1` in next.config.*.
+ */
+export function ensureNextStaticExportConfig(projectDir: string): {
+  updated: boolean;
+  configFile: string;
+  reason: "already-configured" | "wrapped" | "created";
+} {
+  const existing = NEXT_CONFIG_CANDIDATES.find((name) => fs.existsSync(path.join(projectDir, name)));
+  if (!existing) {
+    const configFile = "next.config.mjs";
+    fs.writeFileSync(
+      path.join(projectDir, configFile),
+      [
+        `export default {`,
+        `  output: "export",`,
+        `  trailingSlash: true,`,
+        `  images: { unoptimized: true },`,
+        `};`,
+        ``,
+      ].join("\n"),
+      "utf8"
+    );
+    return { updated: true, configFile, reason: "created" };
+  }
+
+  const configPath = path.join(projectDir, existing);
+  const raw = fs.readFileSync(configPath, "utf8");
+  if (
+    /\bSTATIC_EXPORT\b/.test(raw) ||
+    /\boutput\s*:\s*["']export["']/.test(raw) ||
+    raw.includes("next.config.dw-orig")
+  ) {
+    return { updated: false, configFile: existing, reason: "already-configured" };
+  }
+
+  const ext = path.extname(existing);
+  const origFilename = `next.config.dw-orig${ext}`;
+  fs.renameSync(configPath, path.join(projectDir, origFilename));
+  const mode = resolveNextConfigMode(ext, raw, projectDir);
+  fs.writeFileSync(configPath, buildNextConfigWrapper(mode, origFilename), "utf8");
+  return { updated: true, configFile: existing, reason: "wrapped" };
+}
+
 /**
  * Compiles a framework source project into static HTML and assets.
  * 1. Checks for already pre-rendered folders (out/, dist/).
@@ -206,6 +317,10 @@ export async function buildSourceProject(
         const err = installRes.stderr?.toString("utf8") || installRes.stdout?.toString("utf8") || "Unknown error";
         throw new Error(`Dependency installation failed: ${err.slice(-400)}`);
       }
+    }
+
+    if (detection.kind === "next") {
+      ensureNextStaticExportConfig(tempDir);
     }
 
     // Run build command

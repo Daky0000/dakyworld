@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { detectSourceProject, extractPrebuiltEntries } from "../src/services/website/sourceBuild.js";
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import {
+  detectSourceProject,
+  ensureNextStaticExportConfig,
+  extractPrebuiltEntries,
+} from "../src/services/website/sourceBuild.js";
 import { analyzeImportPackage } from "../src/services/websitePackageImport.js";
 import JSZip from "jszip";
 
@@ -91,5 +100,94 @@ try {
 }
 ok("Threw error explaining source project when autoBuild is false", caughtError !== null);
 ok("Error message includes guidance", caughtError!.message.includes("Next.js") && caughtError!.message.includes("STATIC_EXPORT=1 npm run build"));
+
+// 6. Test ensureNextStaticExportConfig variants
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dw-next-cfg-test-"));
+const requireFromHere = createRequire(import.meta.url);
+try {
+  // 6a. Missing config -> creates next.config.mjs
+  const missingDir = path.join(tmpRoot, "missing");
+  fs.mkdirSync(missingDir, { recursive: true });
+  const missingRes = ensureNextStaticExportConfig(missingDir);
+  equal("Creates next.config.mjs when missing", missingRes, {
+    updated: true,
+    configFile: "next.config.mjs",
+    reason: "created",
+  });
+  const missingMod = await import(pathToFileURL(path.join(missingDir, "next.config.mjs")).href);
+  equal("Created next.config.mjs resolves static export", missingMod.default, {
+    output: "export",
+    trailingSlash: true,
+    images: { unoptimized: true },
+  });
+
+  // 6b. TypeScript config without output -> wraps via extensionless import + dw-orig.ts
+  const tsDir = path.join(tmpRoot, "ts-app");
+  fs.mkdirSync(tsDir, { recursive: true });
+  const tsOrig = `const nextConfig = { images: { unoptimized: true }, reactStrictMode: true };\nexport default nextConfig;\n`;
+  fs.writeFileSync(path.join(tsDir, "next.config.ts"), tsOrig, "utf8");
+  const tsRes = ensureNextStaticExportConfig(tsDir);
+  equal("Wraps next.config.ts when output is missing", tsRes, {
+    updated: true,
+    configFile: "next.config.ts",
+    reason: "wrapped",
+  });
+  equal("Preserves original ts config in next.config.dw-orig.ts", fs.readFileSync(path.join(tsDir, "next.config.dw-orig.ts"), "utf8"), tsOrig);
+  const tsWrapper = fs.readFileSync(path.join(tsDir, "next.config.ts"), "utf8");
+  ok("TS wrapper uses extensionless dw-orig import", tsWrapper.includes('from "./next.config.dw-orig"') && !tsWrapper.includes("dw-orig.ts"));
+  ok("TS wrapper forces output: export", tsWrapper.includes('output: "export"'));
+
+  // 6c. ESM .mjs function config -> wraps and executes cleanly preserving async options
+  const mjsDir = path.join(tmpRoot, "mjs-fn");
+  fs.mkdirSync(mjsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(mjsDir, "next.config.mjs"),
+    `export default async () => ({ images: { remotePatterns: [{ hostname: "cdn.example" }] }, trailingSlash: false });\n`,
+    "utf8"
+  );
+  const mjsRes = ensureNextStaticExportConfig(mjsDir);
+  equal("Wraps next.config.mjs", mjsRes, { updated: true, configFile: "next.config.mjs", reason: "wrapped" });
+  const mjsMod = await import(pathToFileURL(path.join(mjsDir, "next.config.mjs")).href);
+  equal("Function ESM wrapper returns function", typeof mjsMod.default, "function");
+  const resolvedMjs = await mjsMod.default("phase-production-build", { defaultConfig: {} });
+  equal("Wrapped ESM function config resolves static export while preserving trailingSlash & images", resolvedMjs, {
+    images: { remotePatterns: [{ hostname: "cdn.example" }], unoptimized: true },
+    trailingSlash: false,
+    output: "export",
+  });
+
+  // 6d. CJS next.config.js -> wraps cleanly and runs via require()
+  const cjsDir = path.join(tmpRoot, "cjs-app");
+  fs.mkdirSync(cjsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(cjsDir, "next.config.js"),
+    `module.exports = { images: { domains: ["example.com"] } };\n`,
+    "utf8"
+  );
+  const cjsRes = ensureNextStaticExportConfig(cjsDir);
+  equal("Wraps CJS next.config.js", cjsRes, { updated: true, configFile: "next.config.js", reason: "wrapped" });
+  const resolvedCjs = requireFromHere(path.join(cjsDir, "next.config.js"));
+  equal("Wrapped CJS config resolves static export with preserved domains", resolvedCjs, {
+    images: { domains: ["example.com"], unoptimized: true },
+    output: "export",
+    trailingSlash: true,
+  });
+
+  // 6e. Already-configured output: "export" left untouched
+  const configuredDir = path.join(tmpRoot, "configured");
+  fs.mkdirSync(configuredDir, { recursive: true });
+  const configuredSrc = `export default { output: "export", trailingSlash: false };\n`;
+  fs.writeFileSync(path.join(configuredDir, "next.config.mjs"), configuredSrc, "utf8");
+  const configuredRes = ensureNextStaticExportConfig(configuredDir);
+  equal("Leaves already-configured output: 'export' untouched", configuredRes, {
+    updated: false,
+    configFile: "next.config.mjs",
+    reason: "already-configured",
+  });
+  equal("Original configured file unchanged", fs.readFileSync(path.join(configuredDir, "next.config.mjs"), "utf8"), configuredSrc);
+  ok("No dw-orig file created when already configured", !fs.existsSync(path.join(configuredDir, "next.config.dw-orig.mjs")));
+} finally {
+  fs.rmSync(tmpRoot, { recursive: true, force: true });
+}
 
 console.log(`websiteSourceBuild: ${checks} checks passed.`);
