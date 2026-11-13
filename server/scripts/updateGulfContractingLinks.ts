@@ -1,4 +1,6 @@
 import { prisma } from "../src/lib/prisma.js";
+import { invalidate } from "../src/lib/cache.js";
+import { appUrl } from "../src/services/emailSender.js";
 import { rewritePageLinks } from "../src/services/websiteSitePackage.js";
 
 async function main() {
@@ -20,16 +22,19 @@ async function main() {
 
   console.log(`Found Site: ${site.name} (${site.id}), current slug: ${site.slug}`);
 
+  const baseOrigin = (await appUrl()).replace(/\/+$/, "");
+  const nextPublicUrl = `${baseOrigin}/website/${site.slug}`;
+
   // 1. Update site record
   await prisma.site.update({
     where: { id: site.id },
     data: {
-      publicUrl: `https://os.dakyworld.com/website/${site.slug}`,
+      publicUrl: nextPublicUrl,
       hostedSlug: null,
       hostedEnabled: false,
     },
   });
-  console.log(`Updated site.publicUrl -> https://os.dakyworld.com/website/${site.slug}, cleared hostedSlug.`);
+  console.log(`Updated site.publicUrl -> ${nextPublicUrl}, cleared hostedSlug.`);
 
   // 2. Fetch pages
   const pages = await prisma.sitePage.findMany({
@@ -43,7 +48,10 @@ async function main() {
   const routes = new Set(pages.map((p) => p.path));
   const basePath = `/website/${site.slug}`;
   const scopedAssetBase = `/website/${site.slug}/assets/dw/`;
-  const rewriteAssetUrls = (text: string) => text.replace(/(^|["'(\s,=])\/assets\/dw\//g, `$1${scopedAssetBase}`);
+  const rewriteUrls = (text: string) =>
+    text
+      .replace(/(^|["'(\s,=])\/assets\/dw\//g, `$1${scopedAssetBase}`)
+      .replace(/https?:\/\/os\.dakyworld\.com(?=\/website\/)/gi, baseOrigin);
 
   let totalRewritten = 0;
 
@@ -51,12 +59,12 @@ async function main() {
     if (!page.sourceHtml) continue;
     const { html: linkedSource, rewritten } = rewritePageLinks(page.sourceHtml, page.filePath, byFile, routes, basePath, site.slug);
     totalRewritten += rewritten;
-    const newSource = rewriteAssetUrls(linkedSource);
+    const newSource = rewriteUrls(linkedSource);
 
     const linkedPublished = page.publishedHtml
       ? rewritePageLinks(page.publishedHtml, page.filePath, byFile, routes, basePath, site.slug).html
       : null;
-    const newPublished = rewriteAssetUrls(linkedPublished || newSource);
+    const newPublished = rewriteUrls(linkedPublished || newSource);
 
     await prisma.sitePage.update({
       where: { id: page.id },
@@ -67,21 +75,21 @@ async function main() {
     });
   }
 
-  // 3. Rewrite /assets/dw/ inside SitePageVersion snapshots
+  // 3. Rewrite /assets/dw/ and legacy hosts inside SitePageVersion snapshots
   const versions = await prisma.sitePageVersion.findMany({
     where: { page: { siteId: site.id } },
     select: { id: true, html: true },
   });
   let updatedVersions = 0;
   for (const v of versions) {
-    const nextHtml = rewriteAssetUrls(v.html);
+    const nextHtml = rewriteUrls(v.html);
     if (nextHtml !== v.html) {
       await prisma.sitePageVersion.update({ where: { id: v.id }, data: { html: nextHtml } });
       updatedVersions++;
     }
   }
 
-  // 4. Rewrite /assets/dw/ inside text assets (CSS, JS)
+  // 4. Rewrite /assets/dw/ and legacy hosts inside text assets (CSS, JS)
   const textAssets = await prisma.siteAsset.findMany({
     where: {
       siteId: site.id,
@@ -94,7 +102,7 @@ async function main() {
   for (const asset of textAssets) {
     if (!asset.content) continue;
     const original = Buffer.from(asset.content).toString("utf8");
-    const next = rewriteAssetUrls(original);
+    const next = rewriteUrls(original);
     if (next !== original) {
       const buf = Buffer.from(next, "utf8");
       await prisma.siteAsset.update({
@@ -104,6 +112,8 @@ async function main() {
       updatedAssets++;
     }
   }
+
+  await invalidate(`site:${site.id}`, "metadata");
 
   console.log(`Successfully rewrote ${totalRewritten} links across ${pages.length} pages (${updatedVersions} versions, ${updatedAssets} text assets).`);
 

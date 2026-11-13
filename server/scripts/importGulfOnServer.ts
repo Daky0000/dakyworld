@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
 import { prisma } from "../src/lib/prisma.js";
+import { appUrl } from "../src/services/emailSender.js";
 import { extractPageTitle, routePathForFile } from "../src/services/websitePackageImport.js";
 import { commitSitePackage } from "../src/services/websiteSitePackage.js";
 import type { WebsiteActor } from "../src/services/websiteActor.js";
@@ -100,7 +101,7 @@ async function main() {
       data: {
         name: "Gulf Contracting Co. W.L.L.",
         slug: "gulf-contracting",
-        publicUrl: "https://os.dakyworld.com/website/gulf-contracting",
+        publicUrl: `${(await appUrl()).replace(/\/+$/, "")}/website/gulf-contracting`,
         members: {
           create: {
             userId: owner.id,
