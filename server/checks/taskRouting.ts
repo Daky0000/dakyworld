@@ -35,6 +35,11 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Agent, AgentTask } from "@prisma/client";
 
+// These are the roster's weights. `checks/run.ts` sets this for the whole
+// suite; said here too so the file reads the same run on its own. Under one
+// orchestrator the router reads different signals — `checks/routerSignals.ts`.
+process.env.AGENTS_MODE ??= "roster";
+
 const failures: string[] = [];
 let passed = 0;
 

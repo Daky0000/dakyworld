@@ -1359,7 +1359,7 @@ const BUILDER_HARDER: Array<{ word: string; pattern: RegExp }> = [
  * agents' `scoreTask`: below zero simple, four and above complex, and a request
  * with nothing to say about it standard.
  */
-export function scoreBuilderRequest(input: { prompt: string; attachments: number; selected: boolean }): { score: number; reasons: string[] } {
+export function scoreBuilderRequest(input: { prompt: string; attachments: number; selected: boolean; crafts?: number }): { score: number; reasons: string[] } {
   let score = 0;
   const reasons: string[] = [];
   const add = (points: number, why: string) => {
@@ -1383,6 +1383,9 @@ export function scoreBuilderRequest(input: { prompt: string; attachments: number
   // "Review this page" is four words and the most reading the agent does:
   // every element, judged. Short and selected must not make it simple.
   if (/\b(?:review|audit|critique|check over|look over)\b/i.test(prompt)) add(2, "a review of the page");
+  // A request that needs two crafts at once — the words and the layout, the
+  // design and the motion — is two judgements that have to agree.
+  if ((input.crafts ?? 0) >= 2) add(1, "needs two crafts at once");
   return { score, reasons };
 }
 
@@ -1414,6 +1417,8 @@ export async function routeBuilderRequest(input: {
   attachments: number;
   selected: boolean;
   downgrade: boolean;
+  /** How many skills the request picked (`pickBuilderSkills`). */
+  crafts?: number;
   mode?: RoutingMode;
   look?: typeof lookAtTask;
 }): Promise<BuilderRouting> {
@@ -2696,11 +2701,18 @@ async function planWithModel(ctx: ModelContext): Promise<SiteAgentPlan> {
     if (other) shown.set(page.id, other);
   }
 
-  const routing = await routeBuilderRequest({ prompt: trimmed, attachments: attachments.length, selected: Boolean(ctx.selected), downgrade: budget.action === "downgrade" });
-  const level = routing.level;
   // One agent, the right skill for the request: at most two pieces of craft
   // doctrine, chosen by the wording and the selection, with no model call.
+  // Before the grading, which reads how many crafts the request needs.
   ctx.skills = pickBuilderSkills({ prompt: trimmed, selectedKind: ctx.selected?.kind ?? ctx.selected?.tag ?? null, attachments: attachments.length });
+  const routing = await routeBuilderRequest({
+    prompt: trimmed,
+    attachments: attachments.length,
+    selected: Boolean(ctx.selected),
+    downgrade: budget.action === "downgrade",
+    crafts: ctx.skills.length,
+  });
+  const level = routing.level;
   console.log(`[website agent] site ${site.id}: ${routing.sentence}${ctx.skills.length ? ` Skills: ${ctx.skills.map((skill) => skill.name).join(", ")}.` : ""}`);
   try {
     const system = await customerWriterSystem("website.editor", AGENT_BRIEF, { preamble: [AGENT_PREAMBLE], contract: AGENT_CONTRACT });

@@ -2666,6 +2666,7 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
       // before its first checkpoint still starts from it next time. Here rather
       // than on the tick, so a person pressing Run on a waiting task gets the
       // same hand-over with whatever has ended so far.
+      const builtOn = task.waitsFor.length;
       if (task.waitsFor.length > 0) {
         // Who is reading decides the wording: a task that waited for work it
         // raised itself is responsible for it; one that waited for a sibling is
@@ -2852,6 +2853,8 @@ export async function runTask(taskId: string): Promise<RunOutcome> {
         // A rung of the ladder the conversation was already on, so a pause in
         // the middle of a retry comes back thinking as hard as it left.
         savedEffortFloor: savedEffort(saved?.counters.effortFloor),
+        // Work it waited for and was handed: synthesis on top of its own job.
+        builtOn,
       });
       if (sized.level && sized.decidedBy !== "stored") {
         await prisma.agentTask.update({

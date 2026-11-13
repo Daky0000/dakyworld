@@ -222,6 +222,49 @@ first answer wins:
    standard task asked for medium) gives back the raised thinking instead, on
    the same model.
 
+**Under one orchestrator the rules grade the task, not the rank, and learn
+from their own gradings** — 13 Nov 2026, `facts.oneAgent` in `scoreTask`,
+`recentOutcomes` in `routeTask`. The roster's weights stand exactly as above
+when `agents.mode` is `roster`, which is how the suite runs; the differences
+below apply only in orchestrator mode.
+
+- **Rank was three points, awarded before a word of the brief was read.** A
+  status check given to the Chief Executive ran on the top model. With one
+  agent there is no seniority to grade; what is real is the *kind of output*
+  (`KIND_WEIGHT`): a board or executive skill's output is a decision (+2), a
+  risk or people skill's a review (+1), and a specialist's deliverable starts
+  level — its difficulty is in the brief and the tools.
+- **A sub-task is not marked down for being one.** "A slice of a colleague's
+  task" (−1) described a manager handing down a lookup. Under the orchestrator
+  a sub-task is where the letter, the proposal and the audit are actually
+  made, and the point off sent exactly that work to the small model: a
+  proposal raised as a sub-task scored low strength and now scores medium.
+- **Three signals about the work**: three or more steps in order (`partsIn` —
+  a numbered or bulleted list, or steps strung with "then … finally"; the
+  hand-over block `waiting.ts` adds to a brief is ours and is not counted)
+  +1; work built on earlier pieces it waited for (`builtOn`, which only the
+  runner knows once they are handed over) +1; and a call the brief points at
+  that **sends or charges** +1 — what it costs to get wrong, read from the
+  tool's scope rather than from the list of agents' names in
+  `WRITES_FOR_OUTSIDE`, and never counted twice with it.
+- **It learns, upward only.** After the rules and the look, `recentOutcomes`
+  reads this skill's last eight tasks at the strength just chosen (30 days,
+  rehearsals left out). Six or more with three ended short — out of turns, or
+  failed on its own calls or untagged — and the task starts a step up, said on
+  the ROUTED step: "3 of this skill's last 8 low-strength tasks ended short of
+  finishing". The retry ladder only ever fixed one task at a time, after it
+  had failed. **Not counted**: a refusal, a truncation, a vendor that was
+  down, the task's own ceiling, anything the reaper or a restart wrote — none
+  says the model was not up to it. **Never downward**: finishing at medium is
+  not evidence it would have finished at low. Not asked for the Owner's own
+  choice, a resume or a retry, nor at high strength; a read that fails changes
+  nothing. The budget's cap still comes last and outranks it.
+- **The Builder agent's router** adds one point when a request picked two
+  skills (`crafts`): two judgements that have to agree.
+
+`checks/routerSignals.ts` (35, no database) holds all of it, the first section
+being that the roster's scores have not moved.
+
 Resolution of a slot (`tierSlot`): `models.tierModels` (priced ids only, like
 `models.jobModels`) → the model the Owner had already set for that vendor
 (`anthropic.model` = complex, `anthropic.model.economy` = standard,

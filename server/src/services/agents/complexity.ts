@@ -2,6 +2,7 @@ import type { Agent, AgentTask, AgentTaskStatus } from "@prisma/client";
 import type { Effort } from "../../lib/claude.js";
 import { callModel } from "../../lib/models/call.js";
 import { TASK_LEVELS, effortForLevel, isTaskLevel, providerConfigured, type TaskLevel } from "../../lib/models/registry.js";
+import { prisma } from "../../lib/prisma.js";
 import { SETTING, getSetting } from "../../lib/settings.js";
 import { check, scopesForAgent } from "../budgets.js";
 import type { ToolScope } from "../tools/types.js";
@@ -182,6 +183,14 @@ export interface TaskFacts {
   /** The tools the brief's own words point at — `likelyTools` in the runner. */
   likely: string[];
   linked: { lead: boolean; client: boolean; project: boolean; proposal: boolean; invoice: boolean };
+  /**
+   * One orchestrator with skills, rather than a roster of agents. Changes what
+   * the rules read — see `scoreTask`. Absent is the roster, so a caller that
+   * knows nothing about modes scores exactly as it always did.
+   */
+  oneAgent?: boolean;
+  /** How many earlier pieces of work this task waited for and was handed the results of. */
+  builtOn?: number;
 }
 
 export interface Score {
@@ -197,6 +206,50 @@ const TIER_WEIGHT: Record<Agent["tier"], number> = {
   OPERATIONAL: 0,
   SUB_AGENT: -1,
 };
+
+/**
+ * What a skill's kind is worth under one orchestrator.
+ *
+ * The roster's weights above grade **rank**: three points for being an
+ * executive, which is the difference between low strength and high, awarded
+ * before a word of the task is read. A status check given to the Chief
+ * Executive ran on the top model, and a proposal written by a specialist
+ * started a point down. The sizing prompt has always said "judge the task, not
+ * the agent's seniority"; the rules did the opposite.
+ *
+ * With one agent there is no seniority to grade. What is left, and is real, is
+ * the *kind of output*: a board or executive skill produces a decision, where
+ * being wrong is expensive and nothing checks it; a risk or people skill
+ * produces a review. Those keep a smaller weight. A specialist's deliverable
+ * starts level — its difficulty is in the brief and the tools, which the rest
+ * of the rules read.
+ */
+const KIND_WEIGHT: Record<Agent["tier"], { points: number; why: string }> = {
+  BOARD: { points: 2, why: "its output is a decision" },
+  EXECUTIVE: { points: 2, why: "its output is a decision" },
+  FUNCTIONAL: { points: 1, why: "its output is a review" },
+  OPERATIONAL: { points: 0, why: "" },
+  SUB_AGENT: { points: 0, why: "" },
+};
+
+/** The hand-over block `waiting.ts` adds to a brief. Ours, not the task's: not counted as steps of the work. */
+const HANDED_OVER = "EARLIER WORK THIS TASK WAITED FOR";
+
+/**
+ * How many pieces of work a brief asks for, in order.
+ *
+ * A numbered or bulleted list of what to do, or the words a person uses to
+ * string steps together. One sentence asking for one thing is one. Counted
+ * because a task with four ordered steps fails differently from a task with
+ * one: the model has to hold the plan across turns, and a small model drops
+ * step three.
+ */
+export function partsIn(text: string): number {
+  const own = text.split(HANDED_OVER)[0] ?? text;
+  const listed = (own.match(/^[ \t]*(?:\d{1,2}[.)]|[-*•])[ \t]+\S/gm) ?? []).length;
+  const strung = (own.match(/\b(?:and then|then|after that|afterwards|once (?:that|this|it) is done|finally|lastly)\b/gi) ?? []).length;
+  return Math.max(listed, strung > 0 ? strung + 1 : 1);
+}
 
 /**
  * The rules' score for one task. Higher is harder.
@@ -216,10 +269,20 @@ export function scoreTask(facts: TaskFacts): Score {
     reasons.push(`${why} (${points > 0 ? "+" : ""}${points})`);
   };
 
-  add(TIER_WEIGHT[facts.agentTier] ?? 0, `a ${facts.agentTier.toLowerCase().replace("_", "-")} agent`);
+  const oneAgent = facts.oneAgent === true;
+  if (oneAgent) {
+    const kind = KIND_WEIGHT[facts.agentTier];
+    if (kind) add(kind.points, kind.why);
+  } else {
+    add(TIER_WEIGHT[facts.agentTier] ?? 0, `a ${facts.agentTier.toLowerCase().replace("_", "-")} agent`);
+  }
 
   if (facts.origin === "SCHEDULE") add(-1, "routine standing work");
-  if (facts.origin === "AGENT") add(-1, "a slice of a colleague's task");
+  // On the roster a delegated task was a manager handing down a slice. Under
+  // one orchestrator a sub-task is where the deliverable is actually made —
+  // the letter, the proposal, the audit — and a point off for being one sent
+  // exactly that work to the small model.
+  if (facts.origin === "AGENT" && !oneAgent) add(-1, "a slice of a colleague's task");
 
   const scopes = new Map(facts.toolkit.map((tool) => [tool.key, tool.scope]));
   const heavy = facts.likely.find((key) => HEAVY_TOOLS.has(key));
@@ -245,6 +308,21 @@ export function scoreTask(facts: TaskFacts): Score {
 
   const linkedCount = Object.values(facts.linked).filter(Boolean).length;
   if (facts.linked.proposal || facts.linked.project || linkedCount >= 2) add(1, "tied to a proposal, a project or several records");
+
+  // Three things about the work itself, read only under one orchestrator so
+  // the roster's scores are exactly what they were.
+  if (oneAgent) {
+    const parts = partsIn(words);
+    if (parts >= 3) add(1, `${parts} steps in order`);
+
+    if ((facts.builtOn ?? 0) > 0) add(1, `builds on ${facts.builtOn} earlier piece${facts.builtOn === 1 ? "" : "s"} of work`);
+
+    // What it would cost to get wrong. A call that sends or charges cannot be
+    // taken back, whichever skill makes it; the roster knew this only as a
+    // list of agents' names (`WRITES_FOR_OUTSIDE`, counted above).
+    const irreversible = facts.likely.find((key) => scopes.get(key) === "send" || scopes.get(key) === "charge");
+    if (irreversible && !WRITES_FOR_OUTSIDE.has(facts.agentKey)) add(1, `looks like it needs ${irreversible}, which sends or charges`);
+  }
 
   return { score, reasons };
 }
@@ -479,12 +557,93 @@ export interface RouteRequest {
   mode?: RoutingMode;
   /** Replaces the free-model look. For a check; nothing else passes it. */
   look?: typeof lookAtTask;
+  /** One orchestrator or the roster. Read from `agents.mode` when absent. */
+  oneAgent?: boolean;
+  /** How many earlier pieces of work this task waited for. The runner knows; nothing on the row does once they are handed over. */
+  builtOn?: number;
+  /** Replaces the read of how this skill's recent tasks ended. For a check. */
+  outcomes?: typeof recentOutcomes;
+}
+
+// --- What the last gradings came to ------------------------------------------
+
+/**
+ * How a skill's recent tasks at one strength ended.
+ *
+ * The router graded every task and never looked at what became of its
+ * gradings. A skill whose low-strength tasks keep running out of turns, or
+ * keep failing on their own tool calls, is a skill being under-graded — and
+ * the retry ladder only ever fixed that one task at a time, after it had
+ * already failed once, every time.
+ */
+export interface Outcomes {
+  /** Tasks counted: the newest few that reached an ending. */
+  of: number;
+  /** Of those, how many ended short in a way a stronger model could have avoided. */
+  short: number;
+}
+
+/** How far back, how many it takes to mean anything, and how many shorts tip it. */
+export const OUTCOME_WINDOW = 8;
+export const OUTCOME_MIN = 6;
+export const OUTCOME_SHORT = 3;
+const OUTCOME_DAYS = 30;
+
+/**
+ * Endings that say the model was not up to the work: it used every turn, or
+ * it failed on its own calls or for a reason nobody tagged. Not a refusal (a
+ * stronger model declines the same content), not a truncation (thinking
+ * harder spends more of the same reply), not a vendor being down, not the
+ * task's own spending ceiling — and never a failure the reaper or a restart
+ * wrote, which is about the process.
+ */
+function endedShortOfIt(status: AgentTaskStatus, reason: string | null | undefined, actor: string | null | undefined): boolean {
+  if (actor && NOT_THE_MODELS_FAULT.has(actor)) return false;
+  const tag = /^\[([a-z-]+)\]/.exec(reason ?? "")?.[1] ?? null;
+  if (status === "BLOCKED") return tag === "iteration-cap";
+  if (status === "FAILED") return tag === null || tag === "tool-error" || tag === "other";
+  return false;
+}
+
+export async function recentOutcomes(agentKey: string, level: TaskLevel, exceptTaskId?: string): Promise<Outcomes> {
+  const rows = await prisma.agentTask.findMany({
+    where: {
+      agentKey,
+      level: toStored(level),
+      // A rehearsal is not the work, and its endings are not evidence about it.
+      rehearsal: false,
+      status: { in: ["DONE", "NEEDS_APPROVAL", "FAILED", "BLOCKED"] },
+      createdAt: { gte: new Date(Date.now() - OUTCOME_DAYS * 24 * 60 * 60_000) },
+      ...(exceptTaskId ? { id: { not: exceptTaskId } } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: OUTCOME_WINDOW,
+    select: {
+      status: true,
+      transitions: {
+        where: { to: { in: ["FAILED", "BLOCKED"] } },
+        orderBy: [{ at: "desc" }, { id: "desc" }],
+        take: 1,
+        select: { reason: true, actor: true },
+      },
+    },
+  });
+  // A BLOCKED task with no class asked a person something: an ending, and not a short one.
+  const short = rows.filter((row) => endedShortOfIt(row.status, row.transitions[0]?.reason, row.transitions[0]?.actor)).length;
+  return { of: rows.length, short };
+}
+
+/** Enough evidence, and enough of it bad, to grade this skill's next task a step up. */
+export function outcomesSayHarder(seen: Outcomes): boolean {
+  return seen.of >= OUTCOME_MIN && seen.short >= OUTCOME_SHORT;
 }
 
 /** Everything the rules read, taken off the rows the runner already has. */
-export function factsFor(request: Pick<RouteRequest, "agent" | "task" | "toolkit" | "likely">): TaskFacts {
+export function factsFor(request: Pick<RouteRequest, "agent" | "task" | "toolkit" | "likely" | "oneAgent" | "builtOn">): TaskFacts {
   const { agent, task } = request;
   return {
+    ...(request.oneAgent ? { oneAgent: true } : {}),
+    ...(request.builtOn ? { builtOn: request.builtOn } : {}),
     title: task.title,
     brief: task.brief,
     inputChars: task.input == null ? 0 : JSON.stringify(task.input).length,
@@ -602,7 +761,9 @@ export async function routeTask(request: RouteRequest): Promise<LevelDecision> {
     // minutes, and a line each time would bury the timeline.
     sentence = null;
   } else {
-    const facts = factsFor(request);
+    // Unset is one orchestrator, as everywhere else that reads `agents.mode`.
+    const oneAgent = request.oneAgent ?? (await getSetting(SETTING.AGENT_MODE).catch(() => null))?.trim().toLowerCase() !== "roster";
+    const facts = factsFor({ ...request, oneAgent });
     const scored = scoreTask(facts);
     score = scored.score;
     reasons = scored.reasons;
@@ -628,6 +789,23 @@ export async function routeTask(request: RouteRequest): Promise<LevelDecision> {
     if (OUTSIDE_WRITING_FLOOR && WRITES_FOR_OUTSIDE.has(agent.key) && atLeast(level, OUTSIDE_WRITING_FLOOR) !== level) {
       level = OUTSIDE_WRITING_FLOOR;
       sentence = `${sentence} Raised to ${STRENGTH[level]}, the floor for writing that leaves the company.`;
+    }
+
+    // What became of the last gradings. Only ever upward, and only on real
+    // evidence: a skill whose recent tasks at this strength keep ending short
+    // is being under-graded, and the next one starts a step up instead of
+    // failing first and being retried. Never downward — a task finishing at
+    // medium is not evidence it would have finished at low. A read that fails
+    // changes nothing.
+    if (level !== "complex") {
+      const seen = await (request.outcomes ?? recentOutcomes)(agent.key, level, task.id).catch(() => null);
+      if (seen && outcomesSayHarder(seen)) {
+        const graded = level;
+        level = stepUp(level);
+        const learned = `${seen.short} of this skill's last ${seen.of} ${STRENGTH[graded]}-strength tasks ended short`;
+        reasons = [...reasons, `${learned} (one step up)`];
+        sentence = `${sentence} Raised to ${STRENGTH[level]}: ${learned} of finishing, so this one starts a step up rather than failing first.`;
+      }
     }
   }
 
