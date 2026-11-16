@@ -14,6 +14,12 @@ import type { Attachment, SendArgs, SendReceipt } from "./mailer.js";
  * The API takes no custom headers, so `replyTo` and `unsubscribeUrl` are
  * dropped here exactly as they are on the Hostinger path. `inReplyTo` is kept:
  * Mailflare writes the threading headers itself.
+ *
+ * **The letterhead artwork goes as inline parts.** An attachment that carries a
+ * `contentId` is sent inline, and the HTML shows it with `cid:`. That field
+ * is DakyXTech's own addition to Mailflare's send route — upstream sends every
+ * file as a plain attachment — so a Mailflare redeployed from an untouched
+ * upstream copy brings the broken-image boxes back. See the mailflare folder.
  */
 
 export class MailflareMailError extends Error {
@@ -60,13 +66,8 @@ export async function mailflareConfigured(): Promise<boolean> {
 }
 
 async function encodeAttachments(attachments: Attachment[]) {
-  const encoded: { filename: string; type: string; contentBase64: string }[] = [];
+  const encoded: { filename: string; type: string; contentBase64: string; contentId?: string }[] = [];
   for (const attachment of attachments) {
-    // Inline letterhead artwork is addressed as `cid:` from the HTML. The API
-    // has no inline parts, and the same picture arriving as a loose attachment
-    // on every email is worse than the picture not showing.
-    if (attachment.cid) continue;
-
     let buffer: Buffer | null = attachment.content ?? null;
     if (!buffer && attachment.path) {
       const response = await fetch(attachment.path).catch((err: Error) => {
@@ -85,6 +86,7 @@ async function encodeAttachments(attachments: Attachment[]) {
       filename: attachment.filename,
       type: attachment.contentType ?? "application/octet-stream",
       contentBase64: buffer.toString("base64"),
+      ...(attachment.cid ? { contentId: attachment.cid } : {}),
     });
   }
   return encoded;
