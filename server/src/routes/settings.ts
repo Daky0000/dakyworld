@@ -27,7 +27,7 @@ import { GoogleError, buildAuthUrl, clearGoogleTokenCache, googleConfigured, goo
 import { verifyStripeKey } from "../lib/stripe.js";
 import { paystackKeys, paystackMode, verifyPaystackKey, type PaystackMode } from "../lib/paystack.js";
 import { verifyHubtelKeys } from "../lib/hubtel.js";
-import { MailerError, activeTransport, readMailerConfig, sendMail, verifySmtp } from "../lib/mailer.js";
+import { MailerError, activeTransport, mailerConfigured, readMailerConfig, sendMail, verifySmtp } from "../lib/mailer.js";
 import { HostingerMailError, clearHostingerSession, fetchMailboxes, probeMcp, type HostingerMailbox, type McpProbe } from "../lib/hostingerMail.js";
 import { logoSources, signature, toHtml, toText } from "../services/emailRender.js";
 import { SlackError, sendSlack, slackTransport, verifySlack } from "../lib/slack.js";
@@ -530,7 +530,7 @@ async function describeEmail() {
   return {
     transport,
     /** Whether the transport that is actually live can send. */
-    configured: transport === "HOSTINGER" ? hostinger.configured : config !== null,
+    configured: transport === "MAILFLARE" ? await mailerConfigured() : transport === "HOSTINGER" ? hostinger.configured : config !== null,
     envManaged: isEnvManaged(SETTING.SMTP_HOST),
     transportEnvManaged: isEnvManaged(SETTING.MAIL_TRANSPORT),
     host,

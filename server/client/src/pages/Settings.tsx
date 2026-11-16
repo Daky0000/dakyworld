@@ -754,13 +754,15 @@ function EmailPanel({ settings }: { settings: AppSettings }) {
               {email.fromName} &lt;{email.fromEmail}&gt;
             </span>
             <span className="font-mono text-xs text-muted">
-              {email.transport === "HOSTINGER"
+              {email.transport === "MAILFLARE"
+                ? "mailflare"
+                : email.transport === "HOSTINGER"
                 ? email.hostinger.mcp?.ok
                   ? `hostinger mcp · ${email.hostinger.mcp.tool}`
                   : "hostinger mail api"
                 : `${email.host}:${email.port}`}
             </span>
-            {!(email.transport === "HOSTINGER" ? email.hostinger.envManaged : email.envManaged) && (
+            {!(email.transport === "MAILFLARE" || (email.transport === "HOSTINGER" ? email.hostinger.envManaged : email.envManaged)) && (
               <Button variant="ghost" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}>
                 Disconnect
               </Button>

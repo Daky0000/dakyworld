@@ -348,7 +348,7 @@ export const SETTING = {
   // Google Workspace, Hostinger, Zoho — and none of them need a new account
   // opening to start. Hostinger's own mailbox has a second, shorter route: an
   // MCP server that takes one API token instead of five SMTP fields.
-  /** "SMTP" or "HOSTINGER" — which of the two paths below actually sends. */
+  /** "SMTP", "HOSTINGER" or "MAILFLARE" — which of the paths below actually sends. */
   MAIL_TRANSPORT: "mail.transport",
   SMTP_HOST: "smtp.host",
   SMTP_PORT: "smtp.port",
@@ -422,6 +422,13 @@ export const SETTING = {
   HOSTINGER_MAIL_TOKEN: "hostinger.mailToken",
   HOSTINGER_MAILBOX_ID: "hostinger.mailboxId",
   HOSTINGER_MAILBOX_ADDRESS: "hostinger.mailboxAddress",
+
+  // Mailflare, the mail app on DakyXTech's own Cloudflare account. A third
+  // transport, chosen with MAIL_TRANSPORT = "MAILFLARE". See lib/mailflareMail.ts.
+  MAILFLARE_URL: "mailflare.url",
+  MAILFLARE_API_KEY: "mailflare.apiKey",
+  MAILFLARE_MAILBOX_ID: "mailflare.mailboxId",
+  MAILFLARE_MAILBOX_ADDRESS: "mailflare.mailboxAddress",
 
   // Slack, for internal alerts and escalation. Either route works and the
   // token wins when both are set — see lib/slack.ts.
@@ -859,6 +866,10 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.HOSTINGER_MAIL_TOKEN]: "HOSTINGER_MAIL_TOKEN",
   [SETTING.HOSTINGER_MAILBOX_ID]: "HOSTINGER_MAILBOX_ID",
   [SETTING.HOSTINGER_MAILBOX_ADDRESS]: "HOSTINGER_MAILBOX_ADDRESS",
+  [SETTING.MAILFLARE_URL]: "MAILFLARE_URL",
+  [SETTING.MAILFLARE_API_KEY]: "MAILFLARE_API_KEY",
+  [SETTING.MAILFLARE_MAILBOX_ID]: "MAILFLARE_MAILBOX_ID",
+  [SETTING.MAILFLARE_MAILBOX_ADDRESS]: "MAILFLARE_MAILBOX_ADDRESS",
   [SETTING.SMTP_HOST]: "SMTP_HOST",
   [SETTING.SMTP_PORT]: "SMTP_PORT",
   [SETTING.SMTP_SECURE]: "SMTP_SECURE",

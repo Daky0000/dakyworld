@@ -573,7 +573,7 @@ export interface CaptureConfig {
 }
 
 /** SMTP, or the Hostinger mailbox over its own MCP server. */
-export type MailTransport = "SMTP" | "HOSTINGER";
+export type MailTransport = "SMTP" | "HOSTINGER" | "MAILFLARE";
 
 /** What the Hostinger MCP server answered when it was last asked. */
 export interface McpProbe {

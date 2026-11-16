@@ -1,6 +1,7 @@
 import nodemailer, { type Transporter } from "nodemailer";
 import { SETTING, getSetting } from "./settings.js";
 import { HostingerMailError, hostingerConfigured, sendViaHostinger } from "./hostingerMail.js";
+import { MailflareMailError, mailflareConfigured, sendViaMailflare } from "./mailflareMail.js";
 import { inlineBrandImages } from "./brandAssets.js";
 import { prisma } from "./prisma.js";
 
@@ -89,7 +90,7 @@ export async function readMailerConfig(): Promise<MailerConfig | null> {
   };
 }
 
-export type MailTransport = "SMTP" | "HOSTINGER";
+export type MailTransport = "SMTP" | "HOSTINGER" | "MAILFLARE";
 
 /**
  * Which path sends. The stored choice wins; with nothing stored it falls back
@@ -98,13 +99,15 @@ export type MailTransport = "SMTP" | "HOSTINGER";
  */
 export async function activeTransport(): Promise<MailTransport> {
   const stored = await getSetting(SETTING.MAIL_TRANSPORT);
-  if (stored === "HOSTINGER" || stored === "SMTP") return stored;
+  if (stored === "HOSTINGER" || stored === "SMTP" || stored === "MAILFLARE") return stored;
   if (await readMailerConfig()) return "SMTP";
   return (await hostingerConfigured()) ? "HOSTINGER" : "SMTP";
 }
 
 export async function mailerConfigured(): Promise<boolean> {
-  return (await activeTransport()) === "HOSTINGER" ? hostingerConfigured() : (await readMailerConfig()) !== null;
+  const transport = await activeTransport();
+  if (transport === "MAILFLARE") return mailflareConfigured();
+  return transport === "HOSTINGER" ? hostingerConfigured() : (await readMailerConfig()) !== null;
 }
 
 function buildTransport(config: MailerConfig): Transporter {
@@ -211,6 +214,20 @@ async function sendOnce(args: SendArgs, transportName: MailTransport): Promise<S
     }
   }
 
+  if (transportName === "MAILFLARE") {
+    try {
+      return await sendViaMailflare(withBranding);
+    } catch (err) {
+      if (err instanceof MailflareMailError) {
+        const wrapped = new MailerError(err.status, err.message);
+        // Carried across so `transient` can still tell a refusal from a maybe-sent.
+        (wrapped as MailerError & { safeToRetry?: boolean }).safeToRetry = err.safeToRetry;
+        throw wrapped;
+      }
+      throw err;
+    }
+  }
+
   const mailer = await getMailer();
   if (!mailer) {
     throw new MailerError(503, "Email isn't connected yet — add the mailbox under Settings → Email to send anything.");
@@ -258,6 +275,7 @@ const BACKOFF_MS = [2_000, 8_000];
  */
 function transient(error: unknown): boolean {
   if (error instanceof HostingerMailError) return error.safeToRetry;
+  if (error instanceof MailerError && "safeToRetry" in error) return (error as MailerError & { safeToRetry?: boolean }).safeToRetry === true;
   const e = error as { responseCode?: number; code?: string; command?: string };
   if (typeof e.responseCode === "number") return e.responseCode >= 400 && e.responseCode < 500;
   if (e.command === "CONN") return true;

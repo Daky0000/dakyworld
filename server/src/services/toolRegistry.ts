@@ -167,7 +167,7 @@ async function integrations(): Promise<Integration[]> {
       // and the second is the one that explains a Hostinger-shaped failure.
       key: "email",
       requirement: "email",
-      name: transport === "HOSTINGER" ? "Email (Hostinger MCP)" : "Email (SMTP)",
+      name: transport === "MAILFLARE" ? "Email (Mailflare)" : transport === "HOSTINGER" ? "Email (Hostinger MCP)" : "Email (SMTP)",
       purpose: "Outbound business email — drafts, sequences, invoices, client updates.",
       settingsTab: "email",
       readyNote: null,
