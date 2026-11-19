@@ -13,6 +13,7 @@ import {
   EmptyState,
   Field,
   Loading,
+  Modal,
   PageHeader,
   RelativeTime,
   StatGrid,
@@ -20,7 +21,7 @@ import {
 } from "../components/ui";
 import { DemoAnalyticsModal } from "../components/DemoAnalyticsModal";
 import { BrokenFilesBadge } from "../components/DemoBrokenFiles";
-import { IconBarChart, IconClock, IconFlame, IconGlobe } from "../components/WebsiteIcons";
+import { IconBarChart, IconClock, IconFlame, IconGlobe, IconMail } from "../components/WebsiteIcons";
 import { compileClaudeDynamicTemplate } from "../../../src/shared/templateCompiler";
 import { getFilesFromDataTransfer } from "../lib/folderZip";
 import {
@@ -292,6 +293,12 @@ export function Demos() {
   const [slugError, setSlugError] = useState<string | null>(null);
   const [openingBuilderId, setOpeningBuilderId] = useState<string | null>(null);
   const [analyticsDemo, setAnalyticsDemo] = useState<Demo | null>(null);
+  const [sendToLeadDemo, setSendToLeadDemo] = useState<Demo | null>(null);
+
+  const { data: leadsData } = useQuery({
+    queryKey: ["leads-all-brief"],
+    queryFn: ({ signal }) => api.get<{ items: Lead[] }>("/leads?take=200", signal),
+  });
 
   const openInWebsiteBuilder = async (demo: Demo, mode: "visual" | "edit" = "visual") => {
     try {
@@ -331,25 +338,49 @@ export function Demos() {
   const demos = data?.demos ?? [];
   const baseUrl = (data?.base ?? window.location.origin).replace(/\/$/, "");
 
-  const openShareEmail = (demo: Demo, attachHtml: boolean) => {
+  const openShareEmail = async (demo: Demo, attachHtml: boolean, overrideLeadId?: string) => {
+    const isProposal = isProposalDemo(demo) || mainTab === "proposals";
+    let lead = overrideLeadId
+      ? (leadsData?.items ?? []).find((l) => l.id === overrideLeadId)
+      : (demo.lead ?? (demo.leadId ? (leadsData?.items ?? []).find((l) => l.id === demo.leadId) : null));
+
+    if (overrideLeadId && overrideLeadId !== demo.leadId) {
+      try {
+        await api.patch(`/demos/${demo.id}`, { leadId: overrideLeadId });
+        void qc.invalidateQueries({ queryKey: ["demos"] });
+      } catch (err) {
+        console.warn("Could not patch leadId on demo:", err);
+      }
+    }
+
     const recipientName =
-      demo.lead?.contactName ?? demo.client?.name ?? demo.recipientName ?? demo.businessName;
+      lead?.contactName ?? demo.lead?.contactName ?? demo.client?.name ?? demo.recipientName ?? demo.businessName;
     const greeting = recipientName && recipientName !== demo.businessName ? `Hi ${recipientName.split(" ")[0]},` : "Hello,";
-    const defaultBody = attachHtml
-      ? `${greeting}\n\nI have put together an interactive preview for ${demo.businessName}. You can open it directly in your browser at any time using this link:\n\n${demo.url}\n\nI have also attached the standalone HTML file (${demo.slug}.html) to this email in case you would like to keep a copy offline.\n\nLet me know what you think.`
-      : `${greeting}\n\nI have put together an interactive preview for ${demo.businessName}. You can explore it live in your browser here:\n\n${demo.url}\n\nTake a look on your phone or desktop when you have a moment, and let me know what you think.`;
+    const effectiveUrl = (isProposal && demo.url.includes("/demos/"))
+      ? demo.url.replace("/demos/", "/proposals/")
+      : demo.url;
+
+    const defaultBody = isProposal
+      ? `${greeting}\n\nGood day. Following up on our recent communications, I have put together the commercial proposal and scope of work for ${lead?.companyName || demo.businessName}.\n\nYou can review the interactive proposal, scope of work, and investment breakdown at this private link:\n\n${effectiveUrl}\n\nPlease take a look when you have a moment, and let me know if you would like to schedule a brief call to align on timeline and next steps.\n\nBest regards,`
+      : (attachHtml
+        ? `${greeting}\n\nI have put together an interactive preview for ${demo.businessName}. You can open it directly in your browser at any time using this link:\n\n${effectiveUrl}\n\nI have also attached the standalone HTML file (${demo.slug}.html) to this email in case you would like to keep a copy offline.\n\nLet me know what you think.`
+        : `${greeting}\n\nI have put together an interactive preview for ${demo.businessName}. You can explore it live in your browser here:\n\n${effectiveUrl}\n\nTake a look on your phone or desktop when you have a moment, and let me know what you think.`);
 
     setComposerTarget({
-      leadId: demo.lead?.id ?? undefined,
+      leadId: lead?.id ?? demo.lead?.id ?? undefined,
       clientId: demo.client?.id ?? undefined,
-      toEmail: demo.lead?.contactEmail ?? demo.client?.email ?? demo.recipientEmail ?? undefined,
+      toEmail: lead?.contactEmail ?? demo.lead?.contactEmail ?? demo.client?.email ?? demo.recipientEmail ?? undefined,
       toName: recipientName,
-      purpose: "DEMO_READY",
-      initialSubject: `${demo.businessName} — interactive website preview`,
+      purpose: isProposal ? "PROPOSAL_COVER" : "DEMO_READY",
+      initialSubject: isProposal
+        ? `${lead?.companyName || demo.businessName} — Commercial Web & Digital Growth Proposal`
+        : `${demo.businessName} — interactive website preview`,
       initialBody: defaultBody,
-      initialBrief: `Share the live demo preview link (${demo.url}) for ${demo.businessName}${
-        attachHtml ? " and mention that the HTML file is also attached" : ""
-      }.`,
+      initialBrief: isProposal
+        ? `Send commercial proposal link (${effectiveUrl}) to ${lead?.companyName || demo.businessName}.`
+        : `Share the live demo preview link (${effectiveUrl}) for ${demo.businessName}${
+            attachHtml ? " and mention that the HTML file is also attached" : ""
+          }.`,
       attachments: attachHtml ? [{ kind: "demo", demoId: demo.id, name: `${demo.slug}.html` }] : [],
     });
   };
@@ -417,7 +448,7 @@ export function Demos() {
                 setDrawerOpen(true);
               }}
             >
-              + Upload Proposal (HTML or PDF)
+              + Import Proposal (HTML or PDF)
             </Button>
           ) : (
             <Button
@@ -556,7 +587,7 @@ export function Demos() {
                   setDrawerOpen(true);
                 }}
               >
-                {mainTab === "proposals" ? "+ Upload Proposal (HTML or PDF)" : "+ Import HTML Demo"}
+                {mainTab === "proposals" ? "+ Import Proposal (HTML or PDF)" : "+ Import HTML Demo"}
               </Button>
             ) : undefined
           }
@@ -737,80 +768,174 @@ export function Demos() {
                 </div>
 
                 <div className="mt-3.5 flex flex-wrap items-center gap-2 border-t border-line/60 pt-3">
-                  <Button
-                    size="sm"
-                    variant={demo.views > 0 ? "primary" : "secondary"}
-                    onClick={() => setAnalyticsDemo(demo)}
-                    className="gap-1.5 font-semibold"
-                  >
-                    {isProposal ? <IconClock size={13} /> : <IconBarChart size={13} />}
-                    <span>{isProposal ? "Reading Heatmap & Analytics" : "Analytics & Heatmap"}</span>
-                    {demo.views > 0 && (
-                      <span className="ml-1 rounded-full bg-black/10 px-1.5 py-0.2 text-[10px] font-bold">
-                        {demo.views}
-                      </span>
-                    )}
-                  </Button>
+                  {isProposal ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => {
+                          if (demo.lead || demo.leadId) {
+                            void openShareEmail(demo, false);
+                          } else {
+                            setSendToLeadDemo(demo);
+                          }
+                        }}
+                        className="gap-1.5 font-semibold"
+                      >
+                        <IconMail size={13} />
+                        <span>
+                          {demo.lead?.companyName || demo.lead?.contactName
+                            ? `Send to ${demo.lead.companyName || demo.lead.contactName}`
+                            : "Send to Lead"}
+                        </span>
+                      </Button>
 
-                  <select
-                    value={demo.status}
-                    onChange={(event) => update.mutate({ id: demo.id, status: event.target.value as DemoStatus })}
-                    className="rounded-full border border-line bg-white px-2.5 py-1 font-sans text-[11px] uppercase tracking-[.06em] text-ink outline-none focus:border-blue"
-                  >
-                    {STATUSES.map((status) => (
-                      <option key={status} value={status}>
-                        {STATUS_LABEL[status]}
-                      </option>
-                    ))}
-                  </select>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setSendToLeadDemo(demo)}
+                        className="gap-1.5"
+                      >
+                        <span>{demo.lead || demo.leadId ? "Change Lead" : "Link Lead"}</span>
+                      </Button>
 
-                  <Button
-                    size="sm"
-                    disabled={openingBuilderId === demo.id}
-                    onClick={() => void openInWebsiteBuilder(demo, "visual")}
-                  >
-                    {openingBuilderId === demo.id ? "Opening Builder…" : "Edit in Website Builder"}
-                  </Button>
+                      <Button
+                        size="sm"
+                        variant={demo.views > 0 ? "secondary" : "ghost"}
+                        onClick={() => setAnalyticsDemo(demo)}
+                        className="gap-1.5 font-semibold"
+                      >
+                        <IconClock size={13} />
+                        <span>Reading Heatmap &amp; Analytics</span>
+                        {demo.views > 0 && (
+                          <span className="ml-1 rounded-full bg-blue/15 px-1.5 py-0.2 text-[10px] font-bold text-blue">
+                            {demo.views}
+                          </span>
+                        )}
+                      </Button>
 
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={openingBuilderId === demo.id}
-                    onClick={() => void openInWebsiteBuilder(demo, "edit")}
-                  >
-                    Edit Form Fields
-                  </Button>
+                      <select
+                        value={demo.status}
+                        onChange={(event) => update.mutate({ id: demo.id, status: event.target.value as DemoStatus })}
+                        className="rounded-full border border-line bg-white px-2.5 py-1 font-sans text-[11px] uppercase tracking-[.06em] text-ink outline-none focus:border-blue"
+                      >
+                        {STATUSES.map((status) => (
+                          <option key={status} value={status}>
+                            {STATUS_LABEL[status]}
+                          </option>
+                        ))}
+                      </select>
 
-                  <a href={demo.url} target="_blank" rel="noreferrer">
-                    <Button size="sm" variant="secondary">
-                      Open Preview
-                    </Button>
-                  </a>
+                      <a
+                        href={demo.url.includes("/demos/") ? demo.url.replace("/demos/", "/proposals/") : demo.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <Button size="sm" variant="secondary">
+                          Open Live Proposal
+                        </Button>
+                      </a>
 
-                  <a href={`/api/demos/${demo.id}/download`} download={`${demo.slug}.html`}>
-                    <Button size="sm" variant="secondary">
-                      Download .html
-                    </Button>
-                  </a>
+                      <a
+                        href={`/api/demos/${demo.id}/download`}
+                        download={`${demo.slug}.${proposalFormat === "pdf" ? "pdf" : "html"}`}
+                      >
+                        <Button size="sm" variant="secondary">
+                          Download {proposalFormat === "pdf" ? ".pdf" : ".html"}
+                        </Button>
+                      </a>
 
-                  <Button size="sm" variant="secondary" onClick={() => openShareEmail(demo, false)}>
-                    Send Link via Email
-                  </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setEditingDemo(demo);
+                          setIsProposalDrawer(true);
+                          setDrawerOpen(true);
+                        }}
+                      >
+                        Settings / Replace
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        size="sm"
+                        variant={demo.views > 0 ? "primary" : "secondary"}
+                        onClick={() => setAnalyticsDemo(demo)}
+                        className="gap-1.5 font-semibold"
+                      >
+                        <IconBarChart size={13} />
+                        <span>Analytics &amp; Heatmap</span>
+                        {demo.views > 0 && (
+                          <span className="ml-1 rounded-full bg-black/10 px-1.5 py-0.2 text-[10px] font-bold">
+                            {demo.views}
+                          </span>
+                        )}
+                      </Button>
 
-                  <Button size="sm" variant="secondary" onClick={() => openShareEmail(demo, true)}>
-                    Attach HTML to Email
-                  </Button>
+                      <select
+                        value={demo.status}
+                        onChange={(event) => update.mutate({ id: demo.id, status: event.target.value as DemoStatus })}
+                        className="rounded-full border border-line bg-white px-2.5 py-1 font-sans text-[11px] uppercase tracking-[.06em] text-ink outline-none focus:border-blue"
+                      >
+                        {STATUSES.map((status) => (
+                          <option key={status} value={status}>
+                            {STATUS_LABEL[status]}
+                          </option>
+                        ))}
+                      </select>
 
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      setEditingDemo(demo);
-                      setDrawerOpen(true);
-                    }}
-                  >
-                    Replace .html / Settings
-                  </Button>
+                      <Button
+                        size="sm"
+                        disabled={openingBuilderId === demo.id}
+                        onClick={() => void openInWebsiteBuilder(demo, "visual")}
+                      >
+                        {openingBuilderId === demo.id ? "Opening Builder…" : "Edit in Website Builder"}
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={openingBuilderId === demo.id}
+                        onClick={() => void openInWebsiteBuilder(demo, "edit")}
+                      >
+                        Edit Form Fields
+                      </Button>
+
+                      <a href={demo.url} target="_blank" rel="noreferrer">
+                        <Button size="sm" variant="secondary">
+                          Open Preview
+                        </Button>
+                      </a>
+
+                      <a href={`/api/demos/${demo.id}/download`} download={`${demo.slug}.html`}>
+                        <Button size="sm" variant="secondary">
+                          Download .html
+                        </Button>
+                      </a>
+
+                      <Button size="sm" variant="secondary" onClick={() => void openShareEmail(demo, false)}>
+                        Send Link via Email
+                      </Button>
+
+                      <Button size="sm" variant="secondary" onClick={() => void openShareEmail(demo, true)}>
+                        Attach HTML to Email
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setEditingDemo(demo);
+                          setIsProposalDrawer(false);
+                          setDrawerOpen(true);
+                        }}
+                      >
+                        Replace .html / Settings
+                      </Button>
+                    </>
+                  )}
 
                   <span className="flex-1" />
 
@@ -818,7 +943,7 @@ export function Demos() {
                     variant="danger"
                     size="sm"
                     onClick={() => {
-                      if (confirm(`Delete the demo for ${demo.businessName}? The link stops working immediately.`)) {
+                      if (confirm(`Delete ${isProposal ? "proposal" : "demo"} for ${demo.businessName}? The link stops working immediately.`)) {
                         remove.mutate(demo.id);
                       }
                     }}
@@ -847,10 +972,21 @@ export function Demos() {
           setEditingDemo(null);
           void openInWebsiteBuilder(demo, "visual");
         }}
-        onShareEmail={(demo, attachHtml) => {
+        onShareEmail={(demo, attachHtml, overrideLeadId) => {
           setDrawerOpen(false);
           setEditingDemo(null);
-          openShareEmail(demo, attachHtml);
+          void openShareEmail(demo, attachHtml, overrideLeadId);
+        }}
+      />
+
+      <SendProposalToLeadModal
+        demo={sendToLeadDemo}
+        leads={leadsData?.items ?? []}
+        open={Boolean(sendToLeadDemo)}
+        onClose={() => setSendToLeadDemo(null)}
+        onSend={(demo, leadId) => {
+          setSendToLeadDemo(null);
+          void openShareEmail(demo, false, leadId);
         }}
       />
 
@@ -869,6 +1005,107 @@ export function Demos() {
   );
 }
 
+function SendProposalToLeadModal({
+  demo,
+  leads,
+  open,
+  onClose,
+  onSend,
+}: {
+  demo: Demo | null;
+  leads: Lead[];
+  open: boolean;
+  onClose: () => void;
+  onSend: (demo: Demo, leadId: string) => void;
+}) {
+  const [selectedLeadId, setSelectedLeadId] = useState<string>("");
+
+  useEffect(() => {
+    if (demo) {
+      setSelectedLeadId(demo.leadId || demo.lead?.id || "");
+    }
+  }, [demo]);
+
+  if (!demo) return null;
+
+  const targetLeadId = selectedLeadId || demo.leadId || demo.lead?.id || "";
+  const lead = leads.find((l) => l.id === targetLeadId);
+  const fallbackLead = demo.lead;
+  const proposalUrl = demo.url.includes("/demos/")
+    ? demo.url.replace("/demos/", "/proposals/")
+    : demo.url;
+
+  return (
+    <Modal open={open} onClose={onClose} title="Send Proposal to a Pipeline Lead">
+      <div className="space-y-4">
+        <p className="text-xs text-muted leading-relaxed">
+          Select a lead from your pipeline to deliver this proposal to. DakyXTech OS will automatically link the lead, generate their tailored cover email, attach the tracked reading link, and record their dwell time per section.
+        </p>
+
+        <div className="rounded-xl border border-line bg-surface/50 p-3.5">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">Proposal Document</div>
+          <div className="mt-1 font-display text-sm font-semibold text-ink">{demo.businessName}</div>
+          <div className="mt-0.5 font-mono text-xs text-blue truncate">{proposalUrl}</div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-1.5">
+            Select Recipient Lead
+          </label>
+          <select
+            value={selectedLeadId}
+            onChange={(e) => setSelectedLeadId(e.target.value)}
+            className="w-full rounded-xl border border-line bg-white px-3.5 py-2.5 text-xs text-ink outline-none transition focus:border-blue focus:ring-2 focus:ring-blue/15"
+          >
+            <option value="">-- Choose a lead from CRM pipeline --</option>
+            {leads.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.companyName ? `${l.companyName} (${l.contactName || "No contact"})` : (l.contactName || "Untitled Lead")} {l.contactEmail ? `— ${l.contactEmail}` : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {(lead || fallbackLead) && (
+          <div className="rounded-xl border border-blue/20 bg-blue/5 p-3.5 space-y-1.5 text-xs">
+            <div className="font-semibold text-ink flex items-center justify-between">
+              <span>{lead?.companyName || fallbackLead?.companyName || lead?.contactName || fallbackLead?.contactName}</span>
+              {lead?.status && <Badge tone="info">{lead.status}</Badge>}
+            </div>
+            {(lead?.contactName || fallbackLead?.contactName) && (
+              <div className="text-muted">Contact: {lead?.contactName || fallbackLead?.contactName}</div>
+            )}
+            <div className="text-muted">
+              Email: {lead?.contactEmail || fallbackLead?.contactEmail || <span className="italic text-warn-text">No email on file</span>}
+            </div>
+            {lead?.contactPhone && <div className="text-muted">Phone: {lead.contactPhone}</div>}
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2 border-t border-line pt-3">
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={!selectedLeadId}
+            onClick={() => {
+              if (selectedLeadId) {
+                onSend(demo, selectedLeadId);
+              }
+            }}
+            className="gap-1.5 font-semibold"
+          >
+            <IconMail size={13} />
+            <span>Open Email Composer &amp; Send</span>
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function ImportDemoDrawer({
   open,
   editingDemo,
@@ -884,7 +1121,7 @@ function ImportDemoDrawer({
   isProposalMode?: boolean;
   onClose: () => void;
   onOpenBuilder: (demo: Demo) => void;
-  onShareEmail: (demo: Demo, attachHtml: boolean) => void;
+  onShareEmail: (demo: Demo, attachHtml: boolean, overrideLeadId?: string) => void;
 }) {
   const qc = useQueryClient();
   const [sourceTab, setSourceTab] = useState<"file" | "paste">("file");
@@ -920,6 +1157,7 @@ function ImportDemoDrawer({
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [savedDemo, setSavedDemo] = useState<Demo | null>(null);
+  const [postImportLeadId, setPostImportLeadId] = useState<string>("");
 
   const { data: clients } = useQuery({
     queryKey: ["clients"],
@@ -928,9 +1166,9 @@ function ImportDemoDrawer({
   });
 
   const { data: leadsData } = useQuery({
-    queryKey: ["leads-brief-demo"],
-    queryFn: ({ signal }) => api.get<{ items: Lead[] }>("/leads?take=100", signal),
-    enabled: open && linkKind === "lead",
+    queryKey: ["leads-all-brief"],
+    queryFn: ({ signal }) => api.get<{ items: Lead[] }>("/leads?take=200", signal),
+    enabled: open,
   });
 
   useEffect(() => {
@@ -949,6 +1187,7 @@ function ImportDemoDrawer({
     setLocalFiles([]);
 
     if (editingDemo) {
+      setPostImportLeadId(editingDemo.lead?.id || editingDemo.leadId || "");
       setBusinessName(editingDemo.businessName);
       setTitle(editingDemo.title);
       setSlug(editingDemo.slug);
@@ -975,6 +1214,7 @@ function ImportDemoDrawer({
         })
         .catch(() => undefined);
     } else {
+      setPostImportLeadId("");
       setBusinessName("");
       setTitle("");
       setSlug("");
@@ -1398,6 +1638,7 @@ function ImportDemoDrawer({
     },
     onSuccess: (demo) => {
       setSavedDemo(demo);
+      setPostImportLeadId(leadId || (demo as any).leadId || "");
       void qc.invalidateQueries({ queryKey: ["demos"] });
     },
     onError: (err) => {
@@ -1417,7 +1658,7 @@ function ImportDemoDrawer({
         isProposalMode
           ? editingDemo
             ? `Update Proposal — ${editingDemo.businessName}`
-            : "Upload Proposal or Pitch Deck (HTML or PDF)"
+            : "Import Proposal or Pitch Deck (HTML or PDF)"
           : editingDemo
             ? `Update Demo — ${editingDemo.businessName}`
             : "Import HTML File as Demo"
@@ -1436,7 +1677,7 @@ function ImportDemoDrawer({
             <div className="mb-1 flex items-center gap-2">
               <Badge tone="positive">Live &amp; Ready</Badge>
               <span className="font-sans text-[11px] uppercase tracking-[.06em] text-muted">
-                {editingDemo ? `Updated to v${savedDemo.version}` : "Public Demo Created"}
+                {editingDemo ? `Updated to v${savedDemo.version}` : isProposalItem ? "Proposal Imported" : "Public Demo Created"}
               </span>
             </div>
             <h3 className="mt-2 font-display text-lg font-medium text-ink">{savedDemo.businessName}</h3>
@@ -1450,34 +1691,116 @@ function ImportDemoDrawer({
             ) : null}
 
             <div className="mt-4 rounded-xl border border-line bg-white p-3">
-              <div className="font-sans text-[10px] uppercase tracking-[.06em] text-muted">Shareable Public URL</div>
+              <div className="font-sans text-[10px] uppercase tracking-[.06em] text-muted">
+                {isProposalItem ? "Shareable Proposal URL" : "Shareable Public URL"}
+              </div>
               <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
                 <a
-                  href={savedDemo.url}
+                  href={isProposalItem && savedDemo.url.includes("/demos/") ? savedDemo.url.replace("/demos/", "/proposals/") : savedDemo.url}
                   target="_blank"
                   rel="noreferrer"
                   className="break-all font-mono text-xs font-medium text-blue underline underline-offset-2"
                 >
-                  {savedDemo.url}
+                  {isProposalItem && savedDemo.url.includes("/demos/") ? savedDemo.url.replace("/demos/", "/proposals/") : savedDemo.url}
                 </a>
-                <CopyButton text={savedDemo.url} label="Copy URL" />
+                <CopyButton
+                  text={isProposalItem && savedDemo.url.includes("/demos/") ? savedDemo.url.replace("/demos/", "/proposals/") : savedDemo.url}
+                  label="Copy URL"
+                />
               </div>
             </div>
 
+            {/* Direct Send to Lead Dispatch */}
+            <div className="mt-4 rounded-xl border border-blue/40 bg-blue/5 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-sans text-xs font-bold uppercase tracking-[.06em] text-blue">
+                      Send to a Pipeline Lead
+                    </span>
+                    <Badge tone="info">CRM Dispatch</Badge>
+                  </div>
+                  <p className="mt-1 text-xs text-muted">
+                    Pick a lead from your pipeline CRM to link this {isProposalItem ? "proposal" : "demo"} and immediately compose an email with the tracked link.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <select
+                  value={postImportLeadId}
+                  onChange={(e) => setPostImportLeadId(e.target.value)}
+                  className="flex-1 rounded-lg border border-line bg-white px-3 py-2 text-xs font-medium text-ink outline-none focus:border-blue"
+                >
+                  <option value="">-- Choose Lead from Pipeline CRM --</option>
+                  {(leadsData?.items ?? []).map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.companyName ? `${l.companyName} (${l.contactName || "No contact"})` : (l.contactName || "Untitled Lead")} {l.contactEmail ? `— ${l.contactEmail}` : ""}
+                    </option>
+                  ))}
+                </select>
+
+                <Button
+                  variant="primary"
+                  className="gap-1.5 whitespace-nowrap"
+                  disabled={!postImportLeadId && !savedDemo.leadId}
+                  onClick={() => {
+                    const chosen = postImportLeadId || savedDemo.leadId || undefined;
+                    onShareEmail(savedDemo, false, chosen);
+                  }}
+                >
+                  <IconMail size={14} />
+                  <span>Send Proposal to Lead</span>
+                </Button>
+              </div>
+
+              {postImportLeadId && (() => {
+                const chosenLead = (leadsData?.items ?? []).find((l) => l.id === postImportLeadId);
+                if (!chosenLead) return null;
+                return (
+                  <div className="mt-2.5 flex flex-wrap items-center gap-3 rounded-lg bg-white/80 px-3 py-1.5 text-[11px] text-ink border border-line/50">
+                    <span><strong>Recipient:</strong> {chosenLead.companyName || chosenLead.contactName}</span>
+                    {chosenLead.contactEmail && <span><strong>Email:</strong> {chosenLead.contactEmail}</span>}
+                    {chosenLead.status && <Badge tone="info">{chosenLead.status}</Badge>}
+                  </div>
+                );
+              })()}
+            </div>
+
             <div className="mt-4 flex flex-wrap gap-2">
-              <Button onClick={() => onOpenBuilder(savedDemo)}>Edit in Website Builder</Button>
-              <a href={savedDemo.url} target="_blank" rel="noreferrer">
-                <Button variant="secondary">Open Live Preview</Button>
-              </a>
-              <a href={`/api/demos/${savedDemo.id}/download`} download={`${savedDemo.slug}.html`}>
-                <Button variant="secondary">Download .html</Button>
-              </a>
-              <Button variant="secondary" onClick={() => onShareEmail(savedDemo, false)}>
-                Send URL via Email
-              </Button>
-              <Button variant="secondary" onClick={() => onShareEmail(savedDemo, true)}>
-                Attach .html File to Email
-              </Button>
+              {isProposalItem ? (
+                <>
+                  <a
+                    href={savedDemo.url.includes("/demos/") ? savedDemo.url.replace("/demos/", "/proposals/") : savedDemo.url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <Button variant="secondary">Open Live Proposal</Button>
+                  </a>
+                  <a href={`/api/demos/${savedDemo.id}/download`} download={`${savedDemo.slug}.${isPdf ? "pdf" : "html"}`}>
+                    <Button variant="secondary">Download {isPdf ? ".pdf" : ".html"}</Button>
+                  </a>
+                  <Button variant="secondary" onClick={() => onShareEmail(savedDemo, false, postImportLeadId || savedDemo.leadId || undefined)}>
+                    Compose Email
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button onClick={() => onOpenBuilder(savedDemo)}>Edit in Website Builder</Button>
+                  <a href={savedDemo.url} target="_blank" rel="noreferrer">
+                    <Button variant="secondary">Open Live Preview</Button>
+                  </a>
+                  <a href={`/api/demos/${savedDemo.id}/download`} download={`${savedDemo.slug}.html`}>
+                    <Button variant="secondary">Download .html</Button>
+                  </a>
+                  <Button variant="secondary" onClick={() => onShareEmail(savedDemo, false, postImportLeadId || savedDemo.leadId || undefined)}>
+                    Send URL via Email
+                  </Button>
+                  <Button variant="secondary" onClick={() => onShareEmail(savedDemo, true, postImportLeadId || savedDemo.leadId || undefined)}>
+                    Attach .html File to Email
+                  </Button>
+                </>
+              )}
             </div>
           </div>
 
@@ -1867,12 +2190,12 @@ function ImportDemoDrawer({
               disabled={saveMutation.isPending || packaging}
             >
               {saveMutation.isPending
-                ? "Saving Demo…"
+                ? isProposalMode ? "Saving Proposal…" : "Saving Demo…"
                 : sourceTab === "file" && localFiles.length > 0
                   ? `${editingDemo ? "Save" : "Import"} without its ${localFiles.length} picture${localFiles.length === 1 ? "" : "s"}`
                   : editingDemo
                     ? "Save Changes"
-                    : "Import & Generate Public URL"}
+                    : isProposalMode ? "Import & Generate Proposal Link" : "Import & Generate Public URL"}
             </Button>
           </div>
         </div>

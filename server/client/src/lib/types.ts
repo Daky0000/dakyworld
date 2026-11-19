@@ -1379,6 +1379,8 @@ export interface Demo {
   updatedAt: string;
   /** The public address, assembled server-side so there is one spelling of it. */
   url: string;
+  leadId?: string | null;
+  clientId?: string | null;
   lead?: { id: string; contactName: string; companyName?: string | null; contactEmail?: string | null; website?: string | null } | null;
   client?: { id: string; name: string; company?: string | null; email?: string | null } | null;
   recipientEmail?: string | null;
