@@ -1403,6 +1403,8 @@ export interface Demo {
     recipientName?: string | null;
     includeBanner?: boolean;
     notes?: string | null;
+    isProposal?: boolean;
+    proposalFormat?: "html" | "pdf" | string;
   } | null;
   /** High-level analytics summary for this demo. */
   analytics?: DemoAnalyticsSummary;
@@ -1539,6 +1541,14 @@ export interface DemoAnalyticsReport {
     browsers: Array<{ browser: string; count: number; percentage: number }>;
     os: Array<{ os: string; count: number; percentage: number }>;
   };
+  sectionEngagement?: Array<{
+    selector: string;
+    title: string;
+    totalSeconds: number;
+    avgSeconds: number;
+    percentage: number;
+    visitCount: number;
+  }>;
   visits: DemoVisitSession[];
   heatmap: {
     totalClicks: number;

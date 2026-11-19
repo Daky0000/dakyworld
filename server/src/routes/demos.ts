@@ -96,6 +96,8 @@ interface DemoBriefMeta {
   allowedEmails?: string[];
   expiresAt?: string | null;
   notifyOnView?: boolean;
+  isProposal?: boolean;
+  proposalFormat?: "html" | "pdf" | string | null;
   viewNotifications?: Array<{
     id: string;
     text: string;
@@ -132,8 +134,8 @@ async function ensureDemoSitePage(
   options: { overwriteSourceHtml?: boolean } = {},
 ): Promise<{ siteId: string; pageId: string }> {
   const base = await appUrl();
-  const publicUrl = demoUrl(demo.slug, base);
   const meta = readBriefMeta(demo.brief);
+  const publicUrl = demoUrl(demo.slug, base, Boolean(meta.isProposal));
   const siteName = `${demo.businessName} (Demo)`;
   const pageTitle = demo.title || demo.businessName;
 
@@ -414,7 +416,7 @@ demosRouter.get("/", async (req, res, next) => {
 
         return {
           ...demoWithoutVisits,
-          url: demoUrl(demo.slug, base),
+          url: demoUrl(demo.slug, base, Boolean(meta.isProposal)),
           client,
           analytics,
           recipientEmail: meta.recipientEmail ?? demo.lead?.contactEmail ?? client?.email ?? null,
@@ -441,12 +443,14 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
         views: true,
         lastViewedAt: true,
         createdAt: true,
+        brief: true,
       },
     });
     if (!demo) return res.status(404).json({ error: "Demo not found" });
 
     const base = await appUrl();
-    const url = demoUrl(demo.slug, base);
+    const meta = readBriefMeta(demo.brief);
+    const url = demoUrl(demo.slug, base, Boolean(meta.isProposal));
 
     const range = req.query.range as string | undefined;
     const includeBots = req.query.includeBots === "true";
@@ -569,12 +573,43 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
     const browserMap: Record<string, number> = {};
     const osMap: Record<string, number> = {};
     const elementClickMap: Record<string, { selector: string; tag: string; text: string; count: number }> = {};
+    const sectionDwellAgg: Record<string, { selector: string; title: string; totalSeconds: number; visitCount: number }> = {};
+    let totalSectionSeconds = 0;
 
     for (const v of visits) {
       const clickList = Array.isArray(v.clicks) ? (v.clicks as any[]) : [];
-      totalClicks += clickList.length;
+      const mouseClicks: any[] = [];
+      const sectionClicks: any[] = [];
 
-      const isBounced = (v.durationSeconds || 0) < 5 && (v.scrollDepth || 0) < 25 && clickList.length === 0;
+      for (const c of clickList) {
+        if (c && (c.targetTag === "SECTION" || (typeof c.id === "string" && c.id.startsWith("sec_")))) {
+          sectionClicks.push(c);
+        } else if (c) {
+          mouseClicks.push(c);
+        }
+      }
+
+      totalClicks += mouseClicks.length;
+
+      // Accumulate section reading dwell times
+      for (const s of sectionClicks) {
+        const sKey = s.targetSelector || s.id || s.targetText || "section";
+        const title = s.targetText || s.targetSelector?.replace(/^[#.]/, "") || sKey;
+        const secs = typeof s.timeOffset === "number" ? s.timeOffset : 0;
+        if (!sectionDwellAgg[sKey]) {
+          sectionDwellAgg[sKey] = {
+            selector: s.targetSelector || sKey,
+            title,
+            totalSeconds: 0,
+            visitCount: 0,
+          };
+        }
+        sectionDwellAgg[sKey].totalSeconds += secs;
+        sectionDwellAgg[sKey].visitCount += 1;
+        totalSectionSeconds += secs;
+      }
+
+      const isBounced = (v.durationSeconds || 0) < 5 && (v.scrollDepth || 0) < 25 && mouseClicks.length === 0;
       if (isBounced) {
         bouncedCount++;
       }
@@ -614,7 +649,7 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
         osMap[v.os] = (osMap[v.os] || 0) + 1;
       }
 
-      for (const c of clickList) {
+      for (const c of mouseClicks) {
         const enrichedClick = {
           x: typeof c.x === "number" ? c.x : 0,
           y: typeof c.y === "number" ? c.y : 0,
@@ -709,6 +744,14 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
       };
     });
 
+    const sectionEngagement = Object.values(sectionDwellAgg)
+      .map((item) => ({
+        ...item,
+        avgSeconds: item.visitCount > 0 ? Math.round(item.totalSeconds / item.visitCount) : 0,
+        percentage: totalSectionSeconds > 0 ? Math.round((item.totalSeconds / totalSectionSeconds) * 100) : 0,
+      }))
+      .sort((a, b) => b.totalSeconds - a.totalSeconds);
+
     res.json({
       demo: {
         ...demo,
@@ -735,6 +778,7 @@ demosRouter.get("/:id/analytics", async (req, res, next) => {
         browsers: browserBreakdown,
         os: osBreakdown,
       },
+      sectionEngagement,
       visits: formattedVisits,
       pagination: {
         page,
@@ -769,7 +813,7 @@ demosRouter.get("/:id", async (req, res, next) => {
       : null;
     res.json({
       ...demo,
-      url: demoUrl(demo.slug, await appUrl()),
+      url: demoUrl(demo.slug, await appUrl(), Boolean(meta.isProposal)),
       client,
       recipientEmail: meta.recipientEmail ?? demo.lead?.contactEmail ?? client?.email ?? null,
       recipientName: meta.recipientName ?? demo.lead?.contactName ?? client?.name ?? null,
@@ -844,6 +888,8 @@ const importInput = z.object({
   makeInert: z.boolean().default(true),
   demoId: z.string().nullish(),
   entry: z.string().max(500).nullish(),
+  isProposal: z.boolean().optional(),
+  proposalFormat: z.string().max(20).optional(),
 });
 
 /**
@@ -1071,7 +1117,7 @@ demosRouter.patch("/:id", async (req, res, next) => {
       ...demo,
       siteId: editor.siteId,
       sitePageId: editor.pageId,
-      url: demoUrl(demo.slug, await appUrl()),
+      url: demoUrl(demo.slug, await appUrl(), Boolean(nextMeta.isProposal)),
       client,
       recipientEmail: nextMeta.recipientEmail ?? demo.lead?.contactEmail ?? client?.email ?? null,
       recipientName: nextMeta.recipientName ?? demo.lead?.contactName ?? client?.name ?? null,
@@ -1502,12 +1548,44 @@ demoPagesRouter.post("/:slug/analytics", async (req, res, next) => {
     const newDuration = Math.max(existingVisit.durationSeconds ?? 0, data.durationSeconds ?? 0);
     const newScrollDepth = Math.max(existingVisit.scrollDepth ?? 0, data.scrollDepth ?? 0);
 
-    // Merge clicks with event ID deduplication
+    // Merge clicks with event ID deduplication, updating cumulative section dwell records
     const existingClicks = Array.isArray(existingVisit.clicks) ? (existingVisit.clicks as any[]) : [];
-    const existingIds = new Set(existingClicks.map((c) => c.id).filter(Boolean));
     const incomingClicks = data.clicks ?? [];
-    const newClicks = incomingClicks.filter((c) => !c.id || !existingIds.has(c.id));
-    const mergedClicks = [...existingClicks, ...newClicks].slice(-500);
+
+    const sectionMap = new Map<string, any>();
+    const standardClicks: any[] = [];
+
+    for (const c of existingClicks) {
+      if (c && (c.targetTag === "SECTION" || (typeof c.id === "string" && c.id.startsWith("sec_")))) {
+        const key: string = c.id || c.targetSelector || c.targetText || `sec_${sectionMap.size}`;
+        sectionMap.set(key, { ...c });
+      } else if (c) {
+        standardClicks.push(c);
+      }
+    }
+
+    const existingStandardIds = new Set(standardClicks.map((c) => c.id).filter(Boolean));
+
+    for (const c of incomingClicks) {
+      if (c && (c.targetTag === "SECTION" || (typeof c.id === "string" && c.id.startsWith("sec_")))) {
+        const key: string = c.id || c.targetSelector || c.targetText || `sec_${sectionMap.size}`;
+        const prev = sectionMap.get(key);
+        if (prev) {
+          prev.timeOffset = Math.max(prev.timeOffset ?? 0, c.timeOffset ?? 0);
+          if (c.targetText && !prev.targetText) prev.targetText = c.targetText;
+          if (c.targetSelector && !prev.targetSelector) prev.targetSelector = c.targetSelector;
+        } else {
+          sectionMap.set(key, { ...c });
+        }
+      } else if (c) {
+        if (!c.id || !existingStandardIds.has(c.id)) {
+          standardClicks.push(c);
+          if (c.id) existingStandardIds.add(c.id);
+        }
+      }
+    }
+
+    const mergedClicks = [...standardClicks.slice(-400), ...Array.from(sectionMap.values())].slice(-500);
 
     // A file the browser threw away never shows in the HTTP logs as anything
     // but a 200, so the page's own report is written to the log as well.
@@ -1545,10 +1623,10 @@ demoPagesRouter.post("/:slug/unlock", express.urlencoded({ extended: false }), a
     if (!meta.passwordPlain || password === meta.passwordPlain) {
       const hash = meta.passwordHash || createHash("sha256").update(password || "").digest("hex");
       res.setHeader("Set-Cookie", `dw_demo_${demo.slug}=${hash}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
-      return res.redirect(`/demos/${demo.slug}`);
+      return res.redirect(`${req.baseUrl || "/demos"}/${demo.slug}`);
     }
 
-    res.status(401).type("html").send(passwordUnlockPage(demo.slug, demo.businessName, "Incorrect password. Please try again."));
+    res.status(401).type("html").send(passwordUnlockPage(demo.slug, demo.businessName, "Incorrect password. Please try again.", req.baseUrl || "/demos"));
   } catch (err) {
     next(err);
   }
@@ -1594,7 +1672,7 @@ demoPagesRouter.get("/:slug", async (req, res, next) => {
       const cookieHeader = req.headers.cookie || "";
       const cookieMatches = cookieHeader.includes(`dw_demo_${demo.slug}=${meta.passwordHash}`);
       if (passParam !== meta.passwordPlain && !cookieMatches) {
-        return res.status(401).type("html").send(passwordUnlockPage(demo.slug, demo.businessName));
+        return res.status(401).type("html").send(passwordUnlockPage(demo.slug, demo.businessName, undefined, req.baseUrl || "/demos"));
       }
     }
 
@@ -1745,7 +1823,7 @@ h1{font-size:1.5rem;margin:0 0 0.75rem;color:#FFFFFF}p{margin:0 0 1.5rem;color:#
 </main></body></html>`;
 }
 
-function passwordUnlockPage(slug: string, businessName: string, error?: string): string {
+function passwordUnlockPage(slug: string, businessName: string, error?: string, baseUrl: string = "/demos"): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Protected Proposal Demo</title><link rel="icon" href="https://os.dakyx.com/brand/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="https://os.dakyx.com/brand/favicon-180.png">
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#091833;color:#FFFFFF;font:400 16px/1.6 system-ui,-apple-system,sans-serif;padding:2rem}
 main{width:100%;max-width:26rem;background:#0F1B2E;padding:2.5rem;border-radius:1rem;border:1px solid #1E293B;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5)}
@@ -1763,7 +1841,7 @@ button:hover{background:#09529E}
 <h1>Private Proposal Demo</h1>
 <p>${businessName} Website Redesign is password protected.</p>
 ${error ? `<div class="err">${error}</div>` : ""}
-<form method="POST" action="/demos/${slug}/unlock">
+<form method="POST" action="${baseUrl}/${slug}/unlock">
   <input type="password" name="password" placeholder="Enter proposal password" required autofocus />
   <button type="submit">View Proposal Demo</button>
 </form>

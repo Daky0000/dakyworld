@@ -266,9 +266,22 @@ export async function unpackClaudeArtifactBundleInBrowser(rawHtml: string): Prom
   }
 }
 
+function isProposalDemo(demo: Demo | null | undefined): boolean {
+  if (!demo) return false;
+  return Boolean(
+    demo.brief?.isProposal ||
+    demo.brief?.proposalFormat ||
+    demo.title.toLowerCase().includes("proposal") ||
+    demo.slug.toLowerCase().includes("proposal") ||
+    demo.businessName.toLowerCase().includes("proposal")
+  );
+}
+
 export function Demos() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const [mainTab, setMainTab] = useState<"demos" | "proposals">("demos");
+  const [isProposalDrawer, setIsProposalDrawer] = useState(false);
   const [filter, setFilter] = useState<DemoStatus | "">("");
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -347,28 +360,32 @@ export function Demos() {
     let accepted = 0;
     let totalViews = 0;
 
-    for (const d of demos) {
+    const list = demos.filter((d) => (mainTab === "proposals" ? isProposalDemo(d) : !isProposalDemo(d)));
+
+    for (const d of list) {
       if (d.views > 0) opened++;
       if (d.status === "ACCEPTED") accepted++;
       totalViews += d.views;
     }
 
-    const openRate = demos.length > 0 ? Math.round((opened / demos.length) * 100) : 0;
+    const openRate = list.length > 0 ? Math.round((opened / list.length) * 100) : 0;
 
     return {
-      total: demos.length,
+      total: list.length,
       opened,
+      unopened: list.length - opened,
       accepted,
       totalViews,
       openRate,
     };
-  }, [demos]);
+  }, [demos, mainTab]);
 
-  // Search filter
+  // Search filter scoped to active mainTab
   const filtered = useMemo(() => {
+    const list = demos.filter((d) => (mainTab === "proposals" ? isProposalDemo(d) : !isProposalDemo(d)));
     const q = search.trim().toLowerCase();
-    if (!q) return demos;
-    return demos.filter(
+    if (!q) return list;
+    return list.filter(
       (d) =>
         d.businessName.toLowerCase().includes(q) ||
         d.title.toLowerCase().includes(q) ||
@@ -377,35 +394,105 @@ export function Demos() {
         (d.client?.name && d.client.name.toLowerCase().includes(q)) ||
         (d.recipientEmail && d.recipientEmail.toLowerCase().includes(q)),
     );
-  }, [demos, search]);
+  }, [demos, search, mainTab]);
+
+  const totalWebsiteDemosCount = useMemo(() => demos.filter((d) => !isProposalDemo(d)).length, [demos]);
+  const totalProposalsCount = useMemo(() => demos.filter((d) => isProposalDemo(d)).length, [demos]);
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Demos & Previews"
-        subtitle="Landing pages built or imported for prospects and clients. Each one lives at a dedicated public URL you can share or attach to an email."
+        title={mainTab === "proposals" ? "Proposals & Pitch Decks" : "Demos & Previews"}
+        subtitle={
+          mainTab === "proposals"
+            ? "Interactive HTML proposals and PDF decks uploaded for prospects. Each gets a dedicated live link with client open detection and section reading heatmaps."
+            : "Landing pages built or imported for prospects and clients. Each one lives at a dedicated public URL you can share or attach to an email."
+        }
         action={
-          <Button
-            onClick={() => {
-              setEditingDemo(null);
-              setDrawerOpen(true);
-            }}
-          >
-            + Import HTML Demo
-          </Button>
+          mainTab === "proposals" ? (
+            <Button
+              onClick={() => {
+                setEditingDemo(null);
+                setIsProposalDrawer(true);
+                setDrawerOpen(true);
+              }}
+            >
+              + Upload Proposal (HTML or PDF)
+            </Button>
+          ) : (
+            <Button
+              onClick={() => {
+                setEditingDemo(null);
+                setIsProposalDrawer(false);
+                setDrawerOpen(true);
+              }}
+            >
+              + Import HTML Demo
+            </Button>
+          )
         }
       />
 
+      {/* Top-Level Switcher: Website Demos vs Client Proposals */}
+      <div className="flex border-b border-line gap-6 text-sm font-semibold">
+        <button
+          type="button"
+          onClick={() => setMainTab("demos")}
+          className={`flex items-center gap-2 pb-3.5 transition border-b-2 -mb-px ${
+            mainTab === "demos"
+              ? "border-blue text-blue font-bold"
+              : "border-transparent text-muted hover:text-ink"
+          }`}
+        >
+          <IconGlobe size={16} />
+          <span>Website Demos</span>
+          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+            mainTab === "demos" ? "bg-blue/10 text-blue" : "bg-surface text-muted"
+          }`}>
+            {totalWebsiteDemosCount}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setMainTab("proposals")}
+          className={`flex items-center gap-2 pb-3.5 transition border-b-2 -mb-px ${
+            mainTab === "proposals"
+              ? "border-blue text-blue font-bold"
+              : "border-transparent text-muted hover:text-ink"
+          }`}
+        >
+          <IconClock size={16} />
+          <span>Proposals</span>
+          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+            mainTab === "proposals" ? "bg-blue text-white" : "bg-surface text-muted"
+          }`}>
+            {totalProposalsCount}
+          </span>
+        </button>
+      </div>
+
       {/* Metrics Seam Grid */}
       <StatGrid columns={4}>
-        <StatTile label="Total Demos Built" value={stats.total} sub="Unlisted prospect & client previews" />
-        <StatTile label="Opened by Recipient" value={stats.opened} sub={`${stats.openRate}% view engagement rate`} />
-        <StatTile label="Total Views Recorded" value={stats.totalViews} sub="Live link interaction counts" />
-        <StatTile
-          label="Accepted"
-          value={stats.accepted}
-          sub={stats.accepted > 0 ? "Converted to client proposal" : "None converted yet"}
-        />
+        {mainTab === "proposals" ? (
+          <>
+            <StatTile label="Total Proposals" value={stats.total} sub="Uploaded client proposals &amp; decks" />
+            <StatTile label="Opened by Client" value={stats.opened} sub={`${stats.openRate}% proposal view rate`} />
+            <StatTile label="Unopened Proposals" value={stats.unopened} sub={stats.unopened > 0 ? "Awaiting client review" : "All sent proposals opened"} />
+            <StatTile label="Total Link Opens" value={stats.totalViews} sub="Combined reading interaction count" />
+          </>
+        ) : (
+          <>
+            <StatTile label="Total Demos Built" value={stats.total} sub="Unlisted prospect &amp; client previews" />
+            <StatTile label="Opened by Recipient" value={stats.opened} sub={`${stats.openRate}% view engagement rate`} />
+            <StatTile label="Total Views Recorded" value={stats.totalViews} sub="Live link interaction counts" />
+            <StatTile
+              label="Accepted"
+              value={stats.accepted}
+              sub={stats.accepted > 0 ? "Converted to client proposal" : "None converted yet"}
+            />
+          </>
+        )}
       </StatGrid>
 
       {/* Search and Status Filters */}
@@ -450,23 +537,26 @@ export function Demos() {
       </div>
 
       {isLoading ? (
-        <Loading label="Loading demos" rows={4} />
+        <Loading label={mainTab === "proposals" ? "Loading proposals" : "Loading demos"} rows={4} />
       ) : filtered.length === 0 ? (
         <EmptyState
           message={
-            demos.length === 0
-              ? "Nothing built or imported yet. Import an HTML file to get an instant public URL you can send to a client or attach to an email."
-              : "No demos match your search criteria."
+            (mainTab === "proposals" ? totalProposalsCount : totalWebsiteDemosCount) === 0
+              ? mainTab === "proposals"
+                ? "No proposals uploaded yet. Upload an HTML proposal or PDF document to generate an interactive client link with open tracking and reading time insights."
+                : "Nothing built or imported yet. Import an HTML file to get an instant public URL you can send to a client or attach to an email."
+              : "No records match your search criteria."
           }
           action={
-            demos.length === 0 ? (
+            (mainTab === "proposals" ? totalProposalsCount : totalWebsiteDemosCount) === 0 ? (
               <Button
                 onClick={() => {
                   setEditingDemo(null);
+                  setIsProposalDrawer(mainTab === "proposals");
                   setDrawerOpen(true);
                 }}
               >
-                + Import HTML Demo
+                {mainTab === "proposals" ? "+ Upload Proposal (HTML or PDF)" : "+ Import HTML Demo"}
               </Button>
             ) : undefined
           }
@@ -475,7 +565,9 @@ export function Demos() {
         <div className="space-y-3.5">
           {filtered.map((demo) => {
             const isEditingSlug = editingSlugId === demo.id;
+            const isProposal = isProposalDemo(demo);
             const isImported = demo.builtBy === "Imported HTML" || Boolean(demo.brief?.imported);
+            const proposalFormat = demo.brief?.proposalFormat || (demo.title.toLowerCase().includes("pdf") ? "pdf" : "html");
 
             return (
               <Card key={demo.id} interactive className="p-4">
@@ -484,7 +576,20 @@ export function Demos() {
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="font-display text-base font-medium text-ink">{demo.businessName}</h3>
                       <Badge tone={STATUS_TONE[demo.status]}>{STATUS_LABEL[demo.status]}</Badge>
-                      {isImported && <Badge tone="info">Imported HTML</Badge>}
+                      {isProposal ? (
+                        <Badge tone="info">{proposalFormat === "pdf" ? "Proposal (PDF)" : "Proposal (HTML)"}</Badge>
+                      ) : isImported ? (
+                        <Badge tone="info">Imported HTML</Badge>
+                      ) : null}
+                      {demo.views > 0 ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                          ✓ Opened {demo.views} time{demo.views > 1 ? "s" : ""}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                          ⏳ Not yet opened
+                        </span>
+                      )}
                       {demo.version > 1 && <Badge tone="muted">v{demo.version}</Badge>}
                     </div>
 
@@ -522,60 +627,72 @@ export function Demos() {
 
                     {/* Public URL & Inline Slug Editor */}
                     <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                      {isEditingSlug ? (
-                        <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-line bg-sunken px-2.5 py-1">
-                          <span className="font-mono text-xs text-muted">{baseUrl}/demos/</span>
-                          <input
-                            type="text"
-                            value={slugDraft}
-                            onChange={(e) => setSlugDraft(slugifyClient(e.target.value))}
-                            className="w-44 rounded border border-line bg-white px-2 py-0.5 font-mono text-xs text-ink outline-none focus:border-blue"
-                            placeholder="custom-slug"
-                            autoFocus
-                          />
-                          <Button
-                            size="sm"
-                            disabled={!slugDraft.trim() || update.isPending}
-                            onClick={() => update.mutate({ id: demo.id, slug: slugDraft.trim() })}
-                          >
-                            {update.isPending ? "Saving…" : "Save URL"}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              setEditingSlugId(null);
-                              setSlugError(null);
-                            }}
-                          >
-                            Cancel
-                          </Button>
-                          {slugError && <span className="text-xs text-danger-text">{slugError}</span>}
-                        </div>
-                      ) : (
-                        <>
-                          <a
-                            href={demo.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="max-w-md truncate font-mono text-xs text-blue underline-offset-2 hover:underline"
-                          >
-                            {demo.url}
-                          </a>
-                          <CopyButton text={demo.url} label="Copy URL" />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingSlugId(demo.id);
-                              setSlugDraft(demo.slug);
-                              setSlugError(null);
-                            }}
-                            className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
-                          >
-                            Customize URL
-                          </button>
-                        </>
-                      )}
+                      {(() => {
+                        const isProposalItem = isProposalDemo(demo) || mainTab === "proposals";
+                        const pathPrefix = isProposalItem ? "proposals" : "demos";
+                        const effectiveUrl = (isProposalItem && demo.url.includes("/demos/"))
+                          ? demo.url.replace("/demos/", "/proposals/")
+                          : demo.url;
+
+                        if (isEditingSlug) {
+                          return (
+                            <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-line bg-sunken px-2.5 py-1">
+                              <span className="font-mono text-xs text-muted">{baseUrl}/{pathPrefix}/</span>
+                              <input
+                                type="text"
+                                value={slugDraft}
+                                onChange={(e) => setSlugDraft(slugifyClient(e.target.value))}
+                                className="w-44 rounded border border-line bg-white px-2 py-0.5 font-mono text-xs text-ink outline-none focus:border-blue"
+                                placeholder="custom-slug"
+                                autoFocus
+                              />
+                              <Button
+                                size="sm"
+                                disabled={!slugDraft.trim() || update.isPending}
+                                onClick={() => update.mutate({ id: demo.id, slug: slugDraft.trim() })}
+                              >
+                                {update.isPending ? "Saving…" : "Save URL"}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  setEditingSlugId(null);
+                                  setSlugError(null);
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                              {slugError && <span className="text-xs text-danger-text">{slugError}</span>}
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <>
+                            <a
+                              href={effectiveUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="max-w-md truncate font-mono text-xs text-blue underline-offset-2 hover:underline"
+                            >
+                              {effectiveUrl}
+                            </a>
+                            <CopyButton text={effectiveUrl} label={isProposalItem ? "Copy Proposal Link" : "Copy URL"} />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingSlugId(demo.id);
+                                setSlugDraft(demo.slug);
+                                setSlugError(null);
+                              }}
+                              className="font-sans text-[11px] uppercase tracking-[.06em] text-muted transition hover:text-ink"
+                            >
+                              Customize URL
+                            </button>
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
 
@@ -626,8 +743,8 @@ export function Demos() {
                     onClick={() => setAnalyticsDemo(demo)}
                     className="gap-1.5 font-semibold"
                   >
-                    <IconBarChart size={13} />
-                    <span>Analytics & Heatmap</span>
+                    {isProposal ? <IconClock size={13} /> : <IconBarChart size={13} />}
+                    <span>{isProposal ? "Reading Heatmap & Analytics" : "Analytics & Heatmap"}</span>
                     {demo.views > 0 && (
                       <span className="ml-1 rounded-full bg-black/10 px-1.5 py-0.2 text-[10px] font-bold">
                         {demo.views}
@@ -719,9 +836,11 @@ export function Demos() {
         open={drawerOpen}
         editingDemo={editingDemo}
         baseUrl={baseUrl}
+        isProposalMode={isProposalDrawer}
         onClose={() => {
           setDrawerOpen(false);
           setEditingDemo(null);
+          setIsProposalDrawer(false);
         }}
         onOpenBuilder={(demo) => {
           setDrawerOpen(false);
@@ -754,6 +873,7 @@ function ImportDemoDrawer({
   open,
   editingDemo,
   baseUrl,
+  isProposalMode,
   onClose,
   onOpenBuilder,
   onShareEmail,
@@ -761,6 +881,7 @@ function ImportDemoDrawer({
   open: boolean;
   editingDemo: Demo | null;
   baseUrl: string;
+  isProposalMode?: boolean;
   onClose: () => void;
   onOpenBuilder: (demo: Demo) => void;
   onShareEmail: (demo: Demo, attachHtml: boolean) => void;
@@ -768,6 +889,7 @@ function ImportDemoDrawer({
   const qc = useQueryClient();
   const [sourceTab, setSourceTab] = useState<"file" | "paste">("file");
   const [dragging, setDragging] = useState(false);
+  const [isPdf, setIsPdf] = useState(false);
   const [fileName, setFileName] = useState<string>("");
   const [fileSize, setFileSize] = useState<number | null>(null);
   const [dataBase64, setDataBase64] = useState<string>("");
@@ -947,11 +1069,244 @@ function ImportDemoDrawer({
   const handleFile = async (file: File) => {
     setError(null);
     if (/\.zip$/i.test(file.name) || file.type === "application/zip" || file.type === "application/x-zip-compressed") {
+      setIsPdf(false);
       await handleZip(file);
       return;
     }
+    if (/\.pdf$/i.test(file.name) || file.type === "application/pdf") {
+      if (file.size > 30 * 1024 * 1024) {
+        setError("PDF document exceeds the 30 MB limit.");
+        return;
+      }
+      setFolder(null);
+      setEntry(null);
+      setPackageNote(null);
+      setPackaging(true);
+      try {
+        const b64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(new Error("Could not read PDF file."));
+          reader.onload = () => resolve(String(reader.result));
+          reader.readAsDataURL(file);
+        });
+
+        const safeName = file.name.replace(/\.pdf$/i, "").replace(/[-_]/g, " ");
+        const pdfViewerHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${safeName} | Proposal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #091428;
+    color: #F8FAFC;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    padding-bottom: 60px;
+  }
+  .pdf-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(9, 24, 51, 0.95);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(143, 178, 255, 0.2);
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .pdf-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .pdf-brand .logo {
+    font-family: 'Outfit', sans-serif;
+    font-weight: 700;
+    font-size: 15px;
+    color: #FFFFFF;
+  }
+  .pdf-brand .badge {
+    background: rgba(37, 99, 235, 0.2);
+    border: 1px solid rgba(37, 99, 235, 0.4);
+    color: #8FB2FF;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 9999px;
+  }
+  .pdf-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .page-nav-select {
+    background: #0F1B2E;
+    border: 1px solid rgba(143, 178, 255, 0.25);
+    color: #FFFFFF;
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    outline: none;
+    cursor: pointer;
+  }
+  .download-btn {
+    background: #2563EB;
+    color: #FFFFFF;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: 6px;
+    text-decoration: none;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .download-btn:hover { background: #1D4ED8; }
+  .pdf-pages-container {
+    max-width: 880px;
+    margin: 24px auto;
+    padding: 0 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+  .pdf-page-section {
+    background: #FFFFFF;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .pdf-page-header {
+    background: #0F172A;
+    color: #94A3B8;
+    padding: 8px 16px;
+    font-size: 11px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #1E293B;
+  }
+  .pdf-page-canvas-wrapper {
+    display: flex;
+    justify-content: center;
+    background: #525659;
+    padding: 8px;
+  }
+  canvas {
+    max-width: 100%;
+    height: auto !important;
+    display: block;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  }
+  .fallback-iframe {
+    width: 100%;
+    height: 85vh;
+    border: none;
+    border-radius: 10px;
+  }
+</style>
+</head>
+<body>
+  <header class="pdf-toolbar">
+    <div class="pdf-brand">
+      <span class="logo">DakyXTech</span>
+      <span class="badge">Proposal Document</span>
+      <span style="font-size: 12px; color: #CBD5E1; font-weight: 500;">${safeName}</span>
+    </div>
+    <div class="pdf-actions">
+      <select id="page-jump-select" class="page-nav-select" onchange="var el = document.getElementById(this.value); if(el) el.scrollIntoView({behavior:'smooth'});">
+        <option value="">Jump to page…</option>
+      </select>
+      <a href="${b64}" download="${file.name}" class="download-btn">⬇ Download PDF</a>
+    </div>
+  </header>
+
+  <main class="pdf-pages-container" id="pdf-pages-container">
+    <div id="pdf-loading" style="text-align: center; padding: 48px; color: #94A3B8; font-size: 13px;">
+      Rendering proposal pages…
+    </div>
+  </main>
+
+  <script>
+    (async function initPdfRenderer() {
+      var container = document.getElementById("pdf-pages-container");
+      var select = document.getElementById("page-jump-select");
+      var rawData = "${b64}";
+      try {
+        if (!window.pdfjsLib) throw new Error("No PDF.js");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+        var b64Payload = rawData.indexOf(",") > -1 ? rawData.split(",")[1] : rawData;
+        var binary = atob(b64Payload);
+        var bytes = new Uint8Array(binary.length);
+        for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        var doc = await pdfjsLib.getDocument({ data: bytes }).promise;
+        container.innerHTML = "";
+        for (var p = 1; p <= doc.numPages; p++) {
+          var page = await doc.getPage(p);
+          var vp = page.getViewport({ scale: 1.5 });
+          var sec = document.createElement("section");
+          sec.className = "pdf-page-section";
+          sec.id = "page-" + p;
+          sec.setAttribute("data-section-id", "page-" + p);
+          sec.setAttribute("data-section-title", "Page " + p + " of " + doc.numPages);
+          var hdr = document.createElement("div");
+          hdr.className = "pdf-page-header";
+          hdr.innerHTML = "<span>📄 Page " + p + " of " + doc.numPages + "</span><span style='font-size:10px;color:#64748B;'>Scroll to read</span>";
+          var wrap = document.createElement("div");
+          wrap.className = "pdf-page-canvas-wrapper";
+          var canvas = document.createElement("canvas");
+          canvas.height = vp.height;
+          canvas.width = vp.width;
+          wrap.appendChild(canvas);
+          sec.appendChild(hdr);
+          sec.appendChild(wrap);
+          container.appendChild(sec);
+          await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+          var opt = document.createElement("option");
+          opt.value = "page-" + p;
+          opt.textContent = "Page " + p + " of " + doc.numPages;
+          select.appendChild(opt);
+        }
+      } catch (err) {
+        container.innerHTML = '<iframe class="fallback-iframe" src="' + rawData + '#toolbar=1" title="${safeName}"></iframe>';
+      }
+    })();
+  </script>
+</body>
+</html>`;
+
+        const encoded = encodeURIComponent(pdfViewerHtml);
+        const resolvedB64 = `data:text/html;charset=utf-8;base64,${btoa(unescape(encoded))}`;
+
+        setIsPdf(true);
+        setFileName(file.name);
+        setFileSize(file.size);
+        setDataBase64(resolvedB64);
+        setLocalFiles([]);
+        if (!businessName.trim()) setBusinessName(safeName);
+        if (!title.trim()) setTitle(`${safeName} Proposal`);
+        if (!slugTouched && !slug.trim()) setSlug(slugifyClient(safeName));
+      } catch (err) {
+        setError((err as Error).message);
+      } finally {
+        setPackaging(false);
+      }
+      return;
+    }
+
+    setIsPdf(false);
     if (!/\.html?$/i.test(file.name) && file.type && !file.type.includes("html") && !file.type.includes("text")) {
-      setError("Please select an .html or .htm file, a ZIP, or the page's folder.");
+      setError("Please select an .html, .htm, or .pdf file, a ZIP, or the page's folder.");
       return;
     }
     setFolder(null);
@@ -1017,6 +1372,11 @@ function ImportDemoDrawer({
         notes: notes.trim() || null,
       };
 
+      if (isProposalMode || isPdf || isProposalDemo(editingDemo)) {
+        payload.isProposal = true;
+        payload.proposalFormat = isPdf ? "pdf" : "html";
+      }
+
       if (sourceTab === "file" && dataBase64) {
         payload.fileName = fileName;
         payload.filename = fileName;
@@ -1025,7 +1385,7 @@ function ImportDemoDrawer({
       } else if (sourceTab === "paste" && rawHtml.trim()) {
         payload.html = rawHtml.trim();
       } else if (!editingDemo) {
-        throw new Error("Please upload an .html file or paste HTML markup first.");
+        throw new Error("Please upload an .html or .pdf file or paste HTML markup first.");
       }
 
       if (editingDemo) {
@@ -1046,17 +1406,28 @@ function ImportDemoDrawer({
   });
 
   const previewSlug = slugifyClient(slug || businessName || "your-demo-name") || "your-demo-name";
-  const previewUrl = `${baseUrl}/demos/${previewSlug}`;
+  const isProposalItem = isProposalMode || isPdf || (editingDemo && isProposalDemo(editingDemo));
+  const previewUrl = `${baseUrl}/${isProposalItem ? "proposals" : "demos"}/${previewSlug}`;
 
   return (
     <Drawer
       open={open}
       onClose={onClose}
-      title={editingDemo ? `Update Demo — ${editingDemo.businessName}` : "Import HTML File as Demo"}
+      title={
+        isProposalMode
+          ? editingDemo
+            ? `Update Proposal — ${editingDemo.businessName}`
+            : "Upload Proposal or Pitch Deck (HTML or PDF)"
+          : editingDemo
+            ? `Update Demo — ${editingDemo.businessName}`
+            : "Import HTML File as Demo"
+      }
       subtitle={
-        editingDemo
-          ? "Upload a new version (the page's folder brings its pictures) or adjust its public URL and recipient settings."
-          : "Turn an .html page, or its whole folder with the pictures, into a hosted public demo URL you can send to a client or attach to an email."
+        isProposalMode
+          ? "Upload an interactive HTML proposal or PDF presentation. Each proposal gets a dedicated hosted link with open tracking and reading time heatmaps."
+          : editingDemo
+            ? "Upload a new version (the page's folder brings its pictures) or adjust its public URL and recipient settings."
+            : "Turn an .html page, or its whole folder with the pictures, into a hosted public demo URL you can send to a client or attach to an email."
       }
     >
       {savedDemo ? (
@@ -1184,7 +1555,7 @@ function ImportDemoDrawer({
               >
                 <input
                   type="file"
-                  accept=".html,.htm,.zip,text/html,application/zip"
+                  accept={isProposalMode ? ".html,.htm,.pdf,.zip,text/html,application/pdf,application/zip" : ".html,.htm,.zip,text/html,application/zip"}
                   className="hidden"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
@@ -1193,26 +1564,28 @@ function ImportDemoDrawer({
                   }}
                 />
                 {packaging ? (
-                  <span className="text-sm font-medium text-ink">Packing the page and its pictures…</span>
+                  <span className="text-sm font-medium text-ink">Processing document…</span>
                 ) : fileName ? (
                   <>
-                    <Badge tone="positive">{packageNote ? "Selected Page and Files" : "Selected File"}</Badge>
+                    <Badge tone="positive">{isPdf ? "Selected PDF Proposal" : packageNote ? "Selected Page and Files" : "Selected File"}</Badge>
                     <span className="mt-2 font-mono text-sm font-medium text-ink">{packageNote ?? fileName}</span>
                     {fileSize !== null && (
                       <span className="mt-0.5 text-xs text-muted">
                         {fileSize >= 1024 * 1024 ? `${(fileSize / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(fileSize / 1024))} KB`}
                       </span>
                     )}
-                    <span className="mt-2 text-xs text-blue underline">Click or drop another file, ZIP or folder to replace</span>
+                    <span className="mt-2 text-xs text-blue underline">Click or drop another file, PDF or folder to replace</span>
                   </>
                 ) : (
                   <>
                     <span className="text-sm font-medium text-ink">
-                      Drop the page's folder, a ZIP or an <code className="font-mono text-xs">.html</code> file here, or{" "}
+                      {isProposalMode ? "Drop an HTML or PDF proposal here, or " : "Drop the page's folder, a ZIP or an .html file here, or "}
                       <span className="text-blue underline underline-offset-2">browse</span>
                     </span>
                     <span className="mt-1 text-xs text-muted">
-                      A page whose pictures sit beside it (<code className="font-mono">images/…</code>) needs its folder or a ZIP, or they show broken
+                      {isProposalMode
+                        ? "Supports responsive HTML proposals with section tracking, pitch decks, and PDF documents"
+                        : "A page whose pictures sit beside it (images/…) needs its folder or a ZIP, or they show broken"}
                     </span>
                   </>
                 )}
@@ -1332,7 +1705,7 @@ function ImportDemoDrawer({
           >
             <div className="flex items-center gap-2">
               <span className="shrink-0 rounded-xl border border-line bg-sunken px-3 py-2 font-mono text-xs text-muted">
-                {baseUrl}/demos/
+                {baseUrl}/{isProposalMode || isPdf ? "proposals" : "demos"}/
               </span>
               <input
                 className="input font-mono text-xs"

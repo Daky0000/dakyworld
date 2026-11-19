@@ -222,11 +222,67 @@ export function generateTrackerScript(options: {
         }
       }
       lastActiveTick = now;
+      updateSectionDwell();
+    }
+
+    // Section-level engagement & reading dwell tracking
+    var sectionDwellMap = {};
+    var lastSectionTick = Date.now();
+
+    function updateSectionDwell() {
+      try {
+        var now = Date.now();
+        var delta = (now - lastSectionTick) / 1000;
+        lastSectionTick = now;
+        if (!isTabActive || document.hidden || delta <= 0 || delta > 15) return;
+
+        var sections = document.querySelectorAll("[data-section-id]");
+        if (!sections || sections.length === 0) {
+          sections = document.querySelectorAll("section, article, .pdf-page-section, [id^='page-'], [id^='sec-']");
+        }
+        if (!sections || sections.length === 0) return;
+
+        var scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
+        var viewH = window.innerHeight || 800;
+        var targetLine = scrollY + (viewH * 0.38);
+
+        var activeSec = null;
+        for (var si = 0; si < sections.length; si++) {
+          var sEl = sections[si];
+          var sTop = sEl.offsetTop || 0;
+          var sHeight = sEl.offsetHeight || 0;
+          if (sTop <= targetLine && (sTop + sHeight) >= targetLine) {
+            activeSec = sEl;
+            break;
+          }
+        }
+        if (!activeSec && sections.length > 0) {
+          activeSec = sections[0];
+        }
+
+        if (activeSec) {
+          var sId = activeSec.getAttribute("data-section-id") || activeSec.id || ("sec_" + (si + 1));
+          var sHeading = activeSec.querySelector("h1, h2, h3, .pdf-page-header");
+          var sHeadingText = sHeading ? (sHeading.innerText || sHeading.textContent || "") : "";
+          var sTitle = activeSec.getAttribute("data-section-title") || activeSec.getAttribute("aria-label") || cleanText(sHeadingText) || ("Section " + (si + 1));
+          var sSelector = "#" + (activeSec.id || sId);
+
+          if (!sectionDwellMap[sId]) {
+            sectionDwellMap[sId] = {
+              selector: sSelector.slice(0, 100),
+              title: sTitle.slice(0, 100),
+              seconds: 0
+            };
+          }
+          sectionDwellMap[sId].seconds += delta;
+        }
+      } catch(e) {}
     }
 
     document.addEventListener("visibilitychange", function() {
       isTabActive = !document.hidden;
       lastActiveTick = Date.now();
+      lastSectionTick = Date.now();
       if (!isTabActive) {
         flush(false);
       }
@@ -235,6 +291,7 @@ export function generateTrackerScript(options: {
     window.addEventListener("focus", function() {
       isTabActive = true;
       lastActiveTick = Date.now();
+      lastSectionTick = Date.now();
     });
 
     window.addEventListener("blur", function() {
@@ -372,8 +429,27 @@ export function generateTrackerScript(options: {
         var currentDuration = Math.round(activeDurationSeconds);
         var clicksToSend = clickQueue.slice();
 
+        // Attach cumulative section engagement dwell snapshots
+        for (var secKey in sectionDwellMap) {
+          var secInfo = sectionDwellMap[secKey];
+          var secDwell = Math.round(secInfo.seconds);
+          if (secDwell > 0) {
+            clicksToSend.push({
+              id: "sec_" + secKey,
+              x: 0,
+              y: 0,
+              xPercent: 0,
+              yPercent: 0,
+              targetTag: "SECTION",
+              targetText: secInfo.title,
+              targetSelector: secInfo.selector,
+              timeOffset: secDwell
+            });
+          }
+        }
+
         // Batch writes: do not send heartbeat if nothing has changed
-        var hasNewClicks = clicksToSend.length > 0;
+        var hasNewClicks = clickQueue.length > 0;
         var hasNewDuration = (currentDuration - lastAckedDuration) >= 3;
         var hasNewScroll = maxScrollDepth > lastAckedScroll;
         var brokenToSend = brokenFiles.slice();
@@ -410,7 +486,8 @@ export function generateTrackerScript(options: {
           brokenFiles: hasNewBroken ? brokenToSend : undefined
         };
 
-        var endpoint = "/demos/" + encodeURIComponent(SLUG) + "/analytics";
+        var isProposalUrl = window.location.pathname.indexOf("/proposal") === 0;
+        var endpoint = (isProposalUrl ? window.location.pathname.replace(/\/analytics\/?$/, "").replace(/\/+$/, "") : ("/demos/" + encodeURIComponent(SLUG))) + "/analytics";
         var jsonStr = JSON.stringify(payload);
 
         if (isFinal) {

@@ -7,6 +7,7 @@ import { BrokenFilesPanel, mergeBrokenFiles } from "./DemoBrokenFiles.js";
 import {
   IconAward,
   IconBarChart,
+  IconClock,
   IconDesktop,
   IconFlame,
   IconGlobe,
@@ -25,7 +26,7 @@ interface DemoAnalyticsModalProps {
   onClose: () => void;
 }
 
-type TabKey = "overview" | "heatmap";
+type TabKey = "overview" | "reading" | "heatmap";
 type HeatmapMode = "pins" | "heat" | "both";
 type ViewportPreset = "desktop" | "tablet" | "mobile" | "full";
 
@@ -45,6 +46,37 @@ function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
+
+function getDwellBadge(seconds: number) {
+  if (seconds >= 180) {
+    return {
+      label: `🔥 ${formatDuration(seconds)} spent here — Deep Study`,
+      className: "bg-rose-50 text-rose-700 border-rose-200",
+    };
+  }
+  if (seconds >= 60) {
+    return {
+      label: `🔥 ${formatDuration(seconds)} spent here — High Interest`,
+      className: "bg-amber-50 text-amber-800 border-amber-200",
+    };
+  }
+  if (seconds >= 20) {
+    return {
+      label: `👀 ${formatDuration(seconds)} spent here — Thorough Read`,
+      className: "bg-blue-50 text-blue-700 border-blue-200",
+    };
+  }
+  if (seconds >= 6) {
+    return {
+      label: `📖 ${formatDuration(seconds)} spent here — Normal Read`,
+      className: "bg-indigo-50 text-indigo-700 border-indigo-200",
+    };
+  }
+  return {
+    label: `⚡ ${formatDuration(seconds)} spent here — Quick Skim`,
+    className: "bg-slate-100 text-slate-600 border-slate-200",
+  };
 }
 
 export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalProps) {
@@ -290,6 +322,22 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                 }`}
               >
                 <IconBarChart size={13} /> Visitors & Activity
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("reading")}
+                className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 transition ${
+                  activeTab === "reading"
+                    ? "bg-white text-ink shadow-sm font-semibold"
+                    : "text-muted hover:text-ink"
+                }`}
+              >
+                <IconClock size={13} /> Reading Time &amp; Sections
+                {report?.sectionEngagement && report.sectionEngagement.length > 0 ? (
+                  <span className="rounded-full bg-blue/10 px-1.5 py-0.2 text-[10px] font-bold text-blue">
+                    {report.sectionEngagement.length}
+                  </span>
+                ) : null}
               </button>
               <button
                 type="button"
@@ -749,6 +797,160 @@ export function DemoAnalyticsModal({ demo, open, onClose }: DemoAnalyticsModalPr
                         </tbody>
                       </table>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB: READING TIME & SECTION HEATMAP */}
+              {activeTab === "reading" && (
+                <div className="space-y-6">
+                  {/* Top Highlight Banner */}
+                  {report?.sectionEngagement && report.sectionEngagement.length > 0 ? (
+                    <div className="rounded-2xl border border-blue/20 bg-blue/5 p-5">
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <div className="flex items-center gap-3.5">
+                          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue text-white shadow-sm">
+                            <IconClock size={22} />
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold uppercase tracking-wider text-blue">
+                              Highest Client Engagement Area
+                            </div>
+                            <div className="text-base font-bold text-ink">
+                              {report.sectionEngagement[0].title}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="rounded-xl border border-line bg-white px-4 py-2 text-right shadow-xs">
+                            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+                              Total Time Spent
+                            </div>
+                            <div className="text-sm font-bold text-ink">
+                              {formatDuration(report.sectionEngagement[0].totalSeconds)}
+                            </div>
+                          </div>
+                          <div className="rounded-xl border border-line bg-white px-4 py-2 text-right shadow-xs">
+                            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+                              Share of Reading
+                            </div>
+                            <div className="text-sm font-bold text-blue">
+                              {report.sectionEngagement[0].percentage}%
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Section Engagement Table & Progress Meters */}
+                  <div className="rounded-2xl border border-line bg-white p-5 shadow-xs">
+                    <div className="mb-4 flex items-center justify-between">
+                      <div>
+                        <h3 className="text-sm font-bold text-ink">Reading Time by Section</h3>
+                        <p className="text-xs text-muted">
+                          Ranked breakdown showing where the client spent the most reading time.
+                        </p>
+                      </div>
+                      <Badge tone="info">
+                        {report?.sectionEngagement?.length || 0} Sections Measured
+                      </Badge>
+                    </div>
+
+                    {report?.sectionEngagement && report.sectionEngagement.length > 0 ? (
+                      <div className="space-y-3">
+                        {/* Client Attention Journey Summary */}
+                        <div className="rounded-xl border border-blue/20 bg-blue/5 p-3.5 text-xs text-ink">
+                          <div className="mb-1 flex items-center gap-1.5 font-bold uppercase tracking-wider text-[11px] text-blue">
+                            <IconTarget size={13} /> Client Attention Summary
+                          </div>
+                          <p className="leading-relaxed text-muted">
+                            The client spent the most time (<strong className="text-ink">{formatDuration(report.sectionEngagement[0].totalSeconds)}</strong>) on <strong className="text-ink">{report.sectionEngagement[0].title}</strong>, accounting for <strong className="text-blue">{report.sectionEngagement[0].percentage}%</strong> of their total reading focus.
+                            {report.sectionEngagement.length > 1 && report.sectionEngagement[1].totalSeconds > 0 && (
+                              <> They also spent <strong className="text-ink">{formatDuration(report.sectionEngagement[1].totalSeconds)}</strong> reviewing <strong className="text-ink">{report.sectionEngagement[1].title}</strong>.</>
+                            )}
+                            {report.sectionEngagement[report.sectionEngagement.length - 1].totalSeconds > 0 && (
+                              <> Meanwhile, they skimmed through <span className="font-medium text-ink">{report.sectionEngagement[report.sectionEngagement.length - 1].title}</span> in {formatDuration(report.sectionEngagement[report.sectionEngagement.length - 1].totalSeconds)}.</>
+                            )}
+                          </p>
+                        </div>
+
+                        {report.sectionEngagement.map((sec, idx) => {
+                          const dwell = getDwellBadge(sec.totalSeconds);
+                          return (
+                            <div
+                              key={sec.selector || idx}
+                              className="rounded-xl border border-line bg-surface/50 p-4 transition hover:border-blue/30 hover:bg-white"
+                            >
+                              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex items-center gap-2.5">
+                                  <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
+                                    idx === 0
+                                      ? "bg-amber-100 text-amber-800"
+                                      : idx === 1
+                                      ? "bg-slate-200 text-slate-800"
+                                      : idx === 2
+                                      ? "bg-orange-100 text-orange-800"
+                                      : "bg-surface text-muted"
+                                  }`}>
+                                    {idx + 1}
+                                  </span>
+                                  <span className="font-semibold text-ink text-sm">{sec.title}</span>
+                                  <span className="text-[11px] font-mono text-muted">{sec.selector}</span>
+                                </div>
+                                <div className="flex items-center gap-3 text-xs font-medium">
+                                  <span className="text-muted">
+                                    Avg per visit: <strong className="text-ink">{formatDuration(sec.avgSeconds)}</strong>
+                                  </span>
+                                  <span className="text-muted">
+                                    Total: <strong className="text-ink">{formatDuration(sec.totalSeconds)}</strong>
+                                  </span>
+                                  <span className="rounded-full bg-blue/10 px-2 py-0.5 text-xs font-bold text-blue">
+                                    {sec.percentage}%
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Relative Progress Bar */}
+                              <div className="h-2 w-full overflow-hidden rounded-full bg-line/60">
+                                <div
+                                  className={`h-full rounded-full transition-all duration-500 ${
+                                    idx === 0 ? "bg-blue" : idx === 1 ? "bg-indigo-500" : "bg-blue/60"
+                                  }`}
+                                  style={{ width: `${Math.max(4, Math.min(100, sec.percentage))}%` }}
+                                />
+                              </div>
+
+                              {/* Prominent Attention Badge showing exact time spent here */}
+                              <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-line/40 pt-2 text-xs">
+                                <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${dwell.className}`}>
+                                  {dwell.label}
+                                </span>
+                                <span className="text-[11px] text-muted">
+                                  {sec.totalSeconds >= 120
+                                    ? "Client paused and studied this section intently."
+                                    : sec.totalSeconds >= 45
+                                    ? "Read with focused attention."
+                                    : sec.totalSeconds < 10
+                                    ? "Briefly glanced or scrolled past."
+                                    : "Read through normally."}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-dashed border-line p-8 text-center">
+                        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-surface text-muted">
+                          <IconClock size={24} />
+                        </div>
+                        <h4 className="text-sm font-semibold text-ink">No Section Reading Data Yet</h4>
+                        <p className="mx-auto mt-1 max-w-md text-xs text-muted">
+                          Section dwell time is recorded automatically when clients open and read proposals with marked sections (using <code>data-section-id</code>). Send the live link to your client to track their reading engagement!
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

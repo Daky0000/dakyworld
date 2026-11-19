@@ -360,8 +360,9 @@ export function withBanner(html: string, businessName: string, senderName: strin
  * a link that does not match what the server serves is the whole feature
  * failing in the only place the prospect can see.
  */
-export function demoUrl(slug: string, base: string): string {
-  return `${base.replace(/\/$/, "")}/demos/${slug}`;
+export function demoUrl(slug: string, base: string, isProposal?: boolean): string {
+  const segment = isProposal ? "proposals" : "demos";
+  return `${base.replace(/\/$/, "")}/${segment}/${slug}`;
 }
 
 /** `Adjei Dental Centre` becomes `adjei-dental-centre`. */
@@ -706,10 +707,23 @@ export function prepareImportedDemoHtml(
     html = withBanner(html, options.businessName, options.senderName, options.senderSite);
   }
 
+  html = autoTagHtmlSections(html);
   html = withNoIndex(html);
   const missing = localFilesNamed(html);
   if (missing.length) notes.push(missingFilesNote(missing));
   return { html, notes };
+}
+
+export function autoTagHtmlSections(html: string): string {
+  if (/data-section-id=/i.test(html)) return html;
+  let sectionIndex = 1;
+  return html.replace(/<(section|article)\b([^>]*)>/gi, (match, tag, attrs) => {
+    if (/data-section-id=/i.test(attrs)) return match;
+    const secId = `sec-part-${sectionIndex}`;
+    const secTitle = `Section ${sectionIndex}`;
+    sectionIndex++;
+    return `<${tag} id="${secId}" data-section-id="${secId}" data-section-title="${secTitle}"${attrs}>`;
+  });
 }
 
 /**
@@ -797,6 +811,8 @@ export interface ImportDemoInput {
   userId?: string | null;
   /** With a ZIP upload: which page in it is the demo, when it holds several. */
   entry?: string | null;
+  isProposal?: boolean;
+  proposalFormat?: string | null;
 }
 
 /**
@@ -909,6 +925,8 @@ async function importDemoRecord(input: ImportDemoInput) {
     clientName: client ? client.company ?? client.name : null,
     recipientEmail,
     recipientName,
+    isProposal: input.isProposal ?? (existingBrief as any).isProposal ?? false,
+    proposalFormat: input.proposalFormat ?? (existingBrief as any).proposalFormat ?? null,
     importedAt: new Date().toISOString(),
     importedBy: input.userId ?? null,
   };

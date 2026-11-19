@@ -195,6 +195,8 @@ app.use("/api/messaging", webhookRateLimit, express.raw({ type: "*/*", limit: "1
 // deliberate: the individual pages are unlisted-but-public, and the list of
 // every business DakyXTech is pitching to stays behind the login.
 app.use("/demos", demoPagesRouter);
+app.use("/proposals", demoPagesRouter);
+app.use("/proposal", demoPagesRouter);
 app.use("/website", websitePagesRouter);
 
 const publicReviewRouter = express.Router();
