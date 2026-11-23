@@ -1,6 +1,7 @@
 import type { ImapFlow } from "imapflow";
 import { buildClient, readImapConfig, type ImapConfig } from "../../lib/imap.js";
 import { syncMailbox } from "./sync.js";
+import { mailflareReadConfigured } from "../../lib/mailflareRead.js";
 import { backgroundRunAllowed } from "../../lib/backgroundOwnership.js";
 
 /**
@@ -123,6 +124,13 @@ function scheduleReconnect(reason: string) {
 async function connect(): Promise<void> {
   if (!backgroundRunAllowed()) return;
   if (state.stopping) return;
+
+  // Reading through Mailflare: there is no IMAP server to idle on, and the
+  // Hostinger mailbox still configured receives nothing. The minute tick reads.
+  if (await mailflareReadConfigured()) {
+    await teardown();
+    return;
+  }
 
   const config = await readImapConfig();
   if (!config) {

@@ -1,3 +1,4 @@
+import { mailflareReadConfigured } from "./mailflareRead.js";
 import { ImapFlow, type ListResponse } from "imapflow";
 import { SETTING, getSetting } from "./settings.js";
 
@@ -94,6 +95,11 @@ export async function imapConfigured(): Promise<boolean> {
   return (await readImapConfig()) !== null;
 }
 
+/** True when the mail room can read anything: Mailflare over JMAP, or an IMAP mailbox. */
+export async function mailReadingConfigured(): Promise<boolean> {
+  return (await mailflareReadConfigured()) || (await imapConfigured());
+}
+
 /**
  * The IMAP settings implied by the SMTP ones already stored.
  *
@@ -124,12 +130,13 @@ export function suggestFromSmtp(smtpHost: string | null): { host: string; port: 
  * it.
  */
 export async function ownAddresses(): Promise<string[]> {
-  const [configured, fromEmail, smtpUser, imapUser, hostingerAddress] = await Promise.all([
+  const [configured, fromEmail, smtpUser, imapUser, hostingerAddress, mailflareAddress] = await Promise.all([
     getSetting(SETTING.MAIL_OWN_DOMAINS),
     getSetting(SETTING.MAIL_FROM_EMAIL),
     getSetting(SETTING.SMTP_USER),
     getSetting(SETTING.IMAP_USER),
     getSetting(SETTING.HOSTINGER_MAILBOX_ADDRESS),
+    getSetting(SETTING.MAILFLARE_MAILBOX_ADDRESS),
   ]);
 
   const entries = new Set<string>();
@@ -140,7 +147,7 @@ export async function ownAddresses(): Promise<string[]> {
   // The derived ones are added whether or not the setting is filled in: a list
   // that names a domain and forgets the sending address is a list that treats
   // our own outbound as a stranger's mail.
-  for (const value of [fromEmail, smtpUser, imapUser, hostingerAddress]) {
+  for (const value of [fromEmail, smtpUser, imapUser, hostingerAddress, mailflareAddress]) {
     const address = value?.trim().toLowerCase();
     if (!address || !address.includes("@")) continue;
     entries.add(address);

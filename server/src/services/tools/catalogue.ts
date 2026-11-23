@@ -42,7 +42,7 @@ import {
 import { enrol, stopOnReply } from "../emailSequences.js";
 import { handOverMessage, inboxSummary, markHandled } from "../mailbox/actions.js";
 import { NEEDS_NO_REPLY } from "../mailbox/router.js";
-import { imapConfigured } from "../../lib/imap.js";
+import { imapConfigured, mailReadingConfigured } from "../../lib/imap.js";
 import { runSource } from "../scraperRunner.js";
 import { hunt } from "../hunt/run.js";
 import { estimateCost } from "../captureCost.js";
@@ -1287,7 +1287,7 @@ export const TOOLS: ToolDefinition<any, any>[] = [
         orderBy: { receivedAt: "desc" },
         take: input.limit,
       });
-      const connected = await imapConfigured();
+      const connected = await mailReadingConfigured();
       return {
         mailboxConnected: connected,
         // Said out loud rather than returning a quietly short list: an agent

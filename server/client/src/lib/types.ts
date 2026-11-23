@@ -3120,6 +3120,13 @@ export interface InboxStatus {
   connected: boolean;
   mailbox: string | null;
   host: string | null;
+  /** Where the mail room reads from. */
+  source: "MAILFLARE" | "IMAP" | null;
+  /** True once a Mailflare reading key is stored. */
+  mailflareReadable: boolean;
+  /** Mail is sent through Mailflare, so that is where the replies are. */
+  mailflareSending: boolean;
+  mailflareKeyEnvManaged: boolean;
   triage: boolean;
   autoRoute: boolean;
   watcher: { connected: boolean; connectedAt: string | null; lastPushAt: string | null; lastError: string | null; reading: boolean };

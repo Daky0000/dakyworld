@@ -11,8 +11,8 @@ import type { Attachment, SendArgs, SendReceipt } from "./mailer.js";
  * point — what the OS sends and what a person sends from the inbox are then in
  * one place.
  *
- * The API takes no custom headers, so `replyTo` and `unsubscribeUrl` are
- * dropped here exactly as they are on the Hostinger path. `inReplyTo` is kept:
+ * `replyTo` and `unsubscribeUrl` go as headers (see `extraHeaders`), which
+ * needs the patched Mailflare in the mailflare folder. `inReplyTo` is kept:
  * Mailflare writes the threading headers itself.
  *
  * **The letterhead artwork goes as inline parts.** An attachment that carries a
@@ -94,6 +94,22 @@ async function encodeAttachments(attachments: Attachment[]) {
 
 const quoteName = (name: string) => `"${name.replace(/["\\\r\n]/g, "")}"`;
 
+/**
+ * Reply-To and the one-click unsubscribe pair (RFC 8058). Mailflare accepts
+ * exactly these three through DakyXTech's patch to its send route; an
+ * unpatched Mailflare ignores the field rather than refusing the message.
+ */
+function extraHeaders(args: SendArgs): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const clean = (value: string) => value.replace(/[\r\n]/g, "").trim();
+  if (args.replyTo) headers["Reply-To"] = clean(args.replyTo);
+  if (args.unsubscribeUrl) {
+    headers["List-Unsubscribe"] = `<${clean(args.unsubscribeUrl)}>`;
+    headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+  }
+  return headers;
+}
+
 export async function sendViaMailflare(args: SendArgs): Promise<SendReceipt> {
   const config = await readMailflareConfig();
   if (!config) {
@@ -112,6 +128,7 @@ export async function sendViaMailflare(args: SendArgs): Promise<SendReceipt> {
     text: args.text,
     ...(args.inReplyTo ? { inReplyTo: args.inReplyTo, references: args.inReplyTo } : {}),
     ...(attachments.length ? { attachments } : {}),
+    ...(Object.keys(extraHeaders(args)).length ? { headers: extraHeaders(args) } : {}),
   };
 
   let response: Response;
@@ -129,7 +146,7 @@ export async function sendViaMailflare(args: SendArgs): Promise<SendReceipt> {
     throw new MailflareMailError(502, `Could not reach Mailflare: ${(err as Error).message}`, !timedOut);
   }
 
-  const payload = (await response.json().catch(() => null)) as { messageId?: string; error?: unknown } | null;
+  const payload = (await response.json().catch(() => null)) as { messageId?: string; providerMessageId?: string | null; error?: unknown } | null;
   if (!response.ok) {
     const reason = typeof payload?.error === "string" ? payload.error : JSON.stringify(payload?.error ?? response.statusText);
     if (response.status === 401) {
@@ -139,5 +156,8 @@ export async function sendViaMailflare(args: SendArgs): Promise<SendReceipt> {
     throw new MailflareMailError(response.status, `Mailflare refused the message: ${reason}`, response.status === 429 || response.status === 503);
   }
 
-  return { messageId: payload?.messageId ?? null, accepted: [args.to, ...(args.cc ?? []), ...(args.bcc ?? [])] };
+  // The real Message-ID when the patched Mailflare returns it: that is what a
+  // reply's In-Reply-To names and what the Sent copy carries. Mailflare's own
+  // row id is only the fallback (the mail room repairs those as it reads Sent).
+  return { messageId: payload?.providerMessageId || payload?.messageId || null, accepted: [args.to, ...(args.cc ?? []), ...(args.bcc ?? [])] };
 }

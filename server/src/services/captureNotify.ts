@@ -1,8 +1,5 @@
 import type { ScraperRun, ScraperSource } from "@prisma/client";
 import { SETTING, getSetting } from "../lib/settings.js";
-import { readMailerConfig, sendMail } from "../lib/mailer.js";
-import { logoSources, signature, toHtml, toText } from "./emailRender.js";
-import { companyProfile } from "./systemProfile.js";
 import { readCaptureConfig } from "./captureConfig.js";
 import { slackConfigured } from "../lib/slack.js";
 import { postNotification } from "./slack/notify.js";
@@ -20,11 +17,11 @@ import type { RunDiagnostics } from "./scraperRunner.js";
  * Off, failures-only, or every run: Settings → Lead capture. Failures-only by
  * default, because a daily "12 new leads" email stops being read by week two.
  *
- * Goes to Slack as well when Slack is connected — an overnight failure that
- * arrives as one more unread email is a failure you find on Thursday.
+ * Goes to Slack only (never email): an overnight failure that arrives as one
+ * more unread email is a failure you find on Thursday.
  *
  * Nothing here is allowed to matter to the run itself: if the mailbox isn't
- * connected, or SMTP refuses, or Slack is down, the scrape has still succeeded.
+ * connected or Slack is down, the scrape has still succeeded.
  */
 
 const STATUS_HEADLINE: Record<string, string> = {
@@ -43,9 +40,10 @@ export async function reportRun(run: ScraperRun, source: ScraperSource): Promise
 
   // A clean run that captured nothing is reported even in failures-only mode:
   // it is the quiet failure this exists to catch.
-  const to = config.notifyEmail ?? (await getSetting(SETTING.MAIL_FROM_EMAIL));
-  if (!to) return false;
-  if (!(await readMailerConfig())) return false;
+  //
+  // Slack only. Dan asked on 23 Nov 2026 for these reports to stop arriving as
+  // email: they filled the inbox that replies from leads land in.
+  if (!(await slackConfigured())) return false;
 
   const headline = STATUS_HEADLINE[run.status] ?? run.status.toLowerCase();
   const subject = clean
@@ -80,31 +78,15 @@ export async function reportRun(run: ScraperRun, source: ScraperSource): Promise
     .filter(Boolean)
     .join("\n");
 
-  // The same letterhead a client would get, on the same live identity — this
-  // lands in the Owner's own inbox and should not be the one surface still
-  // carrying whatever the constants used to say.
-  const [sign, profile, shell] = await Promise.all([signature(), companyProfile(), logoSources(false)]);
-  await sendMail({
-    to,
-    subject,
-    html: toHtml(body, sign, null, { profile, ...shell }),
-    text: toText(body, sign, null, profile),
-    category: "system:capture-report",
-  });
-
-  // Slack second, and never allowed to undo the email: the report has already
-  // been delivered by the time this runs.
-  if (await slackConfigured()) {
-    const summary = body.split("\n").slice(0, 12).join("\n");
-    const link = `${await appUrl()}/lead-sources`;
-    // Keyed on the run rather than the clock, so a report raised twice for one
-    // capture is one message. A capture that genuinely runs again gets a new
-    // run id and so a new key.
-    await postNotification({
-      idempotencyKey: `capture:${run.id}:report`,
-      text: `*${subject}*\n${summary}\n<${link}|Open lead sources>`,
-    }).catch((err) => console.error("[capture] Slack report failed:", (err as Error).message));
-  }
+  const summary = body.split("\n").slice(0, 12).join("\n");
+  const link = `${await appUrl()}/lead-sources`;
+  // Keyed on the run rather than the clock, so a report raised twice for one
+  // capture is one message. A capture that genuinely runs again gets a new
+  // run id and so a new key.
+  await postNotification({
+    idempotencyKey: `capture:${run.id}:report`,
+    text: `*${subject}*\n${summary}\n<${link}|Open lead sources>`,
+  }).catch((err) => console.error("[capture] Slack report failed:", (err as Error).message));
 
   return true;
 }

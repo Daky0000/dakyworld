@@ -2,6 +2,23 @@
 
 > Part of the DakyXTech OS architecture notes. The index is in [CLAUDE.md](../../CLAUDE.md).
 
+**Reading from Mailflare (23 Nov 2026).** Since 16 Nov the MX for dakyx.com is
+Resend, filed by Mailflare, so the Hostinger IMAP mailbox receives nothing and
+for a week no reply reached the mail room. When `MAILFLARE_READ_KEY` (env
+`MAILFLARE_READ_API_KEY`, or pasted on the Inbox screen) holds a key with the
+`jmap` scope, `syncMailbox()` reads Mailflare over JMAP instead of IMAP
+(`lib/mailflareRead.ts`, `syncMailflare` in `services/mailbox/sync.ts`) and the
+IDLE watcher stays off. The cursor is an arrival time in ms on the INBOX row of
+`MailSyncState` for `mailflare:<address>`; inbox and Sent come from one query,
+told apart by Mailflare's mailbox role, and junk is read as INBOX on purpose.
+**The trap:** Mailflare's `/api/v1/send` returned its own row id (`msg_…`), so
+the outbox stored that, while the Sent copy and every reply carry the real
+`<…@dakyx.com>` Message-ID — our own sends would have read as hand-written
+replies and stopped their sequences. The patched Mailflare now returns
+`providerMessageId`, and `syncMailflare` rewrites any old `msg_…` outbox row
+from its Sent copy *before* ingesting it. `POST /inbox/:id/reply` answers from
+the Inbox screen (gated `emails.send`), threaded, and marks the message handled.
+
 **The mail room** — `src/lib/imap.ts`, `src/services/mailbox/`, `routes/inbox.ts`,
 the `mail.room` agent. Every email module before Aug 2026 was outbound: the app
 could compose, schedule, sequence and send, and had no idea whether anybody

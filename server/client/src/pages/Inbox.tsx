@@ -73,7 +73,9 @@ export function Inbox() {
         }
       />
 
-      {status && !status.connected && (
+      {status && status.mailflareSending && !status.mailflareReadable && <ConnectMailflare />}
+
+      {status && !status.connected && !status.mailflareSending && (
         <Card className="mb-6 border-warn-line bg-warn-surface">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -311,6 +313,48 @@ function ThreadList({ threads, onOpen }: { threads: MailThreadRow[]; onOpen: (id
   );
 }
 
+/**
+ * Mail is sent through Mailflare but not read from it, so replies never reach
+ * this screen. One key fixes that; it is checked against Mailflare first.
+ */
+function ConnectMailflare() {
+  const queryClient = useQueryClient();
+  const [key, setKey] = useState("");
+  const connect = useMutation({
+    mutationFn: () => api.post<InboxSyncResult>("/inbox/mailflare", { key }),
+    onSuccess: () => {
+      setKey("");
+      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
+      void queryClient.invalidateQueries({ queryKey: ["inbox-threads"] });
+      void queryClient.invalidateQueries({ queryKey: ["inbox-status"] });
+    },
+  });
+
+  return (
+    <Card className="mb-6 border-warn-line bg-warn-surface">
+      <p className="font-medium text-ink">Replies are not reaching this screen yet.</p>
+      <p className="mb-3 text-sm text-muted">
+        Mail arrives in Mailflare now. In Mailflare, open Settings → API keys, create a key with the <strong>JMAP</strong> permission for
+        info@dakyx.com, and paste it here. The last 14 days are read straight away.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <input
+          value={key}
+          onChange={(event) => setKey(event.target.value)}
+          placeholder="ep_…"
+          type="password"
+          autoComplete="off"
+          className="min-w-0 flex-1 rounded-xl border border-line px-3 py-2 text-sm"
+        />
+        <Button onClick={() => connect.mutate()} disabled={key.trim().length < 10 || connect.isPending}>
+          {connect.isPending ? "Connecting…" : "Connect"}
+        </Button>
+      </div>
+      {connect.error && <p className="mt-2 text-sm text-danger-text">{(connect.error as ApiError).message}</p>}
+    </Card>
+  );
+}
+
 function MessageDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [note, setNote] = useState("");
@@ -340,6 +384,15 @@ function MessageDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   });
 
   const reread = useMutation({ mutationFn: () => api.post(`/inbox/${id}/retriage`), onSuccess: refresh });
+
+  const [replyBody, setReplyBody] = useState("");
+  const reply = useMutation({
+    mutationFn: () => api.post(`/inbox/${id}/reply`, { body: replyBody }),
+    onSuccess: () => {
+      setReplyBody("");
+      refresh();
+    },
+  });
 
   return (
     <Drawer open onClose={onClose} title={message?.subject ?? "Message"}>
@@ -378,6 +431,26 @@ function MessageDrawer({ id, onClose }: { id: string; onClose: () => void }) {
             <h4 className="mb-2 text-sm font-medium text-muted">What they wrote</h4>
             <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-xl bg-cream p-4 text-sm text-ink">{message.bodyText}</pre>
           </div>
+
+          {message.direction === "INBOUND" && (
+            <Card>
+              <h4 className="mb-3 text-sm font-medium text-ink">Reply to {message.fromName ?? message.fromEmail}</h4>
+              <textarea
+                value={replyBody}
+                onChange={(event) => setReplyBody(event.target.value)}
+                rows={6}
+                placeholder="Write your answer. Your signature and letterhead are added."
+                className="mb-2 w-full rounded-xl border border-line px-3 py-2 text-sm"
+              />
+              <div className="flex flex-wrap items-center gap-3">
+                <Button onClick={() => reply.mutate()} disabled={!replyBody.trim() || reply.isPending}>
+                  {reply.isPending ? "Sending…" : "Send reply"}
+                </Button>
+                {reply.isSuccess && <span className="text-sm text-positive-text">Sent. It is in the conversation now.</span>}
+              </div>
+              {reply.error && <p className="mt-2 text-sm text-danger-text">{(reply.error as ApiError).message}</p>}
+            </Card>
+          )}
 
           {message.hasAttachments && (
             <div>

@@ -4,7 +4,9 @@ import { prisma } from "../../lib/prisma.js";
 import { getSetting, SETTING } from "../../lib/settings.js";
 import { type ImapConfig, ownAddresses, readImapConfig, resolveSentFolder, withImap } from "../../lib/imap.js";
 import { parseMessage } from "./parse.js";
-import { ingestMessage } from "./ingest.js";
+import { dedupeKeyFor, ingestMessage } from "./ingest.js";
+import { bareId } from "./match.js";
+import { type MailflareReadConfig, downloadMailflareRaw, listMailflareEmails, readMailflareReadConfig } from "../../lib/mailflareRead.js";
 
 /**
  * Reading what is new, and only what is new.
@@ -196,6 +198,12 @@ export async function syncFolder(
  * ran is the half that matters.
  */
 export async function syncMailbox(options: { config?: ImapConfig | null } = {}): Promise<SyncResult> {
+  // Mailflare first: once it is connected for reading it is where the mail is,
+  // and the IMAP mailbox still configured beside it is the one that went quiet.
+  if (!options.config) {
+    const mailflare = await readMailflareReadConfig();
+    if (mailflare) return syncMailflare(mailflare);
+  }
   const config = options.config ?? (await readImapConfig());
   if (!config) {
     return { mailbox: "", folders: [], read: 0, routed: 0, notes: ["No mailbox is connected for reading. Settings → Email → Reading the inbox."] };
@@ -238,4 +246,120 @@ export async function syncMailbox(options: { config?: ImapConfig | null } = {}):
       notes,
     };
   });
+}
+
+/* ------------------------------------------------------------ Mailflare -- */
+
+/**
+ * Re-reads this much before the cursor on every pass. Two messages filed in
+ * the same second would otherwise straddle it; the overlap is skipped by
+ * Message-ID before anything is downloaded, so it costs one query.
+ */
+const MAILFLARE_OVERLAP_MS = 60_000;
+
+/** A stable small number from Mailflare's message id, for the `loc:` key of a message with no Message-ID. */
+function pseudoUid(id: string): number {
+  let hash = 0;
+  for (const char of id) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) | 0;
+  return Math.abs(hash) || 1;
+}
+
+/**
+ * One pass over the Mailflare mailbox.
+ *
+ * JMAP has no UIDs, so the cursor is a time: `lastUid` on the INBOX row holds
+ * the arrival time (milliseconds) of the newest message read. Inbox and Sent
+ * come back from one query and are told apart by their Mailflare mailbox role,
+ * so the hand-written reply that stops a sequence is read in the same pass as
+ * the message it answers.
+ */
+export async function syncMailflare(config: MailflareReadConfig): Promise<SyncResult> {
+  const cursorMailbox = `mailflare:${config.address}`;
+  const own = await ownAddresses();
+  const state = await cursorFor(cursorMailbox, "INBOX");
+  const inbox: FolderSync = { folder: "INBOX", path: "Mailflare inbox", read: 0, skipped: 0, routed: 0, more: false, notes: [], error: null };
+  const sent: FolderSync = { folder: "SENT", path: "Mailflare sent", read: 0, skipped: 0, routed: 0, more: false, notes: [], error: null };
+
+  const after = state.lastUid > 0n
+    ? new Date(Number(state.lastUid) - MAILFLARE_OVERLAP_MS)
+    : new Date(Date.now() - (await backfillDays()) * 24 * 60 * 60_000);
+
+  try {
+    const emails = await listMailflareEmails(config, after, MAX_PER_RUN);
+    if (emails.length >= MAX_PER_RUN) inbox.more = true;
+    let highest = state.lastUid;
+
+    for (const email of emails) {
+      const target = email.folder === "SENT" ? sent : inbox;
+      const at = BigInt(email.receivedAt.getTime());
+      try {
+        // Until Mailflare returned the real Message-ID, the outbox stored its row
+        // id (`msg_…`) for each send. The Sent copy names both, so the outbox row
+        // is corrected here, before ingest: otherwise our own automated send
+        // reads as a reply typed by hand and stops its sequence, and a lead's
+        // answer cannot be matched to the email it answers.
+        if (email.folder === "SENT" && email.messageId) {
+          await prisma.emailMessage.updateMany({
+            where: { messageId: email.id },
+            data: { messageId: `<${email.messageId}>` },
+          });
+        }
+        // Already stored: skip before downloading. The overlap lands here every pass.
+        if (email.messageId) {
+          const known = await prisma.mailMessage.findUnique({ where: { dedupeKey: `mid:${bareId(email.messageId)}` }, select: { id: true } });
+          if (known) {
+            target.skipped += 1;
+            if (at > highest) highest = at;
+            continue;
+          }
+        }
+        const raw = await downloadMailflareRaw(config, email.blobId);
+        const parsed = await parseMessage(raw, email.receivedAt);
+        const uid = pseudoUid(email.id);
+        if (!email.messageId) {
+          const key = dedupeKeyFor(parsed, email.folder, uid, 0n);
+          const known = await prisma.mailMessage.findUnique({ where: { dedupeKey: key }, select: { id: true } });
+          if (known) {
+            target.skipped += 1;
+            if (at > highest) highest = at;
+            continue;
+          }
+        }
+        const ingested = await ingestMessage({ parsed, folder: email.folder, uid, uidValidity: 0n, own });
+        if (ingested.fresh) target.read += 1;
+        else target.skipped += 1;
+        if (ingested.taskId) target.routed += 1;
+        target.notes.push(...ingested.notes);
+        if (at > highest) highest = at;
+      } catch (err) {
+        // A download that failed is worth another try next pass, so the cursor
+        // stops here rather than stepping over the message for good.
+        target.error = `Could not read a message from Mailflare: ${(err as Error).message}`;
+        break;
+      }
+    }
+
+    await prisma.mailSyncState.update({
+      where: { id: state.id },
+      data: {
+        lastUid: highest,
+        lastSyncAt: new Date(),
+        lastError: inbox.error ?? sent.error ?? null,
+        messagesSeen: { increment: inbox.read + sent.read },
+      },
+    });
+  } catch (err) {
+    inbox.error = (err as Error).message;
+    await prisma.mailSyncState.update({ where: { id: state.id }, data: { lastError: inbox.error.slice(0, 500), lastSyncAt: new Date() } });
+  }
+
+  const folders = [inbox, sent];
+  const notes = folders.flatMap((folder) => [...folder.notes, ...(folder.error ? [folder.error] : [])]);
+  return {
+    mailbox: config.address,
+    folders,
+    read: inbox.read + sent.read,
+    routed: inbox.routed + sent.routed,
+    notes,
+  };
 }

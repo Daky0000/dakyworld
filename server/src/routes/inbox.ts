@@ -2,13 +2,18 @@ import { Router } from "express";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { imapConfigured, readImapConfig } from "../lib/imap.js";
+import { mailReadingConfigured, readImapConfig } from "../lib/imap.js";
+import { MailflareReadError, checkMailflareRead, readMailflareReadConfig } from "../lib/mailflareRead.js";
+import { SETTING, getSetting, isEnvManaged, setSetting } from "../lib/settings.js";
+import { sendMail } from "../lib/mailer.js";
+import { logoSources, signature, toHtml, toText } from "../services/emailRender.js";
+import { companyProfile } from "../services/systemProfile.js";
+import { restartWatcher, watcherStatus } from "../services/mailbox/watcher.js";
 import { handOverMessage, inboxSummary, markHandled } from "../services/mailbox/actions.js";
 import { retriage } from "../services/mailbox/ingest.js";
 import { NEEDS_NO_REPLY, autoRouteEnabled, destinationFor } from "../services/mailbox/router.js";
 import { syncMailbox } from "../services/mailbox/sync.js";
 import { triageEnabled } from "../services/mailbox/triage.js";
-import { watcherStatus } from "../services/mailbox/watcher.js";
 import { gateBy } from "../middleware/permissionGate.js";
 
 /**
@@ -29,8 +34,7 @@ export const inboxRouter = Router();
 inboxRouter.use(
   gateBy({
     view: "inbox.view",
-    // Nothing on this router sends. Answering a message is a send and goes
-    // through the email module, under "Send an email".
+    // Replying is the one send here, and it is gated like the outbox below.
     create: "inbox.assign",
     routes: [{ path: /^\/sync$/, permission: "inbox.sync" }],
   }),
@@ -106,12 +110,13 @@ const OPEN_WHERE: Prisma.MailMessageWhereInput = {
 /** Where the mail room stands: connected, reading, and what it has been told to do. */
 inboxRouter.get("/status", async (_req, res, next) => {
   try {
-    const [config, connected, triage, autoRoute, cursors, counts] = await Promise.all([
+    const [config, mailflare, connected, triage, autoRoute, cursors, counts] = await Promise.all([
       readImapConfig(),
-      imapConfigured(),
+      readMailflareReadConfig(),
+      mailReadingConfigured(),
       triageEnabled(),
       autoRouteEnabled(),
-      prisma.mailSyncState.findMany({ orderBy: { folder: "asc" } }),
+      prisma.mailSyncState.findMany({ orderBy: [{ lastSyncAt: "desc" }, { folder: "asc" }] }),
       prisma.mailMessage.groupBy({ by: ["triage"], _count: { _all: true }, where: { direction: "INBOUND" } }),
     ]);
 
@@ -125,12 +130,19 @@ inboxRouter.get("/status", async (_req, res, next) => {
 
     res.json({
       connected,
-      mailbox: config?.mailbox ?? null,
-      host: config?.host ?? null,
+      mailbox: mailflare?.address ?? config?.mailbox ?? null,
+      host: mailflare ? "Mailflare" : config?.host ?? null,
+      source: mailflare ? "MAILFLARE" : config ? "IMAP" : null,
+      // Offered on the screen when mail is sent through Mailflare but not yet read from it.
+      mailflareReadable: Boolean(mailflare),
+      mailflareSending: (await getSetting(SETTING.MAIL_TRANSPORT)) === "MAILFLARE",
+      mailflareKeyEnvManaged: isEnvManaged(SETTING.MAILFLARE_READ_KEY),
       triage,
       autoRoute,
       watcher: watcherStatus(),
-      folders: cursors.map((cursor) => ({
+      // Only the cursors of the mailbox being read now; an old IMAP cursor beside
+      // a Mailflare one would show a week-old error as the current state.
+      folders: cursors.filter((cursor) => cursor.mailbox === (mailflare ? `mailflare:${mailflare.address}` : config?.mailbox)).map((cursor) => ({
         folder: cursor.folder,
         lastSyncAt: cursor.lastSyncAt,
         lastError: cursor.lastError,
@@ -155,7 +167,7 @@ inboxRouter.get("/status", async (_req, res, next) => {
  */
 inboxRouter.post("/sync", async (_req, res, next) => {
   try {
-    if (!(await imapConfigured())) {
+    if (!(await mailReadingConfigured())) {
       return res.status(503).json({ error: "No mailbox is connected for reading. Settings → Email → Reading the inbox." });
     }
     const result = await syncMailbox();
@@ -255,6 +267,84 @@ inboxRouter.get("/", async (req, res, next) => {
         wouldGoTo: message.intent ? destinationFor(message.intent, Boolean(message.clientId)) : null,
       })),
     );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Connects the mail room to Mailflare for reading: a key with the JMAP
+ * permission, checked against Mailflare before it is stored, then one pass so
+ * the screen fills straight away. The URL and mailbox come from the sending
+ * settings already in place.
+ */
+inboxRouter.post("/mailflare", async (req, res, next) => {
+  try {
+    const { key } = z.object({ key: z.string().trim().min(10).max(300) }).parse(req.body);
+    if (isEnvManaged(SETTING.MAILFLARE_READ_KEY)) {
+      return res.status(409).json({ error: "The reading key is set on the server (MAILFLARE_READ_API_KEY) and cannot be changed here." });
+    }
+    const [url, mailboxId, address, fromEmail] = await Promise.all([
+      getSetting(SETTING.MAILFLARE_URL),
+      getSetting(SETTING.MAILFLARE_MAILBOX_ID),
+      getSetting(SETTING.MAILFLARE_MAILBOX_ADDRESS),
+      getSetting(SETTING.MAIL_FROM_EMAIL),
+    ]);
+    const mailbox = (address ?? fromEmail)?.trim().toLowerCase();
+    if (!url || !mailboxId || !mailbox) {
+      return res.status(400).json({ error: "Mailflare sending is not set up yet (its address and mailbox), so there is nothing to read from." });
+    }
+    try {
+      await checkMailflareRead({ url: url.replace(/\/+$/, ""), key, mailboxId, address: mailbox });
+    } catch (err) {
+      const status = err instanceof MailflareReadError && err.status < 500 ? 400 : 502;
+      return res.status(status).json({ error: (err as Error).message });
+    }
+    await setSetting(SETTING.MAILFLARE_READ_KEY, key, { secret: true });
+    await restartWatcher().catch(() => undefined);
+    const result = await syncMailbox();
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Answers a message from the Inbox screen.
+ *
+ * Goes out through the configured transport with the threading headers, so it
+ * lands in the sender's conversation, and is marked handled. The copy in
+ * Mailflare's Sent folder is read back on the next pass, which is what the
+ * mail room already treats as "the Owner answered": the sequence stops.
+ */
+inboxRouter.post("/:id/reply", async (req, res, next) => {
+  try {
+    const input = z.object({ body: z.string().trim().min(1).max(20_000) }).parse(req.body);
+    const message = await prisma.mailMessage.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, direction: true, fromEmail: true, fromName: true, subject: true, messageId: true, references: true, handledAt: true },
+    });
+    if (!message) return res.status(404).json({ error: "No such message." });
+    if (message.direction !== "INBOUND") return res.status(400).json({ error: "That is a message we sent; reply to the one that came in." });
+
+    const subject = /^re:/i.test(message.subject.trim()) ? message.subject.trim() : `Re: ${message.subject.trim() || "your message"}`;
+    const [sign, profile, shell] = await Promise.all([signature(), companyProfile(), logoSources(false)]);
+    const receipt = await sendMail({
+      to: message.fromEmail,
+      toName: message.fromName,
+      subject,
+      html: toHtml(input.body, sign, null, { profile, ...shell }),
+      text: toText(input.body, sign, null, profile),
+      inReplyTo: message.messageId ? `<${message.messageId.replace(/^<|>$/g, "")}>` : null,
+      category: "inbox:reply",
+    });
+
+    if (!message.handledAt) {
+      await markHandled({ messageId: message.id, note: "Replied from the Inbox.", userId: req.dbUser?.id ?? null }).catch((err) =>
+        console.warn("[inbox] reply sent but could not mark handled:", (err as Error).message),
+      );
+    }
+    res.status(201).json({ sent: true, messageId: receipt.messageId });
   } catch (err) {
     next(err);
   }

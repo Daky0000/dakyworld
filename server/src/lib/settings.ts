@@ -429,6 +429,8 @@ export const SETTING = {
   MAILFLARE_API_KEY: "mailflare.apiKey",
   MAILFLARE_MAILBOX_ID: "mailflare.mailboxId",
   MAILFLARE_MAILBOX_ADDRESS: "mailflare.mailboxAddress",
+  /** A key with the `jmap` and `read` scopes: how the mail room reads the mailbox. */
+  MAILFLARE_READ_KEY: "mailflare.readKey",
 
   // Slack, for internal alerts and escalation. Either route works and the
   // token wins when both are set — see lib/slack.ts.
@@ -870,6 +872,7 @@ const ENV_FALLBACK: Record<string, string | undefined> = {
   [SETTING.MAILFLARE_API_KEY]: "MAILFLARE_API_KEY",
   [SETTING.MAILFLARE_MAILBOX_ID]: "MAILFLARE_MAILBOX_ID",
   [SETTING.MAILFLARE_MAILBOX_ADDRESS]: "MAILFLARE_MAILBOX_ADDRESS",
+  [SETTING.MAILFLARE_READ_KEY]: "MAILFLARE_READ_API_KEY",
   [SETTING.SMTP_HOST]: "SMTP_HOST",
   [SETTING.SMTP_PORT]: "SMTP_PORT",
   [SETTING.SMTP_SECURE]: "SMTP_SECURE",
